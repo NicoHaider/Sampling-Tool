@@ -5,17 +5,29 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 
 ## Status
 
-**Sprint 1 von 7** – Setup & Sampling-Core ✅ **erledigt** (22/22 Tests grün, Ruff clean).
+**Sprint 2 von 7** – SQLite-Persistenz ✅ **erledigt** (70/70 Tests grün, Ruff + Mypy clean).
 
 | Sprint | Inhalt                                              | Status      |
 |-------:|-----------------------------------------------------|-------------|
 | 1      | Projekt-Skelett, Config, Sampling-Core + Tests      | **done**    |
-| 2      | SQLite-Persistenz, Audit-Trail, Migrations         | offen       |
+| 2      | SQLite-Persistenz, Audit-Trail, Undo, Migrations    | **done**    |
 | 3      | I/O: Excel-Import (openpyxl), CSV, Validierung      | offen       |
 | 4      | PyQt6-UI: Hauptfenster, Engagement-Verwaltung       | offen       |
 | 5      | UI: Sample-Konfigurator, Vorschau, Export-Dialog    | offen       |
 | 6      | Reports: PDF (reportlab), HTML (jinja2), Excel-Out  | offen       |
 | 7      | Bug-Mail (pywin32/Outlook), PyInstaller-Build       | offen       |
+
+### Was Sprint 2 liefert
+
+- `persistence/database.py` – `Database` mit WAL/FK-PRAGMAs, `session()`-Transaktionen,
+  `savepoint()`-Helper, automatische Migrations + UTC-aware Datetime-Adapter
+- `persistence/migrations/001_initial.sql` – 8 Tabellen, FKs, Indizes, Append-Only-Trigger
+- `persistence/repositories.py` – `EngagementRepo`, `DatasetRepo`, `SampleRepo`, `AuditRepo`
+- `audit/logger.py` – `AuditLogger` mit `log_sampling`/`log_import`/`log_export`/
+  `log_undo`/`log_redo`/`log_reset`/`log_correction`
+- `core/undo.py` – `UndoManager` mit Stack-Tiefe 20, Redo-Clear-on-Push, persistiert
+  über Connection-Wechsel hinweg
+- 48 neue Integration-Tests (DB-Lifecycle, Repos, Append-Only-Trigger, Logger, Undo)
 
 ### Was Sprint 1 liefert
 
