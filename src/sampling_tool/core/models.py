@@ -3,6 +3,10 @@
 Alle Modelle sind unveränderlich (`frozen=True, slots=True`), damit Stichproben
 bit-genau reproduzierbar bleiben (ISAE-3402-Anforderung) und keine impliziten
 Mutationen die Audit-Trail-Hash-Chain brechen.
+
+DB-Identitäten werden als optionale Integer (`id: int | None = None`) abgebildet:
+beim ersten Persistieren noch `None`, danach setzt das Repository den vom
+SQLite-AUTOINCREMENT vergebenen Wert via `dataclasses.replace`.
 """
 
 from __future__ import annotations
@@ -11,12 +15,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
-from uuid import UUID, uuid4
 
 
 def _utcnow() -> datetime:
     """Aktueller UTC-Zeitstempel (timezone-aware)."""
     return datetime.now(UTC)
+
+
+def _empty_details() -> dict[str, Any]:
+    """Default-Factory für `AuditEvent.details` – typisiert für mypy/pyright."""
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +50,13 @@ class StratifyMode(StrEnum):
     """Gleichviele pro Schicht (Largest-Remainder bei Rundung)."""
 
 
+class UndoStack(StrEnum):
+    """Stack-Identifier für `UndoManager` / `undo_snapshots`."""
+
+    UNDO = "undo"
+    REDO = "redo"
+
+
 # ---------------------------------------------------------------------------
 # Daten-Modelle
 # ---------------------------------------------------------------------------
@@ -49,14 +64,18 @@ class StratifyMode(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Engagement:
-    """Ein Audit-Mandat (Mandant + Prüfungszeitraum)."""
+    """Ein Audit-Mandat (Auditor + Mandant + Prüfungstyp).
 
-    name: str
-    client: str
-    period_start: datetime
-    period_end: datetime
-    id: UUID = field(default_factory=uuid4)
-    notes: str = ""
+    Pro SQLite-Datei existiert genau ein Engagement (Mandanten-Trennung).
+    """
+
+    auditor_name: str
+    client_name: str
+    auditor_position: str = ""
+    audit_type: str = ""
+    created_at: datetime = field(default_factory=_utcnow)
+    updated_at: datetime = field(default_factory=_utcnow)
+    id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +103,9 @@ class Dataset:
     columns: tuple[str, ...]
     rows: tuple[DatasetRow, ...]
     source_file: str = ""
-    id: UUID = field(default_factory=uuid4)
+    imported_at: datetime = field(default_factory=_utcnow)
+    engagement_id: int | None = None
+    id: int | None = None
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -118,7 +139,9 @@ class SampleResult:
     selected_row_ids: tuple[int, ...]
     population_size: int
     drawn_at: datetime = field(default_factory=_utcnow)
-    id: UUID = field(default_factory=uuid4)
+    parent_sample_id: int | None = None
+    created_by: str = "system"
+    id: int | None = None
 
     @property
     def actual_size(self) -> int:
@@ -128,10 +151,40 @@ class SampleResult:
 
 @dataclass(frozen=True, slots=True)
 class AuditEvent:
-    """Ein einzelner Eintrag im append-only Audit-Log (Hash-Chain folgt in Sprint 2)."""
+    """Ein Eintrag im append-only Audit-Log.
+
+    Die expliziten Felder (`sample_size`, `seed`, `import_file`, …) decken die
+    häufigsten Audit-Operationen und vermeiden Frei-JSON wo möglich.
+    Zusätzlicher Kontext landet in `details` (DB: `details_json TEXT`).
+    """
 
     event_type: str
-    payload: dict[str, Any]
+    engagement_id: int | None = None
+    user_name: str = "system"
     timestamp: datetime = field(default_factory=_utcnow)
-    id: UUID = field(default_factory=uuid4)
-    actor: str = "system"
+
+    sample_id: int | None = None
+    sample_size: int | None = None
+    sample_percent: float | None = None
+    total_count: int | None = None
+    seed: int | None = None
+    import_file: str | None = None
+    export_file: str | None = None
+    details: dict[str, Any] = field(default_factory=_empty_details)
+    corrects_event_id: int | None = None
+
+    id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Snapshot:
+    """Undo-/Redo-Snapshot des Sicht-Zustands (sichtbare und markierte Zeilen)."""
+
+    stack_type: UndoStack
+    position: int
+    visible_rows: tuple[int, ...] = ()
+    highlighted_rows: tuple[int, ...] = ()
+    sample_id: int | None = None
+    engagement_id: int | None = None
+    created_at: datetime = field(default_factory=_utcnow)
+    id: int | None = None

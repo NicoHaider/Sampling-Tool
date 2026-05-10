@@ -19,8 +19,8 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 
 | Sprint | Inhalt                                              | Status      |
 |-------:|-----------------------------------------------------|-------------|
-| 1      | Projekt-Skelett, Config, Sampling-Core + Tests      | in Arbeit   |
-| 2      | SQLite-Persistenz, Audit-Trail, Migrations         | offen       |
+| 1      | Projekt-Skelett, Config, Sampling-Core + Tests      | done        |
+| 2      | SQLite-Persistenz, Audit-Trail, Undo, Migrations    | done        |
 | 3      | I/O: Excel-Import (openpyxl), CSV, Validierung      | offen       |
 | 4      | PyQt6-UI: Hauptfenster, Engagement-Verwaltung       | offen       |
 | 5      | UI: Sample-Konfigurator, Vorschau, Export-Dialog    | offen       |
@@ -47,10 +47,19 @@ ui ──▶ controllers ──▶ core ◀── io
   - `rng.py` – `make_rng(seed)` + `fisher_yates_shuffle` über `numpy.random.default_rng`
   - `sampling.py` – `BaseSampler` + Simple/Cluster/Stratified + `create_sampler`-Factory
 - **`io/`** *(Sprint 3)* – Excel-/CSV-Import, Export. Adapter-Pattern.
-- **`persistence/`** *(Sprint 2)* – SQLite über sqlite3 (kein ORM-Overhead). Migrations
-  als nummerierte SQL-Files unter `persistence/migrations/`.
-- **`audit/`** *(Sprint 2)* – Append-only Event-Log. Jede Aktion (Sample gezogen, Datei
-  importiert, Engagement angelegt) wird mit Hash-Chain protokolliert.
+- **`persistence/`** – SQLite über sqlite3 (kein ORM-Overhead).
+  - `database.py` – `Database`-Wrapper mit WAL+FK-PRAGMAs, `session()`-Transaktionen,
+    `savepoint()`-Helper für nestbare Repo-Transaktionen, automatische Migrations.
+  - `repositories.py` – `EngagementRepo`, `DatasetRepo`, `SampleRepo`, `AuditRepo`.
+    Stateless, nehmen `sqlite3.Connection` im Konstruktor, geben Domain-Modelle zurück.
+  - `migrations/NNN_*.sql` – nummerierte SQL-Files; `001_initial.sql` ist das
+    komplette Sprint-2-Schema. Migrations-Runner liest `schema_version` und führt
+    nur ausstehende Versionen aus.
+- **`audit/`** – Append-only Event-Log via Trigger.
+  - `logger.py` – `AuditLogger` ist der High-Level-Eingang: `log_sampling`,
+    `log_import`, `log_export`, `log_undo`, `log_redo`, `log_reset`, `log_correction`.
+  - Korrekturen werden als neue Events mit `event_type='correction'` und
+    `corrects_event_id`-FK auf den Original-Event gespeichert (kein UPDATE/DELETE).
 - **`ui/`** *(Sprint 4+)* – PyQt6. Strikt MVC: Widgets dumm, Controllers in
   `ui/controllers/`. Stylesheet (BDO-CI) unter `ui/styles/*.qss`.
 
@@ -80,7 +89,8 @@ Grobe Übersetzungstafel zwischen altem VBA-Tool und neuer Python-Architektur.
 | `frmMain.frm` (UserForm)                   | `ui/main_window.py` (Sprint 4)                     |
 | `frmSampleConfig.frm`                      | `ui/dialogs/sample_config_dialog.py` (Sprint 5)    |
 | Excel-Sheet als „DB"                       | SQLite via `persistence/` (Sprint 2)               |
-| `Worksheets("Audit").Range(...)`           | `audit/event_log.py` mit Hash-Chain (Sprint 2)     |
+| `Worksheets("Audit").Range(...)`           | `audit/logger.py` + `AuditRepo`, append-only Trigger |
+| `Worksheets("UndoHistory")` Hidden-Sheet   | `core/undo.py` `UndoManager` + Tabelle `undo_snapshots` |
 | `Application.Mailer` / Outlook-COM         | `pywin32` in `ui/bug_report.py` (Sprint 7)         |
 | Stratifiziert via `Dictionary`-Hack        | `core.sampling.StratifiedSampler` (sauber, getestet)|
 | Cluster-Sampling (war buggy in VBA)        | `core.sampling.ClusterSampler` (neu spezifiziert)  |
@@ -89,6 +99,40 @@ Grobe Übersetzungstafel zwischen altem VBA-Tool und neuer Python-Architektur.
 **Wichtig:** Das alte VBA-Tool hatte einen bekannten Bug bei stratifizierter Auswahl mit
 ungerader Verteilung (siehe interne Bug-Liste). Im Python-Port lösen wir das mit der
 **Largest-Remainder-Methode** in `StratifiedSampler` und decken es mit Tests ab.
+
+## Persistenz-Architektur (Sprint 2)
+
+Drei Kerndogmen, die sich durch die ganze DB-Schicht ziehen:
+
+1. **Eine SQLite-Datei pro Engagement.** Mandanten-Trennung, einfaches Archivieren,
+   DSGVO-konform. Es gibt keinen "globalen" Pool.
+2. **Append-only Audit-Log.** `audit_events` darf ausschließlich per `INSERT`
+   befüllt werden. Zwei BEFORE-Trigger (`audit_events_no_update`,
+   `audit_events_no_delete`) blockieren UPDATE/DELETE hart mit
+   `RAISE(ABORT, 'audit_events is append-only')`. Korrekturen sind neue Events
+   mit `event_type='correction'` und `corrects_event_id`-FK aufs Original.
+3. **WAL-Mode + Foreign Keys an.** `connect()` setzt `journal_mode=WAL`,
+   `foreign_keys=ON`, `synchronous=NORMAL`. Autocommit (`isolation_level=None`),
+   Transaktionen werden via `session()` und `savepoint()` explizit gesteuert.
+
+**Repositories als Eintrittspunkt für Sprint 3 (I/O):**
+
+- Excel-Importer (Sprint 3) konstruiert ein `Dataset` (engagement_id setzen!) und
+  ruft `DatasetRepo.create(dataset)`. Atomar – schlägt das fehl, bleibt nichts
+  zurück. Danach `AuditLogger.log_import(dataset)`.
+- UI-Controller (Sprint 4+) bekommt `Database`-Instanz, baut bei Bedarf eigene
+  Repo-Instanzen pro Operation. Connection-Lebensdauer = App-Sitzung.
+- `UndoManager(db, engagement_id)` ist persistiert (überlebt Connection-Wechsel).
+  `MAX_DEPTH = 20`, neuer `push` löscht den Redo-Stack (Standard-Editor-Verhalten).
+
+**Datetime-Handling:** Eigene Adapter/Konverter in `database.py` registrieren
+UTC-aware ISO-8601 für `INSERT` und parsen sowohl unser Format als auch SQLites
+`CURRENT_TIMESTAMP`-Default (`YYYY-MM-DD HH:MM:SS`) beim Lesen. Kein naives Datetime
+mehr – Python-3.12-Deprecation umgangen.
+
+**JSON-Spalten:** `columns_json`, `values_json`, `details_json` sowie `filter_value`,
+`visible_rows`, `highlighted_rows` sind alle `json.dumps`-/`json.loads`-Roundtrip,
+um Typ-Information (int vs. str vs. nested dict) zu erhalten.
 
 ## Reproduzierbarkeit (kritisch!)
 
