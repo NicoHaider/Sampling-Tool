@@ -1,0 +1,13 @@
+{
+  "recommendations": [
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "charliermarsh.ruff",
+    "anthropic.claude-code",
+    "github.vscode-pull-request-github",
+    "eamodio.gitlens",
+    "qwtel.sqlite-viewer",
+    "tamasfe.even-better-toml",
+    "usernamehw.errorlens"
+  ]
+}

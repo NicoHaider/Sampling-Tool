@@ -1,0 +1,97 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+wheels/
+*.whl
+pip-wheel-metadata/
+.installed.cfg
+MANIFEST
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# --- Testing & coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# --- Type checkers / linters ---
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pyre/
+.pytype/
+
+# --- IDEs ---
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.spyderproject
+.spyproject
+
+# VSCode: workspace settings sind committet (.vscode/), aber nicht user-spezifisches Zeug
+.vscode/*.log
+
+# --- OS ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# --- Build / Packaging ---
+*.spec
+PyInstaller/
+
+# --- Projekt-spezifisch ---
+# SQLite-Datenbanken (lokale Audit-Daten – niemals committen!)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Export-Verzeichnisse
+exports/
+output/
+reports/
+
+# Sensible Audit-Daten
+*.xlsx
+*.xls
+*.xlsm
+!tests/fixtures/*.xlsx
+!tests/fixtures/*.xls
+!tests/fixtures/*.xlsm
+
+# Logs
+*.log
+logs/
+
+# Lokale Konfiguration / Secrets
+.env
+.env.local
+secrets.toml
+config.local.toml

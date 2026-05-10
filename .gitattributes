@@ -1,0 +1,55 @@
+# Default: alles als Text, autodetect line endings
+* text=auto eol=lf
+
+# --- Source code: immer LF (cross-platform safe) ---
+*.py    text eol=lf
+*.pyi   text eol=lf
+*.toml  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.sql   text eol=lf
+*.cfg   text eol=lf
+*.ini   text eol=lf
+*.qss   text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.js    text eol=lf
+
+# --- Windows-spezifische Skripte: CRLF (sonst startet cmd.exe nicht sauber) ---
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# --- Shell-Skripte: LF ---
+*.sh    text eol=lf
+
+# --- Binary-Dateien: nicht diff-en, nicht line-ending-konvertieren ---
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.svg   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.tar   binary
+*.7z    binary
+*.dll   binary
+*.exe   binary
+*.so    binary
+*.dylib binary
+*.db    binary
+*.sqlite binary
+*.sqlite3 binary
+*.xlsx  binary
+*.xls   binary
+*.xlsm  binary
+*.docx  binary
+*.pptx  binary
+
+# --- Linguist-Hints für GitHub-Sprachstatistik ---
+src/sampling_tool/** linguist-language=Python
