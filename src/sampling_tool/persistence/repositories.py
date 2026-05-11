@@ -13,8 +13,8 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import replace
-from datetime import UTC, datetime
-from typing import Any
+from datetime import UTC, date, datetime, time
+from typing import Any, Final
 
 from sampling_tool.core.models import (
     AuditEvent,
@@ -166,7 +166,7 @@ class DatasetRepo:
 
             self.conn.executemany(
                 "INSERT INTO dataset_rows (dataset_id, row_index, values_json) VALUES (?, ?, ?)",
-                [(dataset_id, row.row_id, json.dumps(row.values)) for row in dataset.rows],
+                [(dataset_id, row.row_id, _values_to_json(row.values)) for row in dataset.rows],
             )
 
         return replace(dataset, id=dataset_id)
@@ -183,7 +183,7 @@ class DatasetRepo:
             (dataset_id,),
         )
         rows = tuple(
-            DatasetRow(row_id=r["row_index"], values=json.loads(r["values_json"]))
+            DatasetRow(row_id=r["row_index"], values=_values_from_json(r["values_json"]))
             for r in row_cursor
         )
 
@@ -438,3 +438,50 @@ def _json_or_none_load(text: str | None) -> Any:
         return json.loads(text)
     except (TypeError, json.JSONDecodeError):
         return text
+
+
+# ---------------------------------------------------------------------------
+# Datetime-aware JSON für `dataset_rows.values_json`
+#
+# Die Importer-Schicht (Sprint 3) liefert echte datetime/date/time-Objekte in
+# `DatasetRow.values`. Der eingebaute `json.dumps` kann das nicht, daher
+# tagged-Encoding mit `__type__`-Marker und Round-Trip-sicherer Decode.
+# ---------------------------------------------------------------------------
+
+_TYPE_KEY: Final[str] = "__type__"
+_VAL_KEY: Final[str] = "v"
+
+
+def _encode_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return {_TYPE_KEY: "datetime", _VAL_KEY: value.isoformat()}
+    if isinstance(value, date):
+        return {_TYPE_KEY: "date", _VAL_KEY: value.isoformat()}
+    if isinstance(value, time):
+        return {_TYPE_KEY: "time", _VAL_KEY: value.isoformat()}
+    return value
+
+
+def _decode_value(value: Any) -> Any:
+    if not (isinstance(value, dict) and _TYPE_KEY in value and _VAL_KEY in value):
+        return value
+    type_tag = value[_TYPE_KEY]
+    raw = value[_VAL_KEY]
+    if not isinstance(raw, str):
+        return value
+    if type_tag == "datetime":
+        return datetime.fromisoformat(raw)
+    if type_tag == "date":
+        return date.fromisoformat(raw)
+    if type_tag == "time":
+        return time.fromisoformat(raw)
+    return value
+
+
+def _values_to_json(values: dict[str, Any]) -> str:
+    return json.dumps({k: _encode_value(v) for k, v in values.items()})
+
+
+def _values_from_json(text: str) -> dict[str, Any]:
+    raw = json.loads(text)
+    return {k: _decode_value(v) for k, v in raw.items()}

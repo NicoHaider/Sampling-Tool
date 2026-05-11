@@ -5,17 +5,36 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 
 ## Status
 
-**Sprint 2 von 7** – SQLite-Persistenz ✅ **erledigt** (70/70 Tests grün, Ruff + Mypy clean).
+**Sprint 3 von 7** – I/O-Schicht ✅ **erledigt** (110/110 Tests grün, Ruff + Mypy clean,
+Coverage 92 %).
 
 | Sprint | Inhalt                                              | Status      |
 |-------:|-----------------------------------------------------|-------------|
 | 1      | Projekt-Skelett, Config, Sampling-Core + Tests      | **done**    |
 | 2      | SQLite-Persistenz, Audit-Trail, Undo, Migrations    | **done**    |
-| 3      | I/O: Excel-Import (openpyxl), CSV, Validierung      | offen       |
+| 3      | I/O: Excel-/CSV-Import, Excel-Export, AuditTrail-PDF| **done**    |
 | 4      | PyQt6-UI: Hauptfenster, Engagement-Verwaltung       | offen       |
 | 5      | UI: Sample-Konfigurator, Vorschau, Export-Dialog    | offen       |
-| 6      | Reports: PDF (reportlab), HTML (jinja2), Excel-Out  | offen       |
+| 6      | Reports: HTML (jinja2), erweiterte Excel-Reports    | offen       |
 | 7      | Bug-Mail (pywin32/Outlook), PyInstaller-Build       | offen       |
+
+### Was Sprint 3 liefert
+
+- `io/importer.py` – `ExcelImporter` mit Streaming-Read (openpyxl read_only),
+  Header-Detection, Encoding-Fallback bei CSV (utf-8/utf-8-sig/latin-1/cp1252),
+  Duplikat-Spalten-Suffix, Progress-Callback, Multi-Sheet-Auswahl + `preview()`
+- `io/exporter.py` – `ExcelExporter` mit atomarem Write (`.tmp` + `os.replace`),
+  Sheet "Sample" (BDO-rotes Header-Styling, Auto-Spaltenbreiten) + Sheet
+  "Metadaten" (Engagement, Seed, Methode, Population). Dateiname-Schema:
+  `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`
+- `io/pdf_report.py` – `AuditTrailPDF` (reportlab.platypus): A4-Portrait,
+  Engagement-Block, Event-Tabelle mit Korrektur-Highlight, optionales
+  Briefpapier (PNG/JPG) als Layer hinter dem Content
+- `scripts/demo_full_workflow.py` – End-to-End-Smoke-Test über alle Layer
+- 40 neue Integration-Tests (10 Importer, 10 Exporter, 7 PDF, 1 datetime-
+  Roundtrip in `DatasetRepo`, 12 Helper-Fixtures)
+- Persistenz: `dataset_rows.values_json` nutzt jetzt einen tagged JSON-Encoder
+  für `datetime`/`date`/`time` aus dem Excel-Import (roundtrip-sicher)
 
 ### Was Sprint 2 liefert
 
@@ -74,6 +93,19 @@ pytest -k "stratified"            # einzelne Tests filtern
 pytest --cov-report=html          # HTML-Coverage in ./htmlcov/
 ```
 
+## End-to-End-Demo (Sprint 1–3)
+
+```bash
+python scripts/demo_full_workflow.py
+```
+
+Erzeugt unter `./demo_output/` (gitignored):
+- `engagement.db` – frische SQLite mit Sprint-2-Schema
+- `source_data.xlsx` – generierte Quelldatei (200 Buchungssätze)
+- `DemoSimple_ID001_BDO_sampling_<datum>.xlsx`
+- `DemoStratified_ID002_BDO_sampling_<datum>.xlsx`
+- `audit_trail.pdf`
+
 ## Code-Qualität
 
 ```bash
@@ -87,15 +119,18 @@ mypy src tests                    # Typcheck (strict)
 ```
 src/sampling_tool/
 ├── core/           Sampling-Algorithmen, Modelle, RNG
-├── io/             Excel-/CSV-Import, Export        (Sprint 3)
+├── io/             Excel-/CSV-Import, Export, PDF   (Sprint 3)
 ├── persistence/    SQLite + Migrations              (Sprint 2)
 ├── audit/          Audit-Trail / Event-Log          (Sprint 2)
 └── ui/             PyQt6-Frontend                   (Sprint 4–5)
 
+scripts/
+└── demo_full_workflow.py   End-to-End-Smoke-Test    (Sprint 3)
+
 tests/
 ├── unit/           schnelle, isolierte Tests
 ├── integration/    DB- / Filesystem-Tests           (Sprint 2+)
-└── fixtures/       Test-Daten
+└── fixtures/       (zur Laufzeit erzeugt in conftest.py)
 ```
 
 ## Lizenz

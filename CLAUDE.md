@@ -21,10 +21,10 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 |-------:|-----------------------------------------------------|-------------|
 | 1      | Projekt-Skelett, Config, Sampling-Core + Tests      | done        |
 | 2      | SQLite-Persistenz, Audit-Trail, Undo, Migrations    | done        |
-| 3      | I/O: Excel-Import (openpyxl), CSV, Validierung      | offen       |
+| 3      | I/O: Excel-/CSV-Import, Excel-Export, AuditTrail-PDF| done        |
 | 4      | PyQt6-UI: Hauptfenster, Engagement-Verwaltung       | offen       |
 | 5      | UI: Sample-Konfigurator, Vorschau, Export-Dialog    | offen       |
-| 6      | Reports: PDF (reportlab), HTML (jinja2), Excel-Out  | offen       |
+| 6      | Reports: HTML (jinja2), erweiterte Excel-Reports    | offen       |
 | 7      | Bug-Mail (pywin32/Outlook), PyInstaller-Build       | offen       |
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
@@ -46,7 +46,19 @@ ui ──▶ controllers ──▶ core ◀── io
   - `models.py` – frozen Dataclasses (Engagement, Dataset, SampleConfig, …)
   - `rng.py` – `make_rng(seed)` + `fisher_yates_shuffle` über `numpy.random.default_rng`
   - `sampling.py` – `BaseSampler` + Simple/Cluster/Stratified + `create_sampler`-Factory
-- **`io/`** *(Sprint 3)* – Excel-/CSV-Import, Export. Adapter-Pattern.
+- **`io/`** – Excel-/CSV-Import, Excel-Export, PDF-Report.
+  - `importer.py` – `ExcelImporter` (read-only-Streaming via openpyxl,
+    Header-Detection, Encoding-Fallback bei CSV, Progress-Callback).
+    Liefert `ImportResult(dataset, skipped_rows, warnings)`. Native Python-
+    Typen (kein numpy/pandas-Output).
+  - `exporter.py` – `ExcelExporter`. Atomare Writes (`.tmp` → `os.replace`),
+    Sheet "Sample" (BDO-rote Header) + Sheet "Metadaten" (Engagement, Seed,
+    Methode). Dateiname-Schema:
+    `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
+  - `pdf_report.py` – `AuditTrailPDF` via `reportlab.platypus`.
+    A4 Portrait, Engagement-Block oben, Tabelle aller Events mit
+    Korrektur-Highlight, Footer mit Seitenzahl + Zeitstempel. Optionales
+    Briefpapier (PNG/JPG) wird via `onPage`-Hook hinter den Content gelegt.
 - **`persistence/`** – SQLite über sqlite3 (kein ORM-Overhead).
   - `database.py` – `Database`-Wrapper mit WAL+FK-PRAGMAs, `session()`-Transaktionen,
     `savepoint()`-Helper für nestbare Repo-Transaktionen, automatische Migrations.
@@ -133,6 +145,11 @@ mehr – Python-3.12-Deprecation umgangen.
 **JSON-Spalten:** `columns_json`, `values_json`, `details_json` sowie `filter_value`,
 `visible_rows`, `highlighted_rows` sind alle `json.dumps`-/`json.loads`-Roundtrip,
 um Typ-Information (int vs. str vs. nested dict) zu erhalten.
+`dataset_rows.values_json` nutzt zusätzlich einen tagged Encoder
+(`_values_to_json` / `_values_from_json` in `repositories.py`), damit
+`datetime`/`date`/`time`-Werte aus dem Excel-Import roundtrip-sicher
+persistiert werden – das normale `json.dumps` würde sie nicht
+serialisieren können.
 
 ## Reproduzierbarkeit (kritisch!)
 
@@ -161,6 +178,20 @@ Konsequenzen für den Code:
   (`QT_QPA_PLATFORM=offscreen`) – wird in CI gesetzt.
 - openpyxl wirft `DeprecationWarning` bei `data_only=True` Read von formelhaltigen Zellen
   → in `pyproject.toml` gefiltert.
+
+## End-to-End-Smoke-Test
+
+`scripts/demo_full_workflow.py` durchläuft den kompletten Sprint-1-bis-3-
+Datenpfad: SQLite anlegen → Engagement → Excel-Import → Simple- und
+Stratified-Sampling → Excel-Export → AuditTrail-PDF. Alle Artefakte
+landen unter `./demo_output/` (gitignored). Aufruf:
+
+```bash
+python scripts/demo_full_workflow.py
+```
+
+Wenn UI-Features in Sprint 4+ ergänzt werden, dieses Skript bitte
+mitziehen – es ist der schnellste manuelle Smoke-Test über alle Layer.
 
 ## Wenn du Code schreibst
 
