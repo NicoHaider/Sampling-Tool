@@ -150,6 +150,34 @@ class TestDatasetRepo:
         )
         assert count["c"] == 0
 
+    def test_datetime_values_roundtrip(self, db: Database, engagement_id: int) -> None:
+        from datetime import date, datetime, time
+
+        repo = DatasetRepo(db.connect())
+        ds = Dataset(
+            name="dt-test",
+            columns=("Datum", "Uhrzeit", "Tag"),
+            rows=(
+                DatasetRow(
+                    row_id=1,
+                    values={
+                        "Datum": datetime(2026, 5, 11, 14, 30, 0),
+                        "Uhrzeit": time(8, 15, 30),
+                        "Tag": date(2026, 5, 11),
+                    },
+                ),
+            ),
+            engagement_id=engagement_id,
+        )
+        created = repo.create(ds)
+        assert created.id is not None
+        loaded = repo.get_by_id(created.id)
+        assert loaded is not None
+        first = loaded.rows[0].values
+        assert first["Datum"] == datetime(2026, 5, 11, 14, 30, 0)
+        assert first["Uhrzeit"] == time(8, 15, 30)
+        assert first["Tag"] == date(2026, 5, 11)
+
 
 # ===========================================================================
 # SampleRepo
