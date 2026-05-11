@@ -34,6 +34,11 @@ BDO_WARNING: Final[str] = "#ED6C02"  # orange – Validierungs-Warnung
 BDO_ERROR: Final[str] = "#C62828"  # rot – Fehler-State (UI-Variante,
 #                                           bewusst dezenter als BDO_RED)
 
+# Hintergrund-Farbe für markierte Sample-Zeilen in der Tabelle.
+# Kräftiges Grün mit moderater Deckkraft, damit Text lesbar bleibt.
+SAMPLE_HIGHLIGHT_COLOR: Final[str] = "#28A745"
+SAMPLE_HIGHLIGHT_ALPHA: Final[int] = 90  # 0-255 (≈ 35 % Deckkraft)
+
 # ---------------------------------------------------------------------------
 # Sampling-Defaults
 # ---------------------------------------------------------------------------

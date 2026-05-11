@@ -131,3 +131,58 @@ class TestNavigationSidebar:
         assert item is not None
         assert not item.text().startswith("●")
         assert item.font().bold() is False
+
+
+class TestFilterOnlySampleCheckbox:
+    """Sprint 5.6: neue Sidebar-Checkbox 'Nur markierte Zeilen anzeigen'."""
+
+    def test_checkbox_exists_and_is_initially_disabled(self, qtbot: QtBot) -> None:
+        sidebar = NavigationSidebar()
+        qtbot.addWidget(sidebar)
+        checkbox = sidebar.filter_checkbox()
+        assert checkbox.text() == "Nur markierte Zeilen anzeigen"
+        assert checkbox.isEnabled() is False
+        assert checkbox.isChecked() is False
+
+    def test_set_filter_enabled_toggles_widget(self, qtbot: QtBot) -> None:
+        sidebar = NavigationSidebar()
+        qtbot.addWidget(sidebar)
+        sidebar.set_filter_enabled(True)
+        assert sidebar.filter_checkbox().isEnabled() is True
+        sidebar.set_filter_enabled(False)
+        assert sidebar.filter_checkbox().isEnabled() is False
+
+    def test_disabling_clears_checked_state(self, qtbot: QtBot) -> None:
+        sidebar = NavigationSidebar()
+        qtbot.addWidget(sidebar)
+        sidebar.set_filter_enabled(True)
+        sidebar.set_filter_only_sample(True)
+        assert sidebar.is_filter_only_sample() is True
+        sidebar.set_filter_enabled(False)
+        # Wenn die Checkbox disabled wird, soll sie auch nicht mehr gechecked sein.
+        assert sidebar.is_filter_only_sample() is False
+
+    def test_user_click_emits_signal(self, qtbot: QtBot) -> None:
+        sidebar = NavigationSidebar()
+        qtbot.addWidget(sidebar)
+        sidebar.set_filter_enabled(True)
+        with qtbot.waitSignal(sidebar.filter_only_sample_toggled, timeout=500) as blocker:
+            sidebar.filter_checkbox().setChecked(True)
+        assert blocker.args == [True]
+
+    def test_programmatic_set_does_not_emit(self, qtbot: QtBot) -> None:
+        """`set_filter_only_sample` darf das Signal nicht feuern (Loop-Schutz)."""
+        sidebar = NavigationSidebar()
+        qtbot.addWidget(sidebar)
+        sidebar.set_filter_enabled(True)
+
+        received: list[bool] = []
+        sidebar.filter_only_sample_toggled.connect(received.append)
+        sidebar.set_filter_only_sample(True)
+        sidebar.set_filter_only_sample(False)
+        assert received == []
+        # State korrekt gesetzt:
+        assert sidebar.is_filter_only_sample() is False
+        sidebar.set_filter_only_sample(True)
+        assert sidebar.is_filter_only_sample() is True
+        assert received == []

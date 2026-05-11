@@ -10,6 +10,7 @@ from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import Dataset, DatasetRow
 from sampling_tool.ui.widgets.data_table import (
+    HIGHLIGHT_ALPHA,
     HIGHLIGHT_COLOR,
     DatasetTableModel,
     DataTableView,
@@ -53,7 +54,11 @@ class TestDatasetTableModel:
         bg_row_2 = model.data(model.index(1, 0), Qt.ItemDataRole.BackgroundRole)
         bg_row_3 = model.data(model.index(2, 0), Qt.ItemDataRole.BackgroundRole)
         assert bg_row_2 is not None
-        assert bg_row_2.color().name().lower() == HIGHLIGHT_COLOR.lower()
+        color = bg_row_2.color()
+        assert color.name().lower() == HIGHLIGHT_COLOR.lower()
+        assert (color.red(), color.green(), color.blue()) == (40, 167, 69)
+        assert color.alpha() == HIGHLIGHT_ALPHA
+        assert HIGHLIGHT_ALPHA == 90
         assert bg_row_3 is None
 
     def test_clear_highlight_removes_marker(self) -> None:

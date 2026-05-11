@@ -625,6 +625,153 @@ class TestDatasetClickPreservesHighlight:
             controller.handle_close_engagement()
 
 
+class TestFilterAndSwitchEngagement:
+    """Sprint 5.6: Auto-Filter, Reset-Filter, Engagement schließen mit Bestätigung."""
+
+    def test_new_sampling_activates_filter_and_checkbox(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.core.models import SampleConfig, SamplingMethod
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _s: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            # Tabelle ist auf die gezogenen Zeilen reduziert.
+            assert window.data_table().table_model().rowCount() == 2
+            # Sidebar-Checkbox ist an.
+            assert window.sidebar().is_filter_only_sample() is True
+            # Statusbar-Suffix sichtbar.
+            assert "gefiltert" in window._status_sample.text()
+        finally:
+            controller.handle_close_engagement()
+
+    def test_reset_deactivates_filter(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            # Filter manuell aktivieren
+            controller.handle_filter_only_sample_toggled(True)
+            assert window.sidebar().is_filter_only_sample() is True
+
+            with patch(
+                "sampling_tool.ui.controllers.main_controller.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ):
+                controller.handle_reset()
+            assert window.sidebar().is_filter_only_sample() is False
+            # Tabelle zeigt wieder alle 5 Zeilen.
+            assert window.data_table().table_model().rowCount() == 5
+        finally:
+            controller.handle_close_engagement()
+
+    def test_filter_only_sample_toggle_filters_and_unfilters(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.handle_filter_only_sample_toggled(True)
+            assert window.data_table().table_model().rowCount() == 2
+            controller.handle_filter_only_sample_toggled(False)
+            assert window.data_table().table_model().rowCount() == 5
+        finally:
+            controller.handle_close_engagement()
+
+    def test_filter_checkbox_disabled_without_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            # Frisches Dataset ohne aktives Sample → Checkbox disabled.
+            assert window.sidebar().filter_checkbox().isEnabled() is False
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            # Sample aktiv → Checkbox enabled.
+            assert window.sidebar().filter_checkbox().isEnabled() is True
+        finally:
+            controller.handle_close_engagement()
+
+    def test_close_request_confirmed_returns_to_welcome(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(populated_db)
+            with patch(
+                "sampling_tool.ui.controllers.main_controller.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ):
+                controller.handle_close_engagement_requested()
+            assert window.is_workspace_visible() is False
+        finally:
+            controller.handle_close_engagement()
+
+    def test_close_request_cancelled_stays_in_workspace(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(populated_db)
+            with patch(
+                "sampling_tool.ui.controllers.main_controller.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.No,
+            ):
+                controller.handle_close_engagement_requested()
+            assert window.is_workspace_visible() is True
+        finally:
+            controller.handle_close_engagement()
+
+    def test_close_request_noop_when_no_engagement(
+        self,
+        controller: MainController,
+        window: MainWindow,
+    ) -> None:
+        # Ohne offenes Engagement darf kein Dialog erscheinen.
+        with patch("sampling_tool.ui.controllers.main_controller.QMessageBox.question") as question:
+            controller.handle_close_engagement_requested()
+        assert question.called is False
+        assert window.is_workspace_visible() is False
+
+
 class TestEngagementsDirSetup:
     def test_engagements_dir_is_created_on_init(
         self,

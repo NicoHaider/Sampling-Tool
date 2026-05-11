@@ -123,7 +123,7 @@ class MainController:
         w = self.window
         w.new_engagement_requested.connect(self.handle_new_engagement)
         w.open_engagement_requested.connect(self.handle_open_engagement)
-        w.close_engagement_requested.connect(self.handle_close_engagement)
+        w.close_engagement_requested.connect(self.handle_close_engagement_requested)
         w.import_excel_requested.connect(self.handle_import_excel)
         w.new_sample_requested.connect(self.handle_new_sampling)
         w.reset_sample_requested.connect(self.handle_reset)
@@ -136,6 +136,7 @@ class MainController:
         w.dataset_selected.connect(self.handle_dataset_selected)
         w.sample_selected.connect(self.handle_sample_selected)
         w.sample_filter_toggled.connect(self.handle_sample_filter_toggled)
+        w.filter_only_sample_toggled.connect(self.handle_filter_only_sample_toggled)
 
     # ---- Engagement-Lifecycle ------------------------------------------
 
@@ -191,6 +192,21 @@ class MainController:
 
         self._adopt_database(db, db_path, engagement)
 
+    def handle_close_engagement_requested(self) -> None:
+        """Vom UI angefragtes Schließen – fragt nach Bestätigung, schließt dann."""
+        if self._db is None:
+            return
+        answer = QMessageBox.question(
+            self.window,
+            "Engagement schließen",
+            "Engagement schließen und zum Startbildschirm zurückkehren?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.handle_close_engagement()
+
     def handle_close_engagement(self) -> None:
         """Aktuelles Engagement schließen und zum Welcome-Screen wechseln."""
         if self._db is not None:
@@ -203,6 +219,7 @@ class MainController:
         self._datasets = []
         self._filter_active_sample_id = None
         self._undo_manager = None
+        self.window.set_filter_only_sample(False)
         self.window.clear_table()
         self.window.set_engagement(None)
         self.window.set_datasets([])
@@ -280,6 +297,9 @@ class MainController:
 
         self._dataset = dataset
         self._filter_active_sample_id = None
+        # Dataset-Wechsel setzt Filter-Status zurück – sonst wäre die Checkbox
+        # an, aber die Tabelle zeigt das ganze neue Dataset.
+        self.window.set_filter_only_sample(False)
         self.window.show_dataset(dataset)
 
         samples = SampleRepo(self._db.connect()).list_for_dataset(dataset_id)
@@ -302,7 +322,11 @@ class MainController:
         self._update_undo_redo_state()
 
     def handle_sample_selected(self, sample_id: int) -> None:
-        """Sample-Zeilen in der Tabelle gelb markieren + zur ersten scrollen."""
+        """Sample-Zeilen in der Tabelle markieren + zur ersten scrollen.
+
+        Wenn die Filter-Checkbox aktiv ist, wird der Filter auf das neue
+        Sample umgehängt (statt zurückgesetzt).
+        """
         if self._db is None:
             return
         sample = SampleRepo(self._db.connect()).get_by_id(sample_id)
@@ -310,10 +334,16 @@ class MainController:
             return
         self._sample = sample
         self._active_sample_id = sample.id
-        if self._filter_active_sample_id is not None:
-            self.window.clear_sample_filter()
-            self._filter_active_sample_id = None
-        self.window.highlight_sample(sample)
+        if self.window.sidebar().is_filter_only_sample():
+            self.window.filter_to_sample(sample)
+            self._filter_active_sample_id = sample.id
+            self.window.highlight_sample(sample, filtered=True)
+        else:
+            if self._filter_active_sample_id is not None:
+                self.window.clear_sample_filter()
+                self._filter_active_sample_id = None
+            self.window.highlight_sample(sample)
+        self._update_undo_redo_state()
 
     def handle_sample_filter_toggled(self, sample_id: int) -> None:
         """Doppelklick: Filter auf Sample-Zeilen ein/aus."""
@@ -323,6 +353,9 @@ class MainController:
         if self._filter_active_sample_id == sample_id:
             self.window.clear_sample_filter()
             self._filter_active_sample_id = None
+            self.window.set_filter_only_sample(False)
+            if self._sample is not None:
+                self.window.set_active_sample_label(self._sample, filtered=False)
             return
 
         sample = SampleRepo(self._db.connect()).get_by_id(sample_id)
@@ -330,9 +363,34 @@ class MainController:
             return
         self._sample = sample
         self._active_sample_id = sample.id
-        self.window.highlight_sample(sample)
+        self.window.highlight_sample(sample, filtered=True)
         self.window.filter_to_sample(sample)
         self._filter_active_sample_id = sample_id
+        self.window.set_filter_only_sample(True)
+
+    def handle_filter_only_sample_toggled(self, active: bool) -> None:
+        """Sidebar-Checkbox – Filter auf aktuelles Sample ein/aus.
+
+        Funktioniert auch, wenn programmatisch (statt durch Klick) aufgerufen –
+        die Checkbox wird zur Spiegelung des States synchron mitgezogen.
+        """
+        if self._db is None:
+            return
+        if active:
+            if self._sample is None:
+                # Ohne aktives Sample wäre die Tabelle leer – Checkbox zurücksetzen.
+                self.window.set_filter_only_sample(False)
+                return
+            self.window.filter_to_sample(self._sample)
+            self._filter_active_sample_id = self._sample.id
+            self.window.set_filter_only_sample(True)
+            self.window.set_active_sample_label(self._sample, filtered=True)
+        else:
+            self.window.clear_sample_filter()
+            self._filter_active_sample_id = None
+            self.window.set_filter_only_sample(False)
+            if self._sample is not None:
+                self.window.set_active_sample_label(self._sample, filtered=False)
 
     # ---- Sampling ------------------------------------------------------
 
@@ -386,7 +444,12 @@ class MainController:
         self.window.set_samples(samples)
         self._sample = stored
         self._active_sample_id = stored.id
-        self.window.highlight_sample(stored)
+        # Auto-Filter: nach dem Sampling sieht der Auditor sofort nur die
+        # gezogenen Zeilen, ohne erst die Checkbox suchen zu müssen.
+        self.window.filter_to_sample(stored)
+        self._filter_active_sample_id = stored.id
+        self.window.highlight_sample(stored, filtered=True)
+        self.window.set_filter_only_sample(True)
         self._push_undo_snapshot()
         self._update_undo_redo_state()
 
@@ -416,6 +479,7 @@ class MainController:
         self._active_sample_id = None
         self._filter_active_sample_id = None
         self.window.clear_sample_filter()
+        self.window.set_filter_only_sample(False)
         self.window.data_table().clear_highlight()
         self.window.clear_active_sample()
         self._push_undo_snapshot()
@@ -631,6 +695,7 @@ class MainController:
             self._active_sample_id = None
             self._filter_active_sample_id = None
             self.window.clear_sample_filter()
+            self.window.set_filter_only_sample(False)
             self.window.data_table().clear_highlight()
             self.window.clear_active_sample()
             return
@@ -640,6 +705,7 @@ class MainController:
             # Sample wurde zwischenzeitlich gelöscht – defensiv: leeren State anwenden.
             self._sample = None
             self._active_sample_id = None
+            self.window.set_filter_only_sample(False)
             self.window.data_table().clear_highlight()
             self.window.clear_active_sample()
             return
@@ -649,10 +715,13 @@ class MainController:
         if snapshot.visible_rows:
             self.window.filter_to_sample(sample)
             self._filter_active_sample_id = sample.id
+            self.window.set_filter_only_sample(True)
+            self.window.highlight_sample(sample, filtered=True)
         else:
             self.window.clear_sample_filter()
             self._filter_active_sample_id = None
-        self.window.highlight_sample(sample)
+            self.window.set_filter_only_sample(False)
+            self.window.highlight_sample(sample)
 
     def _update_undo_redo_state(self) -> None:
         """Schaltet die Undo-/Redo-Menüpunkte basierend auf dem Stack-Status."""
@@ -661,6 +730,9 @@ class MainController:
         self.window.set_undo_redo_enabled(can_undo, can_redo)
         has_sample = self._sample is not None
         self.window.set_reset_enabled(has_sample or self._filter_active_sample_id is not None)
+        # Filter-Checkbox nur sinnvoll mit aktivem Sample – sonst wäre die
+        # Tabelle nach dem Setzen leer.
+        self.window.set_filter_enabled(has_sample)
 
     def _next_sample_id_for_export(self, dataset_id: int) -> int:
         if self._db is None:
