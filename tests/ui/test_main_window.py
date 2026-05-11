@@ -115,3 +115,26 @@ class TestMainWindowState:
         win.show_workspace()
         win.set_engagement(_engagement())
         assert win._status_engagement.text() == "ACME"
+
+    def test_active_sample_status_label_filled(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.show_workspace()
+        win.show_dataset(_dataset())
+        win.set_samples([_sample()])
+        win.highlight_sample(_sample())
+        text = win._status_sample.text()
+        assert "Aktive Stichprobe" in text
+        assert "#1" in text
+        assert "Einfach" in text
+        assert "2/3" in text
+
+    def test_active_sample_status_label_empty_when_cleared(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.show_workspace()
+        win.show_dataset(_dataset())
+        win.set_samples([_sample()])
+        win.highlight_sample(_sample())
+        win.clear_active_sample()
+        assert win._status_sample.text() == "Aktive Stichprobe: keine"

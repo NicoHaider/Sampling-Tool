@@ -106,3 +106,28 @@ class TestNavigationSidebar:
         sidebar.set_samples([_sample(1), _sample(2)])
         sidebar.clear_samples()
         assert sidebar.samples_widget().count() == 0
+
+    def test_set_active_sample_marks_item_bold_with_bullet(self, qtbot: QtBot) -> None:
+        sidebar = NavigationSidebar()
+        qtbot.addWidget(sidebar)
+        sidebar.set_samples([_sample(1), _sample(2)])
+        sidebar.set_active_sample(2)
+        first = sidebar.samples_widget().item(0)
+        second = sidebar.samples_widget().item(1)
+        assert first is not None
+        assert second is not None
+        assert not first.text().startswith("●")
+        assert second.text().startswith("●")
+        assert first.font().bold() is False
+        assert second.font().bold() is True
+
+    def test_set_active_sample_none_clears_marker(self, qtbot: QtBot) -> None:
+        sidebar = NavigationSidebar()
+        qtbot.addWidget(sidebar)
+        sidebar.set_samples([_sample(1)])
+        sidebar.set_active_sample(1)
+        sidebar.set_active_sample(None)
+        item = sidebar.samples_widget().item(0)
+        assert item is not None
+        assert not item.text().startswith("●")
+        assert item.font().bold() is False

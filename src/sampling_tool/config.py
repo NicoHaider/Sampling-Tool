@@ -6,6 +6,7 @@ Bug-Mail-Adresse). Keine Logik, nur Konstanten.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Final
 
 # ---------------------------------------------------------------------------
@@ -54,5 +55,44 @@ BUG_REPORT_SUBJECT_PREFIX: Final[str] = "[Sampling-Tool Bug]"
 # ---------------------------------------------------------------------------
 DB_FILE_SUFFIX: Final[str] = ".db"
 EXPORT_DIR_NAME: Final[str] = "exports"
+ARCHIVE_DIR_NAME: Final[str] = "archiv"
 SUPPORTED_EXCEL_SUFFIXES: Final[tuple[str, ...]] = (".xlsx", ".xlsm")
 SUPPORTED_CSV_SUFFIXES: Final[tuple[str, ...]] = (".csv", ".tsv")
+
+# Standard-Ablageort aller Engagement-Dateien. Pro Mandant entsteht ein
+# Unterordner mit der `.db`-Datei und einem `archiv/`-Verzeichnis für
+# Auto-Snapshots beim Öffnen.
+ENGAGEMENTS_DIR: Final[Path] = Path.home() / "Documents" / "BDO Audit Sampling"
+
+
+# ---------------------------------------------------------------------------
+# Pfad-/Datei-Helfer
+# ---------------------------------------------------------------------------
+
+# Umlaut-Transliteration vor der Sanitisierung, damit Mandantennamen wie
+# "Müller & Söhne GmbH" als "Mueller__Soehne_GmbH" erhalten bleiben statt
+# Buchstaben zu verlieren.
+_UMLAUT_MAP: Final[dict[str, str]] = {
+    "ä": "ae",
+    "ö": "oe",
+    "ü": "ue",
+    "ß": "ss",
+    "Ä": "Ae",
+    "Ö": "Oe",
+    "Ü": "Ue",
+}
+
+
+def sanitize_for_path(name: str) -> str:
+    """Macht aus einem Mandanten-/Auditor-Namen einen filesystem-tauglichen Token.
+
+    - Umlaute werden transliteriert (ä → ae, ß → ss, …).
+    - Leerzeichen werden zu Underscores.
+    - Alles außer `A-Za-z0-9_-` wird entfernt (Case bleibt erhalten).
+    - Leerer Output fällt auf `"engagement"` zurück, damit nie ein leerer
+      Pfadbestandteil entsteht.
+    """
+    translated = "".join(_UMLAUT_MAP.get(c, c) for c in name)
+    translated = translated.replace(" ", "_")
+    cleaned = "".join(c for c in translated if c.isalnum() or c in ("_", "-"))
+    return cleaned or "engagement"

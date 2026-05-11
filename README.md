@@ -5,8 +5,8 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 
 ## Status
 
-**Sprint 5 von 7** – Sampling-Dialoge + Export + Undo/Redo ✅ **erledigt**
-(197 Tests grün, Ruff + Mypy clean).
+**Sprint 5.5 von 7** – UX-Bugfixes + Engagement-Auto-Versionierung
+✅ **erledigt** (218 Tests grün, Ruff + Mypy clean).
 
 | Sprint | Inhalt                                              | Status      |
 |-------:|-----------------------------------------------------|-------------|
@@ -15,8 +15,29 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 | 3      | I/O: Excel-/CSV-Import, Excel-Export, AuditTrail-PDF| **done**    |
 | 4      | PyQt6-UI: Hauptfenster, Datentabelle, Sidebar       | **done**    |
 | 5      | UI: Sampling-Dialog, Export, Undo/Redo, Bug/About   | **done**    |
+| 5.5    | UX-Bugfixes + Engagement-Auto-Versionierung         | **done**    |
 | 6      | Reports: HTML (jinja2), erweiterte Excel-Reports    | offen       |
 | 7      | Bug-Mail (pywin32/Outlook), PyInstaller-Build       | offen       |
+
+### Was Sprint 5.5 liefert
+
+- **Toolbar-Buttons** für Undo/Redo (Standard-Icons + deutsche Tooltips)
+- **Sample-Highlight bleibt** beim Klick auf das aktive Dataset; bei
+  Navigation auf ein fremdes Dataset wird `_active_sample_id` aber **nicht**
+  vergessen → Rückkehr zum ursprünglichen Dataset stellt das Highlight wieder her
+- **`ENGAGEMENTS_DIR`** = `~/Documents/BDO Audit Sampling/` als Standard-Ablage
+  (idempotent beim Start erzeugt). Datei-Dialoge starten dort, neue
+  Engagements werden in `{MandantSanitized}/{MandantSanitized}.db` vorgeschlagen
+- **Sanitisierung** mit Umlaut-Transliteration: „Müller & Söhne GmbH" →
+  `Mueller__Soehne_GmbH` (config.sanitize_for_path)
+- **`EngagementVersionManager`**: Snapshot in `{mandant}/archiv/` bei jedem
+  Öffnen einer Engagement-DB (Konzept A: Auto-Snapshot pro Session). Datei-
+  Pattern: `{stem}_{YYYY-MM-DD}_{HH-MM-SS}_{Auditor}.db`. WAL-/SHM-Dateien
+  werden bewusst NICHT mitkopiert. Compliance-Pfad für ISAE-3402-Versions-
+  nachweis
+- **Aktive Stichprobe sichtbar**: Statusbar zeigt
+  `Aktive Stichprobe: #<id> (<Methode>, <gewählt>/<Population>)` und das
+  Sidebar-Item bekommt einen „●"-Bullet plus fette Schrift
 
 ### Was Sprint 5 liefert
 

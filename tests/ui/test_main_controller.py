@@ -499,3 +499,161 @@ class TestSamplingFlow:
             assert window._action_redo.isEnabled() is False
         finally:
             controller.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
+# Sprint-5.5: Dataset-Klick + Highlight-Persistenz + Versionierung
+# ---------------------------------------------------------------------------
+
+
+def _two_dataset_db(tmp_path: Path) -> tuple[Path, int, int, int]:
+    """Engagement mit zwei Datasets und einem Sample am ersten."""
+    db_path = tmp_path / "two.db"
+    db = Database(db_path)
+    db.migrate()
+    eng = EngagementRepo(db.connect()).get_or_create(
+        Engagement(auditor_name="Anna", client_name="ACME", audit_type="ISAE 3402")
+    )
+    assert eng.id is not None
+    ds_repo = DatasetRepo(db.connect())
+    ds1 = ds_repo.create(
+        Dataset(
+            name="First",
+            columns=("a",),
+            rows=tuple(DatasetRow(row_id=i, values={"a": i}) for i in range(1, 4)),
+            engagement_id=eng.id,
+        )
+    )
+    ds2 = ds_repo.create(
+        Dataset(
+            name="Second",
+            columns=("a",),
+            rows=tuple(DatasetRow(row_id=i, values={"a": i}) for i in range(1, 4)),
+            engagement_id=eng.id,
+        )
+    )
+    assert ds1.id is not None
+    assert ds2.id is not None
+    sample_id = SampleRepo(db.connect()).create_from_result(
+        SampleResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=1),
+            selected_row_ids=(1, 3),
+            population_size=3,
+        ),
+        ds1.id,
+        "test",
+    )
+    db.close()
+    return db_path, ds1.id, ds2.id, sample_id
+
+
+class TestDatasetClickPreservesHighlight:
+    def test_clicking_same_dataset_keeps_highlight(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, ds1_id, _ds2_id, sample_id = _two_dataset_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(db_path)
+            controller.handle_dataset_selected(ds1_id)
+            controller.handle_sample_selected(sample_id)
+            before = window.data_table().table_model().highlighted_row_ids()
+            controller.handle_dataset_selected(ds1_id)  # gleicher Klick
+            after = window.data_table().table_model().highlighted_row_ids()
+            assert before == after
+            assert before == frozenset({1, 3})
+        finally:
+            controller.handle_close_engagement()
+
+    def test_clicking_other_dataset_clears_highlight_when_sample_unrelated(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, ds1_id, ds2_id, sample_id = _two_dataset_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(db_path)
+            controller.handle_dataset_selected(ds1_id)
+            controller.handle_sample_selected(sample_id)
+            controller.handle_dataset_selected(ds2_id)  # anderes Dataset
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+        finally:
+            controller.handle_close_engagement()
+
+    def test_clicking_other_dataset_reapplies_highlight_when_sample_belongs(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, ds1_id, ds2_id, sample_id = _two_dataset_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(db_path)
+            controller.handle_dataset_selected(ds1_id)
+            controller.handle_sample_selected(sample_id)
+            # Wechsel auf ds2 → Highlight verschwindet
+            controller.handle_dataset_selected(ds2_id)
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+            # Zurück zu ds1 → Highlight kommt wieder (Sample gehört wieder dazu)
+            controller.handle_dataset_selected(ds1_id)
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset({1, 3})
+        finally:
+            controller.handle_close_engagement()
+
+    def test_open_engagement_creates_snapshot(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        from sampling_tool.config import ARCHIVE_DIR_NAME
+
+        db_path, _ds1, _ds2, _s = _two_dataset_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(db_path)
+            archive = db_path.parent / ARCHIVE_DIR_NAME
+            snaps = list(archive.glob("*.db"))
+            assert len(snaps) == 1
+        finally:
+            controller.handle_close_engagement()
+
+
+class TestEngagementsDirSetup:
+    def test_engagements_dir_is_created_on_init(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+    ) -> None:
+        from sampling_tool.config import ENGAGEMENTS_DIR
+
+        MainController(window, recent_store=recent_store)
+        assert ENGAGEMENTS_DIR.exists()
+
+
+class TestSanitizeForPath:
+    def test_replaces_spaces_with_underscore(self) -> None:
+        from sampling_tool.config import sanitize_for_path
+
+        assert sanitize_for_path("A1 Telekom Austria AG") == "A1_Telekom_Austria_AG"
+
+    def test_transliterates_umlauts(self) -> None:
+        from sampling_tool.config import sanitize_for_path
+
+        assert sanitize_for_path("Müller & Söhne GmbH") == "Mueller__Soehne_GmbH"
+
+    def test_strips_special_chars_keeps_dash(self) -> None:
+        from sampling_tool.config import sanitize_for_path
+
+        assert sanitize_for_path("Foo-Bar/Baz?") == "Foo-BarBaz"
+
+    def test_empty_falls_back(self) -> None:
+        from sampling_tool.config import sanitize_for_path
+
+        assert sanitize_for_path("?!") == "engagement"

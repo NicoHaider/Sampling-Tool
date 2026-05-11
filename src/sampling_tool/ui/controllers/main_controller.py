@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.config import (
     APP_NAME,
+    ENGAGEMENTS_DIR,
     EXPORT_DIR_NAME,
     SUPPORTED_CSV_SUFFIXES,
     SUPPORTED_EXCEL_SUFFIXES,
@@ -50,6 +51,7 @@ from sampling_tool.persistence.repositories import (
     EngagementRepo,
     SampleRepo,
 )
+from sampling_tool.persistence.version_manager import EngagementVersionManager
 from sampling_tool.ui.dialogs.about_dialog import AboutDialog
 from sampling_tool.ui.dialogs.bug_report_dialog import BugReportDialog
 from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialog
@@ -96,7 +98,14 @@ class MainController:
         self._sample: SampleResult | None = None
         self._datasets: list[Dataset] = []
         self._filter_active_sample_id: int | None = None
+        # Aktuell hervorgehobenes Sample (überlebt einen Dataset-Klick, sofern
+        # das Sample weiterhin zum geklickten Dataset gehört).
+        self._active_sample_id: int | None = None
         self._undo_manager: UndoManager | None = None
+
+        # Standard-Speicherort sicherstellen, damit File-Dialoge direkt
+        # dort starten können. Idempotent.
+        ENGAGEMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
         self._connect_signals()
         self.refresh_recent()
@@ -160,6 +169,13 @@ class MainController:
             self.refresh_recent()
             return
 
+        # Compliance-Snapshot BEVOR die Session anfängt – ein Fehler dabei
+        # soll das Öffnen nicht blockieren (Defense-in-Depth, nicht kritisch).
+        try:
+            EngagementVersionManager(db_path).create_snapshot(self._user_name())
+        except Exception:
+            logger.exception("Snapshot beim Öffnen fehlgeschlagen (nicht-kritisch)")
+
         try:
             db = Database(db_path)
             db.migrate()
@@ -183,6 +199,7 @@ class MainController:
         self._engagement = None
         self._dataset = None
         self._sample = None
+        self._active_sample_id = None
         self._datasets = []
         self._filter_active_sample_id = None
         self._undo_manager = None
@@ -243,21 +260,45 @@ class MainController:
             QMessageBox.information(self.window, "Import abgeschlossen", warning_text.strip())
 
     def handle_dataset_selected(self, dataset_id: int) -> None:
-        """Dataset aus DB laden und in der Tabelle anzeigen."""
+        """Dataset aus DB laden und in der Tabelle anzeigen.
+
+        Klick auf das aktuell schon offene Dataset ist ein No-Op (insbesondere
+        bleibt ein laufendes Sample-Highlight stehen). Wechsel auf ein anderes
+        Dataset versucht, das aktive Sample dort wiederzufinden – falls das
+        Sample nicht zum neuen Dataset gehört, wird das Highlight geleert.
+        """
         if self._db is None:
             return
+
+        if self._dataset is not None and self._dataset.id == dataset_id:
+            return  # Nichts zu tun – Highlight bleibt.
+
         dataset = DatasetRepo(self._db.connect()).get_by_id(dataset_id)
         if dataset is None:
             self._error(f"Dataset {dataset_id} nicht gefunden.")
             return
 
         self._dataset = dataset
-        self._sample = None
         self._filter_active_sample_id = None
         self.window.show_dataset(dataset)
 
         samples = SampleRepo(self._db.connect()).list_for_dataset(dataset_id)
         self.window.set_samples(samples)
+
+        sample_ids = {s.id for s in samples if s.id is not None}
+        if self._active_sample_id is not None and self._active_sample_id in sample_ids:
+            # Sample gehört zum neuen Dataset – Highlight wiederherstellen.
+            stored = next((s for s in samples if s.id == self._active_sample_id), None)
+            if stored is not None:
+                self._sample = stored
+                self.window.highlight_sample(stored)
+        else:
+            # Sample gehört nicht zu diesem Dataset – Highlight wird ausgeblendet,
+            # `_active_sample_id` bleibt aber gesetzt, damit ein Re-Klick auf das
+            # ursprüngliche Dataset die Auswahl wiederherstellt.
+            self._sample = None
+            self.window.clear_active_sample()
+
         self._update_undo_redo_state()
 
     def handle_sample_selected(self, sample_id: int) -> None:
@@ -268,6 +309,7 @@ class MainController:
         if sample is None:
             return
         self._sample = sample
+        self._active_sample_id = sample.id
         if self._filter_active_sample_id is not None:
             self.window.clear_sample_filter()
             self._filter_active_sample_id = None
@@ -287,6 +329,7 @@ class MainController:
         if sample is None:
             return
         self._sample = sample
+        self._active_sample_id = sample.id
         self.window.highlight_sample(sample)
         self.window.filter_to_sample(sample)
         self._filter_active_sample_id = sample_id
@@ -342,6 +385,7 @@ class MainController:
         samples = SampleRepo(self._db.connect()).list_for_dataset(self._dataset.id)
         self.window.set_samples(samples)
         self._sample = stored
+        self._active_sample_id = stored.id
         self.window.highlight_sample(stored)
         self._push_undo_snapshot()
         self._update_undo_redo_state()
@@ -369,9 +413,11 @@ class MainController:
             ).log_reset(self._dataset.id)
 
         self._sample = None
+        self._active_sample_id = None
         self._filter_active_sample_id = None
         self.window.clear_sample_filter()
         self.window.data_table().clear_highlight()
+        self.window.clear_active_sample()
         self._push_undo_snapshot()
         self._update_undo_redo_state()
 
@@ -517,6 +563,7 @@ class MainController:
         self._engagement = engagement
         self._dataset = None
         self._sample = None
+        self._active_sample_id = None
         self._filter_active_sample_id = None
         if engagement.id is not None:
             self._undo_manager = UndoManager(db, engagement.id)
@@ -581,19 +628,24 @@ class MainController:
 
         if snapshot is None or snapshot.sample_id is None:
             self._sample = None
+            self._active_sample_id = None
             self._filter_active_sample_id = None
             self.window.clear_sample_filter()
             self.window.data_table().clear_highlight()
+            self.window.clear_active_sample()
             return
 
         sample = SampleRepo(self._db.connect()).get_by_id(snapshot.sample_id)
         if sample is None:
             # Sample wurde zwischenzeitlich gelöscht – defensiv: leeren State anwenden.
             self._sample = None
+            self._active_sample_id = None
             self.window.data_table().clear_highlight()
+            self.window.clear_active_sample()
             return
 
         self._sample = sample
+        self._active_sample_id = sample.id
         if snapshot.visible_rows:
             self.window.filter_to_sample(sample)
             self._filter_active_sample_id = sample.id
