@@ -13,6 +13,7 @@ Glue-Logik zum Repo läuft im `MainController`.
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QFrame,
     QLabel,
@@ -26,6 +27,8 @@ from sampling_tool.core.models import Dataset, Engagement, SampleResult
 
 _DATASET_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 _SAMPLE_ID_ROLE = int(Qt.ItemDataRole.UserRole)
+_SAMPLE_LABEL_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+_ACTIVE_PREFIX: str = "● "
 _SIDEBAR_WIDTH: int = 250
 
 
@@ -103,11 +106,28 @@ class NavigationSidebar(QFrame):
             item = QListWidgetItem(label)
             sample_id = sample.id if sample.id is not None else -1
             item.setData(_SAMPLE_ID_ROLE, sample_id)
+            item.setData(_SAMPLE_LABEL_ROLE, label)
             self._samples_list.addItem(item)
 
     def clear_samples(self) -> None:
         """Leert die Sample-Liste (z. B. wenn kein Dataset aktiv)."""
         self._samples_list.clear()
+
+    def set_active_sample(self, sample_id: int | None) -> None:
+        """Markiert das Sample mit der gegebenen ID als „aktiv" (Bullet + Bold).
+
+        Mit `sample_id=None` wird die Markierung von allen Items entfernt.
+        """
+        for row in range(self._samples_list.count()):
+            item = self._samples_list.item(row)
+            if item is None:
+                continue
+            base_label = item.data(_SAMPLE_LABEL_ROLE) or item.text()
+            is_active = sample_id is not None and item.data(_SAMPLE_ID_ROLE) == sample_id
+            item.setText(f"{_ACTIVE_PREFIX}{base_label}" if is_active else base_label)
+            font = QFont(item.font())
+            font.setBold(is_active)
+            item.setFont(font)
 
     def select_dataset(self, dataset_id: int) -> None:
         """Wählt das Dataset mit der gegebenen ID programmatisch aus."""

@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import DB_FILE_SUFFIX
+from sampling_tool.config import DB_FILE_SUFFIX, ENGAGEMENTS_DIR, sanitize_for_path
 from sampling_tool.core.models import Engagement
 
 AUDIT_TYPES: tuple[str, ...] = (
@@ -157,11 +157,14 @@ class NewEngagementDialog(QDialog):
         if not self._is_valid():
             return
 
-        default_name = _suggest_filename(self._client_name.text().strip())
+        sanitized = sanitize_for_path(self._client_name.text().strip())
+        default_dir = ENGAGEMENTS_DIR / sanitized
+        default_dir.mkdir(parents=True, exist_ok=True)
+        default_target = default_dir / f"{sanitized}{DB_FILE_SUFFIX}"
         path_str, _filter = QFileDialog.getSaveFileName(
             self,
             "Engagement speichern",
-            default_name,
+            str(default_target),
             f"SQLite-Engagement (*{DB_FILE_SUFFIX})",
         )
         if not path_str:
@@ -208,10 +211,3 @@ def _default_user_name() -> str:
         return getpass.getuser()
     except OSError:  # pragma: no cover – sehr defensiv
         return ""
-
-
-def _suggest_filename(client_name: str) -> str:
-    """Vorschlag für die .db-Datei aus dem Mandantennamen."""
-    safe = "".join(c if c.isalnum() or c in (" ", "-", "_") else "_" for c in client_name).strip()
-    safe = safe.replace(" ", "_") or "engagement"
-    return f"{safe}{DB_FILE_SUFFIX}"

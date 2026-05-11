@@ -24,6 +24,7 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 3      | I/O: Excel-/CSV-Import, Excel-Export, AuditTrail-PDF| done        |
 | 4      | PyQt6-UI: Hauptfenster, Datentabelle, Sidebar       | done        |
 | 5      | UI: Sampling-Dialog, Export, Undo/Redo, Bug/About   | done        |
+| 5.5    | UX-Bugfixes + Engagement-Auto-Versionierung         | done        |
 | 6      | Reports: HTML (jinja2), erweiterte Excel-Reports    | offen       |
 | 7      | Bug-Mail (pywin32/Outlook), PyInstaller-Build       | offen       |
 
@@ -67,6 +68,11 @@ ui ──▶ controllers ──▶ core ◀── io
   - `migrations/NNN_*.sql` – nummerierte SQL-Files; `001_initial.sql` ist das
     komplette Sprint-2-Schema. Migrations-Runner liest `schema_version` und führt
     nur ausstehende Versionen aus.
+  - `version_manager.py` – `EngagementVersionManager` legt bei jedem
+    `handle_open_engagement` einen Snapshot der `.db` unter `<mandant>/archiv/`
+    ab (Dateiname `{stem}_{YYYY-MM-DD}_{HH-MM-SS}_{Auditor}.db`).
+    `.db-wal`/`.db-shm` werden NICHT mitkopiert. Compliance-Pfad für
+    ISAE-3402-Versionsnachweis.
 - **`audit/`** – Append-only Event-Log via Trigger.
   - `logger.py` – `AuditLogger` ist der High-Level-Eingang: `log_sampling`,
     `log_import`, `log_export`, `log_undo`, `log_redo`, `log_reset`, `log_correction`.
@@ -160,7 +166,11 @@ ungerader Verteilung (siehe interne Bug-Liste). Im Python-Port lösen wir das mi
 Drei Kerndogmen, die sich durch die ganze DB-Schicht ziehen:
 
 1. **Eine SQLite-Datei pro Engagement.** Mandanten-Trennung, einfaches Archivieren,
-   DSGVO-konform. Es gibt keinen "globalen" Pool.
+   DSGVO-konform. Es gibt keinen "globalen" Pool. Standard-Ablageort ist
+   `~/Documents/BDO Audit Sampling/<MandantSanitized>/<MandantSanitized>.db`
+   (vgl. `config.ENGAGEMENTS_DIR` + `config.sanitize_for_path`). Beim Öffnen
+   landet jeweils eine Sicherheitskopie unter `archiv/` (siehe
+   `persistence/version_manager.py`).
 2. **Append-only Audit-Log.** `audit_events` darf ausschließlich per `INSERT`
    befüllt werden. Zwei BEFORE-Trigger (`audit_events_no_update`,
    `audit_events_no_delete`) blockieren UPDATE/DELETE hart mit

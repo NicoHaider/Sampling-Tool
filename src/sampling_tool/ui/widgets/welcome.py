@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sampling_tool.config import ENGAGEMENTS_DIR
 from sampling_tool.ui.recent import RecentEntry
 
 
@@ -174,10 +175,11 @@ class WelcomeScreen(QWidget):
     # ---- Slots ---------------------------------------------------------
 
     def _on_open_clicked(self) -> None:
+        start_dir = str(ENGAGEMENTS_DIR) if ENGAGEMENTS_DIR.exists() else ""
         path_str, _filter = QFileDialog.getOpenFileName(
             self,
             "Engagement öffnen",
-            "",
+            start_dir,
             "SQLite-Engagement (*.db);;Alle Dateien (*)",
         )
         if path_str:

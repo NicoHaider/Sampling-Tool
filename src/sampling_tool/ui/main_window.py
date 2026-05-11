@@ -20,11 +20,12 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QStatusBar,
+    QStyle,
     QToolBar,
     QWidget,
 )
 
-from sampling_tool.config import APP_NAME
+from sampling_tool.config import APP_NAME, ENGAGEMENTS_DIR
 from sampling_tool.core.models import Dataset, Engagement, SampleResult
 from sampling_tool.ui.recent import RecentEntry
 from sampling_tool.ui.widgets.data_table import DataTableView
@@ -32,6 +33,13 @@ from sampling_tool.ui.widgets.sidebar import NavigationSidebar
 from sampling_tool.ui.widgets.welcome import WelcomeScreen
 
 _MAX_RECENT_IN_MENU: int = 5
+
+# Deutsche Anzeige-Namen der Sampling-Methoden für die Statusbar.
+_METHOD_LABELS: dict[str, str] = {
+    "simple": "Einfach",
+    "cluster": "Cluster",
+    "stratified": "Geschichtet",
+}
 
 
 class MainWindow(QMainWindow):
@@ -100,7 +108,7 @@ class MainWindow(QMainWindow):
         self._status_engagement.setText("Kein Engagement")
         self._status_dataset.setText("Kein Dataset")
         self._status_rows.setText("0 Zeilen")
-        self._status_sample.setText("—")
+        self.set_active_sample_label(None)
 
     def show_workspace(self) -> None:
         """Wechselt zur Arbeitsansicht (Sidebar + Tabelle)."""
@@ -130,14 +138,32 @@ class MainWindow(QMainWindow):
         self._data_table.set_dataset(dataset)
         self._status_dataset.setText(dataset.name)
         self._status_rows.setText(f"{len(dataset.rows)} Zeilen")
-        self._status_sample.setText("—")
+        self.set_active_sample_label(None)
+        self._sidebar.set_active_sample(None)
         self._action_new_sample.setEnabled(True)
 
     def highlight_sample(self, sample: SampleResult) -> None:
         """Markiert Sample-Zeilen in der Tabelle gelb."""
         self._data_table.highlight_rows(sample.selected_row_ids)
-        self._status_sample.setText(f"Sample n={sample.actual_size} ({sample.config.method.value})")
+        self.set_active_sample_label(sample)
+        self._sidebar.set_active_sample(sample.id)
         self._action_export_sample.setEnabled(True)
+
+    def set_active_sample_label(self, sample: SampleResult | None) -> None:
+        """Aktualisiert das „Aktive Stichprobe"-Label in der Statusbar."""
+        if sample is None or sample.id is None:
+            self._status_sample.setText("Aktive Stichprobe: keine")
+            return
+        method_label = _METHOD_LABELS.get(sample.config.method.value, sample.config.method.value)
+        self._status_sample.setText(
+            f"Aktive Stichprobe: #{sample.id} ({method_label}, "
+            f"{sample.actual_size}/{sample.population_size})"
+        )
+
+    def clear_active_sample(self) -> None:
+        """Entfernt die aktive-Stichprobe-Markierung aus Sidebar + Statusbar."""
+        self._sidebar.set_active_sample(None)
+        self.set_active_sample_label(None)
 
     def filter_to_sample(self, sample: SampleResult) -> None:
         """Filtert die Tabelle auf Sample-Zeilen."""
@@ -260,13 +286,20 @@ class MainWindow(QMainWindow):
         sample_menu.addAction(self._action_reset_sample)
 
         sample_menu.addSeparator()
+        style = self.style()
         self._action_undo = QAction("Rückgängig", self)
         self._action_undo.setShortcut(QKeySequence.StandardKey.Undo)
+        self._action_undo.setToolTip("Letzte Aktion rückgängig machen (Cmd+Z)")
+        if style is not None:
+            self._action_undo.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
         self._action_undo.triggered.connect(self.undo_requested.emit)
         sample_menu.addAction(self._action_undo)
 
-        self._action_redo = QAction("Wiederholen", self)
+        self._action_redo = QAction("Wiederherstellen", self)
         self._action_redo.setShortcut(QKeySequence.StandardKey.Redo)
+        self._action_redo.setToolTip("Letzte rückgängig gemachte Aktion wiederholen (Cmd+Shift+Z)")
+        if style is not None:
+            self._action_redo.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowForward))
         self._action_redo.triggered.connect(self.redo_requested.emit)
         sample_menu.addAction(self._action_redo)
 
@@ -288,11 +321,16 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Hauptaktionen", self)
         toolbar.setMovable(False)
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         toolbar.addAction(self._action_new)
         toolbar.addAction(self._action_open)
         toolbar.addSeparator()
         toolbar.addAction(self._action_import)
         toolbar.addAction(self._action_new_sample)
+        toolbar.addSeparator()
+        toolbar.addAction(self._action_undo)
+        toolbar.addAction(self._action_redo)
+        toolbar.addSeparator()
         toolbar.addAction(self._action_export_sample)
         toolbar.addAction(self._action_export_pdf)
         self.addToolBar(toolbar)
@@ -336,10 +374,11 @@ class MainWindow(QMainWindow):
     # ---- Slots ---------------------------------------------------------
 
     def _on_open_clicked(self) -> None:
+        start_dir = str(ENGAGEMENTS_DIR) if ENGAGEMENTS_DIR.exists() else ""
         path_str, _filter = QFileDialog.getOpenFileName(
             self,
             "Engagement öffnen",
-            "",
+            start_dir,
             "SQLite-Engagement (*.db);;Alle Dateien (*)",
         )
         if path_str:
