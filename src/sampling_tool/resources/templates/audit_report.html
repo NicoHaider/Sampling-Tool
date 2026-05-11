@@ -51,16 +51,17 @@
       <div class="card"><div class="num">{{ stats.last_activity }}</div><div class="label">Letzte Aktivität</div></div>
     </div>
 
-    {% if method_chart_b64 %}
+    {% if include_charts and method_chart_b64 %}
     <h2>Sampling-Methoden</h2>
     <div class="chart"><img src="data:image/png;base64,{{ method_chart_b64 }}" alt="Methoden-Verteilung"></div>
     {% endif %}
 
-    {% if history_chart_b64 %}
+    {% if include_charts and history_chart_b64 %}
     <h2>Sampling-Historie (30 Tage)</h2>
     <div class="chart"><img src="data:image/png;base64,{{ history_chart_b64 }}" alt="Sampling-Historie"></div>
     {% endif %}
 
+    {% if include_samples_table %}
     <h2>Stichproben</h2>
     {% if samples %}
     <table>
@@ -87,7 +88,9 @@
     {% else %}
     <p style="color: #B0B0B0; font-style: italic;">Noch keine Stichproben.</p>
     {% endif %}
+    {% endif %}
 
+    {% if include_audit_trail %}
     <h2>AuditTrail</h2>
     {% if events %}
     <table>
@@ -114,6 +117,7 @@
     </table>
     {% else %}
     <p style="color: #B0B0B0; font-style: italic;">Keine Audit-Events.</p>
+    {% endif %}
     {% endif %}
 
     <footer>Generiert am {{ generated_at }} – BDO Audit Sampling Tool</footer>

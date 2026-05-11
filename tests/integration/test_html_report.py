@@ -140,3 +140,48 @@ class TestHtmlReportGenerator:
     def test_missing_template_raises(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
             HtmlReportGenerator(template_path=tmp_path / "ghost.html")
+
+    def test_include_charts_false_drops_base64_blocks(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        samples: list[SampleResult],
+        events: list[AuditEvent],
+    ) -> None:
+        out = tmp_path / "no_charts.html"
+        HtmlReportGenerator().render(engagement, [], samples, events, out, include_charts=False)
+        html = out.read_text(encoding="utf-8")
+        assert "data:image/png;base64," not in html
+        assert "Sampling-Methoden" not in html
+        assert "Sampling-Historie" not in html
+
+    def test_include_audit_trail_false_skips_audit_section(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        samples: list[SampleResult],
+        events: list[AuditEvent],
+    ) -> None:
+        out = tmp_path / "no_audit.html"
+        HtmlReportGenerator().render(
+            engagement, [], samples, events, out, include_audit_trail=False
+        )
+        html = out.read_text(encoding="utf-8")
+        assert "AuditTrail" not in html
+
+    def test_include_samples_table_false_skips_sample_section(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        samples: list[SampleResult],
+        events: list[AuditEvent],
+    ) -> None:
+        out = tmp_path / "no_samples.html"
+        HtmlReportGenerator().render(
+            engagement, [], samples, events, out, include_samples_table=False
+        )
+        html = out.read_text(encoding="utf-8")
+        # Die Stats-Karte „Stichproben" bleibt – aber die Samples-Tabelle und
+        # ihre Header (<th>Methode</th>) verschwinden.
+        assert "<h2>Stichproben</h2>" not in html
+        assert "<th>Methode</th>" not in html

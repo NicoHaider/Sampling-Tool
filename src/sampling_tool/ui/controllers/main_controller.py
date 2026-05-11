@@ -42,6 +42,7 @@ from sampling_tool.core.models import (
 )
 from sampling_tool.core.sampling import SamplingError, create_sampler
 from sampling_tool.core.undo import UndoManager
+from sampling_tool.io.briefpapier import get_default_briefpapier
 from sampling_tool.io.exporter import ExcelExporter, ExportError
 from sampling_tool.io.html_report import HtmlReportGenerator
 from sampling_tool.io.importer import DataImportError, ExcelImporter
@@ -57,6 +58,9 @@ from sampling_tool.persistence.repositories import (
 from sampling_tool.persistence.version_manager import EngagementVersionManager
 from sampling_tool.ui.dialogs.about_dialog import AboutDialog
 from sampling_tool.ui.dialogs.bug_report_dialog import BugReportDialog
+from sampling_tool.ui.dialogs.export_audit_pdf_dialog import ExportAuditPdfDialog
+from sampling_tool.ui.dialogs.export_excel_report_dialog import ExportExcelReportDialog
+from sampling_tool.ui.dialogs.export_html_report_dialog import ExportHtmlReportDialog
 from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialog
 from sampling_tool.ui.dialogs.new_engagement_dialog import NewEngagementDialog
 from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialog
@@ -70,6 +74,14 @@ logger = logging.getLogger(__name__)
 DialogFactory = Callable[["MainWindow"], NewEngagementDialog]
 SamplingDialogFactory = Callable[["MainWindow", Dataset, SampleResult | None], SamplingDialog]
 ExportDialogFactory = Callable[["MainWindow", Dataset, str, str, Path | None], ExportSampleDialog]
+AuditPdfDialogFactory = Callable[
+    ["MainWindow", Engagement, list[str], bool, Path | None],
+    ExportAuditPdfDialog,
+]
+ExcelReportDialogFactory = Callable[
+    ["MainWindow", Engagement, Path | None], ExportExcelReportDialog
+]
+HtmlReportDialogFactory = Callable[["MainWindow", Engagement, Path | None], ExportHtmlReportDialog]
 
 
 class MainController:
@@ -82,6 +94,9 @@ class MainController:
         dialog_factory: DialogFactory | None = None,
         sampling_dialog_factory: SamplingDialogFactory | None = None,
         export_dialog_factory: ExportDialogFactory | None = None,
+        audit_pdf_dialog_factory: AuditPdfDialogFactory | None = None,
+        excel_report_dialog_factory: ExcelReportDialogFactory | None = None,
+        html_report_dialog_factory: HtmlReportDialogFactory | None = None,
     ) -> None:
         self.window = window
         self.recent_store = recent_store if recent_store is not None else RecentEngagementsStore()
@@ -93,6 +108,21 @@ class MainController:
         )
         self._export_factory = (
             export_dialog_factory if export_dialog_factory is not None else _default_export_factory
+        )
+        self._audit_pdf_factory = (
+            audit_pdf_dialog_factory
+            if audit_pdf_dialog_factory is not None
+            else _default_audit_pdf_factory
+        )
+        self._excel_report_factory = (
+            excel_report_dialog_factory
+            if excel_report_dialog_factory is not None
+            else _default_excel_report_factory
+        )
+        self._html_report_factory = (
+            html_report_dialog_factory
+            if html_report_dialog_factory is not None
+            else _default_html_report_factory
         )
 
         self._db: Database | None = None
@@ -591,34 +621,59 @@ class MainController:
         )
 
     def handle_export_audit_pdf(self) -> None:
-        """AuditTrail-PDF für das aktuelle Engagement exportieren."""
+        """AuditTrail-PDF für das aktuelle Engagement exportieren.
+
+        Öffnet den `ExportAuditPdfDialog`, filtert die Events nach gewähltem
+        Zeitraum und Aktionstypen und rendert das PDF mit den gewünschten
+        Optionen (Briefpapier-Layer, Statistik-Block).
+        """
         if self._db is None or self._engagement is None or self._engagement.id is None:
             return
-
-        default_name = f"AuditTrail_{_safe_filename(self._engagement.client_name)}.pdf"
-        path_str, _filter = QFileDialog.getSaveFileName(
-            self.window,
-            "AuditTrail-PDF speichern",
-            default_name,
-            "PDF (*.pdf)",
-        )
-        if not path_str:
-            return
-        path = Path(path_str)
-        if path.suffix.lower() != ".pdf":
-            path = path.with_suffix(".pdf")
 
         events = AuditRepo(self._db.connect()).list_for_engagement(
             self._engagement.id, limit=10_000
         )
+        available_types = sorted({e.event_type for e in events})
+        briefpapier = get_default_briefpapier()
+
+        dialog = self._audit_pdf_factory(
+            self.window,
+            self._engagement,
+            available_types,
+            briefpapier is not None,
+            self._default_export_dir(),
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        result = dialog.get_result()
+        if result is None:
+            return
+
+        filtered = [
+            e
+            for e in events
+            if (not result.event_types or e.event_type in result.event_types)
+            and (result.date_from is None or e.timestamp.date() >= result.date_from)
+            and (result.date_to is None or e.timestamp.date() <= result.date_to)
+        ]
+
         try:
-            AuditTrailPDF().render(self._engagement, events, path)
+            renderer = AuditTrailPDF(briefpapier=briefpapier if result.use_briefpapier else None)
+            renderer.render(
+                self._engagement,
+                filtered,
+                result.output_path,
+                include_statistics=result.include_statistics,
+            )
         except Exception as exc:  # pragma: no cover – defensiv
             logger.exception("PDF-Export fehlgeschlagen")
             self._error(f"PDF-Export fehlgeschlagen: {exc}")
             return
+
         QMessageBox.information(
-            self.window, "AuditTrail exportiert", f"PDF gespeichert unter:\n{path}"
+            self.window,
+            "AuditTrail-PDF exportiert",
+            f"Datei: {result.output_path.name}\n{len(filtered)} Events",
         )
 
     def handle_export_excel_report(self) -> None:
@@ -626,28 +681,33 @@ class MainController:
         if self._db is None or self._engagement is None or self._engagement.id is None:
             return
 
-        default_name = f"Bericht_{_safe_filename(self._engagement.client_name)}.xlsx"
-        path_str, _filter = QFileDialog.getSaveFileName(
-            self.window,
-            "Excel-Report speichern",
-            default_name,
-            "Excel (*.xlsx)",
+        dialog = self._excel_report_factory(
+            self.window, self._engagement, self._default_export_dir()
         )
-        if not path_str:
+        if dialog.exec() != dialog.DialogCode.Accepted:
             return
-        path = Path(path_str)
-        if path.suffix.lower() != ".xlsx":
-            path = path.with_suffix(".xlsx")
+        result = dialog.get_result()
+        if result is None:
+            return
 
         try:
             datasets, samples, events = self._collect_report_data()
-            MultiSheetReportExporter().export(self._engagement, datasets, samples, events, path)
+            MultiSheetReportExporter().export(
+                self._engagement,
+                datasets,
+                samples,
+                events,
+                result.output_path,
+                sheets=result.sheets,
+            )
         except Exception as exc:  # pragma: no cover – defensiv
             logger.exception("Excel-Report fehlgeschlagen")
             self._error(f"Excel-Report fehlgeschlagen: {exc}")
             return
         QMessageBox.information(
-            self.window, "Excel-Report erstellt", f"Bericht gespeichert unter:\n{path}"
+            self.window,
+            "Excel-Report erstellt",
+            f"Bericht gespeichert unter:\n{result.output_path}",
         )
 
     def handle_export_html_report(self) -> None:
@@ -655,28 +715,35 @@ class MainController:
         if self._db is None or self._engagement is None or self._engagement.id is None:
             return
 
-        default_name = f"Bericht_{_safe_filename(self._engagement.client_name)}.html"
-        path_str, _filter = QFileDialog.getSaveFileName(
-            self.window,
-            "HTML-Report speichern",
-            default_name,
-            "HTML (*.html)",
+        dialog = self._html_report_factory(
+            self.window, self._engagement, self._default_export_dir()
         )
-        if not path_str:
+        if dialog.exec() != dialog.DialogCode.Accepted:
             return
-        path = Path(path_str)
-        if path.suffix.lower() != ".html":
-            path = path.with_suffix(".html")
+        result = dialog.get_result()
+        if result is None:
+            return
 
         try:
             datasets, samples, events = self._collect_report_data()
-            HtmlReportGenerator().render(self._engagement, datasets, samples, events, path)
+            HtmlReportGenerator().render(
+                self._engagement,
+                datasets,
+                samples,
+                events,
+                result.output_path,
+                include_charts=result.include_charts,
+                include_audit_trail=result.include_audit_trail,
+                include_samples_table=result.include_samples_table,
+            )
         except Exception as exc:  # pragma: no cover – defensiv
             logger.exception("HTML-Report fehlgeschlagen")
             self._error(f"HTML-Report fehlgeschlagen: {exc}")
             return
         QMessageBox.information(
-            self.window, "HTML-Report erstellt", f"Bericht gespeichert unter:\n{path}"
+            self.window,
+            "HTML-Report erstellt",
+            f"Bericht gespeichert unter:\n{result.output_path}",
         )
 
     # ---- AuditTrail / Dashboard ----------------------------------------
@@ -916,6 +983,33 @@ def _default_export_factory(
     )
 
 
-def _safe_filename(token: str) -> str:
-    cleaned = "".join(c if c.isalnum() or c in (" ", "-", "_") else "_" for c in token).strip()
-    return cleaned.replace(" ", "_") or "AuditTrail"
+def _default_audit_pdf_factory(
+    parent: MainWindow,
+    engagement: Engagement,
+    event_types_available: list[str],
+    briefpapier_available: bool,
+    default_dir: Path | None,
+) -> ExportAuditPdfDialog:
+    return ExportAuditPdfDialog(
+        engagement=engagement,
+        event_types_available=event_types_available,
+        briefpapier_available=briefpapier_available,
+        parent=parent,
+        default_output_dir=default_dir,
+    )
+
+
+def _default_excel_report_factory(
+    parent: MainWindow,
+    engagement: Engagement,
+    default_dir: Path | None,
+) -> ExportExcelReportDialog:
+    return ExportExcelReportDialog(engagement, parent=parent, default_output_dir=default_dir)
+
+
+def _default_html_report_factory(
+    parent: MainWindow,
+    engagement: Engagement,
+    default_dir: Path | None,
+) -> ExportHtmlReportDialog:
+    return ExportHtmlReportDialog(engagement, parent=parent, default_output_dir=default_dir)

@@ -41,6 +41,15 @@ _HEADER_FONT: Final = Font(bold=True, color="FFFFFFFF")
 _HEADER_ALIGN: Final = Alignment(vertical="center", horizontal="left")
 _MAX_COL_WIDTH: Final[int] = 50
 
+SHEET_UEBERSICHT: Final[str] = "Übersicht"
+SHEET_AUDIT_TRAIL: Final[str] = "AuditTrail"
+SHEET_SAMPLES: Final[str] = "Samples"
+SHEET_STATISTIKEN: Final[str] = "Statistiken"
+
+ALL_SHEETS: Final[frozenset[str]] = frozenset(
+    {SHEET_UEBERSICHT, SHEET_AUDIT_TRAIL, SHEET_SAMPLES, SHEET_STATISTIKEN}
+)
+
 
 class MultiSheetReportExporter:
     """Erzeugt einen Engagement-Komplett-Bericht als Multi-Sheet-Excel."""
@@ -52,8 +61,13 @@ class MultiSheetReportExporter:
         samples: list[SampleResult],
         audit_events: list[AuditEvent],
         output_path: Path,
+        sheets: set[str] | None = None,
     ) -> Path:
-        """Schreibt die .xlsx atomar nach `output_path` und gibt den Pfad zurück."""
+        """Schreibt die .xlsx atomar nach `output_path` und gibt den Pfad zurück.
+
+        `sheets` filtert die geschriebenen Sheets nach Namen aus
+        `ALL_SHEETS`. `None` oder leeres Set ⇒ alle Sheets.
+        """
         output_path.parent.mkdir(parents=True, exist_ok=True)
         target = (
             output_path
@@ -62,12 +76,28 @@ class MultiSheetReportExporter:
         )
         tmp = target.with_suffix(target.suffix + ".tmp")
 
+        active = ALL_SHEETS if not sheets else (sheets & ALL_SHEETS)
+        if not active:
+            active = ALL_SHEETS
+
         wb = Workbook()
         try:
-            self._write_uebersicht(wb, engagement, datasets, samples, audit_events)
-            self._write_audit_trail(wb, audit_events)
-            self._write_samples(wb, samples)
-            self._write_statistiken(wb, samples, audit_events)
+            if SHEET_UEBERSICHT in active:
+                self._write_uebersicht(wb, engagement, datasets, samples, audit_events)
+            if SHEET_AUDIT_TRAIL in active:
+                self._write_audit_trail(wb, audit_events)
+            if SHEET_SAMPLES in active:
+                self._write_samples(wb, samples)
+            if SHEET_STATISTIKEN in active:
+                self._write_statistiken(wb, samples, audit_events)
+
+            # Das Default-Sheet "Sheet" von openpyxl bleibt übrig, wenn das
+            # erste tatsächlich geschriebene Sheet via `create_sheet` angelegt
+            # wurde – wir entfernen es. Wurde nur „Übersicht" geschrieben,
+            # hat es bereits den Titel überschrieben.
+            for ws in list(wb.worksheets):
+                if ws.title == "Sheet":
+                    wb.remove(ws)
             wb.save(tmp)
         except Exception:
             if tmp.exists():

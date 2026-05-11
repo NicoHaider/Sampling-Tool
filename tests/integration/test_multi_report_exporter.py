@@ -198,3 +198,50 @@ class TestMultiSheetReportExporter:
         leftovers = list(tmp_path.glob("*.tmp"))
         assert leftovers == []
         assert out.exists()
+
+    def test_only_uebersicht_when_sheets_filtered(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        datasets: list[Dataset],
+        samples: list[SampleResult],
+        audit_events: list[AuditEvent],
+    ) -> None:
+        out = tmp_path / "subset.xlsx"
+        MultiSheetReportExporter().export(
+            engagement,
+            datasets,
+            samples,
+            audit_events,
+            out,
+            sheets={"Übersicht"},
+        )
+        wb = load_workbook(out)
+        names = wb.sheetnames
+        assert len(names) == 1
+        assert "Übersicht" in names[0]
+
+    def test_subset_sheets_writes_exact_selection(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        datasets: list[Dataset],
+        samples: list[SampleResult],
+        audit_events: list[AuditEvent],
+    ) -> None:
+        out = tmp_path / "subset.xlsx"
+        MultiSheetReportExporter().export(
+            engagement,
+            datasets,
+            samples,
+            audit_events,
+            out,
+            sheets={"AuditTrail", "Samples"},
+        )
+        wb = load_workbook(out)
+        names = wb.sheetnames
+        assert len(names) == 2
+        assert any("AuditTrail" in n for n in names)
+        assert any("Samples" in n for n in names)
+        assert not any("Übersicht" in n for n in names)
+        assert not any("Statistiken" in n for n in names)
