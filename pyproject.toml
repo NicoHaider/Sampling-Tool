@@ -34,6 +34,7 @@ dependencies = [
     "numpy>=2.0",
     "reportlab>=4.2",
     "jinja2>=3.1",
+    "platformdirs>=4.0",
     # pywin32 nur auf Windows (für Outlook-Bug-Mail, COM-Integration)
     "pywin32>=306; sys_platform == 'win32'",
 ]

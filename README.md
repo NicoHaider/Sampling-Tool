@@ -5,18 +5,36 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 
 ## Status
 
-**Sprint 3 von 7** – I/O-Schicht ✅ **erledigt** (110/110 Tests grün, Ruff + Mypy clean,
-Coverage 92 %).
+**Sprint 4 von 7** – PyQt6-UI-Skeleton ✅ **erledigt** (Ruff + Mypy clean).
 
 | Sprint | Inhalt                                              | Status      |
 |-------:|-----------------------------------------------------|-------------|
 | 1      | Projekt-Skelett, Config, Sampling-Core + Tests      | **done**    |
 | 2      | SQLite-Persistenz, Audit-Trail, Undo, Migrations    | **done**    |
 | 3      | I/O: Excel-/CSV-Import, Excel-Export, AuditTrail-PDF| **done**    |
-| 4      | PyQt6-UI: Hauptfenster, Engagement-Verwaltung       | offen       |
+| 4      | PyQt6-UI: Hauptfenster, Datentabelle, Sidebar       | **done**    |
 | 5      | UI: Sample-Konfigurator, Vorschau, Export-Dialog    | offen       |
 | 6      | Reports: HTML (jinja2), erweiterte Excel-Reports    | offen       |
 | 7      | Bug-Mail (pywin32/Outlook), PyInstaller-Build       | offen       |
+
+### Was Sprint 4 liefert
+
+- `ui/main_window.py` – `MainWindow` mit State-Maschine Welcome ↔ Workspace
+  (`QStackedWidget`), Menü/Toolbar/Splitter/Statusbar, typisierte Signals
+- `ui/widgets/data_table.py` – `DatasetTableModel(QAbstractTableModel)` +
+  `DataTableView`. Virtuell, sample-highlighting per `BackgroundRole`,
+  Filter ohne Proxy
+- `ui/widgets/sidebar.py` – `NavigationSidebar` (Engagement/Datasets/Samples)
+  mit Klick- und Doppelklick-Signals
+- `ui/widgets/welcome.py` – `WelcomeScreen` mit Recent-Engagement-Karten
+- `ui/dialogs/new_engagement_dialog.py` – Pflichtfeld-Dialog
+  (Auditor/Position/Mandant/Prüfungstyp) + Save-Path-Auswahl
+- `ui/recent.py` – `RecentEngagementsStore` mit JSON-Persistenz via
+  `platformdirs.user_data_dir()`
+- `ui/controllers/main_controller.py` – Glue-Schicht UI ↔ Persistence/IO
+- `ui/styles/bdo_light.qss` – Qt-Stylesheet (BDO-Rot/Weiß/Grau)
+- `__main__.py` startet die Qt-App
+- 47 neue UI-Tests via pytest-qt (offscreen-fähig)
 
 ### Was Sprint 3 liefert
 

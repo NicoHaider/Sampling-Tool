@@ -22,7 +22,7 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 1      | Projekt-Skelett, Config, Sampling-Core + Tests      | done        |
 | 2      | SQLite-Persistenz, Audit-Trail, Undo, Migrations    | done        |
 | 3      | I/O: Excel-/CSV-Import, Excel-Export, AuditTrail-PDF| done        |
-| 4      | PyQt6-UI: Hauptfenster, Engagement-Verwaltung       | offen       |
+| 4      | PyQt6-UI: Hauptfenster, Datentabelle, Sidebar       | done        |
 | 5      | UI: Sample-Konfigurator, Vorschau, Export-Dialog    | offen       |
 | 6      | Reports: HTML (jinja2), erweiterte Excel-Reports    | offen       |
 | 7      | Bug-Mail (pywin32/Outlook), PyInstaller-Build       | offen       |
@@ -72,8 +72,29 @@ ui ──▶ controllers ──▶ core ◀── io
     `log_import`, `log_export`, `log_undo`, `log_redo`, `log_reset`, `log_correction`.
   - Korrekturen werden als neue Events mit `event_type='correction'` und
     `corrects_event_id`-FK auf den Original-Event gespeichert (kein UPDATE/DELETE).
-- **`ui/`** *(Sprint 4+)* – PyQt6. Strikt MVC: Widgets dumm, Controllers in
+- **`ui/`** – PyQt6. Strikt MVC: Widgets dumm, Controllers in
   `ui/controllers/`. Stylesheet (BDO-CI) unter `ui/styles/*.qss`.
+  - `main_window.py` – `MainWindow` mit `QStackedWidget`-State-Maschine
+    Welcome ↔ Workspace. Menü, Toolbar, Splitter (Sidebar+Tabelle),
+    Statusbar. Sendet typisierte Signals; *kein* DB-Zugriff hier.
+  - `controllers/main_controller.py` – Glue-Schicht UI ↔ Persistence/IO.
+    Hält `Database`-Instanz und die geöffnete `Engagement`. Übersetzt
+    UI-Signals in Repo-Calls.
+  - `widgets/data_table.py` – `DatasetTableModel(QAbstractTableModel)` +
+    `DataTableView`. Virtuelles Model (kein QStandardItemModel) –
+    100k+ Zeilen scrollen flüssig. Sample-Highlighting per
+    `BackgroundRole`, Filter ohne Proxy via `_visible_indices`.
+  - `widgets/sidebar.py` – `NavigationSidebar` mit drei Sektionen
+    (Engagement-Block, Datasets-Liste, Samples-Liste).
+  - `widgets/welcome.py` – `WelcomeScreen` (Recent-Engagement-Karten +
+    Buttons) wird angezeigt, wenn keine `.db` geladen ist.
+  - `dialogs/new_engagement_dialog.py` – Modal-Dialog für die
+    Pflichtfelder Auditor/Position/Mandant/Prüfungstyp +
+    Save-Path-Auswahl.
+  - `recent.py` – `RecentEngagementsStore` mit JSON-Persistenz unter
+    `platformdirs.user_data_dir('AuditSamplingTool', 'BDO')`.
+    Defekte Pfade werden beim `list()` gefiltert; `prune_missing()`
+    räumt sie persistent weg.
 
 ## Code-Style
 
