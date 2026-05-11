@@ -6,12 +6,19 @@ Repo). Scope `session`, damit jede Datei genau einmal angelegt wird.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 from openpyxl import Workbook
+
+# Qt-Headless-Default. Wenn weder DISPLAY noch ein expliziter Plattform-Wert
+# gesetzt ist, läuft Qt im offscreen-Modus – damit UI-Tests in CI funktionieren
+# und auf Dev-Maschinen kein lästiges Fenster aufpoppt.
+if "QT_QPA_PLATFORM" not in os.environ and "DISPLAY" not in os.environ:
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 from sampling_tool.core.models import (
     Dataset,
