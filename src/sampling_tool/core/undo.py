@@ -86,6 +86,16 @@ class UndoManager:
     def can_redo(self) -> bool:
         return self._stack_size(UndoStack.REDO) > 0
 
+    def peek_undo(self) -> Snapshot | None:
+        """Top des Undo-Stacks (ohne ihn zu verändern). Wird vom UI-Controller
+        nach `undo()` benötigt, um den darunterliegenden Zustand zu rekonstruieren.
+        """
+        return self._peek(UndoStack.UNDO)
+
+    def peek_redo(self) -> Snapshot | None:
+        """Top des Redo-Stacks (ohne ihn zu verändern)."""
+        return self._peek(UndoStack.REDO)
+
     def clear(self) -> None:
         """Beide Stacks komplett leeren."""
         conn = self.db.connect()
@@ -96,6 +106,30 @@ class UndoManager:
             )
 
     # ---- intern ---------------------------------------------------------
+
+    def _peek(self, stack: UndoStack) -> Snapshot | None:
+        row = (
+            self.db.connect()
+            .execute(
+                "SELECT * FROM undo_snapshots "
+                "WHERE engagement_id = ? AND stack_type = ? "
+                "ORDER BY position DESC LIMIT 1",
+                (self.engagement_id, stack.value),
+            )
+            .fetchone()
+        )
+        if row is None:
+            return None
+        return Snapshot(
+            stack_type=stack,
+            position=row["position"],
+            visible_rows=tuple(json.loads(row["visible_rows"])),
+            highlighted_rows=tuple(json.loads(row["highlighted_rows"])),
+            sample_id=row["sample_id"],
+            engagement_id=self.engagement_id,
+            created_at=row["created_at"],
+            id=row["id"],
+        )
 
     def _move_top(self, from_stack: UndoStack, to_stack: UndoStack) -> Snapshot | None:
         conn = self.db.connect()

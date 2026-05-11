@@ -23,7 +23,7 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 2      | SQLite-Persistenz, Audit-Trail, Undo, Migrations    | done        |
 | 3      | I/O: Excel-/CSV-Import, Excel-Export, AuditTrail-PDF| done        |
 | 4      | PyQt6-UI: Hauptfenster, Datentabelle, Sidebar       | done        |
-| 5      | UI: Sample-Konfigurator, Vorschau, Export-Dialog    | offen       |
+| 5      | UI: Sampling-Dialog, Export, Undo/Redo, Bug/About   | done        |
 | 6      | Reports: HTML (jinja2), erweiterte Excel-Reports    | offen       |
 | 7      | Bug-Mail (pywin32/Outlook), PyInstaller-Build       | offen       |
 
@@ -78,8 +78,13 @@ ui ──▶ controllers ──▶ core ◀── io
     Welcome ↔ Workspace. Menü, Toolbar, Splitter (Sidebar+Tabelle),
     Statusbar. Sendet typisierte Signals; *kein* DB-Zugriff hier.
   - `controllers/main_controller.py` – Glue-Schicht UI ↔ Persistence/IO.
-    Hält `Database`-Instanz und die geöffnete `Engagement`. Übersetzt
-    UI-Signals in Repo-Calls.
+    Hält `Database`-Instanz, das aktuelle Engagement und einen
+    `UndoManager`. Übersetzt UI-Signals in Repo-Calls und orchestriert
+    Sampling/Reset/Undo/Redo/Export. Undo-Konvention: nach jeder
+    mutierenden Aktion wird der NEUE State auf den Undo-Stack
+    gelegt; bei `handle_undo` wird der Top entfernt und der
+    `peek_undo`-State angewandt (leerer State, wenn der Stack
+    nach dem Pop leer ist).
   - `widgets/data_table.py` – `DatasetTableModel(QAbstractTableModel)` +
     `DataTableView`. Virtuelles Model (kein QStandardItemModel) –
     100k+ Zeilen scrollen flüssig. Sample-Highlighting per
@@ -91,6 +96,23 @@ ui ──▶ controllers ──▶ core ◀── io
   - `dialogs/new_engagement_dialog.py` – Modal-Dialog für die
     Pflichtfelder Auditor/Position/Mandant/Prüfungstyp +
     Save-Path-Auswahl.
+  - `dialogs/sampling_dialog.py` – Sampling-Konfigurator (Simple/Cluster/
+    Stratified, Filter, Seed mit Würfel, Resample-Checkbox). Liefert
+    `SamplingDialogResult` mit `SampleConfig` + `from_sample_only`-Flag.
+    Das Flag ist **nicht** persistiert – der Controller filtert das
+    Dataset zur Laufzeit auf die Vorsample-Auswahl.
+  - `dialogs/export_sample_dialog.py` – Spaltenauswahl (Checkboxen) +
+    Filename/ID + Zielordner. Vorschau-Label live mit
+    `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
+  - `dialogs/bug_report_dialog.py` – 3 Freitextfelder + System-Info-
+    Checkbox. Konstruiert `mailto:`-URL und öffnet sie via
+    `QDesktopServices`. Auf Windows wird das in Sprint 7 von
+    `pywin32`/Outlook abgelöst.
+  - `dialogs/about_dialog.py` – statischer About-Dialog (Version,
+    Beschreibung, Repo-Link).
+  - `dialogs/progress_dialog.py` – `TaskProgressDialog` wrapt
+    `QProgressDialog` mit Callback-Adapter im
+    `ExcelImporter`-Signatur-Format.
   - `recent.py` – `RecentEngagementsStore` mit JSON-Persistenz unter
     `platformdirs.user_data_dir('AuditSamplingTool', 'BDO')`.
     Defekte Pfade werden beim `list()` gefiltert; `prune_missing()`
@@ -220,3 +242,42 @@ mitziehen – es ist der schnellste manuelle Smoke-Test über alle Layer.
 - Bei neuen Dependencies: erst hier kurz begründen, dann zu `pyproject.toml` hinzufügen.
 - Bei Sprint-Übergängen: alte Stub-`__init__.py` ersetzen, nicht parallele Module anlegen.
 - Bei Reproducibility-relevanten Änderungen: Test schreiben, dann Code.
+
+## Sprint-Abschluss-Protokoll (verbindlich für Claude Code)
+
+Bei jedem neuen Sprint folgt Claude Code diesem festen Workflow:
+
+### 1. Branch anlegen (BEVOR Code geschrieben wird)
+```bashgit checkout main
+git pull
+git checkout -b feat/<sprint-name>
+
+Wenn ein gleichnamiger Branch existiert: `git branch -D feat/<sprint-name>` davor.
+
+### 2. Code schreiben und Tests grün halten
+Nach jeder größeren Änderung kurz `pytest` lokal laufen lassen.
+
+### 3. Vor dem Push: alle Checks durchlaufen
+```bashpytest
+ruff check .
+ruff format --check .
+mypy src tests
+
+Bei Fehler: **STOPP**, fixen, neu prüfen. Nicht committen mit roten Tests.
+
+### 4. Commit + Push + Auto-Merge (wenn alles grün)
+```bashgit add .
+git status
+git commit -m "Sprint N: <title><bullet-points über Änderungen>Co-Authored-By: Claude Opus 4.7 noreply@anthropic.com"git push -u origin feat/<sprint-name>gh pr create --title "Sprint N: <title>" --body "<beschreibung>"gh pr merge --squash --auto --delete-branchgit checkout main
+git pull
+
+`--auto` bedeutet: GitHub merged automatisch sobald alle CI-Checks grün sind. Aktuell sind keine GitHub Actions konfiguriert → merged sofort. Sobald Actions eingerichtet sind (geplant Sprint 7), wartet `--auto` auf grüne Checks.
+
+### 5. Pre-Push-Hook
+Automatischer Doppel-Check via `.githooks/pre-push`. Aktiv durch `git config core.hooksPath .githooks`.
+
+### Goldene Regeln
+- **Niemals** direkt auf main pushen (außer winzige `chore:`-Commits wie .gitignore-Updates)
+- **Immer** auf main zurückwechseln am Sprint-Ende
+- **Niemals** einen Sprint als "fertig" melden, wenn der PR noch nicht gemerged ist
+- Bei Unsicherheit: lieber stoppen und nachfragen als kaputt mergen

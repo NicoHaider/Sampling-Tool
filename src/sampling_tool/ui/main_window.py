@@ -41,8 +41,14 @@ class MainWindow(QMainWindow):
     open_engagement_requested = pyqtSignal(Path)
     close_engagement_requested = pyqtSignal()
     import_excel_requested = pyqtSignal()
+    new_sample_requested = pyqtSignal()
+    reset_sample_requested = pyqtSignal()
+    undo_requested = pyqtSignal()
+    redo_requested = pyqtSignal()
     export_sample_requested = pyqtSignal()
     export_audit_pdf_requested = pyqtSignal()
+    bug_report_requested = pyqtSignal()
+    about_requested = pyqtSignal()
     dataset_selected = pyqtSignal(int)
     sample_selected = pyqtSignal(int)
     sample_filter_toggled = pyqtSignal(int)
@@ -246,18 +252,22 @@ class MainWindow(QMainWindow):
         assert sample_menu is not None
 
         self._action_new_sample = QAction("Neue Stichprobe…", self)
+        self._action_new_sample.triggered.connect(self.new_sample_requested.emit)
         sample_menu.addAction(self._action_new_sample)
 
         self._action_reset_sample = QAction("Auswahl zurücksetzen", self)
+        self._action_reset_sample.triggered.connect(self.reset_sample_requested.emit)
         sample_menu.addAction(self._action_reset_sample)
 
         sample_menu.addSeparator()
         self._action_undo = QAction("Rückgängig", self)
         self._action_undo.setShortcut(QKeySequence.StandardKey.Undo)
+        self._action_undo.triggered.connect(self.undo_requested.emit)
         sample_menu.addAction(self._action_undo)
 
         self._action_redo = QAction("Wiederholen", self)
         self._action_redo.setShortcut(QKeySequence.StandardKey.Redo)
+        self._action_redo.triggered.connect(self.redo_requested.emit)
         sample_menu.addAction(self._action_redo)
 
         # ---- Help ----
@@ -265,11 +275,11 @@ class MainWindow(QMainWindow):
         assert help_menu is not None
 
         self._action_bug_report = QAction("Bug melden…", self)
-        self._action_bug_report.triggered.connect(self._open_bug_mail)
+        self._action_bug_report.triggered.connect(self.bug_report_requested.emit)
         help_menu.addAction(self._action_bug_report)
 
         self._action_about = QAction("Über…", self)
-        self._action_about.triggered.connect(self._show_about)
+        self._action_about.triggered.connect(self.about_requested.emit)
         help_menu.addAction(self._action_about)
 
         # Sprint-4-Initial: alle workspace-only Aktionen disabled.
@@ -284,6 +294,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self._action_import)
         toolbar.addAction(self._action_new_sample)
         toolbar.addAction(self._action_export_sample)
+        toolbar.addAction(self._action_export_pdf)
         self.addToolBar(toolbar)
 
     # ---- State-Helfer --------------------------------------------------
@@ -334,22 +345,16 @@ class MainWindow(QMainWindow):
         if path_str:
             self.open_engagement_requested.emit(Path(path_str))
 
-    def _open_bug_mail(self) -> None:
-        from PyQt6.QtCore import QUrl
-        from PyQt6.QtGui import QDesktopServices
+    # ---- Public API – Undo/Redo + Reset --------------------------------
 
-        QDesktopServices.openUrl(QUrl("mailto:nico.haider@bdo.at?subject=[Sampling-Tool Bug]"))
+    def set_undo_redo_enabled(self, can_undo: bool, can_redo: bool) -> None:
+        """Schaltet die Undo-/Redo-Menüpunkte. Wird vom Controller aufgerufen."""
+        self._action_undo.setEnabled(can_undo)
+        self._action_redo.setEnabled(can_redo)
 
-    def _show_about(self) -> None:
-        from PyQt6.QtWidgets import QMessageBox
-
-        QMessageBox.about(
-            self,
-            f"Über {APP_NAME}",
-            f"<b>{APP_NAME}</b><br><br>"
-            "Reproduzierbare Audit-Stichproben für ISAE-3402-Engagements.<br>"
-            "Sprint 4 – UI-Skeleton.",
-        )
+    def set_reset_enabled(self, enabled: bool) -> None:
+        """Schaltet den Reset-Menüpunkt. Nur wenn ein Sample aktiv ist."""
+        self._action_reset_sample.setEnabled(enabled)
 
 
 # ---------------------------------------------------------------------------
