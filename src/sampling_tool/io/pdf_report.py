@@ -31,6 +31,7 @@ from reportlab.platypus import (
 
 from sampling_tool.config import BDO_RED
 from sampling_tool.core.models import AuditEvent, Engagement
+from sampling_tool.io.briefpapier import BriefpapierConfig, get_default_briefpapier
 
 _BDO_RED_COLOR: Final = colors.HexColor(BDO_RED)
 _GREY_LIGHT: Final = colors.HexColor("#D9D9D9")
@@ -38,12 +39,37 @@ _GREY_CORRECTION: Final = colors.HexColor("#FFF3D6")
 
 
 class AuditTrailPDF:
-    """Erzeugt das AuditTrail-PDF für ein Engagement."""
+    """Erzeugt das AuditTrail-PDF für ein Engagement.
 
-    def __init__(self, briefpapier: Path | None = None) -> None:
-        self.briefpapier = briefpapier
-        if briefpapier is not None and not briefpapier.exists():
-            raise FileNotFoundError(f"Briefpapier-Datei nicht gefunden: {briefpapier}")
+    `briefpapier` kann sein:
+    - `Path` – nutzt explizit diese Datei als Hintergrund,
+    - `BriefpapierConfig` – komplette Konfiguration inkl. Rändern,
+    - `None` – das System sucht nach einem Default (User-Ordner +
+      Resource-Ordner). Findet sich nichts, läuft der Report ohne
+      Briefpapier-Layer.
+    """
+
+    def __init__(
+        self,
+        briefpapier: Path | BriefpapierConfig | None = None,
+    ) -> None:
+        if isinstance(briefpapier, Path):
+            if not briefpapier.exists():
+                raise FileNotFoundError(f"Briefpapier-Datei nicht gefunden: {briefpapier}")
+            self.briefpapier_config: BriefpapierConfig | None = BriefpapierConfig(
+                background_image=briefpapier
+            )
+        elif isinstance(briefpapier, BriefpapierConfig):
+            self.briefpapier_config = briefpapier
+        else:
+            self.briefpapier_config = get_default_briefpapier()
+
+    @property
+    def briefpapier(self) -> Path | None:
+        """Pfad zum aktiven Briefpapier oder `None`."""
+        if self.briefpapier_config is None:
+            return None
+        return self.briefpapier_config.background_image
 
     def render(
         self,

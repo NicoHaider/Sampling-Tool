@@ -69,6 +69,13 @@ SUPPORTED_CSV_SUFFIXES: Final[tuple[str, ...]] = (".csv", ".tsv")
 # Auto-Snapshots beim Öffnen.
 ENGAGEMENTS_DIR: Final[Path] = Path.home() / "Documents" / "BDO Audit Sampling"
 
+# Ablage für ein optionales Briefpapier (PNG/JPG/PDF), das beim Generieren
+# von PDF-Reports als Hintergrund eingelegt wird. Wird in Sprint 7 mit dem
+# echten BDO-Briefpapier gefüllt; bis dahin nutzt die App das in
+# `resources/briefpapier/` mitgelieferte Default, falls vorhanden.
+BRIEFPAPIER_DIR: Final[Path] = ENGAGEMENTS_DIR / "briefpapier"
+BRIEFPAPIER_DEFAULT_NAME: Final[str] = "bdo_letterhead"
+
 
 # ---------------------------------------------------------------------------
 # Pfad-/Datei-Helfer

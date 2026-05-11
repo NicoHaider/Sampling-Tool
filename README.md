@@ -5,8 +5,8 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 
 ## Status
 
-**Sprint 5.5 von 7** – UX-Bugfixes + Engagement-Auto-Versionierung
-✅ **erledigt** (218 Tests grün, Ruff + Mypy clean).
+**Sprint 6 von 7** – Dashboard, AuditTrail-View, Multi-Sheet-/HTML-Reports
+✅ **erledigt** (Ruff + Mypy clean).
 
 | Sprint | Inhalt                                              | Status      |
 |-------:|-----------------------------------------------------|-------------|
@@ -16,8 +16,34 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 | 4      | PyQt6-UI: Hauptfenster, Datentabelle, Sidebar       | **done**    |
 | 5      | UI: Sampling-Dialog, Export, Undo/Redo, Bug/About   | **done**    |
 | 5.5    | UX-Bugfixes + Engagement-Auto-Versionierung         | **done**    |
-| 6      | Reports: HTML (jinja2), erweiterte Excel-Reports    | offen       |
-| 7      | Bug-Mail (pywin32/Outlook), PyInstaller-Build       | offen       |
+| 5.6    | Sample-Filter-Default, grüne Markierung, Engagement-Wechsel | **done** |
+| 6      | Dashboard, AuditTrail-View, Multi-Sheet-/HTML-Report | **done**   |
+| 7      | Bug-Mail (pywin32/Outlook), echtes BDO-Briefpapier, PyInstaller | offen |
+
+### Was Sprint 6 liefert
+
+- **Splitter-Layout** im Workspace: Tabelle oben (60 %), unten ein
+  `QTabWidget` mit zwei Tabs (AuditTrail / Dashboard, 40 %).
+  Splitter-Größen werden in `QSettings` persistiert.
+- **AuditTrail-View** (`ui/widgets/audit_trail_view.py`): sortierbar,
+  filterbar nach Aktion / User / Zeitraum + Volltext. Doppelklick auf
+  einen Sample-Event markiert das Sample in der Tabelle.
+- **Dashboard-View** (`ui/widgets/dashboard_view.py`): sechs Kacheln
+  mit Statistiken und Mini-Charts (Sampling-Historie, Methoden-
+  Verteilung, Top-Eventtypen). Klick auf eine Stichprobe in
+  „Letzte Stichproben" selektiert sie.
+- **Multi-Sheet Excel-Report** (`io/multi_report_exporter.py`): vier
+  Sheets (Übersicht, AuditTrail, Samples, Statistiken) – komplettes
+  Engagement in einer Datei, Chart als Bild eingebettet.
+- **HTML-Report** (`io/html_report.py`): selbstständige Datei mit
+  Inline-CSS und Base64-Charts, Jinja2-Template.
+- **Briefpapier-System** (`io/briefpapier.py`): `BriefpapierConfig` +
+  `get_default_briefpapier()` (User-Override → Resource-Fallback);
+  echtes BDO-Briefpapier kommt Sprint 7.
+- **Empty-States** in Tabelle, AuditTrail-, Dashboard- und
+  Sidebar-Listen.
+- **About-Dialog** mit Changelog der letzten drei Versionen.
+- **matplotlib** als neue Dependency (Agg-Backend, headless).
 
 ### Was Sprint 5.5 liefert
 

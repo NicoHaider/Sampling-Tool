@@ -25,8 +25,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 4      | PyQt6-UI: Hauptfenster, Datentabelle, Sidebar       | done        |
 | 5      | UI: Sampling-Dialog, Export, Undo/Redo, Bug/About   | done        |
 | 5.5    | UX-Bugfixes + Engagement-Auto-Versionierung         | done        |
-| 6      | Reports: HTML (jinja2), erweiterte Excel-Reports    | offen       |
-| 7      | Bug-Mail (pywin32/Outlook), PyInstaller-Build       | offen       |
+| 5.6    | Sample-Filter-Default, grüne Markierung, Engagement-Wechsel | done |
+| 6      | Dashboard, AuditTrail-View, Multi-Sheet-/HTML-Report | done       |
+| 7      | Bug-Mail (pywin32/Outlook), echtes BDO-Briefpapier, PyInstaller | offen |
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -60,6 +61,20 @@ ui ──▶ controllers ──▶ core ◀── io
     A4 Portrait, Engagement-Block oben, Tabelle aller Events mit
     Korrektur-Highlight, Footer mit Seitenzahl + Zeitstempel. Optionales
     Briefpapier (PNG/JPG) wird via `onPage`-Hook hinter den Content gelegt.
+    Falls kein Briefpapier explizit übergeben wird, lädt
+    `get_default_briefpapier()` automatisch ein Default (s. unten).
+  - `multi_report_exporter.py` – `MultiSheetReportExporter` schreibt einen
+    Komplett-Bericht als Multi-Sheet-xlsx (Übersicht, AuditTrail, Samples,
+    Statistiken inkl. eingebettetem Chart-Bild). Atomare Writes wie der
+    `ExcelExporter`.
+  - `html_report.py` – `HtmlReportGenerator` rendert einen selbstständigen
+    HTML-Report via Jinja2. CSS inline, Charts als Base64-PNG eingebettet,
+    Template-Default unter `resources/templates/audit_report.html`.
+  - `briefpapier.py` – `BriefpapierConfig` (frozen) + `get_default_briefpapier()`.
+    Sucht das BDO-Briefpapier zuerst unter `BRIEFPAPIER_DIR`
+    (`~/Documents/BDO Audit Sampling/briefpapier/`), dann unter
+    `<package>/resources/briefpapier/`. Sprint 7 liefert das echte
+    `bdo_letterhead.png`; bis dahin laufen Reports ohne Briefpapier.
 - **`persistence/`** – SQLite über sqlite3 (kein ORM-Overhead).
   - `database.py` – `Database`-Wrapper mit WAL+FK-PRAGMAs, `session()`-Transaktionen,
     `savepoint()`-Helper für nestbare Repo-Transaktionen, automatische Migrations.
@@ -81,8 +96,11 @@ ui ──▶ controllers ──▶ core ◀── io
 - **`ui/`** – PyQt6. Strikt MVC: Widgets dumm, Controllers in
   `ui/controllers/`. Stylesheet (BDO-CI) unter `ui/styles/*.qss`.
   - `main_window.py` – `MainWindow` mit `QStackedWidget`-State-Maschine
-    Welcome ↔ Workspace. Menü, Toolbar, Splitter (Sidebar+Tabelle),
-    Statusbar. Sendet typisierte Signals; *kein* DB-Zugriff hier.
+    Welcome ↔ Workspace. Menü, Toolbar, Splitter-Layout (Sidebar links;
+    rechts vertikaler Splitter: Datentabelle oben, `QTabWidget` mit
+    AuditTrail-/Dashboard-View unten). Splitter-Größen + aktiver
+    Tab werden in `QSettings` (BDO / Audit Sampling Tool) persistiert.
+    Sendet typisierte Signals; *kein* DB-Zugriff hier.
   - `controllers/main_controller.py` – Glue-Schicht UI ↔ Persistence/IO.
     Hält `Database`-Instanz, das aktuelle Engagement und einen
     `UndoManager`. Übersetzt UI-Signals in Repo-Calls und orchestriert
@@ -95,6 +113,23 @@ ui ──▶ controllers ──▶ core ◀── io
     `DataTableView`. Virtuelles Model (kein QStandardItemModel) –
     100k+ Zeilen scrollen flüssig. Sample-Highlighting per
     `BackgroundRole`, Filter ohne Proxy via `_visible_indices`.
+    Bei leerem Model zeichnet `paintEvent` einen zentrierten
+    "Keine Datensätze – Datei importieren"-Hinweis.
+  - `widgets/audit_trail_view.py` – `AuditTrailModel` +
+    `AuditTrailFilterProxy` + `AuditTrailView`. Filter-Zeile mit
+    Volltextsuche und ComboBoxen (Aktion / User / Zeitraum), sortierbar.
+    Doppelklick emittiert `event_double_clicked(int)` – der Controller
+    sucht den passenden Sample-Event und markiert das Sample.
+  - `widgets/dashboard_view.py` – `DashboardView` mit Kachel-Grid
+    (Datasets, Samples, Audit-Events, Letzte Aktivität, Letzte
+    Stichproben, Sampling-Historie). Charts werden via `chart_renderer`
+    als `QPixmap` in `QLabel`s gerendert. Klicks auf einzelne Samples
+    emittieren `sample_clicked(int)`.
+  - `widgets/chart_renderer.py` – Matplotlib-Wrapper (Agg-Backend).
+    `render_bar/line/pie_chart` liefern `QPixmap` (UI), die
+    `..._bytes`-Varianten liefern rohe PNG-Bytes (HTML-Embed / Excel).
+    BDO-Farbschema aus `config.py`, transparenter Hintergrund,
+    `plt.close(fig)` nach jeder Render-Operation gegen Memory-Leaks.
   - `widgets/sidebar.py` – `NavigationSidebar` mit drei Sektionen
     (Engagement-Block, Datasets-Liste, Samples-Liste).
   - `widgets/welcome.py` – `WelcomeScreen` (Recent-Engagement-Karten +
