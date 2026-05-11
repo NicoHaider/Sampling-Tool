@@ -15,6 +15,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QLabel,
     QListWidget,
@@ -38,6 +39,7 @@ class NavigationSidebar(QFrame):
     dataset_selected = pyqtSignal(int)
     sample_selected = pyqtSignal(int)
     sample_double_clicked = pyqtSignal(int)
+    filter_only_sample_toggled = pyqtSignal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -73,6 +75,14 @@ class NavigationSidebar(QFrame):
         self._samples_list.itemClicked.connect(self._on_sample_clicked)
         self._samples_list.itemDoubleClicked.connect(self._on_sample_double_clicked)
         layout.addWidget(self._samples_list, stretch=1)
+
+        # Filter-Checkbox – grenzt die Tabelle auf das aktive Sample ein.
+        # Default deaktiviert, bis ein Sample aktiv ist (Controller schaltet frei).
+        self._filter_only_sample = QCheckBox("Nur markierte Zeilen anzeigen")
+        self._filter_only_sample.setObjectName("FilterOnlySampleCheckbox")
+        self._filter_only_sample.setEnabled(False)
+        self._filter_only_sample.toggled.connect(self.filter_only_sample_toggled.emit)
+        layout.addWidget(self._filter_only_sample)
 
     # ---- Public API -----------------------------------------------------
 
@@ -144,6 +154,34 @@ class NavigationSidebar(QFrame):
     def samples_widget(self) -> QListWidget:
         """Zugriff auf die innere Sample-Liste (Tests)."""
         return self._samples_list
+
+    def filter_checkbox(self) -> QCheckBox:
+        """Zugriff auf die Filter-Checkbox (Tests)."""
+        return self._filter_only_sample
+
+    def set_filter_enabled(self, enabled: bool) -> None:
+        """Schaltet die Filter-Checkbox (Controller schaltet frei wenn Sample aktiv)."""
+        self._filter_only_sample.setEnabled(enabled)
+        if not enabled and self._filter_only_sample.isChecked():
+            # Wenn die Checkbox deaktiviert wird, soll sie auch entcheckt sein –
+            # sonst entsteht ein verwirrender Zwischenstand (gecheckt, aber wirkungslos).
+            self.set_filter_only_sample(False)
+
+    def is_filter_only_sample(self) -> bool:
+        """Aktueller Zustand der Filter-Checkbox."""
+        return self._filter_only_sample.isChecked()
+
+    def set_filter_only_sample(self, active: bool) -> None:
+        """Setzt die Checkbox programmatisch ohne Signal-Loop auszulösen."""
+        if self._filter_only_sample.isChecked() == active:
+            return
+        # Ohne Block würde `setChecked` das `toggled`-Signal feuern und damit
+        # den Controller erneut anstoßen, der uns gerade aufruft – Endlos-Loop.
+        self._filter_only_sample.blockSignals(True)
+        try:
+            self._filter_only_sample.setChecked(active)
+        finally:
+            self._filter_only_sample.blockSignals(False)
 
     # ---- Slots ---------------------------------------------------------
 

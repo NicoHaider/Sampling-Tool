@@ -138,3 +138,44 @@ class TestMainWindowState:
         win.highlight_sample(_sample())
         win.clear_active_sample()
         assert win._status_sample.text() == "Aktive Stichprobe: keine"
+
+    def test_active_sample_status_label_filtered_suffix(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.show_workspace()
+        win.show_dataset(_dataset())
+        win.set_samples([_sample()])
+        win.highlight_sample(_sample(), filtered=True)
+        assert "– gefiltert" in win._status_sample.text()
+
+    def test_active_sample_status_label_no_suffix_when_not_filtered(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.show_workspace()
+        win.show_dataset(_dataset())
+        win.set_samples([_sample()])
+        win.highlight_sample(_sample(), filtered=False)
+        assert "gefiltert" not in win._status_sample.text()
+
+
+class TestSwitchEngagementToolbar:
+    """Sprint 5.6: neuer Toolbar-Button 'Engagement wechseln'."""
+
+    def test_toolbar_action_exists(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        assert hasattr(win, "_action_switch_engagement")
+        assert win._action_switch_engagement.text() == "Engagement wechseln"
+
+    def test_toolbar_action_emits_close_signal(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        with qtbot.waitSignal(win.close_engagement_requested, timeout=500):
+            win._action_switch_engagement.trigger()
+
+    def test_close_action_in_file_menu_emits_close_signal(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.show_workspace()  # Aktion ist nur enabled, wenn Workspace sichtbar.
+        with qtbot.waitSignal(win.close_engagement_requested, timeout=500):
+            win._action_close.trigger()

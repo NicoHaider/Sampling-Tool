@@ -21,9 +21,11 @@ from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import QHeaderView, QTableView, QWidget
 
+from sampling_tool.config import SAMPLE_HIGHLIGHT_ALPHA, SAMPLE_HIGHLIGHT_COLOR
 from sampling_tool.core.models import Dataset
 
-HIGHLIGHT_COLOR: str = "#FFF4D6"
+HIGHLIGHT_COLOR: str = SAMPLE_HIGHLIGHT_COLOR
+HIGHLIGHT_ALPHA: int = SAMPLE_HIGHLIGHT_ALPHA
 
 _MIN_COLUMN_WIDTH: int = 60
 _MAX_COLUMN_WIDTH: int = 320
@@ -42,7 +44,9 @@ class DatasetTableModel(QAbstractTableModel):
         self._columns: tuple[str, ...] = ()
         self._visible_indices: list[int] = []
         self._highlight: frozenset[int] = frozenset()
-        self._highlight_brush = QBrush(QColor(HIGHLIGHT_COLOR))
+        color = QColor(HIGHLIGHT_COLOR)
+        color.setAlpha(HIGHLIGHT_ALPHA)
+        self._highlight_brush = QBrush(color)
         if dataset is not None:
             self.set_dataset(dataset)
 
@@ -67,7 +71,7 @@ class DatasetTableModel(QAbstractTableModel):
         self.endResetModel()
 
     def set_highlight(self, row_ids: Sequence[int]) -> None:
-        """Markiert Zeilen mit den angegebenen `row_id`s gelb."""
+        """Markiert Zeilen mit den angegebenen `row_id`s in der Highlight-Farbe."""
         self._highlight = frozenset(row_ids)
         if self.rowCount() > 0 and self._columns:
             top_left = self.index(0, 0)

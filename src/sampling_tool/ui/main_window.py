@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
     dataset_selected = pyqtSignal(int)
     sample_selected = pyqtSignal(int)
     sample_filter_toggled = pyqtSignal(int)
+    filter_only_sample_toggled = pyqtSignal(bool)
 
     def __init__(self) -> None:
         super().__init__()
@@ -142,23 +143,34 @@ class MainWindow(QMainWindow):
         self._sidebar.set_active_sample(None)
         self._action_new_sample.setEnabled(True)
 
-    def highlight_sample(self, sample: SampleResult) -> None:
-        """Markiert Sample-Zeilen in der Tabelle gelb."""
+    def highlight_sample(self, sample: SampleResult, *, filtered: bool = False) -> None:
+        """Markiert Sample-Zeilen und aktualisiert Statusbar + Sidebar."""
         self._data_table.highlight_rows(sample.selected_row_ids)
-        self.set_active_sample_label(sample)
+        self.set_active_sample_label(sample, filtered=filtered)
         self._sidebar.set_active_sample(sample.id)
         self._action_export_sample.setEnabled(True)
 
-    def set_active_sample_label(self, sample: SampleResult | None) -> None:
-        """Aktualisiert das „Aktive Stichprobe"-Label in der Statusbar."""
+    def set_active_sample_label(
+        self,
+        sample: SampleResult | None,
+        *,
+        filtered: bool = False,
+    ) -> None:
+        """Aktualisiert das „Aktive Stichprobe"-Label in der Statusbar.
+
+        Wenn `filtered=True`, wird der Suffix " – gefiltert" angehängt.
+        """
         if sample is None or sample.id is None:
             self._status_sample.setText("Aktive Stichprobe: keine")
             return
         method_label = _METHOD_LABELS.get(sample.config.method.value, sample.config.method.value)
-        self._status_sample.setText(
+        text = (
             f"Aktive Stichprobe: #{sample.id} ({method_label}, "
             f"{sample.actual_size}/{sample.population_size})"
         )
+        if filtered:
+            text += " – gefiltert"
+        self._status_sample.setText(text)
 
     def clear_active_sample(self) -> None:
         """Entfernt die aktive-Stichprobe-Markierung aus Sidebar + Statusbar."""
@@ -172,6 +184,14 @@ class MainWindow(QMainWindow):
     def clear_sample_filter(self) -> None:
         """Hebt einen Sample-Filter wieder auf."""
         self._data_table.clear_filter()
+
+    def set_filter_only_sample(self, active: bool) -> None:
+        """Setzt die Sidebar-Checkbox programmatisch (ohne Signal-Loop)."""
+        self._sidebar.set_filter_only_sample(active)
+
+    def set_filter_enabled(self, enabled: bool) -> None:
+        """Schaltet die Sidebar-Filter-Checkbox (Controller entscheidet)."""
+        self._sidebar.set_filter_enabled(enabled)
 
     def clear_table(self) -> None:
         """Entfernt das aktuelle Dataset aus der Tabelle."""
@@ -214,6 +234,7 @@ class MainWindow(QMainWindow):
         self._sidebar.dataset_selected.connect(self.dataset_selected.emit)
         self._sidebar.sample_selected.connect(self.sample_selected.emit)
         self._sidebar.sample_double_clicked.connect(self.sample_filter_toggled.emit)
+        self._sidebar.filter_only_sample_toggled.connect(self.filter_only_sample_toggled.emit)
         splitter.addWidget(self._sidebar)
 
         self._data_table = DataTableView()
@@ -247,7 +268,11 @@ class MainWindow(QMainWindow):
         self._recent_menu.setEnabled(False)
 
         file_menu.addSeparator()
+        style = self.style()
         self._action_close = QAction("Engagement schließen", self)
+        if style is not None:
+            self._action_close.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon))
+        self._action_close.setToolTip("Engagement schließen und zum Startbildschirm zurückkehren")
         self._action_close.triggered.connect(self.close_engagement_requested.emit)
         file_menu.addAction(self._action_close)
 
@@ -322,6 +347,19 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("Hauptaktionen", self)
         toolbar.setMovable(False)
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        # "Engagement wechseln" ganz links – schneller Rückweg zum Welcome-Screen.
+        style = self.style()
+        self._action_switch_engagement = QAction("Engagement wechseln", self)
+        if style is not None:
+            self._action_switch_engagement.setIcon(
+                style.standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon)
+            )
+        self._action_switch_engagement.setToolTip(
+            "Engagement schließen und zum Startbildschirm zurückkehren"
+        )
+        self._action_switch_engagement.triggered.connect(self.close_engagement_requested.emit)
+        toolbar.addAction(self._action_switch_engagement)
+        toolbar.addSeparator()
         toolbar.addAction(self._action_new)
         toolbar.addAction(self._action_open)
         toolbar.addSeparator()
