@@ -99,3 +99,8 @@ config.local.toml
 
 # Claude Code workspace cache
 .claude/
+
+# SQLite Hilfsdateien (WAL-Mode)
+*.db-shm
+*.db-wal
+*.db-journal
