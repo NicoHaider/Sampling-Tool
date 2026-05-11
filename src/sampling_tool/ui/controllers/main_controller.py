@@ -33,6 +33,7 @@ from sampling_tool.config import (
     SUPPORTED_EXCEL_SUFFIXES,
 )
 from sampling_tool.core.models import (
+    AuditEvent,
     Dataset,
     DatasetRow,
     Engagement,
@@ -42,7 +43,9 @@ from sampling_tool.core.models import (
 from sampling_tool.core.sampling import SamplingError, create_sampler
 from sampling_tool.core.undo import UndoManager
 from sampling_tool.io.exporter import ExcelExporter, ExportError
+from sampling_tool.io.html_report import HtmlReportGenerator
 from sampling_tool.io.importer import DataImportError, ExcelImporter
+from sampling_tool.io.multi_report_exporter import MultiSheetReportExporter
 from sampling_tool.io.pdf_report import AuditTrailPDF
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import (
@@ -131,12 +134,17 @@ class MainController:
         w.redo_requested.connect(self.handle_redo)
         w.export_sample_requested.connect(self.handle_export_sample)
         w.export_audit_pdf_requested.connect(self.handle_export_audit_pdf)
+        w.export_excel_report_requested.connect(self.handle_export_excel_report)
+        w.export_html_report_requested.connect(self.handle_export_html_report)
         w.bug_report_requested.connect(self.handle_bug_report)
         w.about_requested.connect(self.handle_about)
         w.dataset_selected.connect(self.handle_dataset_selected)
         w.sample_selected.connect(self.handle_sample_selected)
         w.sample_filter_toggled.connect(self.handle_sample_filter_toggled)
         w.filter_only_sample_toggled.connect(self.handle_filter_only_sample_toggled)
+        w.audit_event_double_clicked.connect(self.handle_audit_event_double_clicked)
+        w.audit_refresh_requested.connect(self._refresh_audit_trail)
+        w.dashboard_refresh_requested.connect(self._refresh_dashboard)
 
     # ---- Engagement-Lifecycle ------------------------------------------
 
@@ -226,6 +234,7 @@ class MainController:
         self.window.set_samples([])
         self.window.show_welcome()
         self._update_undo_redo_state()
+        self._refresh_views()
         self.refresh_recent()
 
     # ---- Import / Dataset ----------------------------------------------
@@ -267,6 +276,7 @@ class MainController:
         self._reload_datasets()
         if stored.id is not None:
             self.handle_dataset_selected(stored.id)
+        self._refresh_views()
 
         warning_text = ""
         if result.skipped_rows:
@@ -452,6 +462,7 @@ class MainController:
         self.window.set_filter_only_sample(True)
         self._push_undo_snapshot()
         self._update_undo_redo_state()
+        self._refresh_views()
 
     def handle_reset(self) -> None:
         """Auswahl zurücksetzen (Highlights entfernen, Filter raus)."""
@@ -484,6 +495,7 @@ class MainController:
         self.window.clear_active_sample()
         self._push_undo_snapshot()
         self._update_undo_redo_state()
+        self._refresh_views()
 
     # ---- Undo / Redo ---------------------------------------------------
 
@@ -502,6 +514,7 @@ class MainController:
                 AuditRepo(self._db.connect()), self._user_name(), self._engagement.id
             ).log_undo(self._sample.id)
         self._update_undo_redo_state()
+        self._refresh_views()
 
     def handle_redo(self) -> None:
         """Letzten rückgängig gemachten Zustand wiederherstellen."""
@@ -519,6 +532,7 @@ class MainController:
                 AuditRepo(self._db.connect()), self._user_name(), self._engagement.id
             ).log_redo(self._sample.id)
         self._update_undo_redo_state()
+        self._refresh_views()
 
     # ---- Export --------------------------------------------------------
 
@@ -568,6 +582,7 @@ class MainController:
         AuditLogger(
             AuditRepo(self._db.connect()), self._user_name(), self._engagement.id
         ).log_export(self._sample.id, output_path, self._sample.actual_size)
+        self._refresh_views()
 
         QMessageBox.information(
             self.window,
@@ -606,6 +621,78 @@ class MainController:
             self.window, "AuditTrail exportiert", f"PDF gespeichert unter:\n{path}"
         )
 
+    def handle_export_excel_report(self) -> None:
+        """Multi-Sheet Excel-Report für das aktuelle Engagement."""
+        if self._db is None or self._engagement is None or self._engagement.id is None:
+            return
+
+        default_name = f"Bericht_{_safe_filename(self._engagement.client_name)}.xlsx"
+        path_str, _filter = QFileDialog.getSaveFileName(
+            self.window,
+            "Excel-Report speichern",
+            default_name,
+            "Excel (*.xlsx)",
+        )
+        if not path_str:
+            return
+        path = Path(path_str)
+        if path.suffix.lower() != ".xlsx":
+            path = path.with_suffix(".xlsx")
+
+        try:
+            datasets, samples, events = self._collect_report_data()
+            MultiSheetReportExporter().export(self._engagement, datasets, samples, events, path)
+        except Exception as exc:  # pragma: no cover – defensiv
+            logger.exception("Excel-Report fehlgeschlagen")
+            self._error(f"Excel-Report fehlgeschlagen: {exc}")
+            return
+        QMessageBox.information(
+            self.window, "Excel-Report erstellt", f"Bericht gespeichert unter:\n{path}"
+        )
+
+    def handle_export_html_report(self) -> None:
+        """HTML-Report für E-Mail-Versand."""
+        if self._db is None or self._engagement is None or self._engagement.id is None:
+            return
+
+        default_name = f"Bericht_{_safe_filename(self._engagement.client_name)}.html"
+        path_str, _filter = QFileDialog.getSaveFileName(
+            self.window,
+            "HTML-Report speichern",
+            default_name,
+            "HTML (*.html)",
+        )
+        if not path_str:
+            return
+        path = Path(path_str)
+        if path.suffix.lower() != ".html":
+            path = path.with_suffix(".html")
+
+        try:
+            datasets, samples, events = self._collect_report_data()
+            HtmlReportGenerator().render(self._engagement, datasets, samples, events, path)
+        except Exception as exc:  # pragma: no cover – defensiv
+            logger.exception("HTML-Report fehlgeschlagen")
+            self._error(f"HTML-Report fehlgeschlagen: {exc}")
+            return
+        QMessageBox.information(
+            self.window, "HTML-Report erstellt", f"Bericht gespeichert unter:\n{path}"
+        )
+
+    # ---- AuditTrail / Dashboard ----------------------------------------
+
+    def handle_audit_event_double_clicked(self, event_id: int) -> None:
+        """Doppelklick auf einen AuditTrail-Event: falls Sample-Bezug → markieren."""
+        if self._db is None or self._engagement is None or self._engagement.id is None:
+            return
+        events = AuditRepo(self._db.connect()).list_for_engagement(
+            self._engagement.id, limit=10_000
+        )
+        event = next((e for e in events if e.id == event_id), None)
+        if event is None or event.sample_id is None:
+            return
+        self.handle_sample_selected(event.sample_id)
+
     # ---- Help ----------------------------------------------------------
 
     def handle_bug_report(self) -> None:
@@ -640,6 +727,7 @@ class MainController:
         self.window.set_samples([])
         self.window.clear_table()
         self._update_undo_redo_state()
+        self._refresh_views()
 
         self.recent_store.add(
             db_path,
@@ -653,6 +741,50 @@ class MainController:
             return
         self._datasets = DatasetRepo(self._db.connect()).list_for_engagement(self._engagement.id)
         self.window.set_datasets(self._datasets)
+
+    def _collect_report_data(
+        self,
+    ) -> tuple[list[Dataset], list[SampleResult], list[AuditEvent]]:
+        """Bündelt Datasets / Samples / Events fürs Report-Rendering."""
+        assert self._db is not None
+        assert self._engagement is not None
+        assert self._engagement.id is not None
+        engagement_id = self._engagement.id
+        ds_repo = DatasetRepo(self._db.connect())
+        sample_repo = SampleRepo(self._db.connect())
+        audit_repo = AuditRepo(self._db.connect())
+        datasets = ds_repo.list_for_engagement(engagement_id)
+        samples: list[SampleResult] = []
+        for ds in datasets:
+            if ds.id is None:
+                continue
+            samples.extend(sample_repo.list_for_dataset(ds.id))
+        events = audit_repo.list_for_engagement(engagement_id, limit=10_000)
+        return datasets, samples, events
+
+    def _refresh_audit_trail(self) -> None:
+        """Lädt AuditEvents neu und gibt sie an AuditTrailView."""
+        if self._db is None or self._engagement is None or self._engagement.id is None:
+            self.window.set_audit_events([])
+            return
+        events = AuditRepo(self._db.connect()).list_for_engagement(
+            self._engagement.id, limit=10_000
+        )
+        self.window.set_audit_events(events)
+
+    def _refresh_dashboard(self) -> None:
+        """Lädt Engagement-Stats neu und gibt sie an DashboardView."""
+        if self._db is None or self._engagement is None or self._engagement.id is None:
+            self.window.set_dashboard_data(None, [], [], [])
+            return
+        datasets, samples, events = self._collect_report_data()
+        self.window.set_dashboard_data(self._engagement, datasets, samples, events)
+
+    def _refresh_views(self) -> None:
+        """Aktualisiert AuditTrail + Dashboard + Report-Buttons in einem Rutsch."""
+        self._refresh_audit_trail()
+        self._refresh_dashboard()
+        self.window.set_reports_enabled(self._engagement is not None and self._db is not None)
 
     def _build_sampling_dataset(self, from_sample_only: bool) -> Dataset:
         """Liefert das Dataset, auf dem der Sampler arbeitet.

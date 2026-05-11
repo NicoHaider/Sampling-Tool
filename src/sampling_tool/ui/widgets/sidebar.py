@@ -65,12 +65,16 @@ class NavigationSidebar(QFrame):
 
         # Datasets
         layout.addWidget(_section_label("Datensätze"))
+        self._datasets_empty = _empty_hint("Noch keine Datensätze")
+        layout.addWidget(self._datasets_empty)
         self._datasets_list = QListWidget()
         self._datasets_list.itemClicked.connect(self._on_dataset_clicked)
         layout.addWidget(self._datasets_list, stretch=1)
 
         # Samples
         layout.addWidget(_section_label("Stichproben"))
+        self._samples_empty = _empty_hint("Noch keine Stichproben")
+        layout.addWidget(self._samples_empty)
         self._samples_list = QListWidget()
         self._samples_list.itemClicked.connect(self._on_sample_clicked)
         self._samples_list.itemDoubleClicked.connect(self._on_sample_double_clicked)
@@ -104,6 +108,7 @@ class NavigationSidebar(QFrame):
             ds_id = ds.id if ds.id is not None else -1
             item.setData(_DATASET_ID_ROLE, ds_id)
             self._datasets_list.addItem(item)
+        self._datasets_empty.setVisible(not datasets)
 
     def set_samples(self, samples: list[SampleResult]) -> None:
         """Befüllt die Sample-Liste – mit Methode + Größe als Label."""
@@ -118,6 +123,7 @@ class NavigationSidebar(QFrame):
             item.setData(_SAMPLE_ID_ROLE, sample_id)
             item.setData(_SAMPLE_LABEL_ROLE, label)
             self._samples_list.addItem(item)
+        self._samples_empty.setVisible(not samples)
 
     def clear_samples(self) -> None:
         """Leert die Sample-Liste (z. B. wenn kein Dataset aktiv)."""
@@ -209,4 +215,12 @@ class NavigationSidebar(QFrame):
 def _section_label(text: str) -> QLabel:
     label = QLabel(text)
     label.setProperty("sectionHeader", True)
+    return label
+
+
+def _empty_hint(text: str) -> QLabel:
+    """Graues Sub-Label – wird unter den Sektions-Headern angezeigt, wenn leer."""
+    label = QLabel(text)
+    label.setStyleSheet("color: #B0B0B0; font-style: italic; padding: 4px 8px;")
+    label.setProperty("emptyHint", True)
     return label

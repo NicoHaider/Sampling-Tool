@@ -18,7 +18,7 @@ from datetime import date, datetime, time
 from typing import Any
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
-from PyQt6.QtGui import QBrush, QColor
+from PyQt6.QtGui import QBrush, QColor, QPainter, QPaintEvent
 from PyQt6.QtWidgets import QHeaderView, QTableView, QWidget
 
 from sampling_tool.config import SAMPLE_HIGHLIGHT_ALPHA, SAMPLE_HIGHLIGHT_COLOR
@@ -29,6 +29,7 @@ HIGHLIGHT_ALPHA: int = SAMPLE_HIGHLIGHT_ALPHA
 
 _MIN_COLUMN_WIDTH: int = 60
 _MAX_COLUMN_WIDTH: int = 320
+_EMPTY_MESSAGE: str = "Keine Datensätze – Datei importieren"
 
 
 class DatasetTableModel(QAbstractTableModel):
@@ -233,6 +234,29 @@ class DataTableView(QTableView):
     def table_model(self) -> DatasetTableModel:
         """Direkter Zugriff auf das interne Model (für Tests)."""
         return self._model
+
+    def paintEvent(self, e: QPaintEvent | None) -> None:  # noqa: N802
+        """Zeichnet zusätzlich einen Empty-State-Hinweis, wenn keine Daten geladen sind."""
+        super().paintEvent(e)
+        if self._model.rowCount() > 0:
+            return
+        viewport = self.viewport()
+        if viewport is None:
+            return
+        painter = QPainter(viewport)
+        try:
+            painter.setPen(QColor("#B0B0B0"))
+            font = painter.font()
+            font.setPointSize(font.pointSize() + 2)
+            font.setItalic(True)
+            painter.setFont(font)
+            painter.drawText(
+                viewport.rect(),
+                int(Qt.AlignmentFlag.AlignCenter),
+                _EMPTY_MESSAGE,
+            )
+        finally:
+            painter.end()
 
     # ---- intern ---------------------------------------------------------
 

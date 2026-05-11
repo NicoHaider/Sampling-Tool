@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtCore import QByteArray, QSettings, Qt, pyqtSignal
+from PyQt6.QtGui import QAction, QCloseEvent, QKeySequence
 from PyQt6.QtWidgets import (
     QFileDialog,
     QLabel,
@@ -21,13 +21,16 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
     QStatusBar,
     QStyle,
+    QTabWidget,
     QToolBar,
     QWidget,
 )
 
-from sampling_tool.config import APP_NAME, ENGAGEMENTS_DIR
-from sampling_tool.core.models import Dataset, Engagement, SampleResult
+from sampling_tool.config import APP_NAME, APP_ORG, ENGAGEMENTS_DIR
+from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.ui.recent import RecentEntry
+from sampling_tool.ui.widgets.audit_trail_view import AuditTrailView
+from sampling_tool.ui.widgets.dashboard_view import DashboardView
 from sampling_tool.ui.widgets.data_table import DataTableView
 from sampling_tool.ui.widgets.sidebar import NavigationSidebar
 from sampling_tool.ui.widgets.welcome import WelcomeScreen
@@ -55,17 +58,24 @@ class MainWindow(QMainWindow):
     redo_requested = pyqtSignal()
     export_sample_requested = pyqtSignal()
     export_audit_pdf_requested = pyqtSignal()
+    export_excel_report_requested = pyqtSignal()
+    export_html_report_requested = pyqtSignal()
     bug_report_requested = pyqtSignal()
     about_requested = pyqtSignal()
     dataset_selected = pyqtSignal(int)
     sample_selected = pyqtSignal(int)
     sample_filter_toggled = pyqtSignal(int)
     filter_only_sample_toggled = pyqtSignal(bool)
+    audit_event_double_clicked = pyqtSignal(int)
+    audit_refresh_requested = pyqtSignal()
+    dashboard_refresh_requested = pyqtSignal()
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.resize(1280, 800)
+
+        self._settings = QSettings(APP_ORG, APP_NAME)
 
         # ---- zentrale Widgets ----
         self._stack = QStackedWidget()
@@ -78,6 +88,7 @@ class MainWindow(QMainWindow):
 
         self._workspace = self._build_workspace()
         self._stack.addWidget(self._workspace)
+        self._restore_workspace_state()
 
         # ---- Statusbar ----
         self._status_engagement = QLabel("Kein Engagement")
@@ -142,6 +153,25 @@ class MainWindow(QMainWindow):
         self.set_active_sample_label(None)
         self._sidebar.set_active_sample(None)
         self._action_new_sample.setEnabled(True)
+
+    def set_audit_events(self, events: list[AuditEvent]) -> None:
+        """Liefert die Events an die AuditTrail-View."""
+        self._audit_trail_view.set_events(events)
+
+    def set_dashboard_data(
+        self,
+        engagement: Engagement | None,
+        datasets: list[Dataset],
+        samples: list[SampleResult],
+        audit_events: list[AuditEvent],
+    ) -> None:
+        """Liefert die Dashboard-Daten an die DashboardView."""
+        self._dashboard_view.set_data(engagement, datasets, samples, audit_events)
+
+    def set_reports_enabled(self, enabled: bool) -> None:
+        """Schaltet die Report-Buttons (Excel/HTML) ein/aus."""
+        for action in (self._action_excel_report, self._action_html_report):
+            action.setEnabled(enabled)
 
     def highlight_sample(self, sample: SampleResult, *, filtered: bool = False) -> None:
         """Markiert Sample-Zeilen und aktualisiert Statusbar + Sidebar."""
@@ -220,6 +250,22 @@ class MainWindow(QMainWindow):
         """Welcome-Screen-Widget (Tests)."""
         return self._welcome
 
+    def audit_trail_view(self) -> AuditTrailView:
+        """AuditTrail-View (Tests / Controller)."""
+        return self._audit_trail_view
+
+    def dashboard_view(self) -> DashboardView:
+        """Dashboard-View (Tests / Controller)."""
+        return self._dashboard_view
+
+    def workspace_splitter(self) -> QSplitter:
+        """Vertikaler Workspace-Splitter (Tests)."""
+        return self._workspace_splitter
+
+    def lower_tabs(self) -> QTabWidget:
+        """Tab-Widget unten (Tests)."""
+        return self._lower_tabs
+
     def is_workspace_visible(self) -> bool:
         """`True`, wenn aktuell der Workspace angezeigt wird."""
         return self._stack.currentWidget() is self._workspace
@@ -227,23 +273,75 @@ class MainWindow(QMainWindow):
     # ---- Setup ---------------------------------------------------------
 
     def _build_workspace(self) -> QSplitter:
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(1)
+        # Outer horizontal splitter: Sidebar | (Tabelle / AuditTrail+Dashboard)
+        outer = QSplitter(Qt.Orientation.Horizontal)
+        outer.setHandleWidth(1)
+        outer.setObjectName("WorkspaceOuterSplitter")
 
         self._sidebar = NavigationSidebar()
         self._sidebar.dataset_selected.connect(self.dataset_selected.emit)
         self._sidebar.sample_selected.connect(self.sample_selected.emit)
         self._sidebar.sample_double_clicked.connect(self.sample_filter_toggled.emit)
         self._sidebar.filter_only_sample_toggled.connect(self.filter_only_sample_toggled.emit)
-        splitter.addWidget(self._sidebar)
+        outer.addWidget(self._sidebar)
+
+        # Inner vertical splitter: Tabelle oben, Tab-Widget (AuditTrail/Dashboard) unten.
+        self._workspace_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._workspace_splitter.setObjectName("WorkspaceInnerSplitter")
+        self._workspace_splitter.setHandleWidth(2)
 
         self._data_table = DataTableView()
-        splitter.addWidget(self._data_table)
+        self._workspace_splitter.addWidget(self._data_table)
 
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([250, 1030])
-        return splitter
+        self._lower_tabs = QTabWidget()
+        self._lower_tabs.setObjectName("LowerTabs")
+
+        self._audit_trail_view = AuditTrailView()
+        self._audit_trail_view.event_double_clicked.connect(self.audit_event_double_clicked.emit)
+        self._audit_trail_view.refresh_requested.connect(self.audit_refresh_requested.emit)
+        self._lower_tabs.addTab(self._audit_trail_view, "AuditTrail")
+
+        self._dashboard_view = DashboardView()
+        self._dashboard_view.refresh_requested.connect(self.dashboard_refresh_requested.emit)
+        self._dashboard_view.sample_clicked.connect(self.sample_selected.emit)
+        self._dashboard_view.dataset_clicked.connect(self.dataset_selected.emit)
+        self._lower_tabs.addTab(self._dashboard_view, "Dashboard")
+
+        self._workspace_splitter.addWidget(self._lower_tabs)
+        self._workspace_splitter.setSizes([600, 400])
+        self._workspace_splitter.setStretchFactor(0, 3)
+        self._workspace_splitter.setStretchFactor(1, 2)
+
+        outer.addWidget(self._workspace_splitter)
+        outer.setStretchFactor(0, 0)
+        outer.setStretchFactor(1, 1)
+        outer.setSizes([250, 1030])
+        return outer
+
+    # ---- Settings-Persistenz -------------------------------------------
+
+    def _restore_workspace_state(self) -> None:
+        """Stellt die Splitter-Größen aus `QSettings` wieder her, falls vorhanden."""
+        state = self._settings.value("workspace/inner_splitter")
+        if isinstance(state, QByteArray):
+            self._workspace_splitter.restoreState(state)
+        tab_index = self._settings.value("workspace/lower_tab", 0)
+        try:
+            self._lower_tabs.setCurrentIndex(int(tab_index))
+        except (TypeError, ValueError):
+            self._lower_tabs.setCurrentIndex(0)
+
+    def _save_workspace_state(self) -> None:
+        """Persistiert Splitter-Größen + aktiven Tab."""
+        self._settings.setValue("workspace/inner_splitter", self._workspace_splitter.saveState())
+        self._settings.setValue("workspace/lower_tab", self._lower_tabs.currentIndex())
+
+    def closeEvent(self, a0: QCloseEvent | None) -> None:  # noqa: N802
+        """Sichert UI-State beim Schließen."""
+        try:
+            self._save_workspace_state()
+        finally:
+            super().closeEvent(a0)
 
     def _build_menu(self) -> None:
         menu_bar = self.menuBar()
@@ -297,6 +395,14 @@ class MainWindow(QMainWindow):
         self._action_export_pdf = QAction("AuditTrail-PDF…", self)
         self._action_export_pdf.triggered.connect(self.export_audit_pdf_requested.emit)
         edit_menu.addAction(self._action_export_pdf)
+
+        self._action_excel_report = QAction("Excel-Report exportieren…", self)
+        self._action_excel_report.triggered.connect(self.export_excel_report_requested.emit)
+        edit_menu.addAction(self._action_excel_report)
+
+        self._action_html_report = QAction("HTML-Report generieren…", self)
+        self._action_html_report.triggered.connect(self.export_html_report_requested.emit)
+        edit_menu.addAction(self._action_html_report)
 
         # ---- Sample ----
         sample_menu = menu_bar.addMenu("&Stichprobe")
@@ -371,6 +477,16 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         toolbar.addAction(self._action_export_sample)
         toolbar.addAction(self._action_export_pdf)
+        toolbar.addSeparator()
+        if style is not None:
+            self._action_excel_report.setIcon(
+                style.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
+            )
+            self._action_html_report.setIcon(
+                style.standardIcon(QStyle.StandardPixmap.SP_FileLinkIcon)
+            )
+        toolbar.addAction(self._action_excel_report)
+        toolbar.addAction(self._action_html_report)
         self.addToolBar(toolbar)
 
     # ---- State-Helfer --------------------------------------------------
@@ -381,6 +497,8 @@ class MainWindow(QMainWindow):
             self._action_close,
             self._action_import,
             self._action_export_pdf,
+            self._action_excel_report,
+            self._action_html_report,
         ):
             action.setEnabled(enabled)
         # Diese benötigen zusätzlich ein Dataset / Sample – Controller schaltet

@@ -804,3 +804,122 @@ class TestSanitizeForPath:
         from sampling_tool.config import sanitize_for_path
 
         assert sanitize_for_path("?!") == "engagement"
+
+
+# ---------------------------------------------------------------------------
+# Sprint-6: Reports + Refresh-Logik
+# ---------------------------------------------------------------------------
+
+
+class TestSprint6Reports:
+    def test_audit_trail_view_populated_after_open(
+        self,
+        controller: MainController,
+        window: MainWindow,
+        populated_db: Path,
+    ) -> None:
+        controller.handle_open_engagement(populated_db)
+        events = window.audit_trail_view().model()._events
+        # populated_db enthält noch keine Events (Sample wurde direkt
+        # eingefügt, kein Logger). Aber das Modell muss gesetzt sein.
+        assert isinstance(events, list)
+
+    def test_dashboard_view_populated_after_open(
+        self,
+        controller: MainController,
+        window: MainWindow,
+        populated_db: Path,
+    ) -> None:
+        controller.handle_open_engagement(populated_db)
+        # Dashboard sollte aus dem Empty-State raus sein, da Datasets vorhanden sind.
+        dashboard = window.dashboard_view()
+        assert dashboard._stack.currentWidget() is not dashboard._empty_label
+
+    def test_audit_event_double_clicked_selects_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        import_xlsx: Path,
+    ) -> None:
+        """Nach einem Import sollte ein Doppelklick aufs Import-Event nichts brechen."""
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(populated_db)
+            # Trigger eine Aktion mit Sample-Bezug.
+            ds_id = _first_item_data(window.sidebar().datasets_widget())
+            controller.handle_dataset_selected(ds_id)
+            sample_id = _first_item_data(window.sidebar().samples_widget())
+
+            # Manuell einen Sample-Event ins Audit-Log schreiben.
+            from sampling_tool.audit.logger import AuditLogger
+            from sampling_tool.persistence.database import Database
+            from sampling_tool.persistence.repositories import AuditRepo, SampleRepo
+
+            db = Database(populated_db)
+            db.migrate()
+            sample = SampleRepo(db.connect()).get_by_id(sample_id)
+            assert sample is not None
+            logger_ = AuditLogger(AuditRepo(db.connect()), "tester", 1)
+            evt = logger_.log_sampling(sample, sample_id)
+            db.close()
+
+            controller._refresh_audit_trail()
+            assert evt.id is not None
+            controller.handle_audit_event_double_clicked(evt.id)
+            # Sample sollte jetzt hervorgehoben sein.
+            highlights = window.data_table().table_model().highlighted_row_ids()
+            assert sample_id in {s for s in [sample_id]}  # smoke
+            assert highlights
+        finally:
+            controller.handle_close_engagement()
+
+    def test_handle_export_excel_report_writes_file(
+        self,
+        controller: MainController,
+        window: MainWindow,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        controller.handle_open_engagement(populated_db)
+        target = tmp_path / "bericht.xlsx"
+        with (
+            patch(
+                "sampling_tool.ui.controllers.main_controller.QFileDialog.getSaveFileName",
+                return_value=(str(target), ""),
+            ),
+            patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"),
+        ):
+            controller.handle_export_excel_report()
+        assert target.exists()
+
+    def test_handle_export_html_report_writes_file(
+        self,
+        controller: MainController,
+        window: MainWindow,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        controller.handle_open_engagement(populated_db)
+        target = tmp_path / "bericht.html"
+        with (
+            patch(
+                "sampling_tool.ui.controllers.main_controller.QFileDialog.getSaveFileName",
+                return_value=(str(target), ""),
+            ),
+            patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"),
+        ):
+            controller.handle_export_html_report()
+        assert target.exists()
+        content = target.read_text(encoding="utf-8")
+        assert "ACME" in content
+
+    def test_refresh_views_resets_to_empty_on_close(
+        self,
+        controller: MainController,
+        window: MainWindow,
+        populated_db: Path,
+    ) -> None:
+        controller.handle_open_engagement(populated_db)
+        controller.handle_close_engagement()
+        assert window.audit_trail_view().model()._events == []

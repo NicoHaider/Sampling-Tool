@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>{{ title }}</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #333333; margin: 0; padding: 0; background: #f5f5f5; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 24px; background: white; }
+  header.bdo { background: #E81A3B; color: white; padding: 18px 24px; border-radius: 6px 6px 0 0; display: flex; align-items: center; justify-content: space-between; }
+  header.bdo h1 { margin: 0; font-size: 22px; }
+  header.bdo .logo { font-weight: 800; font-size: 22px; letter-spacing: 2px; }
+  .meta { padding: 16px 24px; border: 1px solid #D9D9D9; border-top: none; }
+  .meta dl { margin: 0; display: grid; grid-template-columns: 160px 1fr; row-gap: 4px; column-gap: 16px; font-size: 13px; }
+  .meta dt { color: #7F7F7F; }
+  .meta dd { margin: 0; }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 18px 0; }
+  .card { background: white; border: 1px solid #D9D9D9; border-radius: 6px; padding: 12px; }
+  .card .num { font-size: 26px; font-weight: 800; color: #E81A3B; }
+  .card .label { font-size: 11px; color: #7F7F7F; text-transform: uppercase; }
+  h2 { color: #333333; margin-top: 28px; font-size: 16px; border-bottom: 2px solid #E81A3B; padding-bottom: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  th { background: #E81A3B; color: white; text-align: left; padding: 6px 8px; }
+  td { border-bottom: 1px solid #ECECEC; padding: 5px 8px; vertical-align: top; }
+  tr:nth-child(even) td { background: #FAFAFA; }
+  .chart { margin: 12px 0; text-align: center; }
+  .chart img { max-width: 100%; }
+  footer { margin-top: 32px; padding: 12px; font-size: 11px; color: #B0B0B0; text-align: center; border-top: 1px solid #D9D9D9; }
+  .pill { display: inline-block; padding: 2px 8px; background: #FFEFF1; color: #A41229; border-radius: 10px; font-size: 11px; font-weight: 700; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="bdo">
+      <h1>{{ title }}</h1>
+      <span class="logo">BDO</span>
+    </header>
+
+    <div class="meta">
+      <dl>
+        <dt>Mandant</dt><dd>{{ engagement.client_name }}</dd>
+        <dt>Prüfungstyp</dt><dd>{{ engagement.audit_type or '—' }}</dd>
+        <dt>Auditor</dt><dd>{{ engagement.auditor_name }} ({{ engagement.auditor_position or '—' }})</dd>
+        <dt>Bericht erstellt</dt><dd>{{ generated_at }}</dd>
+      </dl>
+    </div>
+
+    <div class="cards">
+      <div class="card"><div class="num">{{ stats.datasets }}</div><div class="label">Datasets</div></div>
+      <div class="card"><div class="num">{{ stats.samples }}</div><div class="label">Stichproben</div></div>
+      <div class="card"><div class="num">{{ stats.events }}</div><div class="label">Audit-Events</div></div>
+      <div class="card"><div class="num">{{ stats.last_activity }}</div><div class="label">Letzte Aktivität</div></div>
+    </div>
+
+    {% if method_chart_b64 %}
+    <h2>Sampling-Methoden</h2>
+    <div class="chart"><img src="data:image/png;base64,{{ method_chart_b64 }}" alt="Methoden-Verteilung"></div>
+    {% endif %}
+
+    {% if history_chart_b64 %}
+    <h2>Sampling-Historie (30 Tage)</h2>
+    <div class="chart"><img src="data:image/png;base64,{{ history_chart_b64 }}" alt="Sampling-Historie"></div>
+    {% endif %}
+
+    <h2>Stichproben</h2>
+    {% if samples %}
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>Methode</th><th>Größe</th><th>Population</th>
+          <th>Anteil</th><th>Seed</th><th>Erstellt</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in samples %}
+        <tr>
+          <td>#{{ s.id }}</td>
+          <td><span class="pill">{{ s.config.method.value }}</span></td>
+          <td>{{ s.actual_size }}</td>
+          <td>{{ s.population_size }}</td>
+          <td>{{ s.percent_str }}</td>
+          <td>{{ s.config.seed }}</td>
+          <td>{{ s.drawn_at_str }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color: #B0B0B0; font-style: italic;">Noch keine Stichproben.</p>
+    {% endif %}
+
+    <h2>AuditTrail</h2>
+    {% if events %}
+    <table>
+      <thead>
+        <tr>
+          <th>Zeitstempel</th><th>Aktion</th><th>User</th><th>Sample</th>
+          <th>Größe</th><th>%</th><th>Seed</th><th>Datei</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in events %}
+        <tr>
+          <td>{{ e.timestamp_str }}</td>
+          <td>{{ e.event_type }}{% if e.corrects_event_id %} → #{{ e.corrects_event_id }}{% endif %}</td>
+          <td>{{ e.user_name }}</td>
+          <td>{{ '#' ~ e.sample_id if e.sample_id else '—' }}</td>
+          <td>{{ e.sample_size if e.sample_size is not none else '—' }}</td>
+          <td>{{ e.percent_str }}</td>
+          <td>{{ e.seed if e.seed is not none else '—' }}</td>
+          <td>{{ e.filename }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color: #B0B0B0; font-style: italic;">Keine Audit-Events.</p>
+    {% endif %}
+
+    <footer>Generiert am {{ generated_at }} – BDO Audit Sampling Tool</footer>
+  </div>
+</body>
+</html>
