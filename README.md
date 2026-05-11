@@ -5,7 +5,8 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 
 ## Status
 
-**Sprint 4 von 7** – PyQt6-UI-Skeleton ✅ **erledigt** (Ruff + Mypy clean).
+**Sprint 5 von 7** – Sampling-Dialoge + Export + Undo/Redo ✅ **erledigt**
+(197 Tests grün, Ruff + Mypy clean).
 
 | Sprint | Inhalt                                              | Status      |
 |-------:|-----------------------------------------------------|-------------|
@@ -13,9 +14,30 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 | 2      | SQLite-Persistenz, Audit-Trail, Undo, Migrations    | **done**    |
 | 3      | I/O: Excel-/CSV-Import, Excel-Export, AuditTrail-PDF| **done**    |
 | 4      | PyQt6-UI: Hauptfenster, Datentabelle, Sidebar       | **done**    |
-| 5      | UI: Sample-Konfigurator, Vorschau, Export-Dialog    | offen       |
+| 5      | UI: Sampling-Dialog, Export, Undo/Redo, Bug/About   | **done**    |
 | 6      | Reports: HTML (jinja2), erweiterte Excel-Reports    | offen       |
 | 7      | Bug-Mail (pywin32/Outlook), PyInstaller-Build       | offen       |
+
+### Was Sprint 5 liefert
+
+- `ui/dialogs/sampling_dialog.py` – Sampling-Konfigurator
+  (Simple/Cluster/Stratified, Filter, Seed-Würfel, Resample-Checkbox)
+- `ui/dialogs/export_sample_dialog.py` – Multi-Select-Spaltenauswahl +
+  Filename/ID + Zielordner + Live-Vorschau
+- `ui/dialogs/bug_report_dialog.py` – mailto-basierter Bug-Report mit
+  URL-Encoding und optionaler System-Info
+- `ui/dialogs/about_dialog.py` – Version, Beschreibung, Repo-Link
+- `ui/dialogs/progress_dialog.py` – Wrapper für `QProgressDialog`
+- `ui/controllers/main_controller.py` – Handler für alle Menü-Aktionen,
+  Undo/Redo-State, Sampling/Reset/Export-Flow
+- `ui/main_window.py` – alle Menü-Hooks verdrahtet, Undo/Redo via
+  `QKeySequence.StandardKey.Undo/Redo`
+- `ui/widgets/data_table.py` – Datums-Formatierung (Zeit nur bei != 00:00:00)
+- `core/undo.py` – neue `peek_undo()`/`peek_redo()`-Methoden für
+  saubere UI-Undo-Semantik
+- ~40 neue UI-Tests via pytest-qt
+- End-to-End-Workflow funktioniert: Engagement → Import → Sampling →
+  Export → AuditTrail-PDF
 
 ### Was Sprint 4 liefert
 

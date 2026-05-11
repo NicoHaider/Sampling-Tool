@@ -247,3 +247,255 @@ class TestMainController:
             assert window.data_table().table_model().rowCount() == 3
         finally:
             controller.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
+# Sprint-5: Sampling-Flow, Reset, Undo/Redo, Export
+# ---------------------------------------------------------------------------
+
+
+class _StubSamplingDialog:
+    """Mini-Stub statt `SamplingDialog`. Liefert ein vordefiniertes Result."""
+
+    DialogCode = QDialog.DialogCode
+
+    def __init__(self, result_obj: object, accept: bool = True) -> None:
+        self._result = result_obj
+        self._accept = accept
+
+    def exec(self) -> int:
+        return int(QDialog.DialogCode.Accepted if self._accept else QDialog.DialogCode.Rejected)
+
+    def get_result(self) -> object:
+        return self._result
+
+
+class _StubExportDialog:
+    DialogCode = QDialog.DialogCode
+
+    def __init__(self, result_obj: object, accept: bool = True) -> None:
+        self._result = result_obj
+        self._accept = accept
+
+    def exec(self) -> int:
+        return int(QDialog.DialogCode.Accepted if self._accept else QDialog.DialogCode.Rejected)
+
+    def get_result(self) -> object:
+        return self._result
+
+
+def _open_dataset(controller: MainController, window: MainWindow, db_path: Path) -> int:
+    controller.handle_open_engagement(db_path)
+    ds_id = _first_item_data(window.sidebar().datasets_widget())
+    controller.handle_dataset_selected(ds_id)
+    return ds_id
+
+
+class TestSamplingFlow:
+    def test_new_sampling_creates_sample_and_highlights(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.core.models import SampleConfig, SamplingMethod
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _s: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            samples_before = window.sidebar().samples_widget().count()
+            controller.handle_new_sampling()
+            samples_after = window.sidebar().samples_widget().count()
+            assert samples_after == samples_before + 1
+            highlighted = window.data_table().table_model().highlighted_row_ids()
+            assert len(highlighted) == 2
+        finally:
+            controller.handle_close_engagement()
+
+    def test_reset_clears_highlight_with_confirmation(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            with patch(
+                "sampling_tool.ui.controllers.main_controller.QMessageBox.question",
+                return_value=__import__(
+                    "PyQt6.QtWidgets", fromlist=["QMessageBox"]
+                ).QMessageBox.StandardButton.Yes,
+            ):
+                controller.handle_reset()
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+        finally:
+            controller.handle_close_engagement()
+
+    def test_reset_cancelled_keeps_highlight(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            from PyQt6.QtWidgets import QMessageBox
+
+            with patch(
+                "sampling_tool.ui.controllers.main_controller.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.No,
+            ):
+                controller.handle_reset()
+            # Highlight unverändert
+            assert len(window.data_table().table_model().highlighted_row_ids()) == 2
+        finally:
+            controller.handle_close_engagement()
+
+    def test_undo_redo_round_trip(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.core.models import SampleConfig, SamplingMethod
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _s: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            after_sampling = window.data_table().table_model().highlighted_row_ids()
+            assert len(after_sampling) == 3
+
+            controller.handle_undo()
+            # Vorheriger Zustand: kein Sample (vor dem ersten Sampling-Push gab es nichts).
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+
+            controller.handle_redo()
+            assert window.data_table().table_model().highlighted_row_ids() == after_sampling
+        finally:
+            controller.handle_close_engagement()
+
+    def test_resample_filters_to_current_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.core.models import SampleConfig, SamplingMethod
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=3),
+            from_sample_only=True,
+        )
+        factory = lambda _p, _d, _s: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            # Vorhandenes Sample auswählen (row_ids 2,4 aus dem Fixture)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.handle_new_sampling()
+            new_highlight = window.data_table().table_model().highlighted_row_ids()
+            assert new_highlight  # mindestens eine
+            # Die neue Auswahl darf nur row_ids aus dem Vorsample enthalten.
+            assert new_highlight.issubset({2, 4})
+        finally:
+            controller.handle_close_engagement()
+
+    def test_export_sample_calls_excel_exporter(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialogResult
+
+        export_result = ExportSampleDialogResult(
+            columns=["Konto", "Betrag"],
+            custom_name="testname",
+            custom_id="42",
+            output_dir=tmp_path,
+        )
+        factory = lambda *args, **kw: _StubExportDialog(export_result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            export_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            with patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"):
+                controller.handle_export_sample()
+            files = list(tmp_path.glob("testname_ID42_BDO_sampling_*.xlsx"))
+            assert len(files) == 1
+        finally:
+            controller.handle_close_engagement()
+
+    def test_export_audit_pdf_writes_file(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(populated_db)
+            target = tmp_path / "trail.pdf"
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.main_controller.QFileDialog.getSaveFileName",
+                    return_value=(str(target), ""),
+                ),
+                patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"),
+            ):
+                controller.handle_export_audit_pdf()
+            assert target.exists()
+            assert target.stat().st_size > 0
+        finally:
+            controller.handle_close_engagement()
+
+    def test_undo_redo_state_after_open_engagement(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(populated_db)
+            # Frisches Engagement: weder Undo noch Redo verfügbar.
+            assert window._action_undo.isEnabled() is False
+            assert window._action_redo.isEnabled() is False
+        finally:
+            controller.handle_close_engagement()

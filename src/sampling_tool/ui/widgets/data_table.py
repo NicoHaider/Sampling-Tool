@@ -256,11 +256,15 @@ def _format_value(value: Any) -> str:
     if isinstance(value, bool):
         return "Ja" if value else "Nein"
     if isinstance(value, datetime):
+        # Excel-Importe ohne Uhrzeit kommen als datetime mit 00:00:00 rein –
+        # dann sähe " ... 00:00:00" wie ein Bug aus. Nur Datum anzeigen.
+        if value.hour == 0 and value.minute == 0 and value.second == 0 and value.microsecond == 0:
+            return value.strftime("%Y-%m-%d")
         return value.strftime("%Y-%m-%d %H:%M:%S")
     if isinstance(value, date):
-        return value.isoformat()
+        return value.strftime("%Y-%m-%d")
     if isinstance(value, time):
-        return value.isoformat()
+        return value.strftime("%H:%M:%S")
     if isinstance(value, float):
         return f"{value:g}"
     return str(value)

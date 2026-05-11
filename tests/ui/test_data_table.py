@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 import pytest
 from PyQt6.QtCore import Qt
@@ -103,6 +103,42 @@ class TestDatasetTableModel:
         assert model.data(model.index(0, 1), Qt.ItemDataRole.DisplayRole) == "Ja"
         assert model.data(model.index(0, 2), Qt.ItemDataRole.DisplayRole) == "2026-01-02 03:04:05"
         assert model.data(model.index(0, 3), Qt.ItemDataRole.DisplayRole) == "1.5"
+
+    def test_datetime_with_midnight_shows_only_date(self) -> None:
+        ds = Dataset(
+            name="x",
+            columns=("dt",),
+            rows=(DatasetRow(row_id=1, values={"dt": datetime(2026, 5, 11, 0, 0, 0)}),),
+        )
+        model = DatasetTableModel(ds)
+        assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == "2026-05-11"
+
+    def test_datetime_with_time_shows_full_timestamp(self) -> None:
+        ds = Dataset(
+            name="x",
+            columns=("dt",),
+            rows=(DatasetRow(row_id=1, values={"dt": datetime(2026, 5, 11, 14, 30, 5)}),),
+        )
+        model = DatasetTableModel(ds)
+        assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == "2026-05-11 14:30:05"
+
+    def test_pure_date_value(self) -> None:
+        ds = Dataset(
+            name="x",
+            columns=("d",),
+            rows=(DatasetRow(row_id=1, values={"d": date(2026, 5, 11)}),),
+        )
+        model = DatasetTableModel(ds)
+        assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == "2026-05-11"
+
+    def test_pure_time_value(self) -> None:
+        ds = Dataset(
+            name="x",
+            columns=("t",),
+            rows=(DatasetRow(row_id=1, values={"t": time(9, 15, 30)}),),
+        )
+        model = DatasetTableModel(ds)
+        assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == "09:15:30"
 
 
 class TestDataTableView:
