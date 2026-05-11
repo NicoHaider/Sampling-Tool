@@ -141,3 +141,20 @@ class TestAuditTrailPDF:
         assert out.exists()
         reader = PdfReader(str(out))
         assert len(reader.pages) >= 2
+
+    def test_statistik_block_default_enthaelt_eventtypen(
+        self, engagement: Engagement, events: list[AuditEvent], tmp_path: Path
+    ) -> None:
+        out = tmp_path / "mit_stats.pdf"
+        AuditTrailPDF().render(engagement, events, out)
+        text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
+        assert "Statistiken" in text
+        assert "Gesamt" in text
+
+    def test_include_statistics_false_laesst_block_weg(
+        self, engagement: Engagement, events: list[AuditEvent], tmp_path: Path
+    ) -> None:
+        out = tmp_path / "ohne_stats.pdf"
+        AuditTrailPDF().render(engagement, events, out, include_statistics=False)
+        text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
+        assert "Statistiken" not in text

@@ -91,8 +91,15 @@ class HtmlReportGenerator:
         samples: list[SampleResult],
         audit_events: list[AuditEvent],
         output_path: Path,
+        include_charts: bool = True,
+        include_audit_trail: bool = True,
+        include_samples_table: bool = True,
     ) -> Path:
-        """Erzeugt den Report und schreibt ihn als .html nach `output_path`."""
+        """Erzeugt den Report und schreibt ihn als .html nach `output_path`.
+
+        Die `include_*`-Flags schalten optionale Blöcke ab. Standard ist „alles
+        an" – damit bleiben bestehende Aufrufer unverändert.
+        """
         target = (
             output_path
             if output_path.suffix.lower() == ".html"
@@ -105,8 +112,8 @@ class HtmlReportGenerator:
         except TemplateNotFound as exc:
             raise FileNotFoundError(f"Template '{self._template_name}' nicht gefunden.") from exc
 
-        method_chart = _method_chart_base64(samples)
-        history_chart = _history_chart_base64(samples)
+        method_chart = _method_chart_base64(samples) if include_charts else None
+        history_chart = _history_chart_base64(samples) if include_charts else None
 
         ctx = {
             "title": f"Audit-Bericht – {engagement.client_name}",
@@ -122,6 +129,9 @@ class HtmlReportGenerator:
             },
             "method_chart_b64": method_chart,
             "history_chart_b64": history_chart,
+            "include_charts": include_charts,
+            "include_audit_trail": include_audit_trail,
+            "include_samples_table": include_samples_table,
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         target.write_text(template.render(**ctx), encoding="utf-8")

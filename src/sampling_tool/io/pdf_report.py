@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Final
@@ -76,8 +77,13 @@ class AuditTrailPDF:
         engagement: Engagement,
         events: list[AuditEvent],
         output_path: Path,
+        include_statistics: bool = True,
     ) -> Path:
-        """Schreibt das PDF nach `output_path` und gibt den Pfad zurück."""
+        """Schreibt das PDF nach `output_path` und gibt den Pfad zurück.
+
+        `include_statistics=False` lässt den abschließenden Statistik-Block
+        weg – nützlich für minimale Trail-Exports.
+        """
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         doc = SimpleDocTemplate(
@@ -95,6 +101,8 @@ class AuditTrailPDF:
         story.extend(_build_header(engagement))
         story.append(Spacer(1, 6 * mm))
         story.extend(_build_event_table(events))
+        if include_statistics:
+            story.extend(_build_statistics(events))
 
         on_page = _make_on_page(self.briefpapier)
         doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
@@ -232,6 +240,49 @@ def _build_event_table(events: list[AuditEvent]) -> list[Any]:
 
     table.setStyle(style)
     return [table]
+
+
+def _build_statistics(events: list[AuditEvent]) -> list[Any]:
+    """Abschließender Statistik-Block: Event-Typen-Verteilung."""
+    if not events:
+        return []
+    styles = getSampleStyleSheet()
+    heading = ParagraphStyle(
+        "BDOStatsHeading",
+        parent=styles["Heading2"],
+        textColor=_BDO_RED_COLOR,
+        fontSize=13,
+        leading=18,
+        spaceBefore=10,
+        spaceAfter=4,
+    )
+
+    counts = Counter(e.event_type for e in events)
+    rows: list[list[Any]] = [["Eventtyp", "Anzahl"]]
+    for event_type, count in counts.most_common():
+        rows.append([event_type, str(count)])
+    rows.append(["Gesamt", str(len(events))])
+
+    table = Table(rows, colWidths=[60 * mm, 30 * mm])
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), _BDO_RED_COLOR),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("GRID", (0, 0), (-1, -1), 0.25, _GREY_LIGHT),
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                ("BACKGROUND", (0, -1), (-1, -1), colors.whitesmoke),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]
+        )
+    )
+    return [Spacer(1, 8 * mm), Paragraph("Statistiken", heading), table]
 
 
 # ---------------------------------------------------------------------------

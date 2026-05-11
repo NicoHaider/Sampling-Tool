@@ -27,6 +27,7 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 5.5    | UX-Bugfixes + Engagement-Auto-Versionierung         | done        |
 | 5.6    | Sample-Filter-Default, grüne Markierung, Engagement-Wechsel | done |
 | 6      | Dashboard, AuditTrail-View, Multi-Sheet-/HTML-Report | done       |
+| 6.1    | Einheitliche Export-Dialoge für alle Reports         | done        |
 | 7      | Bug-Mail (pywin32/Outlook), echtes BDO-Briefpapier, PyInstaller | offen |
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
@@ -145,6 +146,24 @@ ui ──▶ controllers ──▶ core ◀── io
   - `dialogs/export_sample_dialog.py` – Spaltenauswahl (Checkboxen) +
     Filename/ID + Zielordner. Vorschau-Label live mit
     `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
+  - `dialogs/_export_base.py` – `ExportTargetWidget` als wiederverwendbare
+    rechte Spalte für alle Export-Dialoge (Dateiname, ID, Zielordner,
+    Vorschau-Label). Pattern-basiert über `{name}/{id}/{type}/{date}`-Tokens
+    + frei wählbare Extension. Emittiert `changed`-Signal für Live-
+    Validierung der OK-Buttons.
+  - `dialogs/export_audit_pdf_dialog.py` – `ExportAuditPdfDialog` mit
+    Zeitraum-Filter (zwei optional aktivierbare `QDateEdit`),
+    Aktionstyp-Selektion (Checkbox-Liste je verfügbarem Event-Typ),
+    Briefpapier-Toggle (disabled wenn nicht konfiguriert) und
+    Statistik-Seite-Toggle. Liefert `ExportAuditPdfDialogResult`.
+  - `dialogs/export_excel_report_dialog.py` – `ExportExcelReportDialog`
+    mit Sheet-Selektion (Übersicht/AuditTrail/Samples/Statistiken,
+    Default alle ein). Liefert `ExportExcelReportDialogResult` inkl.
+    `sheets: set[str]` für den `MultiSheetReportExporter`.
+  - `dialogs/export_html_report_dialog.py` – `ExportHtmlReportDialog`
+    mit Toggles für Charts (Base64-eingebettet), AuditTrail-Tabelle und
+    Samples-Übersicht. Liefert `ExportHtmlReportDialogResult` mit den
+    drei `include_*`-Flags für `HtmlReportGenerator.render`.
   - `dialogs/bug_report_dialog.py` – 3 Freitextfelder + System-Info-
     Checkbox. Konstruiert `mailto:`-URL und öffnet sie via
     `QDesktopServices`. Auf Windows wird das in Sprint 7 von

@@ -468,17 +468,28 @@ class TestSamplingFlow:
         populated_db: Path,
         tmp_path: Path,
     ) -> None:
-        controller = MainController(window, recent_store=recent_store)
+        from sampling_tool.ui.dialogs.export_audit_pdf_dialog import (
+            ExportAuditPdfDialogResult,
+        )
+
+        target = tmp_path / "trail.pdf"
+        result = ExportAuditPdfDialogResult(
+            output_path=target,
+            date_from=None,
+            date_to=None,
+            event_types=set(),
+            use_briefpapier=False,
+            include_statistics=True,
+        )
+        factory = lambda *args, **kw: _StubExportDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            audit_pdf_dialog_factory=factory,  # type: ignore[arg-type]
+        )
         try:
             controller.handle_open_engagement(populated_db)
-            target = tmp_path / "trail.pdf"
-            with (
-                patch(
-                    "sampling_tool.ui.controllers.main_controller.QFileDialog.getSaveFileName",
-                    return_value=(str(target), ""),
-                ),
-                patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"),
-            ):
+            with patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"):
                 controller.handle_export_audit_pdf()
             assert target.exists()
             assert target.stat().st_size > 0
@@ -876,43 +887,67 @@ class TestSprint6Reports:
 
     def test_handle_export_excel_report_writes_file(
         self,
-        controller: MainController,
         window: MainWindow,
+        recent_store: RecentEngagementsStore,
         populated_db: Path,
         tmp_path: Path,
     ) -> None:
-        controller.handle_open_engagement(populated_db)
+        from sampling_tool.ui.dialogs.export_excel_report_dialog import (
+            ExportExcelReportDialogResult,
+        )
+
         target = tmp_path / "bericht.xlsx"
-        with (
-            patch(
-                "sampling_tool.ui.controllers.main_controller.QFileDialog.getSaveFileName",
-                return_value=(str(target), ""),
-            ),
-            patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"),
-        ):
-            controller.handle_export_excel_report()
-        assert target.exists()
+        result = ExportExcelReportDialogResult(
+            output_path=target,
+            sheets={"Übersicht", "AuditTrail", "Samples", "Statistiken"},
+        )
+        factory = lambda *args, **kw: _StubExportDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            excel_report_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            with patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"):
+                controller.handle_export_excel_report()
+            assert target.exists()
+        finally:
+            controller.handle_close_engagement()
 
     def test_handle_export_html_report_writes_file(
         self,
-        controller: MainController,
         window: MainWindow,
+        recent_store: RecentEngagementsStore,
         populated_db: Path,
         tmp_path: Path,
     ) -> None:
-        controller.handle_open_engagement(populated_db)
+        from sampling_tool.ui.dialogs.export_html_report_dialog import (
+            ExportHtmlReportDialogResult,
+        )
+
         target = tmp_path / "bericht.html"
-        with (
-            patch(
-                "sampling_tool.ui.controllers.main_controller.QFileDialog.getSaveFileName",
-                return_value=(str(target), ""),
-            ),
-            patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"),
-        ):
-            controller.handle_export_html_report()
-        assert target.exists()
-        content = target.read_text(encoding="utf-8")
-        assert "ACME" in content
+        result = ExportHtmlReportDialogResult(
+            output_path=target,
+            include_charts=True,
+            include_audit_trail=True,
+            include_samples_table=True,
+        )
+        factory = lambda *args, **kw: _StubExportDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            html_report_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            with patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"):
+                controller.handle_export_html_report()
+            assert target.exists()
+            content = target.read_text(encoding="utf-8")
+            assert "ACME" in content
+        finally:
+            controller.handle_close_engagement()
 
     def test_refresh_views_resets_to_empty_on_close(
         self,
@@ -923,3 +958,115 @@ class TestSprint6Reports:
         controller.handle_open_engagement(populated_db)
         controller.handle_close_engagement()
         assert window.audit_trail_view().model()._events == []
+
+
+class TestUnifiedExportDialogs:
+    """Sprint 6.1: Handler nutzen Dialog-Factories und filtern korrekt."""
+
+    def test_audit_pdf_handler_filters_events_by_type(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Mit `event_types={"import"}` muss das PDF nur Import-Events enthalten."""
+        from sampling_tool.audit.logger import AuditLogger
+        from sampling_tool.persistence.database import Database
+        from sampling_tool.persistence.repositories import AuditRepo, SampleRepo
+        from sampling_tool.ui.dialogs.export_audit_pdf_dialog import (
+            ExportAuditPdfDialogResult,
+        )
+
+        # Drei verschiedene Events in die DB schreiben.
+        db = Database(populated_db)
+        db.migrate()
+        sample_repo = SampleRepo(db.connect())
+        sample = sample_repo.list_for_dataset(1)[0]
+        assert sample.id is not None
+        logger_ = AuditLogger(AuditRepo(db.connect()), "tester", 1)
+        logger_.log_sampling(sample, sample.id)
+        logger_.log_export(sample.id, tmp_path / "x.xlsx", 2)
+        db.close()
+
+        target = tmp_path / "trail.pdf"
+        result = ExportAuditPdfDialogResult(
+            output_path=target,
+            date_from=None,
+            date_to=None,
+            event_types={"sampling"},
+            use_briefpapier=False,
+            include_statistics=True,
+        )
+        factory = lambda *args, **kw: _StubExportDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            audit_pdf_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            with patch(
+                "sampling_tool.ui.controllers.main_controller.QMessageBox.information"
+            ) as info:
+                controller.handle_export_audit_pdf()
+            # Info-Text enthält Anzahl der gefilterten Events.
+            assert info.called
+            args = info.call_args[0]
+            assert "1 Events" in args[2]
+        finally:
+            controller.handle_close_engagement()
+
+    def test_audit_pdf_handler_cancelled_returns_silently(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        factory = lambda *args, **kw: _StubExportDialog(None, accept=False)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            audit_pdf_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            controller.handle_export_audit_pdf()
+            assert not list(tmp_path.glob("*.pdf"))
+        finally:
+            controller.handle_close_engagement()
+
+    def test_excel_report_handler_passes_sheets_subset(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        from openpyxl import load_workbook
+
+        from sampling_tool.ui.dialogs.export_excel_report_dialog import (
+            ExportExcelReportDialogResult,
+        )
+
+        target = tmp_path / "subset.xlsx"
+        result = ExportExcelReportDialogResult(
+            output_path=target,
+            sheets={"Übersicht"},
+        )
+        factory = lambda *args, **kw: _StubExportDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            excel_report_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            with patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"):
+                controller.handle_export_excel_report()
+            assert target.exists()
+            wb = load_workbook(target)
+            assert len(wb.sheetnames) == 1
+        finally:
+            controller.handle_close_engagement()
