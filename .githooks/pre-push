@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#
+# Pre-Push-Hook: führt Tests und statische Checks aus, bevor gepusht wird.
+# Bricht den Push ab, falls etwas fehlschlägt.
+#
+# Aktivieren mit:
+#   git config core.hooksPath .githooks
+
+set -e
+
+echo "▶ Pre-Push: aktiviere venv..."
+if [ -f .venv/bin/activate ]; then
+    source .venv/bin/activate
+else
+    echo "✗ .venv nicht gefunden. Bitte 'python3.13 -m venv .venv' ausführen." >&2
+    exit 1
+fi
+
+echo "▶ Pre-Push: Tests..."
+pytest -q
+
+echo "▶ Pre-Push: Lint..."
+ruff check .
+
+echo "▶ Pre-Push: Format..."
+ruff format --check .
+
+echo "▶ Pre-Push: Type-Check..."
+mypy src tests
+
+echo "✓ Alle Pre-Push-Checks bestanden."
