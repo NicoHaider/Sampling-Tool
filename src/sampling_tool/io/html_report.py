@@ -5,7 +5,8 @@ Jinja2. CSS ist inline, Charts werden als Base64-PNG eingebettet – damit
 funktioniert der Report ohne externe Assets und kann per E-Mail oder
 File-Share verteilt werden.
 
-Template-Default: `<package>/resources/templates/audit_report.html`. Custom
+Template-Default: `resources/templates/audit_report.html` (Top-Level-
+Resource, im Bundle unter `sys._MEIPASS/resources/templates/`). Custom
 Templates können über `template_path` injiziert werden.
 """
 
@@ -28,12 +29,13 @@ from jinja2 import (
 )
 
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
+from sampling_tool.resources import shared_resource
 from sampling_tool.ui.widgets.chart_renderer import (
     render_bar_chart_bytes,
     render_line_chart_bytes,
 )
 
-_DEFAULT_TEMPLATE_DIR: Final[Path] = Path(__file__).resolve().parents[1] / "resources" / "templates"
+_DEFAULT_TEMPLATE_DIR: Final[Path] = shared_resource("templates")
 _DEFAULT_TEMPLATE_NAME: Final[str] = "audit_report.html"
 _HISTORY_DAYS: Final[int] = 30
 

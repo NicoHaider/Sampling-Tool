@@ -1,9 +1,10 @@
 """Generiert ein Platzhalter-Briefpapier für Tests und Development.
 
 Wird einmalig ausgeführt und commitet das resultierende PDF unter
-`src/sampling_tool/resources/briefpapier/bdo_placeholder.pdf`. Damit wird
-es als Paket-Ressource ausgeliefert (siehe `[tool.setuptools.package-data]`
-in `pyproject.toml`).
+`resources/briefpapier/bdo_placeholder.pdf`. Damit wird es vom Build-
+Skript (PyInstaller-Spec, `datas`-Eintrag für `resources/`) mit dem
+Bundle ausgeliefert und vom Resolver `sampling_tool.resources.shared_resource`
+gefunden.
 
 Sobald das echte BDO-Briefpapier verfügbar ist, kann es ohne Code-
 Änderung ausgetauscht werden (User-Override in `BRIEFPAPIER_DIR` oder
@@ -20,7 +21,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = REPO_ROOT / "src" / "sampling_tool" / "resources" / "briefpapier" / "bdo_placeholder.pdf"
+OUTPUT = REPO_ROOT / "resources" / "briefpapier" / "bdo_placeholder.pdf"
 
 
 def main() -> None:

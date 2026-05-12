@@ -26,18 +26,12 @@ elif IS_WINDOWS:
     ico = ROOT / "resources" / "icons" / "app.ico"
     ICON = str(ico) if ico.exists() else None
 
-# Datenfiles bündeln. Die Zielpfade spiegeln die Package-Struktur, weil der
-# App-Code Resourcen via `Path(__file__).parent / ...` relativ zu den
-# Sub-Modulen lokalisiert (siehe config.py, __main__.py, io/html_report.py).
+# Datenfiles bündeln. Die Zielpfade matchen den Resource-Resolver in
+# `sampling_tool.resources`:
+#   - `package_resource("foo/bar")` → `_MEIPASS/sampling_tool/foo/bar`
+#   - `shared_resource("foo/bar")`  → `_MEIPASS/resources/foo/bar`
 datas = [
-    (
-        str(ROOT / "src" / "sampling_tool" / "resources" / "briefpapier"),
-        "sampling_tool/resources/briefpapier",
-    ),
-    (
-        str(ROOT / "src" / "sampling_tool" / "resources" / "templates"),
-        "sampling_tool/resources/templates",
-    ),
+    (str(ROOT / "resources"), "resources"),
     (
         str(ROOT / "src" / "sampling_tool" / "persistence" / "migrations"),
         "sampling_tool/persistence/migrations",

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from sampling_tool.config import APP_NAME, APP_ORG, APP_ORG_DOMAIN
+from sampling_tool.resources import package_resource
 
 
 def main() -> int:
@@ -20,7 +20,7 @@ def main() -> int:
     app.setOrganizationName(APP_ORG)
     app.setOrganizationDomain(APP_ORG_DOMAIN)
 
-    qss_path = Path(__file__).parent / "ui" / "styles" / "bdo_light.qss"
+    qss_path = package_resource("ui/styles/bdo_light.qss")
     if qss_path.exists():
         app.setStyleSheet(qss_path.read_text(encoding="utf-8"))
 

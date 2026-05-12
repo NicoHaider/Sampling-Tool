@@ -16,11 +16,11 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from importlib.resources import files
 from pathlib import Path
 from typing import Final
 
-MIGRATIONS_PACKAGE: Final = "sampling_tool.persistence.migrations"
+from sampling_tool.resources import package_resource
+
 SCHEMA_VERSION_TABLE: Final = "schema_version"
 
 
@@ -129,7 +129,7 @@ class Database:
         conn = self.connect()
         current = self.schema_version()
 
-        migrations_root = files(MIGRATIONS_PACKAGE)
+        migrations_root = package_resource("persistence/migrations")
         pending: list[tuple[int, str]] = []
         for entry in migrations_root.iterdir():
             if not entry.name.endswith(".sql"):
