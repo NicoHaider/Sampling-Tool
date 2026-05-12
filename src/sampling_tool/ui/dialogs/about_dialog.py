@@ -21,6 +21,16 @@ REPO_URL: str = "https://github.com/NicoHaider/Sampling-Tool"
 
 CHANGELOG: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
+        "v0.8.0",
+        (
+            "PyInstaller-Build: doppelklickbare App für Mac (.app) und Windows (.exe)",
+            "GitHub-Actions-Release-Workflow auf Tag-Push (v*.*.*)",
+            "Cross-platform Build-Script scripts/build_app.py (optional --dmg auf Mac)",
+            "BDO-roter Platzhalter-App-Icon (.icns + .ico, austauschbar)",
+            "Anwender-Installations-Anleitung mit 'Trotzdem öffnen'-Workaround",
+        ),
+    ),
+    (
         "v0.7.0",
         (
             "Settings-Dialog (Allgemein / Reports / Erweitert) mit QSettings-Persistenz",
