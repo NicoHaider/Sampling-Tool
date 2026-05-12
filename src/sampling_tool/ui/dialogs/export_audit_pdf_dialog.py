@@ -66,6 +66,8 @@ class ExportAuditPdfDialog(QDialog):
         briefpapier_available: bool,
         parent: QWidget | None = None,
         default_output_dir: Path | None = None,
+        default_use_briefpapier: bool | None = None,
+        default_include_statistics: bool = True,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("AuditTrail-PDF exportieren")
@@ -74,6 +76,12 @@ class ExportAuditPdfDialog(QDialog):
 
         self._result: ExportAuditPdfDialogResult | None = None
         self._briefpapier_available = briefpapier_available
+        # Wenn das Setting nichts vorgibt, bleibt das alte Verhalten:
+        # Briefpapier an, falls es überhaupt verfügbar ist.
+        self._default_use_briefpapier = (
+            briefpapier_available if default_use_briefpapier is None else default_use_briefpapier
+        )
+        self._default_include_statistics = default_include_statistics
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 20, 20, 20)
@@ -177,12 +185,12 @@ class ExportAuditPdfDialog(QDialog):
         gb_options = QGroupBox("Optionen")
         opt_layout = QVBoxLayout(gb_options)
         self._cb_briefpapier = QCheckBox("Briefpapier verwenden")
-        self._cb_briefpapier.setChecked(briefpapier_available)
+        self._cb_briefpapier.setChecked(briefpapier_available and self._default_use_briefpapier)
         if not briefpapier_available:
             self._cb_briefpapier.setEnabled(False)
             self._cb_briefpapier.setToolTip("Briefpapier nicht konfiguriert")
         self._cb_statistics = QCheckBox("Statistik-Seite anhängen")
-        self._cb_statistics.setChecked(True)
+        self._cb_statistics.setChecked(self._default_include_statistics)
         opt_layout.addWidget(self._cb_briefpapier)
         opt_layout.addWidget(self._cb_statistics)
         left.addWidget(gb_options)

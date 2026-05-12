@@ -57,7 +57,7 @@ class TestGetDefaultBriefpapier:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(bp, "BRIEFPAPIER_DIR", tmp_path / "empty")
-        monkeypatch.setattr(bp, "_RESOURCES_DIR", tmp_path / "also-empty")
+        monkeypatch.setattr(bp, "DEFAULT_BRIEFPAPIER", tmp_path / "no-placeholder.pdf")
         assert get_default_briefpapier() is None
 
     def test_finds_png_in_user_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -65,31 +65,42 @@ class TestGetDefaultBriefpapier:
         user_dir.mkdir()
         _make_png(user_dir / "bdo_letterhead.png")
         monkeypatch.setattr(bp, "BRIEFPAPIER_DIR", user_dir)
-        monkeypatch.setattr(bp, "_RESOURCES_DIR", tmp_path / "no-resources")
+        monkeypatch.setattr(bp, "DEFAULT_BRIEFPAPIER", tmp_path / "missing.pdf")
 
         cfg = get_default_briefpapier()
         assert cfg is not None
         assert cfg.background_image is not None
         assert cfg.background_image.name == "bdo_letterhead.png"
 
-    def test_user_dir_overrides_resources(
+    def test_user_dir_overrides_default(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         user_dir = tmp_path / "user"
         user_dir.mkdir()
         _make_png(user_dir / "bdo_letterhead.png")
 
-        resources_dir = tmp_path / "resources"
-        resources_dir.mkdir()
-        _make_png(resources_dir / "bdo_letterhead.png")
+        default_pdf = tmp_path / "placeholder.pdf"
+        default_pdf.write_bytes(b"%PDF-1.4\n%\xc4\xe5\xf2\xe5\xeb\xa7\xf3\xa0\xd0\xc4\xc6\n")
 
         monkeypatch.setattr(bp, "BRIEFPAPIER_DIR", user_dir)
-        monkeypatch.setattr(bp, "_RESOURCES_DIR", resources_dir)
+        monkeypatch.setattr(bp, "DEFAULT_BRIEFPAPIER", default_pdf)
 
         cfg = get_default_briefpapier()
         assert cfg is not None
         assert cfg.background_image is not None
         assert cfg.background_image.parent == user_dir
+
+    def test_falls_back_to_default_placeholder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        default_pdf = tmp_path / "bdo_placeholder.pdf"
+        default_pdf.write_bytes(b"%PDF-1.4\n%\xc4\xe5\xf2\xe5\xeb\xa7\xf3\xa0\xd0\xc4\xc6\n")
+        monkeypatch.setattr(bp, "BRIEFPAPIER_DIR", tmp_path / "no-user")
+        monkeypatch.setattr(bp, "DEFAULT_BRIEFPAPIER", default_pdf)
+
+        cfg = get_default_briefpapier()
+        assert cfg is not None
+        assert cfg.background_image == default_pdf
 
 
 class TestBriefpapierFromPath:

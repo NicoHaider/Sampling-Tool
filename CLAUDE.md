@@ -28,7 +28,8 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 5.6    | Sample-Filter-Default, grüne Markierung, Engagement-Wechsel | done |
 | 6      | Dashboard, AuditTrail-View, Multi-Sheet-/HTML-Report | done       |
 | 6.1    | Einheitliche Export-Dialoge für alle Reports         | done        |
-| 7      | Bug-Mail (pywin32/Outlook), echtes BDO-Briefpapier, PyInstaller | offen |
+| 7      | Settings, Platzhalter-Briefpapier, CI, Windows-Compat | done        |
+| 8      | PyInstaller `.exe`-Build                             | offen       |
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -72,10 +73,16 @@ ui ──▶ controllers ──▶ core ◀── io
     HTML-Report via Jinja2. CSS inline, Charts als Base64-PNG eingebettet,
     Template-Default unter `resources/templates/audit_report.html`.
   - `briefpapier.py` – `BriefpapierConfig` (frozen) + `get_default_briefpapier()`.
-    Sucht das BDO-Briefpapier zuerst unter `BRIEFPAPIER_DIR`
-    (`~/Documents/BDO Audit Sampling/briefpapier/`), dann unter
-    `<package>/resources/briefpapier/`. Sprint 7 liefert das echte
-    `bdo_letterhead.png`; bis dahin laufen Reports ohne Briefpapier.
+    Resolution-Order: zuerst User-Override unter `BRIEFPAPIER_DIR`
+    (`~/Documents/BDO Audit Sampling/briefpapier/bdo_letterhead.{png,jpg,jpeg,pdf}`),
+    danach das Paket-Default `config.DEFAULT_BRIEFPAPIER`
+    (Platzhalter-PDF unter `<package>/resources/briefpapier/bdo_placeholder.pdf`).
+    Wenn beides fehlt, läuft der Report ohne Briefpapier-Layer.
+    Der Controller hängt zusätzlich `settings.custom_briefpapier_path`
+    (aus dem Settings-Dialog) als höchste Priorität vor (siehe
+    `MainController._resolve_briefpapier`). PDF-Briefpapier wird via
+    `pdfrw` (`pagexobj` + `makerl`) auf den Reportlab-Canvas gelegt;
+    PNG/JPG direkt mit `canvas.drawImage`.
 - **`persistence/`** – SQLite über sqlite3 (kein ORM-Overhead).
   - `database.py` – `Database`-Wrapper mit WAL+FK-PRAGMAs, `session()`-Transaktionen,
     `savepoint()`-Helper für nestbare Repo-Transaktionen, automatische Migrations.
@@ -177,6 +184,36 @@ ui ──▶ controllers ──▶ core ◀── io
     `platformdirs.user_data_dir('AuditSamplingTool', 'BDO')`.
     Defekte Pfade werden beim `list()` gefiltert; `prune_missing()`
     räumt sie persistent weg.
+  - `settings_store.py` – `AppSettings` (frozen dataclass) plus
+    `load_settings()` / `save_settings(...)`. Persistenz via
+    `QSettings(APP_ORG, APP_NAME)`; fehlende Keys fallen auf
+    `AppSettings.defaults()` zurück. Wird vom `MainController` beim
+    Start gelesen und in `handle_settings` zurückgeschrieben.
+  - `dialogs/settings_dialog.py` – `SettingsDialog` mit 3 Tabs
+    (Allgemein / Reports / Erweitert), Reset-Button und Briefpapier-
+    Vorschau via `QDesktopServices`. Konstruktor nimmt das aktuelle
+    `AppSettings`; OK liefert ein neues `AppSettings`, Cancel `None`.
+
+## Settings & Sprint-8-Vorbereitung
+
+`AppSettings` (siehe `ui/settings_store.py`) ist die zentrale Quelle
+für Anwender-Präferenzen:
+
+- `default_auditor_name` – Vorbelegung im New-Engagement-Dialog.
+- `engagements_dir` – Default-Pfad für die SQLite-Ablage.
+- `reset_keeps_filter` – Reset entfernt nur das Sample, lässt den
+  Filter stehen.
+- `default_include_briefpapier` / `default_include_statistics` –
+  Default-Checkboxen im AuditTrail-PDF-Dialog.
+- `custom_briefpapier_path` – User-Override für das Briefpapier
+  (höchste Priorität in `_resolve_briefpapier`).
+- `undo_depth` / `snapshot_retention_days` / `log_level` – reserviert
+  für Sprint 8 (PyInstaller-Build), aktuell informativ.
+
+Sprint 8 wird das Tool als `.exe` paketieren (PyInstaller-Profil
+existiert bereits in `pyproject.toml`'s `build`-Extras). Beim
+Bundling muss `resources/briefpapier/bdo_placeholder.pdf` als
+Paket-Resource mitgehen (bereits in `package-data` deklariert).
 
 ## Code-Style
 

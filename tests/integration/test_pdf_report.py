@@ -99,9 +99,15 @@ class TestAuditTrailPDF:
         briefpapier_png: Path,
         tmp_path: Path,
     ) -> None:
+        from sampling_tool.io.briefpapier import BriefpapierConfig
+
         out_without = tmp_path / "ohne.pdf"
         out_with = tmp_path / "mit.pdf"
-        AuditTrailPDF().render(engagement, events, out_without)
+        # Default-Lookup explizit umgehen, damit das Paket-Platzhalter-PDF
+        # die Größen-Vergleichsprüfung nicht beeinflusst.
+        AuditTrailPDF(briefpapier=BriefpapierConfig(background_image=None)).render(
+            engagement, events, out_without
+        )
         AuditTrailPDF(briefpapier=briefpapier_png).render(engagement, events, out_with)
 
         # Briefpapier-Variante muss zumindest ein paar Bytes mehr enthalten

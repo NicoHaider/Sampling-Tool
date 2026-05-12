@@ -13,6 +13,7 @@ versehentlichen Änderungen" ab und bleibt trotzdem minimal-invasiv.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 from dataclasses import dataclass
 from datetime import datetime
@@ -52,7 +53,10 @@ class EngagementVersionManager:
 
         Dateiname: `{stem}_{YYYY-MM-DD}_{HH-MM-SS}_{AuditorSanitized}.db`.
         Sekundengenau, damit mehrere Snapshots pro Tag/Minute kollisionsfrei sind.
-        WAL-/SHM-Hilfsdateien werden bewusst NICHT mitkopiert.
+        WAL-/SHM-Hilfsdateien werden bewusst NICHT mitkopiert. Nach der
+        Kopie wird die Snapshot-Datei auf read-only gesetzt (0o444), damit
+        sie nicht versehentlich überschrieben wird – Windows mappt das nur
+        grob auf das Read-Only-Attribut, aber besser als gar nichts.
         """
         if not self.engagement_db_path.exists():
             raise FileNotFoundError(f"Engagement-DB existiert nicht: {self.engagement_db_path}")
@@ -66,6 +70,8 @@ class EngagementVersionManager:
         )
         target = self.archive_dir / snapshot_name
         shutil.copy2(self.engagement_db_path, target)
+        with contextlib.suppress(OSError):  # pragma: no cover – manche FS lehnen chmod ab
+            target.chmod(0o444)
         return target
 
     def list_snapshots(self) -> list[SnapshotInfo]:
@@ -98,7 +104,14 @@ class EngagementVersionManager:
         Sprint-Version freigeschaltet (Restore-Dialog)."""
         if not snapshot_path.exists():
             raise FileNotFoundError(f"Snapshot existiert nicht: {snapshot_path}")
+        # Ziel ggf. beschreibbar machen, falls es ein alter (read-only)
+        # Snapshot ist; Windows behandelt das sonst als Permission-Denied.
+        if self.engagement_db_path.exists():
+            with contextlib.suppress(OSError):  # pragma: no cover
+                self.engagement_db_path.chmod(0o644)
         shutil.copy2(snapshot_path, self.engagement_db_path)
+        with contextlib.suppress(OSError):  # pragma: no cover
+            self.engagement_db_path.chmod(0o644)
         return self.engagement_db_path
 
 

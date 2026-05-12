@@ -214,7 +214,7 @@ class TestMainController:
         controller = MainController(
             window,
             recent_store=recent_store,
-            dialog_factory=lambda parent: _StubDialog(parent),
+            dialog_factory=lambda parent, _settings: _StubDialog(parent),
         )
         try:
             controller.handle_new_engagement()
@@ -1070,3 +1070,183 @@ class TestUnifiedExportDialogs:
             assert len(wb.sheetnames) == 1
         finally:
             controller.handle_close_engagement()
+
+
+class TestSettingsIntegration:
+    """Settings beeinflussen Default-Werte beim Controller."""
+
+    def test_init_uses_provided_settings(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        from dataclasses import replace
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        custom_dir = tmp_path / "my-engagements"
+        settings = replace(AppSettings.defaults(), engagements_dir=custom_dir)
+        MainController(window, recent_store=recent_store, settings=settings)
+        assert custom_dir.exists()
+
+    def test_handle_settings_persists_new_values(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from PyQt6.QtCore import QSettings
+
+        from sampling_tool.config import APP_NAME, APP_ORG
+        from sampling_tool.ui.dialogs.settings_dialog import SettingsDialog
+        from sampling_tool.ui.settings_store import AppSettings
+
+        # QSettings in tmp_path isolieren, damit echte Prefs nicht angefasst werden.
+        monkeypatch.setattr(
+            "sampling_tool.ui.settings_store._qsettings",
+            lambda: QSettings(
+                QSettings.Format.IniFormat,
+                QSettings.Scope.UserScope,
+                APP_ORG,
+                APP_NAME,
+            ),
+        )
+        QSettings.setPath(
+            QSettings.Format.IniFormat,
+            QSettings.Scope.UserScope,
+            str(tmp_path),
+        )
+        from dataclasses import replace
+
+        new_settings = replace(
+            AppSettings.defaults(), default_auditor_name="Updated", undo_depth=33
+        )
+
+        class _StubSettingsDialog(SettingsDialog):
+            def exec(self) -> int:
+                self._result = new_settings
+                return int(QDialog.DialogCode.Accepted)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            settings_dialog_factory=lambda parent, current: _StubSettingsDialog(current, parent),
+        )
+        controller.handle_settings()
+        from sampling_tool.ui.settings_store import load_settings
+
+        assert controller._settings.default_auditor_name == "Updated"
+        loaded = load_settings()
+        assert loaded.default_auditor_name == "Updated"
+        assert loaded.undo_depth == 33
+
+    def test_audit_pdf_dialog_receives_settings_defaults(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.ui.dialogs.export_audit_pdf_dialog import ExportAuditPdfDialog
+        from sampling_tool.ui.settings_store import AppSettings
+
+        captured: dict[str, object] = {}
+        from dataclasses import replace
+
+        settings = replace(
+            AppSettings.defaults(),
+            default_include_briefpapier=False,
+            default_include_statistics=False,
+        )
+
+        def factory(  # type: ignore[no-untyped-def]
+            parent,
+            engagement,
+            available,
+            bp_available,
+            default_dir,
+            default_use_briefpapier,
+            default_include_statistics,
+        ):
+            captured["default_use_briefpapier"] = default_use_briefpapier
+            captured["default_include_statistics"] = default_include_statistics
+
+            dialog = ExportAuditPdfDialog(
+                engagement=engagement,
+                event_types_available=available,
+                briefpapier_available=bp_available,
+                parent=parent,
+                default_output_dir=default_dir,
+                default_use_briefpapier=default_use_briefpapier,
+                default_include_statistics=default_include_statistics,
+            )
+
+            def reject() -> int:
+                return int(QDialog.DialogCode.Rejected)
+
+            dialog.exec = reject  # type: ignore[method-assign]
+            return dialog
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            audit_pdf_dialog_factory=factory,
+            settings=settings,
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            controller.handle_export_audit_pdf()
+            assert captured["default_use_briefpapier"] is False
+            assert captured["default_include_statistics"] is False
+        finally:
+            controller.handle_close_engagement()
+
+    def test_reset_keeps_filter_when_setting_enabled(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from dataclasses import replace
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        settings = replace(AppSettings.defaults(), reset_keeps_filter=True)
+        controller = MainController(window, recent_store=recent_store, settings=settings)
+        monkeypatch.setattr(
+            QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.handle_filter_only_sample_toggled(True)
+            assert controller._filter_active_sample_id is not None
+            controller.handle_reset()
+            # Filter bleibt aktiv (Setting), aber Sample-Highlight ist weg.
+            assert controller._sample is None
+            assert controller._filter_active_sample_id is not None
+        finally:
+            controller.handle_close_engagement()
+
+    def test_resolve_briefpapier_uses_setting_override(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        from sampling_tool.ui.settings_store import AppSettings
+
+        custom_pdf = tmp_path / "my_letter.pdf"
+        custom_pdf.write_bytes(b"%PDF-1.4\n%\xc4\xe5\xf2\xe5\xeb\xa7\xf3\xa0\xd0\xc4\xc6\n")
+        from dataclasses import replace
+
+        settings = replace(AppSettings.defaults(), custom_briefpapier_path=custom_pdf)
+        controller = MainController(window, recent_store=recent_store, settings=settings)
+        cfg = controller._resolve_briefpapier()
+        assert cfg is not None
+        assert cfg.background_image == custom_pdf

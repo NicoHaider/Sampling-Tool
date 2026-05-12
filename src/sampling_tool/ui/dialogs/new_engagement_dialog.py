@@ -44,16 +44,23 @@ AUDIT_TYPES: tuple[str, ...] = (
 class NewEngagementDialog(QDialog):
     """Dialog für die Erstanlage eines Engagements."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        default_auditor_name: str | None = None,
+        engagements_dir: Path | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Neues Engagement anlegen")
         self.setModal(True)
         self.setMinimumWidth(440)
 
         self._db_path: Path | None = None
+        self._engagements_dir = engagements_dir if engagements_dir is not None else ENGAGEMENTS_DIR
 
         # ---- Felder ----
-        self._auditor_name = QLineEdit(_default_user_name())
+        initial_auditor = default_auditor_name or _default_user_name()
+        self._auditor_name = QLineEdit(initial_auditor)
         self._auditor_position = QLineEdit()
         self._client_name = QLineEdit()
 
@@ -158,7 +165,7 @@ class NewEngagementDialog(QDialog):
             return
 
         sanitized = sanitize_for_path(self._client_name.text().strip())
-        default_dir = ENGAGEMENTS_DIR / sanitized
+        default_dir = self._engagements_dir / sanitized
         default_dir.mkdir(parents=True, exist_ok=True)
         default_target = default_dir / f"{sanitized}{DB_FILE_SUFFIX}"
         path_str, _filter = QFileDialog.getSaveFileName(

@@ -62,6 +62,8 @@ class MainWindow(QMainWindow):
     export_html_report_requested = pyqtSignal()
     bug_report_requested = pyqtSignal()
     about_requested = pyqtSignal()
+    settings_requested = pyqtSignal()
+    hotkeys_requested = pyqtSignal()
     dataset_selected = pyqtSignal(int)
     sample_selected = pyqtSignal(int)
     sample_filter_toggled = pyqtSignal(int)
@@ -353,10 +355,12 @@ class MainWindow(QMainWindow):
         assert file_menu is not None
 
         self._action_new = QAction("Neues Engagement…", self)
+        self._action_new.setShortcut(QKeySequence.StandardKey.New)
         self._action_new.triggered.connect(self.new_engagement_requested.emit)
         file_menu.addAction(self._action_new)
 
         self._action_open = QAction("Engagement öffnen…", self)
+        self._action_open.setShortcut(QKeySequence.StandardKey.Open)
         self._action_open.triggered.connect(self._on_open_clicked)
         file_menu.addAction(self._action_open)
 
@@ -368,11 +372,19 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         style = self.style()
         self._action_close = QAction("Engagement schließen", self)
+        self._action_close.setShortcut(QKeySequence.StandardKey.Close)
         if style is not None:
             self._action_close.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon))
         self._action_close.setToolTip("Engagement schließen und zum Startbildschirm zurückkehren")
         self._action_close.triggered.connect(self.close_engagement_requested.emit)
         file_menu.addAction(self._action_close)
+
+        file_menu.addSeparator()
+        self._action_settings = QAction("Einstellungen…", self)
+        self._action_settings.setShortcut(QKeySequence.StandardKey.Preferences)
+        self._action_settings.setMenuRole(QAction.MenuRole.PreferencesRole)
+        self._action_settings.triggered.connect(self.settings_requested.emit)
+        file_menu.addAction(self._action_settings)
 
         file_menu.addSeparator()
         action_quit = QAction("Beenden", self)
@@ -385,6 +397,7 @@ class MainWindow(QMainWindow):
         assert edit_menu is not None
 
         self._action_import = QAction("Datei importieren…", self)
+        self._action_import.setShortcut(QKeySequence("Ctrl+I"))
         self._action_import.triggered.connect(self.import_excel_requested.emit)
         edit_menu.addAction(self._action_import)
 
@@ -438,11 +451,16 @@ class MainWindow(QMainWindow):
         help_menu = menu_bar.addMenu("&Hilfe")
         assert help_menu is not None
 
+        self._action_hotkeys = QAction("Tastatur-Shortcuts…", self)
+        self._action_hotkeys.triggered.connect(self.hotkeys_requested.emit)
+        help_menu.addAction(self._action_hotkeys)
+
         self._action_bug_report = QAction("Bug melden…", self)
         self._action_bug_report.triggered.connect(self.bug_report_requested.emit)
         help_menu.addAction(self._action_bug_report)
 
         self._action_about = QAction("Über…", self)
+        self._action_about.setMenuRole(QAction.MenuRole.AboutRole)
         self._action_about.triggered.connect(self.about_requested.emit)
         help_menu.addAction(self._action_about)
 

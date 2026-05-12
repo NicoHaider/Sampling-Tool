@@ -70,11 +70,20 @@ SUPPORTED_CSV_SUFFIXES: Final[tuple[str, ...]] = (".csv", ".tsv")
 ENGAGEMENTS_DIR: Final[Path] = Path.home() / "Documents" / "BDO Audit Sampling"
 
 # Ablage für ein optionales Briefpapier (PNG/JPG/PDF), das beim Generieren
-# von PDF-Reports als Hintergrund eingelegt wird. Wird in Sprint 7 mit dem
-# echten BDO-Briefpapier gefüllt; bis dahin nutzt die App das in
-# `resources/briefpapier/` mitgelieferte Default, falls vorhanden.
+# von PDF-Reports als Hintergrund eingelegt wird. User-Override für das
+# echte BDO-Briefpapier; wenn dort nichts liegt, fällt die App auf das in
+# `DEFAULT_BRIEFPAPIER` mitgelieferte Platzhalter-PDF zurück (Sprint 7).
 BRIEFPAPIER_DIR: Final[Path] = ENGAGEMENTS_DIR / "briefpapier"
 BRIEFPAPIER_DEFAULT_NAME: Final[str] = "bdo_letterhead"
+
+# Paket-Default: das Platzhalter-Briefpapier wird mit dem Wheel ausgeliefert
+# (siehe `[tool.setuptools.package-data]` in `pyproject.toml`). Es wird genau
+# dann genutzt, wenn kein User-Override unter `BRIEFPAPIER_DIR` liegt. Sobald
+# das echte BDO-Briefpapier verfügbar ist, kann diese Datei ohne Code-Änderung
+# ausgetauscht werden.
+DEFAULT_BRIEFPAPIER: Final[Path] = (
+    Path(__file__).parent / "resources" / "briefpapier" / "bdo_placeholder.pdf"
+)
 
 
 # ---------------------------------------------------------------------------

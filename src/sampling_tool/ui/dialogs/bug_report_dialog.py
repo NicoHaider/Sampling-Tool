@@ -12,12 +12,13 @@ import urllib.parse
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QUrl
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
     QVBoxLayout,
     QWidget,
@@ -114,8 +115,34 @@ class BugReportDialog(QDialog):
 
     def _on_accept(self) -> None:
         payload = self.get_payload()
-        QDesktopServices.openUrl(QUrl(payload.mailto_url()))
+        if open_mailto(QUrl(payload.mailto_url())):
+            self.accept()
+            return
+        # Keine Mail-App registriert: Body in die Zwischenablage und
+        # dem User die Empfänger-Adresse zeigen.
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(payload.body())
+        QMessageBox.warning(
+            self,
+            "Mail-App nicht gefunden",
+            (
+                "Es konnte keine System-Mail-App geöffnet werden. "
+                "Der Bug-Report wurde in die Zwischenablage kopiert – "
+                f"bitte manuell an {BUG_REPORT_EMAIL} senden."
+            ),
+        )
         self.accept()
+
+
+def open_mailto(url: QUrl) -> bool:
+    """Versucht eine `mailto:`-URL via Default-Mail-App zu öffnen.
+
+    Liefert `False`, wenn keine Mail-App registriert ist oder das
+    Aufrufen fehlschlägt – Caller können dann einen Clipboard-Fallback
+    triggern.
+    """
+    return QDesktopServices.openUrl(url)
 
 
 # ---------------------------------------------------------------------------
