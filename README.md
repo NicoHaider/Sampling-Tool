@@ -1,12 +1,14 @@
 # Sampling Tool
 
+[![CI](https://github.com/NicoHaider/Sampling-Tool/actions/workflows/ci.yml/badge.svg)](https://github.com/NicoHaider/Sampling-Tool/actions/workflows/ci.yml)
+
 Python-Port des BDO-internen, VBA-basierten Excel-Audit-Sampling-Tools (ISAE 3402).
 Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Stichprobenziehung.
 
 ## Status
 
-**Sprint 6 von 7** – Dashboard, AuditTrail-View, Multi-Sheet-/HTML-Reports
-✅ **erledigt** (Ruff + Mypy clean).
+**Sprint 7 von 7** – Settings, Platzhalter-Briefpapier, CI, Windows-Kompatibilität
+✅ **erledigt** (Ruff + Mypy clean). Sprint 8 (PyInstaller `.exe`-Build) folgt separat.
 
 | Sprint | Inhalt                                              | Status      |
 |-------:|-----------------------------------------------------|-------------|
@@ -18,7 +20,31 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 | 5.5    | UX-Bugfixes + Engagement-Auto-Versionierung         | **done**    |
 | 5.6    | Sample-Filter-Default, grüne Markierung, Engagement-Wechsel | **done** |
 | 6      | Dashboard, AuditTrail-View, Multi-Sheet-/HTML-Report | **done**   |
-| 7      | Bug-Mail (pywin32/Outlook), echtes BDO-Briefpapier, PyInstaller | offen |
+| 6.1    | Einheitliche Export-Dialoge für alle Reports         | **done**    |
+| 7      | Settings, Platzhalter-Briefpapier, CI, Windows-Compat | **done**  |
+| 8      | PyInstaller `.exe`-Build                             | offen       |
+
+### Was Sprint 7 liefert
+
+- **Settings-Dialog** (`Datei → Einstellungen…`) mit 3 Tabs (Allgemein /
+  Reports / Erweitert), persistiert via `QSettings`.
+- **Platzhalter-Briefpapier** als PDF unter
+  `resources/briefpapier/bdo_placeholder.pdf` – wird automatisch
+  geladen, falls kein User-Override gesetzt ist. Austauschbar ohne
+  Code-Änderung, sobald das echte BDO-Briefpapier vorliegt.
+- **Briefpapier-Resolution-Order**: Setting (`custom_briefpapier_path`)
+  → User-Override im Filesystem → Paket-Default → ohne Briefpapier.
+- **Mail-App-Fallback** im Bug-Report-Dialog: wenn `QDesktopServices.openUrl`
+  fehlschlägt, wird der Body in die Zwischenablage kopiert und der User
+  informiert.
+- **Windows-Kompatibilität**: Snapshots werden nach Erstellung
+  read-only gesetzt (`chmod 0o444`), Restore setzt Schreibrechte
+  zurück.
+- **GitHub Actions CI**: `pytest + ruff + mypy` auf Ubuntu und Windows
+  mit Python 3.13.
+- **Docs**: `docs/USER_GUIDE.md` und `docs/ADMIN_GUIDE.md`.
+- **Hotkeys-Übersicht** im Hilfe-Menü, plus konsistente Shortcuts für
+  Neu/Öffnen/Schließen/Import/Settings.
 
 ### Was Sprint 6 liefert
 
@@ -152,23 +178,40 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 - macOS oder Windows 10/11
 - Aktives venv (siehe unten)
 
-## Installation
+## Installation für Anwender
+
+1. **Python 3.13** installieren – Download unter
+   [python.org/downloads](https://www.python.org/downloads/).
+   Auf Windows beim Installer „Add Python to PATH" anhaken.
+2. Dieses Repository klonen oder als ZIP herunterladen.
+3. Terminal öffnen, in den Projekt-Ordner wechseln.
+4. Optional venv anlegen:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate       # macOS/Linux
+   .\.venv\Scripts\activate        # Windows
+   ```
+5. Editable install:
+   ```bash
+   pip install -e .
+   ```
+6. App starten:
+   ```bash
+   python -m sampling_tool
+   # oder:
+   sampling-tool
+   ```
+
+> Eine fertige `.exe`-Version folgt in **Sprint 8** (PyInstaller-Build).
+
+## Installation für Entwickler
 
 ```bash
-# venv aktivieren (falls noch nicht aktiv)
-source .venv/bin/activate         # macOS/Linux
-# .\.venv\Scripts\activate        # Windows
-
 # Editable install inkl. Dev-Tools
 pip install -e ".[dev]"
-```
 
-## Start
-
-```bash
+# Start
 python -m sampling_tool
-# oder via Console-Script:
-sampling-tool
 ```
 
 ## Tests

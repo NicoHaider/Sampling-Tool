@@ -312,15 +312,21 @@ def _draw_background(canvas: Canvas, source: Path, pagesize: tuple[float, float]
     canvas.saveState()
     if suffix == ".pdf":
         try:
-            from pdfrw import PageMerge, PdfReader  # type: ignore[import-not-found]
+            from pdfrw import PdfReader
+            from pdfrw.buildxobj import pagexobj
+            from pdfrw.toreportlab import makerl
         except ImportError:
             # Fallback: PDF-Briefpapier ohne pdfrw nicht unterstützt – wir
             # rendern unauffällig ohne Layer, damit der Report-Build nicht
-            # crasht. Die Test-Suite nutzt PNG.
+            # crasht.
             canvas.restoreState()
             return
-        page = PdfReader(str(source)).pages[0]
-        PageMerge(canvas).add(page, prepend=True).render()
+        pages = PdfReader(str(source)).pages
+        if not pages:
+            canvas.restoreState()
+            return
+        xobj = pagexobj(pages[0])
+        canvas.doForm(makerl(canvas, xobj))
     else:
         # Annahme: Bildformat, das reportlab nativ kann (PNG/JPG).
         canvas.drawImage(

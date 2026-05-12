@@ -27,7 +27,6 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.config import (
     APP_NAME,
-    ENGAGEMENTS_DIR,
     EXPORT_DIR_NAME,
     SUPPORTED_CSV_SUFFIXES,
     SUPPORTED_EXCEL_SUFFIXES,
@@ -42,7 +41,11 @@ from sampling_tool.core.models import (
 )
 from sampling_tool.core.sampling import SamplingError, create_sampler
 from sampling_tool.core.undo import UndoManager
-from sampling_tool.io.briefpapier import get_default_briefpapier
+from sampling_tool.io.briefpapier import (
+    BriefpapierConfig,
+    briefpapier_from_path,
+    get_default_briefpapier,
+)
 from sampling_tool.io.exporter import ExcelExporter, ExportError
 from sampling_tool.io.html_report import HtmlReportGenerator
 from sampling_tool.io.importer import DataImportError, ExcelImporter
@@ -64,24 +67,27 @@ from sampling_tool.ui.dialogs.export_html_report_dialog import ExportHtmlReportD
 from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialog
 from sampling_tool.ui.dialogs.new_engagement_dialog import NewEngagementDialog
 from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialog
+from sampling_tool.ui.dialogs.settings_dialog import SettingsDialog
 from sampling_tool.ui.recent import RecentEngagementsStore
+from sampling_tool.ui.settings_store import AppSettings, load_settings, save_settings
 
 if TYPE_CHECKING:
     from sampling_tool.ui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
 
-DialogFactory = Callable[["MainWindow"], NewEngagementDialog]
+DialogFactory = Callable[["MainWindow", AppSettings], NewEngagementDialog]
 SamplingDialogFactory = Callable[["MainWindow", Dataset, SampleResult | None], SamplingDialog]
 ExportDialogFactory = Callable[["MainWindow", Dataset, str, str, Path | None], ExportSampleDialog]
 AuditPdfDialogFactory = Callable[
-    ["MainWindow", Engagement, list[str], bool, Path | None],
+    ["MainWindow", Engagement, list[str], bool, Path | None, bool, bool],
     ExportAuditPdfDialog,
 ]
 ExcelReportDialogFactory = Callable[
     ["MainWindow", Engagement, Path | None], ExportExcelReportDialog
 ]
 HtmlReportDialogFactory = Callable[["MainWindow", Engagement, Path | None], ExportHtmlReportDialog]
+SettingsDialogFactory = Callable[["MainWindow", AppSettings], SettingsDialog]
 
 
 class MainController:
@@ -97,10 +103,15 @@ class MainController:
         audit_pdf_dialog_factory: AuditPdfDialogFactory | None = None,
         excel_report_dialog_factory: ExcelReportDialogFactory | None = None,
         html_report_dialog_factory: HtmlReportDialogFactory | None = None,
+        settings_dialog_factory: SettingsDialogFactory | None = None,
+        settings: AppSettings | None = None,
     ) -> None:
         self.window = window
         self.recent_store = recent_store if recent_store is not None else RecentEngagementsStore()
-        self._dialog_factory = dialog_factory if dialog_factory is not None else NewEngagementDialog
+        self._settings = settings if settings is not None else load_settings()
+        self._dialog_factory = (
+            dialog_factory if dialog_factory is not None else _default_new_engagement_factory
+        )
         self._sampling_factory = (
             sampling_dialog_factory
             if sampling_dialog_factory is not None
@@ -124,6 +135,11 @@ class MainController:
             if html_report_dialog_factory is not None
             else _default_html_report_factory
         )
+        self._settings_factory = (
+            settings_dialog_factory
+            if settings_dialog_factory is not None
+            else _default_settings_factory
+        )
 
         self._db: Database | None = None
         self._engagement: Engagement | None = None
@@ -136,9 +152,9 @@ class MainController:
         self._active_sample_id: int | None = None
         self._undo_manager: UndoManager | None = None
 
-        # Standard-Speicherort sicherstellen, damit File-Dialoge direkt
-        # dort starten können. Idempotent.
-        ENGAGEMENTS_DIR.mkdir(parents=True, exist_ok=True)
+        # Engagement-Ordner aus Settings sicherstellen, damit File-Dialoge
+        # direkt dort starten können. Idempotent.
+        self._settings.engagements_dir.mkdir(parents=True, exist_ok=True)
 
         self._connect_signals()
         self.refresh_recent()
@@ -168,6 +184,8 @@ class MainController:
         w.export_html_report_requested.connect(self.handle_export_html_report)
         w.bug_report_requested.connect(self.handle_bug_report)
         w.about_requested.connect(self.handle_about)
+        w.settings_requested.connect(self.handle_settings)
+        w.hotkeys_requested.connect(self.handle_hotkeys)
         w.dataset_selected.connect(self.handle_dataset_selected)
         w.sample_selected.connect(self.handle_sample_selected)
         w.sample_filter_toggled.connect(self.handle_sample_filter_toggled)
@@ -180,7 +198,7 @@ class MainController:
 
     def handle_new_engagement(self) -> None:
         """Dialog anzeigen, neues Engagement anlegen + DB initialisieren."""
-        dialog = self._dialog_factory(self.window)
+        dialog = self._dialog_factory(self.window, self._settings)
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
 
@@ -518,11 +536,16 @@ class MainController:
 
         self._sample = None
         self._active_sample_id = None
-        self._filter_active_sample_id = None
-        self.window.clear_sample_filter()
-        self.window.set_filter_only_sample(False)
-        self.window.data_table().clear_highlight()
-        self.window.clear_active_sample()
+        if self._settings.reset_keeps_filter and self._filter_active_sample_id is not None:
+            # User-Setting: Filter bleibt aktiv, nur das Sample-Highlight geht.
+            self.window.data_table().clear_highlight()
+            self.window.clear_active_sample()
+        else:
+            self._filter_active_sample_id = None
+            self.window.clear_sample_filter()
+            self.window.set_filter_only_sample(False)
+            self.window.data_table().clear_highlight()
+            self.window.clear_active_sample()
         self._push_undo_snapshot()
         self._update_undo_redo_state()
         self._refresh_views()
@@ -634,7 +657,7 @@ class MainController:
             self._engagement.id, limit=10_000
         )
         available_types = sorted({e.event_type for e in events})
-        briefpapier = get_default_briefpapier()
+        briefpapier = self._resolve_briefpapier()
 
         dialog = self._audit_pdf_factory(
             self.window,
@@ -642,6 +665,8 @@ class MainController:
             available_types,
             briefpapier is not None,
             self._default_export_dir(),
+            self._settings.default_include_briefpapier,
+            self._settings.default_include_statistics,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
@@ -769,6 +794,41 @@ class MainController:
     def handle_about(self) -> None:
         """About-Dialog öffnen."""
         AboutDialog(self.window).exec()
+
+    def handle_settings(self) -> None:
+        """Settings-Dialog öffnen und auf OK persistieren."""
+        dialog = self._settings_factory(self.window, self._settings)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        new_settings = dialog.get_settings()
+        if new_settings is None:
+            return
+        self._settings = new_settings
+        save_settings(new_settings)
+        # Engagement-Ordner ggf. neu anlegen.
+        try:
+            new_settings.engagements_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            logger.exception("Engagement-Ordner konnte nicht angelegt werden")
+
+    def handle_hotkeys(self) -> None:
+        """Statisches Info-Fenster mit Tastatur-Shortcuts."""
+        QMessageBox.information(
+            self.window,
+            "Tastatur-Shortcuts",
+            (
+                "<table cellpadding='6'>"
+                "<tr><td><b>Cmd/Ctrl+Z</b></td><td>Rückgängig</td></tr>"
+                "<tr><td><b>Cmd/Ctrl+Shift+Z</b></td><td>Wiederherstellen</td></tr>"
+                "<tr><td><b>Cmd/Ctrl+N</b></td><td>Neues Engagement</td></tr>"
+                "<tr><td><b>Cmd/Ctrl+O</b></td><td>Engagement öffnen</td></tr>"
+                "<tr><td><b>Cmd/Ctrl+I</b></td><td>Datei importieren</td></tr>"
+                "<tr><td><b>Cmd/Ctrl+W</b></td><td>Engagement schließen</td></tr>"
+                "<tr><td><b>Cmd/Ctrl+,</b></td><td>Einstellungen</td></tr>"
+                "<tr><td><b>Cmd/Ctrl+Q</b></td><td>Beenden</td></tr>"
+                "</table>"
+            ),
+        )
 
     # ---- intern --------------------------------------------------------
 
@@ -944,6 +1004,21 @@ class MainController:
             return self._db.db_path.parent / EXPORT_DIR_NAME
         return Path.cwd() / EXPORT_DIR_NAME
 
+    def _resolve_briefpapier(self) -> BriefpapierConfig | None:
+        """Liefert das aktive Briefpapier: User-Setting > Default-Resolution.
+
+        Setting-Override (`custom_briefpapier_path`) hat Vorrang. Existiert
+        der Pfad nicht, fällt der Controller still auf das Default-System
+        (`get_default_briefpapier`) zurück.
+        """
+        custom = self._settings.custom_briefpapier_path
+        if custom is not None and custom.exists():
+            try:
+                return briefpapier_from_path(custom)
+            except (FileNotFoundError, ValueError):
+                logger.exception("Custom-Briefpapier ungültig, falle auf Default zurück")
+        return get_default_briefpapier()
+
     def _error(self, message: str) -> None:
         logger.error(message)
         QMessageBox.warning(self.window, APP_NAME, message)
@@ -959,6 +1034,16 @@ class MainController:
 # ---------------------------------------------------------------------------
 # Default-Factories
 # ---------------------------------------------------------------------------
+
+
+def _default_new_engagement_factory(
+    parent: MainWindow, settings: AppSettings
+) -> NewEngagementDialog:
+    return NewEngagementDialog(
+        parent=parent,
+        default_auditor_name=settings.default_auditor_name or None,
+        engagements_dir=settings.engagements_dir,
+    )
 
 
 def _default_sampling_factory(
@@ -989,6 +1074,8 @@ def _default_audit_pdf_factory(
     event_types_available: list[str],
     briefpapier_available: bool,
     default_dir: Path | None,
+    default_use_briefpapier: bool = True,
+    default_include_statistics: bool = True,
 ) -> ExportAuditPdfDialog:
     return ExportAuditPdfDialog(
         engagement=engagement,
@@ -996,6 +1083,8 @@ def _default_audit_pdf_factory(
         briefpapier_available=briefpapier_available,
         parent=parent,
         default_output_dir=default_dir,
+        default_use_briefpapier=default_use_briefpapier,
+        default_include_statistics=default_include_statistics,
     )
 
 
@@ -1013,3 +1102,7 @@ def _default_html_report_factory(
     default_dir: Path | None,
 ) -> ExportHtmlReportDialog:
     return ExportHtmlReportDialog(engagement, parent=parent, default_output_dir=default_dir)
+
+
+def _default_settings_factory(parent: MainWindow, current: AppSettings) -> SettingsDialog:
+    return SettingsDialog(current, parent=parent)

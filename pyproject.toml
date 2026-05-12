@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # ---------------------------------------------------------------------------
 [project]
 name = "sampling-tool"
-version = "0.6.0"
+version = "0.7.0"
 description = "BDO Audit Sampling Tool – Python-Port des VBA-basierten Excel-Tools (ISAE 3402)."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -34,6 +34,7 @@ dependencies = [
     "numpy>=2.0",
     "matplotlib>=3.8",
     "reportlab>=4.2",
+    "pdfrw>=0.4",
     "jinja2>=3.1",
     "platformdirs>=4.0",
     # pywin32 nur auf Windows (für Outlook-Bug-Mail, COM-Integration)
@@ -139,6 +140,7 @@ module = [
     "matplotlib.*",
     "win32com.*",
     "pythoncom.*",
+    "pdfrw.*",
 ]
 ignore_missing_imports = true
 

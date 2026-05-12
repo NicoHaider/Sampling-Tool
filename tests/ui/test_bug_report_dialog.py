@@ -76,7 +76,44 @@ class TestBugReportDialog:
         with patch(
             "sampling_tool.ui.dialogs.bug_report_dialog.QDesktopServices.openUrl"
         ) as open_url:
+            open_url.return_value = True
             dialog._on_accept()
         open_url.assert_called_once()
         url_arg = open_url.call_args.args[0]
         assert url_arg.toString().startswith("mailto:")
+
+    def test_fallback_when_open_url_fails_copies_to_clipboard(self, qtbot: QtBot) -> None:
+        dialog = BugReportDialog()
+        qtbot.addWidget(dialog)
+        dialog._did.setPlainText("hat geknallt")
+        dialog._expected.setPlainText("kein Crash")
+        dialog._actual.setPlainText("Crash")
+
+        with (
+            patch(
+                "sampling_tool.ui.dialogs.bug_report_dialog.QDesktopServices.openUrl",
+                return_value=False,
+            ),
+            patch("sampling_tool.ui.dialogs.bug_report_dialog.QMessageBox.warning") as warn,
+            patch(
+                "sampling_tool.ui.dialogs.bug_report_dialog.QGuiApplication.clipboard"
+            ) as clipboard,
+        ):
+            dialog._on_accept()
+
+        warn.assert_called_once()
+        clipboard.return_value.setText.assert_called_once()
+        body_arg = clipboard.return_value.setText.call_args.args[0]
+        assert "hat geknallt" in body_arg
+
+    def test_open_mailto_returns_qdesktopservices_result(self, qtbot: QtBot) -> None:
+        from PyQt6.QtCore import QUrl
+
+        from sampling_tool.ui.dialogs.bug_report_dialog import open_mailto
+
+        with patch(
+            "sampling_tool.ui.dialogs.bug_report_dialog.QDesktopServices.openUrl"
+        ) as open_url:
+            open_url.return_value = False
+            result = open_mailto(QUrl("mailto:test@example.com"))
+        assert result is False

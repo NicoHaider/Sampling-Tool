@@ -21,6 +21,27 @@ REPO_URL: str = "https://github.com/NicoHaider/Sampling-Tool"
 
 CHANGELOG: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
+        "v0.7.0",
+        (
+            "Settings-Dialog (Allgemein / Reports / Erweitert) mit QSettings-Persistenz",
+            "Platzhalter-Briefpapier (PDF) wird mit dem Paket ausgeliefert",
+            "Briefpapier-Resolution: Setting → User-Override → Paket-Default",
+            "Mail-App-Fallback im Bug-Report-Dialog (Clipboard, wenn keine Mail-App)",
+            "Windows-Kompatibilität: Snapshots read-only nach Erstellung",
+            "GitHub Actions CI auf Ubuntu + Windows mit Python 3.13",
+            "Tastatur-Shortcuts-Übersicht im Hilfe-Menü",
+            "User-Guide und Admin-Guide unter docs/",
+        ),
+    ),
+    (
+        "v0.6.1",
+        (
+            "Einheitliche Export-Dialoge für alle vier Report-Pfade",
+            "ExportTargetWidget als wiederverwendbare rechte Spalte",
+            "Pattern-basierte Dateinamen mit {name}/{id}/{type}/{date}-Tokens",
+        ),
+    ),
+    (
         "v0.6.0",
         (
             "Dashboard mit Statistik-Kacheln und Mini-Charts (matplotlib)",
