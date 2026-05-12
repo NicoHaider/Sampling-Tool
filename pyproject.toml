@@ -74,8 +74,6 @@ where = ["src"]
 sampling_tool = [
     "ui/styles/*.qss",
     "persistence/migrations/*.sql",
-    "resources/templates/*.html",
-    "resources/briefpapier/*",
 ]
 
 # ---------------------------------------------------------------------------

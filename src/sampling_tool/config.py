@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
+from sampling_tool.resources import shared_resource
+
 # ---------------------------------------------------------------------------
 # Anwendungs-Metadaten
 # ---------------------------------------------------------------------------
@@ -76,14 +78,12 @@ ENGAGEMENTS_DIR: Final[Path] = Path.home() / "Documents" / "BDO Audit Sampling"
 BRIEFPAPIER_DIR: Final[Path] = ENGAGEMENTS_DIR / "briefpapier"
 BRIEFPAPIER_DEFAULT_NAME: Final[str] = "bdo_letterhead"
 
-# Paket-Default: das Platzhalter-Briefpapier wird mit dem Wheel ausgeliefert
-# (siehe `[tool.setuptools.package-data]` in `pyproject.toml`). Es wird genau
-# dann genutzt, wenn kein User-Override unter `BRIEFPAPIER_DIR` liegt. Sobald
-# das echte BDO-Briefpapier verfügbar ist, kann diese Datei ohne Code-Änderung
-# ausgetauscht werden.
-DEFAULT_BRIEFPAPIER: Final[Path] = (
-    Path(__file__).parent / "resources" / "briefpapier" / "bdo_placeholder.pdf"
-)
+# Paket-Default: das Platzhalter-Briefpapier wird mit dem Build ausgeliefert
+# (Projekt-Root `resources/briefpapier/`, im PyInstaller-Bundle unter
+# `sys._MEIPASS/resources/briefpapier/`). Es wird genau dann genutzt, wenn kein
+# User-Override unter `BRIEFPAPIER_DIR` liegt. Sobald das echte BDO-Briefpapier
+# verfügbar ist, kann diese Datei ohne Code-Änderung ausgetauscht werden.
+DEFAULT_BRIEFPAPIER: Final[Path] = shared_resource("briefpapier/bdo_placeholder.pdf")
 
 
 # ---------------------------------------------------------------------------

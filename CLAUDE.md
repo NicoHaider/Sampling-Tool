@@ -212,6 +212,36 @@ für Anwender-Präferenzen:
 - `undo_depth` / `snapshot_retention_days` / `log_level` – reserviert
   für spätere Erweiterungen, aktuell informativ.
 
+## Resource-Loading (Sprint 8.1)
+
+Dev-Layout und PyInstaller-Bundle-Layout für Resource-Dateien unterscheiden
+sich. **Niemals** Resources direkt via `Path(__file__).parent / ...` adressieren –
+das schlägt im Frozen-Bundle stillschweigend fehl (z. B. Stylesheet wird nicht
+geladen, App fällt aufs System-Theme zurück).
+
+Stattdessen den zentralen Resolver in `sampling_tool.resources` nutzen:
+
+- **`package_resource("foo/bar")`** – Files, die zum Paket gehören:
+  - Dev: `src/sampling_tool/foo/bar`
+  - Bundle: `sys._MEIPASS/sampling_tool/foo/bar`
+  - Beispiele: `ui/styles/bdo_light.qss`, `persistence/migrations`.
+- **`shared_resource("foo/bar")`** – Top-Level `resources/`-Ordner:
+  - Dev: `resources/foo/bar` (im Projekt-Root)
+  - Bundle: `sys._MEIPASS/resources/foo/bar`
+  - Beispiele: `briefpapier/bdo_placeholder.pdf`,
+    `templates/audit_report.html`, `icons/app.icns`.
+
+Konsequenzen:
+
+- Neue Resources im Projekt-Root `resources/` ablegen, wenn sie eher
+  "Daten" sind (Templates, Briefpapier, Icons). Inside-Package nur dann,
+  wenn die Datei eng mit Code verzahnt ist (Stylesheets, Migrations).
+- Wer Resources lädt, importiert `from sampling_tool.resources import
+  package_resource, shared_resource` – kein direkter Pfadbau mehr.
+- Spec-File (`sampling_tool.spec`) muss neue Resource-Pfade in `datas`
+  ergänzen. Aktuell: `resources/` (top-level), `sampling_tool/persistence/
+  migrations`, `sampling_tool/ui/styles`.
+
 ## Distribution (Sprint 8)
 
 Das Tool wird als doppelklickbare App ausgeliefert. **Code-Signing ist
