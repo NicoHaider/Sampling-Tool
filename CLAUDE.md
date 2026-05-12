@@ -29,7 +29,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 6      | Dashboard, AuditTrail-View, Multi-Sheet-/HTML-Report | done       |
 | 6.1    | Einheitliche Export-Dialoge für alle Reports         | done        |
 | 7      | Settings, Platzhalter-Briefpapier, CI, Windows-Compat | done        |
-| 8      | PyInstaller `.exe`-Build                             | offen       |
+| 8      | PyInstaller-Build (Mac `.app` + Windows `.exe`), Release-Workflow | done |
+
+**Sprint 8 abgeschlossen. Alle 8 Sprints durch.**
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -194,7 +196,7 @@ ui ──▶ controllers ──▶ core ◀── io
     Vorschau via `QDesktopServices`. Konstruktor nimmt das aktuelle
     `AppSettings`; OK liefert ein neues `AppSettings`, Cancel `None`.
 
-## Settings & Sprint-8-Vorbereitung
+## Settings
 
 `AppSettings` (siehe `ui/settings_store.py`) ist die zentrale Quelle
 für Anwender-Präferenzen:
@@ -208,12 +210,36 @@ für Anwender-Präferenzen:
 - `custom_briefpapier_path` – User-Override für das Briefpapier
   (höchste Priorität in `_resolve_briefpapier`).
 - `undo_depth` / `snapshot_retention_days` / `log_level` – reserviert
-  für Sprint 8 (PyInstaller-Build), aktuell informativ.
+  für spätere Erweiterungen, aktuell informativ.
 
-Sprint 8 wird das Tool als `.exe` paketieren (PyInstaller-Profil
-existiert bereits in `pyproject.toml`'s `build`-Extras). Beim
-Bundling muss `resources/briefpapier/bdo_placeholder.pdf` als
-Paket-Resource mitgehen (bereits in `package-data` deklariert).
+## Distribution (Sprint 8)
+
+Das Tool wird als doppelklickbare App ausgeliefert. **Code-Signing ist
+bewusst nicht konfiguriert** – Anwender bekommen beim ersten Start eine
+"unbekannter Entwickler"-Warnung (siehe `docs/INSTALL_USER.md` für den
+Workaround).
+
+- **Build lokal:** `python scripts/build_app.py [--dmg]` (benötigt
+  `pip install -e ".[build]"`). Output unter `dist/`:
+  - Mac: `Audit Sampling Tool.app` (+ optional `.dmg` via `create-dmg`)
+  - Windows: Ordner `AuditSamplingTool/` mit `AuditSamplingTool.exe`
+- **Build via CI:** `git tag v0.X.Y && git push --tags` triggert
+  `.github/workflows/release.yml`. Baut auf `macos-latest` +
+  `windows-latest` parallel, lädt beide Bundles als ZIPs in einen
+  Draft-Release.
+- **Spec-File:** `sampling_tool.spec` (PyInstaller-Konfiguration). One-folder
+  Mode, `noarchive=False`. Resources werden unter `sampling_tool/...`
+  gebundelt, damit `Path(__file__).parent / ...`-Lookups (Briefpapier,
+  QSS, HTML-Templates) im Frozen-Bundle weiterhin funktionieren.
+- **Hidden Imports:** matplotlib-Backends, openpyxl-Writer, reportlab-Font-
+  Tabellen, `pdfrw`, `platformdirs`. PyInstaller findet diese nicht
+  automatisch – im Spec explizit aufgeführt.
+- **Icons:** `resources/icons/app.icns` (Mac) + `app.ico` (Windows). Werden
+  vom Build-Script bei Bedarf via `scripts/generate_app_icon.py`
+  regeneriert (Platzhalter BDO-Rot + Schrift "BDO"). Austauschbar ohne
+  Code-Änderung.
+- **Anwender-Doku:** `docs/INSTALL_USER.md` mit ZIP-Entpacken-Anleitung +
+  "Trotzdem öffnen"-Workaround für Mac- und Windows-Gatekeeper.
 
 ## Code-Style
 

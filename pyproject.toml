@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # ---------------------------------------------------------------------------
 [project]
 name = "sampling-tool"
-version = "0.7.0"
+version = "0.8.0"
 description = "BDO Audit Sampling Tool – Python-Port des VBA-basierten Excel-Tools (ISAE 3402)."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -52,6 +52,7 @@ dev = [
 ]
 build = [
     "pyinstaller>=6.10",
+    "pillow>=10.0",
 ]
 
 [project.scripts]

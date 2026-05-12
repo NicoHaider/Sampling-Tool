@@ -7,8 +7,8 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 
 ## Status
 
-**Sprint 7 von 7** – Settings, Platzhalter-Briefpapier, CI, Windows-Kompatibilität
-✅ **erledigt** (Ruff + Mypy clean). Sprint 8 (PyInstaller `.exe`-Build) folgt separat.
+**Sprint 8 von 8** – PyInstaller-Build für Mac `.app` und Windows `.exe` plus
+GitHub-Actions-Release-Workflow ✅ **erledigt**. Alle 8 Sprints abgeschlossen.
 
 | Sprint | Inhalt                                              | Status      |
 |-------:|-----------------------------------------------------|-------------|
@@ -22,7 +22,25 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 | 6      | Dashboard, AuditTrail-View, Multi-Sheet-/HTML-Report | **done**   |
 | 6.1    | Einheitliche Export-Dialoge für alle Reports         | **done**    |
 | 7      | Settings, Platzhalter-Briefpapier, CI, Windows-Compat | **done**  |
-| 8      | PyInstaller `.exe`-Build                             | offen       |
+| 8      | PyInstaller-Build (Mac `.app` + Windows `.exe`), Release-Workflow | **done** |
+
+### Was Sprint 8 liefert
+
+- **PyInstaller-Build** als doppelklickbare App: `.app` auf Mac, `.exe`
+  im Ordner auf Windows. Spec-File-basiert (`sampling_tool.spec`), damit
+  alle Optionen versioniert sind.
+- **Lokales Build-Script** `scripts/build_app.py` (cross-platform, optional
+  `--dmg` auf Mac). Erzeugt Platzhalter-Icons bei Bedarf automatisch.
+- **GitHub-Actions-Release-Workflow** `.github/workflows/release.yml`:
+  Tag-Push (`v*.*.*`) baut auf `macos-latest` + `windows-latest`, hängt
+  beide Bundles in einen Draft-Release.
+- **App-Icon** als BDO-roter Platzhalter (`resources/icons/app.icns` +
+  `app.ico`). Austauschbar ohne Code-Änderung, sobald ein echtes Icon
+  vorliegt – oder via `scripts/generate_app_icon.py` regenerierbar.
+- **Anwender-Installations-Anleitung** `docs/INSTALL_USER.md` inkl.
+  "Trotzdem öffnen"-Workaround für nicht-signierte App.
+- **Code-Signing bewusst nicht konfiguriert** – Aufwand/Nutzen für internes
+  Tool aktuell zu gering. Kann später in eigenem Sprint nachgerüstet werden.
 
 ### Was Sprint 7 liefert
 
@@ -180,29 +198,13 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 
 ## Installation für Anwender
 
-1. **Python 3.13** installieren – Download unter
-   [python.org/downloads](https://www.python.org/downloads/).
-   Auf Windows beim Installer „Add Python to PATH" anhaken.
-2. Dieses Repository klonen oder als ZIP herunterladen.
-3. Terminal öffnen, in den Projekt-Ordner wechseln.
-4. Optional venv anlegen:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate       # macOS/Linux
-   .\.venv\Scripts\activate        # Windows
-   ```
-5. Editable install:
-   ```bash
-   pip install -e .
-   ```
-6. App starten:
-   ```bash
-   python -m sampling_tool
-   # oder:
-   sampling-tool
-   ```
+Vorgefertigte Bundles (Mac `.app` / Windows `.exe`) gibt es im
+[Release-Bereich](https://github.com/NicoHaider/Sampling-Tool/releases).
+Schritt-für-Schritt-Anleitung inkl. "Trotzdem öffnen"-Workaround:
+[docs/INSTALL_USER.md](docs/INSTALL_USER.md).
 
-> Eine fertige `.exe`-Version folgt in **Sprint 8** (PyInstaller-Build).
+Kein Python, keine venv, kein Terminal nötig – ZIP entpacken,
+doppelklicken, fertig.
 
 ## Installation für Entwickler
 
@@ -213,6 +215,27 @@ pip install -e ".[dev]"
 # Start
 python -m sampling_tool
 ```
+
+## Distribution / Release-Build
+
+Lokal eine `.app` (Mac) bzw. einen `.exe`-Ordner (Windows) bauen:
+
+```bash
+pip install -e ".[build]"
+python scripts/build_app.py            # Output: dist/
+python scripts/build_app.py --dmg      # Mac: zusätzlich .dmg (brew install create-dmg)
+```
+
+Offiziellen Release auslösen – baut Mac + Windows parallel via GitHub
+Actions und legt einen Draft-Release mit beiden ZIPs an:
+
+```bash
+git tag v0.8.0
+git push --tags
+```
+
+Details: `sampling_tool.spec` (PyInstaller-Konfiguration) und
+`.github/workflows/release.yml`.
 
 ## Tests
 

@@ -1,0 +1,81 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact_name: AuditSamplingTool-macOS.zip
+          - os: windows-latest
+            artifact_name: AuditSamplingTool-Windows.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[build]"
+
+      - name: Build
+        run: python scripts/build_app.py
+
+      - name: Package macOS .app
+        if: matrix.os == 'macos-latest'
+        run: |
+          cd dist
+          zip -r "../${{ matrix.artifact_name }}" "Audit Sampling Tool.app"
+        shell: bash
+
+      - name: Package Windows .exe folder
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd dist
+          7z a -tzip "../${{ matrix.artifact_name }}" AuditSamplingTool
+        shell: bash
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/AuditSamplingTool-macOS.zip/AuditSamplingTool-macOS.zip
+            artifacts/AuditSamplingTool-Windows.zip/AuditSamplingTool-Windows.zip
+          generate_release_notes: true
+          draft: true
+          prerelease: false

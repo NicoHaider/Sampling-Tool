@@ -64,7 +64,12 @@ Desktop.ini
 
 # --- Build / Packaging ---
 *.spec
+!sampling_tool.spec
+*.spec.bak
 PyInstaller/
+
+# Generierte Icon-Zwischenartefakte (Build-Script regeneriert bei Bedarf)
+resources/icons/app.iconset/
 
 # --- Projekt-spezifisch ---
 # SQLite-Datenbanken (lokale Audit-Daten – niemals committen!)
