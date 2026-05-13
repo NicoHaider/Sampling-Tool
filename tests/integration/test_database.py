@@ -17,14 +17,14 @@ class TestSchemaVersion:
         finally:
             db.close()
 
-    def test_one_after_migration(self, db: Database) -> None:
+    def test_latest_after_migration(self, db: Database) -> None:
         # Fixture migriert bereits.
-        assert db.schema_version() == 1
+        assert db.schema_version() == 2
 
     def test_migration_is_idempotent(self, db: Database) -> None:
         db.migrate()  # erneut – darf nichts ändern
         db.migrate()
-        assert db.schema_version() == 1
+        assert db.schema_version() == 2
 
 
 class TestMigrationsApply:
@@ -45,6 +45,7 @@ class TestMigrationsApply:
             "sample_rows",
             "audit_events",
             "undo_snapshots",
+            "engagement_state",
         }
         assert expected.issubset(names)
 
@@ -85,6 +86,60 @@ class TestSession:
 
         rows = db.connect().execute("SELECT COUNT(*) AS c FROM datasets").fetchone()
         assert rows["c"] == 0
+
+
+class TestMigrationV1ToV2:
+    """Regression: bestehende Sprint-7-DBs (schema_version=1) müssen ohne
+    Datenverlust auf v2 hochgezogen werden, sobald sie das erste Mal von der
+    Sprint-8.2-App geöffnet werden."""
+
+    def test_v1_db_is_upgraded_in_place(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "legacy.db"
+
+        # Schritt 1: Sprint-7-Stand simulieren – nur Migration 001 anwenden.
+        legacy = Database(db_path)
+        try:
+            conn = legacy.connect()
+            v1_sql = (
+                Path(__file__).resolve().parents[2]
+                / "src"
+                / "sampling_tool"
+                / "persistence"
+                / "migrations"
+                / "001_initial.sql"
+            ).read_text(encoding="utf-8")
+            conn.executescript(v1_sql)
+            with legacy.session() as c:
+                c.execute(
+                    "INSERT INTO engagements (auditor_name, client_name) VALUES (?, ?)",
+                    ("Anna", "ACME"),
+                )
+            assert legacy.schema_version() == 1
+        finally:
+            legacy.close()
+
+        # Schritt 2: dieselbe DB-Datei normal öffnen (wie der Controller).
+        upgraded = Database(db_path)
+        try:
+            upgraded.migrate()
+            assert upgraded.schema_version() == 2
+
+            # Bestehende Daten überleben.
+            row = (
+                upgraded.connect()
+                .execute("SELECT auditor_name, client_name FROM engagements")
+                .fetchone()
+            )
+            assert row["auditor_name"] == "Anna"
+            assert row["client_name"] == "ACME"
+
+            # Neue Tabelle ist da und leer.
+            count = (
+                upgraded.connect().execute("SELECT COUNT(*) AS c FROM engagement_state").fetchone()
+            )
+            assert count["c"] == 0
+        finally:
+            upgraded.close()
 
 
 class TestPersistenceAcrossConnections:

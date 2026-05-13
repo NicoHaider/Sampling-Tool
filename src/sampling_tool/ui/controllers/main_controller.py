@@ -56,6 +56,7 @@ from sampling_tool.persistence.repositories import (
     AuditRepo,
     DatasetRepo,
     EngagementRepo,
+    EngagementStateRepo,
     SampleRepo,
 )
 from sampling_tool.persistence.version_manager import EngagementVersionManager
@@ -151,6 +152,12 @@ class MainController:
         # das Sample weiterhin zum geklickten Dataset gehört).
         self._active_sample_id: int | None = None
         self._undo_manager: UndoManager | None = None
+        self._state_repo: EngagementStateRepo | None = None
+        # `_restoring_state` blockiert `_persist_state` während des Restore-
+        # Vorgangs, damit der frisch eingelesene State nicht durch jeden
+        # einzelnen `handle_*`-Aufruf (Dataset, Sample, Filter) sofort
+        # zwischenüberschrieben wird.
+        self._restoring_state: bool = False
 
         # Engagement-Ordner aus Settings sicherstellen, damit File-Dialoge
         # direkt dort starten können. Idempotent.
@@ -275,6 +282,8 @@ class MainController:
         self._datasets = []
         self._filter_active_sample_id = None
         self._undo_manager = None
+        self._state_repo = None
+        self._restoring_state = False
         self.window.set_filter_only_sample(False)
         self.window.clear_table()
         self.window.set_engagement(None)
@@ -378,6 +387,7 @@ class MainController:
             self.window.clear_active_sample()
 
         self._update_undo_redo_state()
+        self._persist_state()
 
     def handle_sample_selected(self, sample_id: int) -> None:
         """Sample-Zeilen in der Tabelle markieren + zur ersten scrollen.
@@ -402,6 +412,7 @@ class MainController:
                 self._filter_active_sample_id = None
             self.window.highlight_sample(sample)
         self._update_undo_redo_state()
+        self._persist_state()
 
     def handle_sample_filter_toggled(self, sample_id: int) -> None:
         """Doppelklick: Filter auf Sample-Zeilen ein/aus."""
@@ -414,6 +425,7 @@ class MainController:
             self.window.set_filter_only_sample(False)
             if self._sample is not None:
                 self.window.set_active_sample_label(self._sample, filtered=False)
+            self._persist_state()
             return
 
         sample = SampleRepo(self._db.connect()).get_by_id(sample_id)
@@ -425,6 +437,7 @@ class MainController:
         self.window.filter_to_sample(sample)
         self._filter_active_sample_id = sample_id
         self.window.set_filter_only_sample(True)
+        self._persist_state()
 
     def handle_filter_only_sample_toggled(self, active: bool) -> None:
         """Sidebar-Checkbox – Filter auf aktuelles Sample ein/aus.
@@ -449,6 +462,7 @@ class MainController:
             self.window.set_filter_only_sample(False)
             if self._sample is not None:
                 self.window.set_active_sample_label(self._sample, filtered=False)
+        self._persist_state()
 
     # ---- Sampling ------------------------------------------------------
 
@@ -511,6 +525,7 @@ class MainController:
         self._push_undo_snapshot()
         self._update_undo_redo_state()
         self._refresh_views()
+        self._persist_state()
 
     def handle_reset(self) -> None:
         """Auswahl zurücksetzen (Highlights entfernen, Filter raus)."""
@@ -549,6 +564,7 @@ class MainController:
         self._push_undo_snapshot()
         self._update_undo_redo_state()
         self._refresh_views()
+        self._persist_state()
 
     # ---- Undo / Redo ---------------------------------------------------
 
@@ -568,6 +584,7 @@ class MainController:
             ).log_undo(self._sample.id)
         self._update_undo_redo_state()
         self._refresh_views()
+        self._persist_state()
 
     def handle_redo(self) -> None:
         """Letzten rückgängig gemachten Zustand wiederherstellen."""
@@ -586,6 +603,7 @@ class MainController:
             ).log_redo(self._sample.id)
         self._update_undo_redo_state()
         self._refresh_views()
+        self._persist_state()
 
     # ---- Export --------------------------------------------------------
 
@@ -845,8 +863,10 @@ class MainController:
         self._filter_active_sample_id = None
         if engagement.id is not None:
             self._undo_manager = UndoManager(db, engagement.id)
+            self._state_repo = EngagementStateRepo(db.connect())
         else:
             self._undo_manager = None
+            self._state_repo = None
 
         self.window.set_engagement(engagement)
         self.window.show_workspace()
@@ -862,6 +882,65 @@ class MainController:
             audit_type=engagement.audit_type or "",
         )
         self.refresh_recent()
+
+        # Letzten UI-State (Dataset/Sample/Filter) wiederherstellen, sofern
+        # einer für dieses Engagement persistiert wurde.
+        self._restore_state()
+
+    def _restore_state(self) -> None:
+        """Wendet den zuletzt persistierten `EngagementState` aufs UI an.
+
+        Stille No-Op, wenn nichts gespeichert ist oder das referenzierte
+        Dataset/Sample inzwischen gelöscht wurde. `_persist_state` wird
+        während des Restores via `_restoring_state` blockiert.
+
+        Wichtig: stale Referenzen werden hier *still* übersprungen, damit
+        beim Öffnen kein blockierender QMessageBox-Dialog aufpoppt – der
+        Anwender erwartet einen sauberen Restore, keine Fehlermeldung.
+        """
+        if (
+            self._state_repo is None
+            or self._db is None
+            or self._engagement is None
+            or self._engagement.id is None
+        ):
+            return
+        state = self._state_repo.get(self._engagement.id)
+        if state is None:
+            return
+
+        self._restoring_state = True
+        try:
+            if state.active_dataset_id is not None:
+                # Vor dem Dispatch prüfen, damit `handle_dataset_selected`
+                # bei stale IDs keine Fehlermeldung anzeigt.
+                dataset = DatasetRepo(self._db.connect()).get_by_id(state.active_dataset_id)
+                if dataset is not None:
+                    self.handle_dataset_selected(state.active_dataset_id)
+            if state.active_sample_id is not None and self._dataset is not None:
+                sample = SampleRepo(self._db.connect()).get_by_id(state.active_sample_id)
+                if sample is not None:
+                    # Filter-Checkbox vor `handle_sample_selected` setzen,
+                    # damit der Handler weiß, dass nach dem Highlight
+                    # gefiltert werden soll.
+                    self.window.set_filter_only_sample(state.filter_active)
+                    self.handle_sample_selected(state.active_sample_id)
+        finally:
+            self._restoring_state = False
+
+    def _persist_state(self) -> None:
+        """Schreibt den aktuellen UI-State in die DB (No-Op während Restore)."""
+        if self._restoring_state:
+            return
+        if self._state_repo is None or self._engagement is None or self._engagement.id is None:
+            return
+        active_dataset_id = self._dataset.id if self._dataset is not None else None
+        self._state_repo.upsert(
+            engagement_id=self._engagement.id,
+            active_dataset_id=active_dataset_id,
+            active_sample_id=self._active_sample_id,
+            filter_active=self._filter_active_sample_id is not None,
+        )
 
     def _reload_datasets(self) -> None:
         if self._db is None or self._engagement is None or self._engagement.id is None:
