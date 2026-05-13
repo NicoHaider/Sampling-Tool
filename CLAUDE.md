@@ -32,8 +32,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 8      | PyInstaller-Build (Mac `.app` + Windows `.exe`), Release-Workflow | done |
 | 9.1    | Duplikat-Check beim Anlegen neuer Engagements        | done        |
 | 9.2    | Bug-Report als Toolbar-Button                        | done        |
+| 9.3    | Advanced-Mode-Toggle (Simple/Advanced Sampling)      | done        |
 
-**Sprint 9.2 abgeschlossen.**
+**Sprint 9.3 abgeschlossen.**
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -168,6 +169,15 @@ ui ──▶ controllers ──▶ core ◀── io
     `SamplingDialogResult` mit `SampleConfig` + `from_sample_only`-Flag.
     Das Flag ist **nicht** persistiert – der Controller filtert das
     Dataset zur Laufzeit auf die Vorsample-Auswahl.
+    Konstruktor-Parameter `advanced_mode: bool`: im Default-Modus
+    (False) werden Methodenauswahl, Cluster-/Schicht-Felder, Spalten-
+    Filter und das manuelle Seed-Widget komplett nicht angelegt –
+    Methode ist fix `SIMPLE`, der Seed wird zufällig (über
+    `secrets.randbelow`) erzeugt und im `SampleConfig` persistiert
+    (ISAE-3402-Reproduzierbarkeit bleibt erhalten). Footer zeigt links
+    einen diskreten „Einfach-Modus"-Hinweis mit Tooltip; der
+    `_resample_checkbox` (= from_sample_only-Filter) bleibt in beiden
+    Modi sichtbar.
   - `dialogs/export_sample_dialog.py` – Spaltenauswahl (Checkboxen) +
     Filename/ID + Zielordner. Vorschau-Label live mit
     `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
@@ -225,6 +235,11 @@ für Anwender-Präferenzen:
   Default-Checkboxen im AuditTrail-PDF-Dialog.
 - `custom_briefpapier_path` – User-Override für das Briefpapier
   (höchste Priorität in `_resolve_briefpapier`).
+- `advanced_mode` – Schaltet im Sampling-Dialog zusätzliche Methoden
+  (Cluster, Stratifiziert) und Detail-Optionen (Cluster-/Schicht-Feld,
+  Spalten-Filter, manueller Seed mit Würfel-Button) frei. Default
+  `False` – auch für Bestandsuser ohne `advanced_mode`-Key. Wird vom
+  `MainController` direkt an die `SamplingDialog`-Factory durchgereicht.
 - `undo_depth` / `snapshot_retention_days` / `log_level` – reserviert
   für spätere Erweiterungen, aktuell informativ.
 

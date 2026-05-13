@@ -124,3 +124,37 @@ class TestSettingsDialog:
         dialog.reject()
         assert dialog.result() == QDialog.DialogCode.Rejected
         assert dialog.get_settings() is None
+
+
+class TestAdvancedModeToggle:
+    def test_checkbox_shows_initial_value(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        assert dialog._chk_advanced_mode.isChecked() is False
+
+    def test_checkbox_prefilled_when_enabled(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        current = replace(defaults, advanced_mode=True)
+        dialog = SettingsDialog(current)
+        qtbot.addWidget(dialog)
+        assert dialog._chk_advanced_mode.isChecked() is True
+
+    def test_ok_propagates_advanced_mode(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        dialog._chk_advanced_mode.setChecked(True)
+        dialog._on_accept()
+        result = dialog.get_settings()
+        assert result is not None
+        assert result.advanced_mode is True
+
+    def test_reset_to_defaults_unchecks_advanced(
+        self, qtbot: QtBot, defaults: AppSettings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        current = replace(defaults, advanced_mode=True)
+        dialog = SettingsDialog(current)
+        qtbot.addWidget(dialog)
+        monkeypatch.setattr(
+            QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes
+        )
+        dialog._on_reset_defaults()
+        assert dialog._chk_advanced_mode.isChecked() is False

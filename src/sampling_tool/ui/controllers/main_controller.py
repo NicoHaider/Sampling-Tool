@@ -83,7 +83,7 @@ logger = logging.getLogger(__name__)
 
 DialogFactory = Callable[["MainWindow", AppSettings, Engagement | None], NewEngagementDialog]
 DuplicateDialogFactory = Callable[["MainWindow", Path], DuplicateEngagementDialog]
-SamplingDialogFactory = Callable[["MainWindow", Dataset, SampleResult | None], SamplingDialog]
+SamplingDialogFactory = Callable[["MainWindow", Dataset, SampleResult | None, bool], SamplingDialog]
 ExportDialogFactory = Callable[["MainWindow", Dataset, str, str, Path | None], ExportSampleDialog]
 AuditPdfDialogFactory = Callable[
     ["MainWindow", Engagement, list[str], bool, Path | None, bool, bool],
@@ -513,7 +513,9 @@ class MainController:
         ):
             return
 
-        dialog = self._sampling_factory(self.window, self._dataset, self._sample)
+        dialog = self._sampling_factory(
+            self.window, self._dataset, self._sample, self._settings.advanced_mode
+        )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         result = dialog.get_result()
@@ -1171,9 +1173,17 @@ def _default_duplicate_dialog_factory(
 
 
 def _default_sampling_factory(
-    parent: MainWindow, dataset: Dataset, current_sample: SampleResult | None
+    parent: MainWindow,
+    dataset: Dataset,
+    current_sample: SampleResult | None,
+    advanced_mode: bool,
 ) -> SamplingDialog:
-    return SamplingDialog(dataset, current_sample=current_sample, parent=parent)
+    return SamplingDialog(
+        dataset,
+        current_sample=current_sample,
+        parent=parent,
+        advanced_mode=advanced_mode,
+    )
 
 
 def _default_export_factory(

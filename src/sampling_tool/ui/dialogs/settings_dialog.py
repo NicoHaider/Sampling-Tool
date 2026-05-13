@@ -27,7 +27,9 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QSpinBox,
+    QStyle,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -165,7 +167,31 @@ class SettingsDialog(QDialog):
 
     def _build_advanced_tab(self, current: AppSettings) -> QWidget:
         page = QWidget()
-        form = QFormLayout(page)
+        outer = QVBoxLayout(page)
+        outer.setSpacing(10)
+
+        # ---- Erweiterter Modus (prominent oben) ----
+        self._chk_advanced_mode = QCheckBox("Erweiterten Modus aktivieren")
+        self._chk_advanced_mode.setChecked(current.advanced_mode)
+        info_btn = QToolButton()
+        style = self.style()
+        if style is not None:
+            info_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation))
+        info_btn.setAutoRaise(True)
+        info_btn.setToolTip(
+            "Schaltet zusätzliche Sampling-Methoden (Cluster, Stratifiziert) "
+            "und Detail-Optionen (Resample, manueller Seed) im Stichproben-"
+            "Dialog frei. Standardmäßig ist nur die einfache Zufallsstichprobe "
+            "sichtbar."
+        )
+        advanced_row = QHBoxLayout()
+        advanced_row.addWidget(self._chk_advanced_mode)
+        advanced_row.addWidget(info_btn)
+        advanced_row.addStretch(1)
+        outer.addLayout(advanced_row)
+
+        # ---- Rest des Tabs ----
+        form = QFormLayout()
         form.setSpacing(10)
 
         self._undo_depth = QSpinBox()
@@ -193,6 +219,8 @@ class SettingsDialog(QDialog):
         info.setWordWrap(True)
         info.setStyleSheet("color: #7F7F7F;")
         form.addRow(" ", info)
+        outer.addLayout(form)
+        outer.addStretch(1)
         return page
 
     # ---- Slots ----------------------------------------------------------
@@ -244,6 +272,7 @@ class SettingsDialog(QDialog):
         self._default_statistics.setChecked(defaults.default_include_statistics)
         self._radio_placeholder.setChecked(True)
         self._custom_briefpapier.clear()
+        self._chk_advanced_mode.setChecked(defaults.advanced_mode)
         self._undo_depth.setValue(defaults.undo_depth)
         self._snapshot_retention.setValue(defaults.snapshot_retention_days)
         idx = self._log_level.findText(defaults.log_level)
@@ -268,6 +297,7 @@ class SettingsDialog(QDialog):
             default_include_briefpapier=self._default_briefpapier.isChecked(),
             default_include_statistics=self._default_statistics.isChecked(),
             custom_briefpapier_path=custom_path,
+            advanced_mode=self._chk_advanced_mode.isChecked(),
             undo_depth=self._undo_depth.value(),
             snapshot_retention_days=self._snapshot_retention.value(),
             log_level=self._log_level.currentText(),

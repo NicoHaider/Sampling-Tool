@@ -485,7 +485,7 @@ class TestSamplingFlow:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _s: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _s, _am: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -558,7 +558,7 @@ class TestSamplingFlow:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _s: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _s, _am: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -592,7 +592,7 @@ class TestSamplingFlow:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=3),
             from_sample_only=True,
         )
-        factory = lambda _p, _d, _s: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _s, _am: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -832,7 +832,7 @@ class TestFilterAndSwitchEngagement:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _s: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _s, _am: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -1594,5 +1594,80 @@ class TestEngagementStateRestore:
             assert state is not None
             assert state.active_sample_id is None
             assert state.filter_active is False
+        finally:
+            controller.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 9.3: Advanced-Mode wird an SamplingDialog-Factory durchgereicht
+# ---------------------------------------------------------------------------
+
+
+class TestAdvancedModePropagation:
+    def test_controller_uebergibt_advanced_mode_false_an_factory(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        received: dict[str, bool] = {}
+
+        def fake_factory(
+            _parent: MainWindow,
+            _dataset: object,
+            _current: object,
+            advanced_mode: bool,
+        ) -> _StubSamplingDialog:
+            received["advanced_mode"] = advanced_mode
+            return _StubSamplingDialog(None, accept=False)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=fake_factory,  # type: ignore[arg-type]
+            settings=dc_replace(AppSettings.defaults(), advanced_mode=False),
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            assert received["advanced_mode"] is False
+        finally:
+            controller.handle_close_engagement()
+
+    def test_controller_uebergibt_advanced_mode_true_an_factory(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        received: dict[str, bool] = {}
+
+        def fake_factory(
+            _parent: MainWindow,
+            _dataset: object,
+            _current: object,
+            advanced_mode: bool,
+        ) -> _StubSamplingDialog:
+            received["advanced_mode"] = advanced_mode
+            return _StubSamplingDialog(None, accept=False)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=fake_factory,  # type: ignore[arg-type]
+            settings=dc_replace(AppSettings.defaults(), advanced_mode=True),
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            assert received["advanced_mode"] is True
         finally:
             controller.handle_close_engagement()

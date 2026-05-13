@@ -104,3 +104,19 @@ class TestRoundtrip:
         s.sync()
         loaded = load_settings()
         assert loaded.undo_depth == DEFAULT_UNDO_DEPTH
+
+
+class TestAdvancedMode:
+    def test_advanced_mode_default_is_false(self) -> None:
+        assert AppSettings.defaults().advanced_mode is False
+
+    def test_advanced_mode_roundtrips_true(self) -> None:
+        original = replace(AppSettings.defaults(), advanced_mode=True)
+        save_settings(original)
+        loaded = load_settings()
+        assert loaded.advanced_mode is True
+
+    def test_advanced_mode_missing_key_defaults_to_false(self) -> None:
+        # QSettings ohne advanced_mode-Key → load_settings liefert False.
+        loaded = load_settings()
+        assert loaded.advanced_mode is False
