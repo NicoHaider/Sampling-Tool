@@ -419,6 +419,7 @@ class MainWindow(QMainWindow):
         # ---- File ----
         file_menu = menu_bar.addMenu("&Datei")
         assert file_menu is not None
+        self._file_menu: QMenu = file_menu
 
         self._action_new = QAction("Neues Engagement…", self)
         self._action_new.setShortcut(QKeySequence.StandardKey.New)
@@ -448,7 +449,12 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         self._action_settings = QAction("Einstellungen…", self)
         self._action_settings.setShortcut(QKeySequence.StandardKey.Preferences)
+        # PreferencesRole sorgt auf Mac dafür, dass die Action zusätzlich
+        # ins App-Menü gezogen wird (Cmd+,). Die gleiche Instanz bleibt im
+        # Datei-Menü sichtbar – Pattern wie beim Bug-Report-Button.
         self._action_settings.setMenuRole(QAction.MenuRole.PreferencesRole)
+        self._action_settings.setToolTip("Einstellungen öffnen")
+        self._action_settings.setStatusTip("Öffnet den Einstellungen-Dialog")
         self._action_settings.triggered.connect(self.settings_requested.emit)
         file_menu.addAction(self._action_settings)
 

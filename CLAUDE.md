@@ -35,8 +35,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 9.3    | Advanced-Mode-Toggle (Simple/Advanced Sampling)      | done        |
 | 9.4    | Dashboard/AuditTrail ein-/ausblendbar               | done        |
 | 9.5    | First-Run-Wizard (Standard-Ordner + Auditor-Name)   | done        |
+| 9.6    | Settings im Menü + Sample-Größe-Hint + Seed in Simple-Mode | done |
 
-**Sprint 9.5 abgeschlossen.**
+**Sprint 9.6 abgeschlossen.**
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -118,6 +119,12 @@ ui ──▶ controllers ──▶ core ◀── io
     Die Toolbar enthält rechtsbündig (Expanding-Spacer) einen Bug-
     Report-Button, der dieselbe `QAction`-Instanz wie der Hilfe-Menü-
     Eintrag teilt – keine Duplikation des Triggers.
+    `self._action_settings` ist eine geteilte QAction zwischen Datei-
+    Menü (sichtbar via `file_menu.addAction`) und – über
+    `setMenuRole(PreferencesRole)` – dem Mac-App-Menü. Cmd+,-Shortcut
+    via `QKeySequence.StandardKey.Preferences`. `self._file_menu` ist
+    als Attribut exponiert, damit Tests die Menü-Zugehörigkeit prüfen
+    können.
     Sendet typisierte Signals; *kein* DB-Zugriff hier.
   - `controllers/main_controller.py` – Glue-Schicht UI ↔ Persistence/IO.
     Hält `Database`-Instanz, das aktuelle Engagement und einen
@@ -179,14 +186,30 @@ ui ──▶ controllers ──▶ core ◀── io
     Das Flag ist **nicht** persistiert – der Controller filtert das
     Dataset zur Laufzeit auf die Vorsample-Auswahl.
     Konstruktor-Parameter `advanced_mode: bool`: im Default-Modus
-    (False) werden Methodenauswahl, Cluster-/Schicht-Felder, Spalten-
-    Filter und das manuelle Seed-Widget komplett nicht angelegt –
-    Methode ist fix `SIMPLE`, der Seed wird zufällig (über
-    `secrets.randbelow`) erzeugt und im `SampleConfig` persistiert
-    (ISAE-3402-Reproduzierbarkeit bleibt erhalten). Footer zeigt links
-    einen diskreten „Einfach-Modus"-Hinweis mit Tooltip; der
-    `_resample_checkbox` (= from_sample_only-Filter) bleibt in beiden
-    Modi sichtbar.
+    (False) werden ausschließlich Methodenauswahl, Cluster-/Schicht-
+    Felder und der Spalten-Filter ausgeblendet. Methode ist fix
+    `SIMPLE`. Footer zeigt links einen diskreten „Einfach-Modus"-Hinweis
+    mit Tooltip.
+    Sprint 9.6 – Common-Block in beiden Modi:
+    - `_resample_checkbox` (= from_sample_only-Filter).
+    - **Seed-Widget** (`_seed_spin` + `_seed_dice`-Würfel): beim Öffnen
+      mit Zufalls-Seed via `_generate_random_seed()` vorbefüllt; User
+      kann manuell ändern oder per Würfel neu generieren. Korrektur zur
+      Sprint-9.3-Spec: das Widget wandert aus dem Advanced-Block in den
+      Common-Block, weil Reproduzierbarkeits-Transparenz auch im
+      Default-Modus essentiell ist (ISAE-3402).
+    - **Größe (`_size_spin`)** ohne hartes Cap (`setMaximum(_SPINBOX_MAX)`,
+      = int32-max). Direkt unter dem SpinBox sitzt `_lbl_size_hint`
+      ("max. N verfügbar"), das via `_update_size_hint()` live bei
+      Resample-Toggle aktualisiert wird. Validierung passiert in der
+      überschriebenen `accept()`-Methode: Größe < `MIN_SAMPLE_SIZE`
+      oder > `_effective_max_sample_size()` zeigt eine
+      `QMessageBox.warning` und blockiert das Dialog-Close. Vorher hat
+      `_on_resample_toggled` stilles QSpinBox-Capping gemacht – das ist
+      raus.
+    Verbleibender Unterschied Simple/Advanced: nur noch Methodenwahl +
+    method-spezifische Felder (Cluster-/Schicht-Feld, Stratify-Mode,
+    Spalten-Filter).
   - `dialogs/export_sample_dialog.py` – Spaltenauswahl (Checkboxen) +
     Filename/ID + Zielordner. Vorschau-Label live mit
     `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.

@@ -12,7 +12,6 @@ UI-Anweisung an den Controller, das Dataset vor der Ziehung zu filtern.
 from __future__ import annotations
 
 import secrets
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,6 +26,7 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QRadioButton,
     QSpinBox,
@@ -37,7 +37,6 @@ from PyQt6.QtWidgets import (
 
 from sampling_tool.config import (
     DEFAULT_SAMPLE_SIZE,
-    MAX_SAMPLE_SIZE,
     MIN_SAMPLE_SIZE,
     SEED_MAX,
     SEED_MIN,
@@ -51,6 +50,11 @@ from sampling_tool.core.models import (
 )
 
 NO_FILTER_LABEL: str = "(kein Filter)"
+
+# QSpinBox-Maximum: int32-signed-Limit. Die Größe wird dadurch faktisch
+# nicht mehr durch das Widget gecappt – stattdessen schlägt Validierung
+# beim Accept zu (siehe `accept()`).
+_SPINBOX_MAX: int = 2_147_483_647
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,9 +136,19 @@ class SamplingDialog(QDialog):
         form.setSpacing(8)
 
         self._size_spin = QSpinBox()
-        self._size_spin.setRange(MIN_SAMPLE_SIZE, min(MAX_SAMPLE_SIZE, self._max_population))
+        # Kein hartes Cap mehr im Widget – Hint-Label + Accept-Validierung
+        # sind transparenter als stilles QSpinBox-Capping.
+        self._size_spin.setRange(MIN_SAMPLE_SIZE, _SPINBOX_MAX)
         self._size_spin.setValue(min(DEFAULT_SAMPLE_SIZE, self._max_population))
-        form.addRow("Stichprobengröße *", self._size_spin)
+        size_box = QWidget()
+        size_layout = QVBoxLayout(size_box)
+        size_layout.setContentsMargins(0, 0, 0, 0)
+        size_layout.setSpacing(2)
+        size_layout.addWidget(self._size_spin)
+        self._lbl_size_hint = QLabel()
+        self._lbl_size_hint.setStyleSheet("color: #7F7F7F; font-size: 11px;")
+        size_layout.addWidget(self._lbl_size_hint)
+        form.addRow("Stichprobengröße *", size_box)
 
         if self._advanced_mode:
             self._filter_field = QComboBox()
@@ -176,22 +190,6 @@ class SamplingDialog(QDialog):
             self._radio_equal.setEnabled(False)
             form.addRow("Schicht-Verteilung", stratify_box)
 
-            seed_row = QHBoxLayout()
-            seed_row.setSpacing(8)
-            self._seed_spin = QSpinBox()
-            self._seed_spin.setRange(SEED_MIN, _safe_int_max())
-            self._seed_spin.setValue(_default_seed())
-            self._seed_spin.setToolTip(
-                "Gleicher Seed + gleiche Daten → bit-genau gleiche Stichprobe."
-            )
-            self._seed_dice = QPushButton("🎲 Neuer Seed")
-            self._seed_dice.setProperty("secondary", True)
-            seed_row.addWidget(self._seed_spin, stretch=1)
-            seed_row.addWidget(self._seed_dice)
-            seed_widget = QWidget()
-            seed_widget.setLayout(seed_row)
-            form.addRow("Seed *", seed_widget)
-
         outer.addLayout(form)
 
         # ---- Resample-Filter (in beiden Modi sichtbar) ----
@@ -205,6 +203,30 @@ class SamplingDialog(QDialog):
                 "Es ist kein Sample aktiv – Resampling nicht möglich."
             )
         outer.addWidget(self._resample_checkbox)
+
+        # ---- Seed-Zeile (in beiden Modi sichtbar) ----
+        # Auch im Simple-Mode soll der User den Seed sehen und ändern können
+        # (Reproduzierbarkeits-Transparenz; ISAE-3402).
+        seed_form = QFormLayout()
+        seed_form.setSpacing(8)
+        seed_row = QHBoxLayout()
+        seed_row.setSpacing(8)
+        self._seed_spin = QSpinBox()
+        self._seed_spin.setRange(SEED_MIN, _safe_int_max())
+        self._seed_spin.setValue(_generate_random_seed())
+        self._seed_spin.setToolTip("Gleicher Seed + gleiche Daten → bit-genau gleiche Stichprobe.")
+        self._seed_dice = QPushButton("🎲 Neuer Seed")
+        self._seed_dice.setProperty("secondary", True)
+        self._seed_dice.setToolTip("Neuen zufälligen Seed generieren")
+        seed_row.addWidget(self._seed_spin, stretch=1)
+        seed_row.addWidget(self._seed_dice)
+        seed_widget = QWidget()
+        seed_widget.setLayout(seed_row)
+        seed_form.addRow("Seed *", seed_widget)
+        outer.addLayout(seed_form)
+
+        # Initiale Hint-Befüllung (Resample ist hier garantiert noch unchecked).
+        self._update_size_hint()
 
         # ---- Validierungs-Label ----
         self._error_label = QLabel("")
@@ -255,6 +277,7 @@ class SamplingDialog(QDialog):
     def _wire_signals(self) -> None:
         self._size_spin.valueChanged.connect(self._validate)
         self._resample_checkbox.toggled.connect(self._on_resample_toggled)
+        self._seed_dice.clicked.connect(self._reroll_seed)
         if self._advanced_mode:
             for rb in (self._radio_simple, self._radio_cluster, self._radio_stratified):
                 rb.toggled.connect(self._on_method_changed)
@@ -262,8 +285,7 @@ class SamplingDialog(QDialog):
             self._filter_value.currentTextChanged.connect(self._validate)
             self._cluster_field.currentTextChanged.connect(self._validate)
             self._stratum_field.currentTextChanged.connect(self._validate)
-            self._seed_dice.clicked.connect(self._reroll_seed)
-        self._buttons.accepted.connect(self._on_accept)
+        self._buttons.accepted.connect(self.accept)
         self._buttons.rejected.connect(self.reject)
 
     # ---- Slots ---------------------------------------------------------
@@ -292,29 +314,59 @@ class SamplingDialog(QDialog):
         self._filter_value.blockSignals(False)
         self._validate()
 
-    def _on_resample_toggled(self, checked: bool) -> None:
-        if checked and self._current_sample is not None:
-            limit = max(len(self._current_sample.selected_row_ids), 1)
-            self._size_spin.setMaximum(limit)
-            if self._size_spin.value() > limit:
-                self._size_spin.setValue(limit)
-        else:
-            self._size_spin.setMaximum(min(MAX_SAMPLE_SIZE, self._max_population))
+    def _on_resample_toggled(self, _checked: bool) -> None:
+        # Kein hartes Cap mehr – Hint-Label informiert, Accept-Validierung
+        # fängt Überschreitung ab.
+        self._update_size_hint()
         self._validate()
 
     def _reroll_seed(self) -> None:
-        self._seed_spin.setValue(secrets.randbelow(_safe_int_max()))
+        self._seed_spin.setValue(_generate_random_seed())
 
-    def _on_accept(self) -> None:
-        message = self._validation_error()
-        if message is not None:
-            self._error_label.setText(message)
+    def _effective_max_sample_size(self) -> int:
+        """Aktuell zulässige Maximalgröße der Stichprobe.
+
+        Bei aktivem Resampling-Filter ist das die Größe des bestehenden
+        Samples, sonst die Datasetgröße.
+        """
+        if self._resample_checkbox.isChecked() and self._current_sample is not None:
+            return max(len(self._current_sample.selected_row_ids), 1)
+        return self._max_population
+
+    def _update_size_hint(self) -> None:
+        """Aktualisiert den Hint-Text unter dem Size-SpinBox."""
+        max_n = self._effective_max_sample_size()
+        self._lbl_size_hint.setText(f"max. {_format_int(max_n)} verfügbar")
+
+    def accept(self) -> None:
+        """QDialog-Accept mit zusätzlicher Größen-Validierung."""
+        size = self._size_spin.value()
+        max_n = self._effective_max_sample_size()
+        if size < MIN_SAMPLE_SIZE:
+            QMessageBox.warning(
+                self,
+                "Ungültige Stichprobengröße",
+                f"Die Stichprobengröße muss mindestens {MIN_SAMPLE_SIZE} betragen.",
+            )
+            return
+        if size > max_n:
+            QMessageBox.warning(
+                self,
+                "Stichprobengröße zu groß",
+                f"Die gewählte Größe ({_format_int(size)}) übersteigt die "
+                f"verfügbare Datenmenge ({_format_int(max_n)}).\n\n"
+                f"Bitte wähle einen Wert zwischen 1 und {_format_int(max_n)}.",
+            )
+            return
+        other = self._validation_error()
+        if other is not None:
+            self._error_label.setText(other)
             return
         self._result = SamplingDialogResult(
             config=self._build_config(),
             from_sample_only=self._resample_checkbox.isChecked(),
         )
-        self.accept()
+        super().accept()
 
     # ---- Validierung ---------------------------------------------------
 
@@ -330,13 +382,13 @@ class SamplingDialog(QDialog):
     def _build_config(self) -> SampleConfig:
         method = self._selected_method()
         if not self._advanced_mode:
-            # Simple-Mode: Methode fix SIMPLE, Seed zufällig aber persistiert
-            # (ISAE-3402: reproduzierbar trotzdem, weil seed in SampleConfig
-            # landet und nachher rekonstruierbar bleibt).
+            # Simple-Mode: Methode fix SIMPLE; Seed kommt aus dem
+            # (vorbefüllten oder vom User editierten) SpinBox – ISAE-3402
+            # bleibt reproduzierbar, weil der Seed im SampleConfig persistiert.
             return SampleConfig(
                 method=SamplingMethod.SIMPLE,
                 size=self._size_spin.value(),
-                seed=secrets.randbelow(_safe_int_max()) + 1,
+                seed=self._seed_spin.value(),
             )
 
         filter_field = (
@@ -418,10 +470,16 @@ def _display(value: Any) -> str:
     return str(value)
 
 
-def _default_seed() -> int:
-    return int(time.time()) % 1_000_000
+def _generate_random_seed() -> int:
+    """Zufalls-Seed im erlaubten QSpinBox-Bereich (immer > 0)."""
+    return secrets.randbelow(_safe_int_max()) + 1
 
 
 def _safe_int_max() -> int:
     # QSpinBox unterstützt nur 32-Bit-signed → wir kappen SEED_MAX entsprechend.
-    return min(SEED_MAX, 2_147_483_647)
+    return min(SEED_MAX, _SPINBOX_MAX)
+
+
+def _format_int(value: int) -> str:
+    """Tausenderpunkte für deutsche Locale (12345 → '12.345')."""
+    return f"{value:,}".replace(",", ".")

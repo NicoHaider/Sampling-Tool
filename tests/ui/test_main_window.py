@@ -181,6 +181,36 @@ class TestSwitchEngagementToolbar:
             win._action_close.trigger()
 
 
+class TestSettingsAction:
+    """Sprint 9.6: Einstellungen-Menüpunkt sichtbar im Datei-Menü."""
+
+    def test_settings_action_im_datei_menue(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        assert win._action_settings in win._file_menu.actions()
+
+    def test_settings_action_hat_preferences_role(self, qtbot: QtBot) -> None:
+        from PyQt6.QtGui import QAction
+
+        win = MainWindow()
+        qtbot.addWidget(win)
+        assert win._action_settings.menuRole() == QAction.MenuRole.PreferencesRole
+
+    def test_settings_action_hat_preferences_shortcut(self, qtbot: QtBot) -> None:
+        from PyQt6.QtGui import QKeySequence
+
+        win = MainWindow()
+        qtbot.addWidget(win)
+        expected = QKeySequence(QKeySequence.StandardKey.Preferences)
+        assert win._action_settings.shortcut() == expected
+
+    def test_settings_action_emittiert_settings_signal(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        with qtbot.waitSignal(win.settings_requested, timeout=500):
+            win._action_settings.trigger()
+
+
 class TestBugReportToolbarButton:
     """Sprint 9.2: Bug-Report jetzt zusätzlich rechtsbündig in der Toolbar."""
 

@@ -110,7 +110,7 @@ class TestSamplingDialog:
         dialog._seed_spin.setValue(42)
         dialog._filter_field.setCurrentText("Land")
         dialog._filter_value.setCurrentIndex(0)
-        dialog._on_accept()
+        dialog.accept()
         result = dialog.get_result()
         assert result is not None
         assert result.config.method == SamplingMethod.SIMPLE
@@ -119,15 +119,18 @@ class TestSamplingDialog:
         assert result.config.filter_field == "Land"
         assert result.from_sample_only is False
 
-    def test_resample_checkbox_limits_size_to_current_sample(self, qtbot: QtBot) -> None:
+    def test_resample_checkbox_updates_size_hint(self, qtbot: QtBot) -> None:
+        # Sprint 9.6: kein hartes Capping mehr – Hint-Label kommuniziert
+        # die zulässige Obergrenze, Validierung beim Accept fängt
+        # Überschreitungen ab.
         dialog = SamplingDialog(
             _make_dataset(), current_sample=_make_sample((1, 3, 5, 7)), advanced_mode=True
         )
         qtbot.addWidget(dialog)
-        dialog._size_spin.setValue(10)
         dialog._resample_checkbox.setChecked(True)
-        assert dialog._size_spin.maximum() == 4
-        assert dialog._size_spin.value() <= 4
+        assert "4" in dialog._lbl_size_hint.text()
+        dialog._resample_checkbox.setChecked(False)
+        assert "12" in dialog._lbl_size_hint.text()
 
     def test_resample_disabled_when_no_current_sample(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(_make_dataset(), current_sample=None, advanced_mode=True)
@@ -140,7 +143,7 @@ class TestSamplingDialog:
         dialog._radio_stratified.setChecked(True)
         dialog._stratum_field.setCurrentText("Land")
         dialog._size_spin.setValue(6)
-        dialog._on_accept()
+        dialog.accept()
         result = dialog.get_result()
         assert result is not None
         assert result.config.method == SamplingMethod.STRATIFIED
@@ -155,7 +158,8 @@ class TestSamplingDialog:
 
 
 class TestSamplingDialogSimpleMode:
-    """Sprint 9.3: Simple-Mode versteckt Methoden, Filter, Seed, Resample-Optionen."""
+    """Sprint 9.3 + 9.6: Simple-Mode versteckt Methoden + method-spezifische
+    Felder, behält aber Resample-Filter und Seed-Widget."""
 
     def test_simple_mode_does_not_create_method_radios(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
@@ -163,11 +167,13 @@ class TestSamplingDialogSimpleMode:
         assert not hasattr(dialog, "_radio_cluster")
         assert not hasattr(dialog, "_radio_stratified")
 
-    def test_simple_mode_does_not_create_seed_widget(self, qtbot: QtBot) -> None:
+    def test_simple_mode_creates_seed_widget(self, qtbot: QtBot) -> None:
+        # Sprint 9.6 (Korrektur zu 9.3): Seed-Widget wandert in den Common-
+        # Block. Reproduzierbarkeits-Transparenz auch im Default-Modus.
         dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
         qtbot.addWidget(dialog)
-        assert not hasattr(dialog, "_seed_spin")
-        assert not hasattr(dialog, "_seed_dice")
+        assert hasattr(dialog, "_seed_spin")
+        assert hasattr(dialog, "_seed_dice")
 
     def test_simple_mode_does_not_create_method_specific_fields(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
@@ -192,31 +198,127 @@ class TestSamplingDialogSimpleMode:
         qtbot.addWidget(dialog)
         assert not hasattr(dialog, "_mode_hint")
 
-    def test_simple_mode_baut_simple_config_mit_random_seed(self, qtbot: QtBot) -> None:
+    def test_simple_mode_seed_ist_vorbefuellt(self, qtbot: QtBot) -> None:
+        # Sprint 9.6: Seed wird beim Öffnen mit Zufalls-Wert gefüllt.
         dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
         qtbot.addWidget(dialog)
+        seed = dialog._seed_spin.value()
+        assert seed > 0
+
+    def test_simple_mode_seed_landet_im_config(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
+        qtbot.addWidget(dialog)
+        dialog._seed_spin.setValue(424242)
         dialog._size_spin.setValue(5)
-        dialog._on_accept()
+        dialog.accept()
         result = dialog.get_result()
         assert result is not None
         assert result.config.method == SamplingMethod.SIMPLE
         assert result.config.size == 5
-        # Zufalls-Seed: > 0, kein vom User gesetzter Wert. ISAE-3402: trotzdem
-        # persistiert und damit reproduzierbar.
-        assert isinstance(result.config.seed, int)
-        assert result.config.seed > 0
+        assert result.config.seed == 424242
 
-    def test_simple_mode_zwei_aufrufe_liefern_unterschiedliche_seeds(self, qtbot: QtBot) -> None:
+    def test_simple_mode_wuerfel_aendert_seed(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
+        qtbot.addWidget(dialog)
+        seed_before = dialog._seed_spin.value()
+        # Mit 31-Bit-Range ist eine Kollision astronomisch unwahrscheinlich,
+        # aber zur Sicherheit ein kleiner Retry-Loop.
+        for _ in range(5):
+            dialog._seed_dice.click()
+            if dialog._seed_spin.value() != seed_before:
+                break
+        assert dialog._seed_spin.value() != seed_before
+
+    def test_simple_mode_neuer_dialog_neuer_seed(self, qtbot: QtBot) -> None:
+        # Sanity: zwei frische Dialoge liefern verschiedene Default-Seeds.
         seeds: set[int] = set()
         for _ in range(5):
             dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
             qtbot.addWidget(dialog)
-            dialog._size_spin.setValue(3)
-            dialog._on_accept()
-            result = dialog.get_result()
-            assert result is not None
-            seeds.add(result.config.seed)
-        # Mit 5 zufälligen 31-Bit-Seeds wäre eine Kollision astronomisch
-        # unwahrscheinlich – Sanity-Check, dass nicht der gleiche Default
-        # zurückgeliefert wird.
+            seeds.add(dialog._seed_spin.value())
         assert len(seeds) >= 4
+
+
+class TestSamplingDialogSizeHint:
+    """Sprint 9.6: Hint-Label unter Größe-SpinBox + Accept-Validierung."""
+
+    def test_hint_zeigt_dataset_groesse_im_default(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
+        qtbot.addWidget(dialog)
+        assert hasattr(dialog, "_lbl_size_hint")
+        # Dataset hat 12 Zeilen.
+        assert "12" in dialog._lbl_size_hint.text()
+        assert "max." in dialog._lbl_size_hint.text().lower()
+
+    def test_hint_updatet_bei_filter_toggle(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(
+            _make_dataset(),
+            current_sample=_make_sample((1, 2, 3, 4, 5)),
+            advanced_mode=False,
+        )
+        qtbot.addWidget(dialog)
+        dialog._resample_checkbox.setChecked(True)
+        assert "5" in dialog._lbl_size_hint.text()
+        dialog._resample_checkbox.setChecked(False)
+        assert "12" in dialog._lbl_size_hint.text()
+
+    def test_size_zu_gross_zeigt_messagebox(
+        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        warnings: list[tuple[str, str]] = []
+
+        def fake_warning(*args: object, **_kwargs: object) -> int:
+            # args: (parent, title, text, ...)
+            warnings.append((str(args[1]), str(args[2])))
+            return 0
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        monkeypatch.setattr(QMessageBox, "warning", fake_warning)
+
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
+        qtbot.addWidget(dialog)
+        # Dataset hat 12 Zeilen; 1000 muss fehlschlagen.
+        dialog._size_spin.setValue(1000)
+        dialog.accept()
+
+        assert len(warnings) == 1
+        title, text = warnings[0]
+        assert "groß" in title.lower() or "groß" in text.lower()
+        # Dialog wurde nicht akzeptiert.
+        assert dialog.result() != int(dialog.DialogCode.Accepted)
+        assert dialog.get_result() is None
+
+    def test_size_unter_minimum_zeigt_messagebox(
+        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        warnings: list[tuple[str, str]] = []
+
+        def fake_warning(*args: object, **_kwargs: object) -> int:
+            warnings.append((str(args[1]), str(args[2])))
+            return 0
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        monkeypatch.setattr(QMessageBox, "warning", fake_warning)
+
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
+        qtbot.addWidget(dialog)
+        # MIN_SAMPLE_SIZE ist 1; setRange erlaubt eigentlich kein 0 –
+        # wir setzen den Range temporär runter, um den Validierungs-Pfad zu
+        # treffen.
+        dialog._size_spin.setMinimum(0)
+        dialog._size_spin.setValue(0)
+        dialog.accept()
+
+        assert len(warnings) == 1
+        assert dialog.result() != int(dialog.DialogCode.Accepted)
+
+    def test_size_spin_hat_kein_hartes_cap(self, qtbot: QtBot) -> None:
+        # Sprint 9.6: Widget cappt nicht mehr still – Validierung beim Accept
+        # übernimmt. Sanity-Check: setValue oberhalb des Datasets bleibt
+        # erhalten.
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
+        qtbot.addWidget(dialog)
+        dialog._size_spin.setValue(9999)
+        assert dialog._size_spin.value() == 9999
