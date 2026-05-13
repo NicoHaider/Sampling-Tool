@@ -42,6 +42,7 @@ class AppSettings:
     custom_briefpapier_path: Path | None
 
     # Erweitert
+    advanced_mode: bool
     undo_depth: int
     snapshot_retention_days: int
     log_level: str
@@ -56,6 +57,7 @@ class AppSettings:
             default_include_briefpapier=True,
             default_include_statistics=True,
             custom_briefpapier_path=None,
+            advanced_mode=False,
             undo_depth=DEFAULT_UNDO_DEPTH,
             snapshot_retention_days=DEFAULT_SNAPSHOT_RETENTION_DAYS,
             log_level=DEFAULT_LOG_LEVEL,
@@ -92,6 +94,7 @@ def load_settings() -> AppSettings:
             s.value("settings/default_include_statistics", base.default_include_statistics)
         ),
         custom_briefpapier_path=custom,
+        advanced_mode=_bool(s.value("settings/advanced_mode", base.advanced_mode)),
         undo_depth=_int(s.value("settings/undo_depth", base.undo_depth), base.undo_depth),
         snapshot_retention_days=_int(
             s.value("settings/snapshot_retention_days", base.snapshot_retention_days),
@@ -113,6 +116,7 @@ def save_settings(settings: AppSettings) -> None:
         "settings/custom_briefpapier_path",
         str(settings.custom_briefpapier_path) if settings.custom_briefpapier_path else "",
     )
+    s.setValue("settings/advanced_mode", settings.advanced_mode)
     s.setValue("settings/undo_depth", settings.undo_depth)
     s.setValue("settings/snapshot_retention_days", settings.snapshot_retention_days)
     s.setValue("settings/log_level", settings.log_level)

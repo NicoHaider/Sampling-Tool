@@ -53,21 +53,21 @@ def _ok_enabled(dialog: SamplingDialog) -> bool:
 
 class TestSamplingDialog:
     def test_default_method_is_simple(self, qtbot: QtBot) -> None:
-        dialog = SamplingDialog(_make_dataset())
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=True)
         qtbot.addWidget(dialog)
         assert dialog._radio_simple.isChecked()
         assert dialog._cluster_field.isEnabled() is False
         assert dialog._stratum_field.isEnabled() is False
 
     def test_switching_to_cluster_enables_cluster_field(self, qtbot: QtBot) -> None:
-        dialog = SamplingDialog(_make_dataset())
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=True)
         qtbot.addWidget(dialog)
         dialog._radio_cluster.setChecked(True)
         assert dialog._cluster_field.isEnabled() is True
         assert dialog._stratum_field.isEnabled() is False
 
     def test_switching_to_stratified_enables_stratum_and_mode(self, qtbot: QtBot) -> None:
-        dialog = SamplingDialog(_make_dataset())
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=True)
         qtbot.addWidget(dialog)
         dialog._radio_stratified.setChecked(True)
         assert dialog._stratum_field.isEnabled() is True
@@ -75,7 +75,7 @@ class TestSamplingDialog:
         assert dialog._radio_equal.isEnabled() is True
 
     def test_filter_field_change_populates_values(self, qtbot: QtBot) -> None:
-        dialog = SamplingDialog(_make_dataset())
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=True)
         qtbot.addWidget(dialog)
         dialog._filter_field.setCurrentText("Land")
         assert dialog._filter_value.isEnabled() is True
@@ -84,14 +84,14 @@ class TestSamplingDialog:
         assert items == {"AUT", "DEU", "CHE"}
 
     def test_no_filter_disables_value_combo(self, qtbot: QtBot) -> None:
-        dialog = SamplingDialog(_make_dataset())
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=True)
         qtbot.addWidget(dialog)
         dialog._filter_field.setCurrentText("Land")
         dialog._filter_field.setCurrentText(NO_FILTER_LABEL)
         assert dialog._filter_value.isEnabled() is False
 
     def test_dice_button_changes_seed(self, qtbot: QtBot) -> None:
-        dialog = SamplingDialog(_make_dataset())
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=True)
         qtbot.addWidget(dialog)
         dialog._seed_spin.setValue(7)
         dialog._reroll_seed()
@@ -99,12 +99,12 @@ class TestSamplingDialog:
 
     def test_validation_blocks_cluster_without_field(self, qtbot: QtBot) -> None:
         ds = Dataset(name="leer", columns=(), rows=())
-        dialog = SamplingDialog(ds)
+        dialog = SamplingDialog(ds, advanced_mode=True)
         qtbot.addWidget(dialog)
         assert _ok_enabled(dialog) is False
 
     def test_simple_get_result_returns_correct_config(self, qtbot: QtBot) -> None:
-        dialog = SamplingDialog(_make_dataset())
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=True)
         qtbot.addWidget(dialog)
         dialog._size_spin.setValue(5)
         dialog._seed_spin.setValue(42)
@@ -120,7 +120,9 @@ class TestSamplingDialog:
         assert result.from_sample_only is False
 
     def test_resample_checkbox_limits_size_to_current_sample(self, qtbot: QtBot) -> None:
-        dialog = SamplingDialog(_make_dataset(), current_sample=_make_sample((1, 3, 5, 7)))
+        dialog = SamplingDialog(
+            _make_dataset(), current_sample=_make_sample((1, 3, 5, 7)), advanced_mode=True
+        )
         qtbot.addWidget(dialog)
         dialog._size_spin.setValue(10)
         dialog._resample_checkbox.setChecked(True)
@@ -128,12 +130,12 @@ class TestSamplingDialog:
         assert dialog._size_spin.value() <= 4
 
     def test_resample_disabled_when_no_current_sample(self, qtbot: QtBot) -> None:
-        dialog = SamplingDialog(_make_dataset(), current_sample=None)
+        dialog = SamplingDialog(_make_dataset(), current_sample=None, advanced_mode=True)
         qtbot.addWidget(dialog)
         assert dialog._resample_checkbox.isEnabled() is False
 
     def test_stratified_proportional_default(self, qtbot: QtBot) -> None:
-        dialog = SamplingDialog(_make_dataset())
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=True)
         qtbot.addWidget(dialog)
         dialog._radio_stratified.setChecked(True)
         dialog._stratum_field.setCurrentText("Land")
@@ -146,7 +148,75 @@ class TestSamplingDialog:
         assert result.config.stratum_field == "Land"
 
     def test_cancel_returns_none(self, qtbot: QtBot) -> None:
-        dialog = SamplingDialog(_make_dataset())
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=True)
         qtbot.addWidget(dialog)
         dialog.reject()
         assert dialog.get_result() is None
+
+
+class TestSamplingDialogSimpleMode:
+    """Sprint 9.3: Simple-Mode versteckt Methoden, Filter, Seed, Resample-Optionen."""
+
+    def test_simple_mode_does_not_create_method_radios(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
+        qtbot.addWidget(dialog)
+        assert not hasattr(dialog, "_radio_cluster")
+        assert not hasattr(dialog, "_radio_stratified")
+
+    def test_simple_mode_does_not_create_seed_widget(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
+        qtbot.addWidget(dialog)
+        assert not hasattr(dialog, "_seed_spin")
+        assert not hasattr(dialog, "_seed_dice")
+
+    def test_simple_mode_does_not_create_method_specific_fields(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
+        qtbot.addWidget(dialog)
+        assert not hasattr(dialog, "_cluster_field")
+        assert not hasattr(dialog, "_stratum_field")
+        assert not hasattr(dialog, "_filter_field")
+
+    def test_simple_mode_keeps_from_sample_only_filter(self, qtbot: QtBot) -> None:
+        # `_resample_checkbox` IST der from_sample_only-Filter – muss bleiben.
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
+        qtbot.addWidget(dialog)
+        assert hasattr(dialog, "_resample_checkbox")
+
+    def test_simple_mode_zeigt_mode_hint(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
+        qtbot.addWidget(dialog)
+        assert hasattr(dialog, "_mode_hint")
+
+    def test_advanced_mode_kein_mode_hint(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=True)
+        qtbot.addWidget(dialog)
+        assert not hasattr(dialog, "_mode_hint")
+
+    def test_simple_mode_baut_simple_config_mit_random_seed(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
+        qtbot.addWidget(dialog)
+        dialog._size_spin.setValue(5)
+        dialog._on_accept()
+        result = dialog.get_result()
+        assert result is not None
+        assert result.config.method == SamplingMethod.SIMPLE
+        assert result.config.size == 5
+        # Zufalls-Seed: > 0, kein vom User gesetzter Wert. ISAE-3402: trotzdem
+        # persistiert und damit reproduzierbar.
+        assert isinstance(result.config.seed, int)
+        assert result.config.seed > 0
+
+    def test_simple_mode_zwei_aufrufe_liefern_unterschiedliche_seeds(self, qtbot: QtBot) -> None:
+        seeds: set[int] = set()
+        for _ in range(5):
+            dialog = SamplingDialog(_make_dataset(), advanced_mode=False)
+            qtbot.addWidget(dialog)
+            dialog._size_spin.setValue(3)
+            dialog._on_accept()
+            result = dialog.get_result()
+            assert result is not None
+            seeds.add(result.config.seed)
+        # Mit 5 zufälligen 31-Bit-Seeds wäre eine Kollision astronomisch
+        # unwahrscheinlich – Sanity-Check, dass nicht der gleiche Default
+        # zurückgeliefert wird.
+        assert len(seeds) >= 4
