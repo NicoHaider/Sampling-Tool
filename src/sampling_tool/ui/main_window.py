@@ -585,11 +585,25 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self._action_excel_report)
         toolbar.addAction(self._action_html_report)
 
-        # Sekundäre Aktion – rechts abgesetzt via Expanding-Spacer, damit der
-        # Bug-Report-Button optisch nicht mit den Haupt-Aktionen konkurriert.
+        # Sekundäre Aktionen – rechts abgesetzt via Expanding-Spacer, damit die
+        # Settings-/Bug-Report-Buttons optisch nicht mit den Haupt-Aktionen
+        # konkurrieren. Reihenfolge rechts: Einstellungen (häufiger genutzt),
+        # dann Bug-Report.
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
+        if style is not None and self._action_settings.icon().isNull():
+            # Qt-Standard-Pixmaps haben kein Zahnrad – SP_FileDialogContentsView
+            # liefert ein neutrales Listen-Icon. SP_FileDialogDetailedView ist
+            # bereits für den Excel-Report belegt, daher die andere Variante.
+            self._action_settings.setIcon(
+                style.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView)
+            )
+        shortcut_text = self._action_settings.shortcut().toString(
+            QKeySequence.SequenceFormat.NativeText
+        )
+        self._action_settings.setToolTip(f"Einstellungen öffnen ({shortcut_text})")
+        toolbar.addAction(self._action_settings)
         toolbar.addAction(self._action_bug_report)
 
         self._toolbar: QToolBar = toolbar

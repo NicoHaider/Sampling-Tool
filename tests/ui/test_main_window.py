@@ -211,6 +211,47 @@ class TestSettingsAction:
             win._action_settings.trigger()
 
 
+class TestSettingsToolbarButton:
+    """Sprint 9.7: Einstellungen zusätzlich als Toolbar-Button."""
+
+    def test_toolbar_enthaelt_settings_action(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        assert win._action_settings in win._toolbar.actions()
+
+    def test_menue_und_toolbar_teilen_dieselbe_settings_action(self, qtbot: QtBot) -> None:
+        # Identitäts-Check: dieselbe QAction-Instanz in Menü + Toolbar.
+        win = MainWindow()
+        qtbot.addWidget(win)
+        assert win._action_settings in win._file_menu.actions()
+        assert win._action_settings in win._toolbar.actions()
+
+    def test_settings_action_hat_icon(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        assert not win._action_settings.icon().isNull()
+
+    def test_settings_steht_in_toolbar_vor_bug_report(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        actions = win._toolbar.actions()
+        settings_idx = actions.index(win._action_settings)
+        bug_report_idx = actions.index(win._action_bug_report)
+        assert settings_idx < bug_report_idx
+
+    def test_settings_tooltip_enthaelt_shortcut(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        tooltip = win._action_settings.toolTip()
+        assert "Einstellungen" in tooltip
+        # Tooltip soll die plattformnative Shortcut-Repräsentation
+        # enthalten – Format ist OS-abhängig (Mac "⌘,", Win "Ctrl+,",
+        # offscreen-Plattform liefert "Settings"). Sanity: Klammer-Suffix
+        # ist vorhanden, also wurde der Shortcut-Text angehängt.
+        assert "(" in tooltip
+        assert ")" in tooltip
+
+
 class TestBugReportToolbarButton:
     """Sprint 9.2: Bug-Report jetzt zusätzlich rechtsbündig in der Toolbar."""
 
