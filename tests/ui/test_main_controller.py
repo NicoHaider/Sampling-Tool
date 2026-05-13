@@ -1250,3 +1250,169 @@ class TestSettingsIntegration:
         cfg = controller._resolve_briefpapier()
         assert cfg is not None
         assert cfg.background_image == custom_pdf
+
+
+class TestEngagementStateRestore:
+    """Sprint 8.2 – aktiver Sample-State überlebt Schließen/Öffnen."""
+
+    def test_no_state_on_first_open(
+        self,
+        controller: MainController,
+        window: MainWindow,
+        populated_db: Path,
+    ) -> None:
+        controller.handle_open_engagement(populated_db)
+        assert controller._sample is None
+        assert controller._active_sample_id is None
+        assert controller._filter_active_sample_id is None
+
+    def test_sample_selection_is_persisted(
+        self,
+        controller: MainController,
+        window: MainWindow,
+        populated_db: Path,
+    ) -> None:
+        controller.handle_open_engagement(populated_db)
+        ds_id = _first_item_data(window.sidebar().datasets_widget())
+        controller.handle_dataset_selected(ds_id)
+        sample_id = _first_item_data(window.sidebar().samples_widget())
+        controller.handle_sample_selected(sample_id)
+
+        assert controller._state_repo is not None
+        assert controller._engagement is not None
+        assert controller._engagement.id is not None
+        state = controller._state_repo.get(controller._engagement.id)
+        assert state is not None
+        assert state.active_dataset_id == ds_id
+        assert state.active_sample_id == sample_id
+
+    def test_restore_reapplies_sample_highlight_and_filter(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        # Session 1: Sample auswählen, Filter aktivieren, schließen.
+        ctrl1 = MainController(window, recent_store=recent_store)
+        try:
+            ctrl1.handle_open_engagement(populated_db)
+            ds_id = _first_item_data(window.sidebar().datasets_widget())
+            ctrl1.handle_dataset_selected(ds_id)
+            sample_id = _first_item_data(window.sidebar().samples_widget())
+            ctrl1.handle_sample_filter_toggled(sample_id)
+            assert window.data_table().table_model().rowCount() == 2
+        finally:
+            ctrl1.handle_close_engagement()
+
+        # Session 2: gleiches Engagement erneut öffnen – State muss da sein.
+        ctrl2 = MainController(window, recent_store=recent_store)
+        try:
+            ctrl2.handle_open_engagement(populated_db)
+            assert ctrl2._sample is not None
+            assert ctrl2._sample.id == sample_id
+            assert ctrl2._filter_active_sample_id == sample_id
+            assert window.data_table().table_model().rowCount() == 2
+            highlights = window.data_table().table_model().highlighted_row_ids()
+            assert highlights == frozenset({2, 4})
+        finally:
+            ctrl2.handle_close_engagement()
+
+    def test_restore_without_filter(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        # Session 1: Sample auswählen ohne Filter (Default ohne Toggle).
+        ctrl1 = MainController(window, recent_store=recent_store)
+        try:
+            ctrl1.handle_open_engagement(populated_db)
+            ds_id = _first_item_data(window.sidebar().datasets_widget())
+            ctrl1.handle_dataset_selected(ds_id)
+            sample_id = _first_item_data(window.sidebar().samples_widget())
+            ctrl1.handle_sample_selected(sample_id)
+            # Filter NICHT aktiv – nur Highlight.
+            assert ctrl1._filter_active_sample_id is None
+            assert window.data_table().table_model().rowCount() == 5
+        finally:
+            ctrl1.handle_close_engagement()
+
+        ctrl2 = MainController(window, recent_store=recent_store)
+        try:
+            ctrl2.handle_open_engagement(populated_db)
+            assert ctrl2._sample is not None
+            assert ctrl2._filter_active_sample_id is None
+            # Tabelle ungefiltert, aber Highlight da.
+            assert window.data_table().table_model().rowCount() == 5
+            highlights = window.data_table().table_model().highlighted_row_ids()
+            assert highlights == frozenset({2, 4})
+        finally:
+            ctrl2.handle_close_engagement()
+
+    def test_restore_survives_deleted_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        # State auf nicht-existentes Sample setzen. Dafür FK kurzzeitig
+        # ausschalten – produktiv simulieren wir den Fall, dass eine
+        # spätere App-Version die Sample-Tabelle anders aufräumt.
+        db = Database(populated_db)
+        db.migrate()
+        eng = EngagementRepo(db.connect()).get()
+        assert eng is not None
+        assert eng.id is not None
+
+        conn = db.connect()
+        conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            conn.execute(
+                "INSERT INTO engagement_state "
+                "(engagement_id, active_dataset_id, active_sample_id, filter_active) "
+                "VALUES (?, ?, ?, ?)",
+                (eng.id, 999999, 888888, 1),
+            )
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
+        db.close()
+
+        # Öffnen darf nicht crashen, State wird stillschweigend ignoriert.
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(populated_db)
+            assert controller._sample is None
+            assert window.is_workspace_visible() is True
+        finally:
+            controller.handle_close_engagement()
+
+    def test_reset_clears_persisted_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+
+        monkeypatch.setattr(
+            QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes
+        )
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(populated_db)
+            ds_id = _first_item_data(window.sidebar().datasets_widget())
+            controller.handle_dataset_selected(ds_id)
+            sample_id = _first_item_data(window.sidebar().samples_widget())
+            controller.handle_sample_selected(sample_id)
+            controller.handle_reset()
+
+            assert controller._state_repo is not None
+            assert controller._engagement is not None
+            assert controller._engagement.id is not None
+            state = controller._state_repo.get(controller._engagement.id)
+            assert state is not None
+            assert state.active_sample_id is None
+            assert state.filter_active is False
+        finally:
+            controller.handle_close_engagement()

@@ -342,6 +342,19 @@ UTC-aware ISO-8601 für `INSERT` und parsen sowohl unser Format als auch SQLites
 `CURRENT_TIMESTAMP`-Default (`YYYY-MM-DD HH:MM:SS`) beim Lesen. Kein naives Datetime
 mehr – Python-3.12-Deprecation umgangen.
 
+**UI-State pro Engagement (Sprint 8.2):** Die Tabelle `engagement_state` (Migration
+`002`) hält pro Engagement genau eine Zeile mit `active_dataset_id`,
+`active_sample_id` und `filter_active`. Der `MainController` schreibt diesen
+State nach jeder mutierenden Aktion (Sample-Auswahl, Dataset-Wechsel,
+Filter-Toggle, Reset, Sampling, Undo/Redo) via `EngagementStateRepo.upsert`
+und liest ihn bei `handle_open_engagement` über `_restore_state()` zurück.
+Damit überlebt die zuletzt aktive Stichprobe inkl. Filter-Status den
+App-Neustart. Stale IDs (Dataset/Sample inzwischen gelöscht) werden im
+Restore stillschweigend übersprungen – kein blockierender Error-Dialog.
+Während `_restore_state` läuft, blockiert `_restoring_state` die
+`_persist_state`-Aufrufe der orchestrierten `handle_*`-Methoden, damit der
+gespeicherte State nicht zwischenüberschrieben wird.
+
 **JSON-Spalten:** `columns_json`, `values_json`, `details_json` sowie `filter_value`,
 `visible_rows`, `highlighted_rows` sind alle `json.dumps`-/`json.loads`-Roundtrip,
 um Typ-Information (int vs. str vs. nested dict) zu erhalten.
