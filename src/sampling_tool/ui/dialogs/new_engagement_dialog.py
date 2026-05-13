@@ -26,7 +26,6 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QVBoxLayout,
     QWidget,
 )
@@ -49,6 +48,7 @@ class NewEngagementDialog(QDialog):
         parent: QWidget | None = None,
         default_auditor_name: str | None = None,
         engagements_dir: Path | None = None,
+        initial_engagement: Engagement | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Neues Engagement anlegen")
@@ -59,10 +59,22 @@ class NewEngagementDialog(QDialog):
         self._engagements_dir = engagements_dir if engagements_dir is not None else ENGAGEMENTS_DIR
 
         # ---- Felder ----
-        initial_auditor = default_auditor_name or _default_user_name()
+        # `initial_engagement` schlägt Auditor/Position/Mandant aus
+        # `default_auditor_name`, wenn beide gesetzt sind – Use-Case ist das
+        # erneute Öffnen nach Duplikat-Konflikt, da soll der zuletzt
+        # eingegebene Auditor wieder erscheinen, nicht der OS-Default.
+        initial_auditor = (
+            initial_engagement.auditor_name
+            if initial_engagement is not None
+            else (default_auditor_name or _default_user_name())
+        )
         self._auditor_name = QLineEdit(initial_auditor)
-        self._auditor_position = QLineEdit()
-        self._client_name = QLineEdit()
+        self._auditor_position = QLineEdit(
+            initial_engagement.auditor_position if initial_engagement is not None else ""
+        )
+        self._client_name = QLineEdit(
+            initial_engagement.client_name if initial_engagement is not None else ""
+        )
 
         self._audit_type_combo = QComboBox()
         self._audit_type_combo.addItems(AUDIT_TYPES)
@@ -71,6 +83,13 @@ class NewEngagementDialog(QDialog):
         self._audit_type_other = QLineEdit()
         self._audit_type_other.setPlaceholderText('Freitext für „Sonstige"…')
         self._audit_type_other.setVisible(False)
+
+        if initial_engagement is not None and initial_engagement.audit_type:
+            if initial_engagement.audit_type in AUDIT_TYPES:
+                self._audit_type_combo.setCurrentText(initial_engagement.audit_type)
+            else:
+                self._audit_type_combo.setCurrentText("Sonstige")
+                self._audit_type_other.setText(initial_engagement.audit_type)
 
         # ---- Layout ----
         outer = QVBoxLayout(self)
@@ -181,17 +200,9 @@ class NewEngagementDialog(QDialog):
         if target.suffix.lower() != DB_FILE_SUFFIX:
             target = target.with_suffix(DB_FILE_SUFFIX)
 
-        if target.exists():
-            answer = QMessageBox.question(
-                self,
-                "Datei überschreiben?",
-                f"Die Datei '{target.name}' existiert bereits. Überschreiben?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-
+        # Kollision mit bestehendem Engagement wird im Controller via
+        # `DuplicateEngagementDialog` behandelt – siehe `MainController.
+        # handle_new_engagement`. Hier nur den Pfad bestätigen.
         self._db_path = target
         self.accept()
 

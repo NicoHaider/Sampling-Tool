@@ -62,6 +62,10 @@ from sampling_tool.persistence.repositories import (
 from sampling_tool.persistence.version_manager import EngagementVersionManager
 from sampling_tool.ui.dialogs.about_dialog import AboutDialog
 from sampling_tool.ui.dialogs.bug_report_dialog import BugReportDialog
+from sampling_tool.ui.dialogs.duplicate_engagement_dialog import (
+    DuplicateEngagementChoice,
+    DuplicateEngagementDialog,
+)
 from sampling_tool.ui.dialogs.export_audit_pdf_dialog import ExportAuditPdfDialog
 from sampling_tool.ui.dialogs.export_excel_report_dialog import ExportExcelReportDialog
 from sampling_tool.ui.dialogs.export_html_report_dialog import ExportHtmlReportDialog
@@ -77,7 +81,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DialogFactory = Callable[["MainWindow", AppSettings], NewEngagementDialog]
+DialogFactory = Callable[["MainWindow", AppSettings, Engagement | None], NewEngagementDialog]
+DuplicateDialogFactory = Callable[["MainWindow", Path], DuplicateEngagementDialog]
 SamplingDialogFactory = Callable[["MainWindow", Dataset, SampleResult | None], SamplingDialog]
 ExportDialogFactory = Callable[["MainWindow", Dataset, str, str, Path | None], ExportSampleDialog]
 AuditPdfDialogFactory = Callable[
@@ -99,6 +104,7 @@ class MainController:
         window: MainWindow,
         recent_store: RecentEngagementsStore | None = None,
         dialog_factory: DialogFactory | None = None,
+        duplicate_dialog_factory: DuplicateDialogFactory | None = None,
         sampling_dialog_factory: SamplingDialogFactory | None = None,
         export_dialog_factory: ExportDialogFactory | None = None,
         audit_pdf_dialog_factory: AuditPdfDialogFactory | None = None,
@@ -112,6 +118,11 @@ class MainController:
         self._settings = settings if settings is not None else load_settings()
         self._dialog_factory = (
             dialog_factory if dialog_factory is not None else _default_new_engagement_factory
+        )
+        self._duplicate_factory = (
+            duplicate_dialog_factory
+            if duplicate_dialog_factory is not None
+            else _default_duplicate_dialog_factory
         )
         self._sampling_factory = (
             sampling_dialog_factory
@@ -204,26 +215,51 @@ class MainController:
     # ---- Engagement-Lifecycle ------------------------------------------
 
     def handle_new_engagement(self) -> None:
-        """Dialog anzeigen, neues Engagement anlegen + DB initialisieren."""
-        dialog = self._dialog_factory(self.window, self._settings)
-        if dialog.exec() != dialog.DialogCode.Accepted:
+        """Dialog anzeigen, neues Engagement anlegen + DB initialisieren.
+
+        Wenn der gewählte Ziel-DB-Pfad bereits existiert, wird der
+        `DuplicateEngagementDialog` gezeigt – der User kann dann das
+        bestehende Engagement öffnen, einen anderen Namen wählen
+        (Dialog wird mit den bisherigen Werten erneut geöffnet) oder
+        komplett abbrechen. Verhindert versehentliches Überschreiben.
+        """
+        prefill: Engagement | None = None
+        while True:
+            dialog = self._dialog_factory(self.window, self._settings, prefill)
+            if dialog.exec() != dialog.DialogCode.Accepted:
+                return
+
+            engagement = dialog.get_engagement()
+            db_path = dialog.get_db_path()
+
+            if db_path.exists():
+                choice = self._prompt_duplicate(db_path)
+                if choice is DuplicateEngagementChoice.OPEN_EXISTING:
+                    self.handle_open_engagement(db_path)
+                    return
+                if choice is DuplicateEngagementChoice.RENAME:
+                    prefill = engagement
+                    continue
+                # CANCEL → komplettes Abbrechen
+                return
+
+            try:
+                db = Database(db_path)
+                db.migrate()
+                created = EngagementRepo(db.connect()).get_or_create(engagement)
+            except Exception as exc:  # pragma: no cover – defensiv
+                logger.exception("Engagement-Anlage fehlgeschlagen")
+                self._error(f"Engagement konnte nicht angelegt werden: {exc}")
+                return
+
+            self._adopt_database(db, db_path, created)
             return
 
-        engagement = dialog.get_engagement()
-        db_path = dialog.get_db_path()
-        if db_path.exists():
-            db_path.unlink()
-
-        try:
-            db = Database(db_path)
-            db.migrate()
-            created = EngagementRepo(db.connect()).get_or_create(engagement)
-        except Exception as exc:  # pragma: no cover – defensiv
-            logger.exception("Engagement-Anlage fehlgeschlagen")
-            self._error(f"Engagement konnte nicht angelegt werden: {exc}")
-            return
-
-        self._adopt_database(db, db_path, created)
+    def _prompt_duplicate(self, db_path: Path) -> DuplicateEngagementChoice:
+        """Zeigt den DuplicateEngagementDialog und liefert das User-Choice."""
+        dialog = self._duplicate_factory(self.window, db_path)
+        dialog.exec()
+        return dialog.choice()
 
     def handle_open_engagement(self, db_path: Path) -> None:
         """Bestehende SQLite-Datei öffnen und Engagement laden."""
@@ -1116,13 +1152,22 @@ class MainController:
 
 
 def _default_new_engagement_factory(
-    parent: MainWindow, settings: AppSettings
+    parent: MainWindow,
+    settings: AppSettings,
+    initial_engagement: Engagement | None,
 ) -> NewEngagementDialog:
     return NewEngagementDialog(
         parent=parent,
         default_auditor_name=settings.default_auditor_name or None,
         engagements_dir=settings.engagements_dir,
+        initial_engagement=initial_engagement,
     )
+
+
+def _default_duplicate_dialog_factory(
+    parent: MainWindow, db_path: Path
+) -> DuplicateEngagementDialog:
+    return DuplicateEngagementDialog(db_path=db_path, parent=parent)
 
 
 def _default_sampling_factory(
