@@ -33,8 +33,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 9.1    | Duplikat-Check beim Anlegen neuer Engagements        | done        |
 | 9.2    | Bug-Report als Toolbar-Button                        | done        |
 | 9.3    | Advanced-Mode-Toggle (Simple/Advanced Sampling)      | done        |
+| 9.4    | Dashboard/AuditTrail ein-/ausblendbar               | done        |
 
-**Sprint 9.3 abgeschlossen.**
+**Sprint 9.4 abgeschlossen.**
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -240,6 +241,15 @@ für Anwender-Präferenzen:
   Spalten-Filter, manueller Seed mit Würfel-Button) frei. Default
   `False` – auch für Bestandsuser ohne `advanced_mode`-Key. Wird vom
   `MainController` direkt an die `SamplingDialog`-Factory durchgereicht.
+- `show_dashboard` / `show_audit_trail` – Default `True`. Steuern die
+  Tab-Sichtbarkeit im unteren `QTabWidget`. Sind beide `False`, wird
+  das gesamte untere Panel ausgeblendet und die Datentabelle nutzt die
+  volle Höhe. `MainController` ruft `MainWindow.apply_panel_visibility`
+  beim App-Start und nach jedem Settings-OK auf – kein Neustart nötig.
+  Splitter-Größen werden beim Collapse in `_cached_splitter_sizes`
+  gemerkt und beim Re-Show wiederhergestellt; `_save_workspace_state`
+  schreibt im Collapse-Zustand die echten (gecachten) Größen, nicht
+  den `[total, 0]`-Snapshot.
 - `undo_depth` / `snapshot_retention_days` / `log_level` – reserviert
   für spätere Erweiterungen, aktuell informativ.
 

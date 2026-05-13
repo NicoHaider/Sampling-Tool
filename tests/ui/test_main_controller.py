@@ -1671,3 +1671,54 @@ class TestAdvancedModePropagation:
             assert received["advanced_mode"] is True
         finally:
             controller.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 9.4: Panel-Sichtbarkeit (Dashboard / AuditTrail) wird live angewendet
+# ---------------------------------------------------------------------------
+
+
+class TestPanelVisibilityWiring:
+    def test_init_wendet_panel_visibility_aus_settings_an(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        settings = dc_replace(AppSettings.defaults(), show_dashboard=False, show_audit_trail=True)
+        MainController(window, recent_store=recent_store, settings=settings)
+        # Initialer Controller-Aufruf hat Sichtbarkeit gesetzt.
+        assert window._lower_tabs.indexOf(window._dashboard_view) == -1
+        assert window._lower_tabs.indexOf(window._audit_trail_view) != -1
+
+    def test_handle_settings_wendet_neue_panel_visibility_an(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.dialogs.settings_dialog import SettingsDialog
+        from sampling_tool.ui.settings_store import AppSettings
+
+        defaults = AppSettings.defaults()
+        new_settings = dc_replace(defaults, show_dashboard=False, show_audit_trail=False)
+
+        class _StubSettingsDialog(SettingsDialog):
+            def exec(self) -> int:
+                self._result = new_settings
+                return int(QDialog.DialogCode.Accepted)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            settings_dialog_factory=lambda _p, _s: _StubSettingsDialog(defaults),
+            settings=defaults,
+        )
+        controller.handle_settings()
+        # Beide Tabs sind weg.
+        assert window._lower_tabs.count() == 0
+        assert window._lower_tabs.isVisible() is False

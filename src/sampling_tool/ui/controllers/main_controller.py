@@ -176,6 +176,11 @@ class MainController:
 
         self._connect_signals()
         self.refresh_recent()
+        # Initiales Panel-Sichtbarkeits-Setup aus AppSettings anwenden.
+        self.window.apply_panel_visibility(
+            show_dashboard=self._settings.show_dashboard,
+            show_audit_trail=self._settings.show_audit_trail,
+        )
 
     # ---- Public API ----------------------------------------------------
 
@@ -866,6 +871,11 @@ class MainController:
             new_settings.engagements_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
             logger.exception("Engagement-Ordner konnte nicht angelegt werden")
+        # Panel-Sichtbarkeit live anwenden – kein Neustart nötig.
+        self.window.apply_panel_visibility(
+            show_dashboard=new_settings.show_dashboard,
+            show_audit_trail=new_settings.show_audit_trail,
+        )
 
     def handle_hotkeys(self) -> None:
         """Statisches Info-Fenster mit Tastatur-Shortcuts."""

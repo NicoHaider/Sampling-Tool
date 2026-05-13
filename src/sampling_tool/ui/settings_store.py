@@ -41,6 +41,10 @@ class AppSettings:
     default_include_statistics: bool
     custom_briefpapier_path: Path | None
 
+    # Sichtbare Panels (Allgemein-Tab)
+    show_dashboard: bool
+    show_audit_trail: bool
+
     # Erweitert
     advanced_mode: bool
     undo_depth: int
@@ -57,6 +61,8 @@ class AppSettings:
             default_include_briefpapier=True,
             default_include_statistics=True,
             custom_briefpapier_path=None,
+            show_dashboard=True,
+            show_audit_trail=True,
             advanced_mode=False,
             undo_depth=DEFAULT_UNDO_DEPTH,
             snapshot_retention_days=DEFAULT_SNAPSHOT_RETENTION_DAYS,
@@ -94,6 +100,8 @@ def load_settings() -> AppSettings:
             s.value("settings/default_include_statistics", base.default_include_statistics)
         ),
         custom_briefpapier_path=custom,
+        show_dashboard=_bool(s.value("settings/show_dashboard", base.show_dashboard)),
+        show_audit_trail=_bool(s.value("settings/show_audit_trail", base.show_audit_trail)),
         advanced_mode=_bool(s.value("settings/advanced_mode", base.advanced_mode)),
         undo_depth=_int(s.value("settings/undo_depth", base.undo_depth), base.undo_depth),
         snapshot_retention_days=_int(
@@ -116,6 +124,8 @@ def save_settings(settings: AppSettings) -> None:
         "settings/custom_briefpapier_path",
         str(settings.custom_briefpapier_path) if settings.custom_briefpapier_path else "",
     )
+    s.setValue("settings/show_dashboard", settings.show_dashboard)
+    s.setValue("settings/show_audit_trail", settings.show_audit_trail)
     s.setValue("settings/advanced_mode", settings.advanced_mode)
     s.setValue("settings/undo_depth", settings.undo_depth)
     s.setValue("settings/snapshot_retention_days", settings.snapshot_retention_days)
