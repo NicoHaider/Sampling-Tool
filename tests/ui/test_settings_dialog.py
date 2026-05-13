@@ -158,3 +158,44 @@ class TestAdvancedModeToggle:
         )
         dialog._on_reset_defaults()
         assert dialog._chk_advanced_mode.isChecked() is False
+
+
+class TestPanelVisibilityToggle:
+    def test_dialog_zeigt_panel_checkboxen_mit_defaults(
+        self, qtbot: QtBot, defaults: AppSettings
+    ) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        assert dialog._chk_show_dashboard.isChecked() is True
+        assert dialog._chk_show_audit_trail.isChecked() is True
+
+    def test_dialog_prefilled_panel_flags(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        current = replace(defaults, show_dashboard=False, show_audit_trail=True)
+        dialog = SettingsDialog(current)
+        qtbot.addWidget(dialog)
+        assert dialog._chk_show_dashboard.isChecked() is False
+        assert dialog._chk_show_audit_trail.isChecked() is True
+
+    def test_ok_propagates_panel_flags(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        dialog._chk_show_dashboard.setChecked(False)
+        dialog._chk_show_audit_trail.setChecked(False)
+        dialog._on_accept()
+        result = dialog.get_settings()
+        assert result is not None
+        assert result.show_dashboard is False
+        assert result.show_audit_trail is False
+
+    def test_reset_to_defaults_restores_panel_flags(
+        self, qtbot: QtBot, defaults: AppSettings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        current = replace(defaults, show_dashboard=False, show_audit_trail=False)
+        dialog = SettingsDialog(current)
+        qtbot.addWidget(dialog)
+        monkeypatch.setattr(
+            QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes
+        )
+        dialog._on_reset_defaults()
+        assert dialog._chk_show_dashboard.isChecked() is True
+        assert dialog._chk_show_audit_trail.isChecked() is True

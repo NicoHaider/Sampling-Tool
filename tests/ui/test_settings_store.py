@@ -120,3 +120,32 @@ class TestAdvancedMode:
         # QSettings ohne advanced_mode-Key → load_settings liefert False.
         loaded = load_settings()
         assert loaded.advanced_mode is False
+
+
+class TestPanelVisibilityFlags:
+    def test_show_dashboard_default_is_true(self) -> None:
+        assert AppSettings.defaults().show_dashboard is True
+
+    def test_show_audit_trail_default_is_true(self) -> None:
+        assert AppSettings.defaults().show_audit_trail is True
+
+    def test_show_dashboard_roundtrips_false(self) -> None:
+        original = replace(AppSettings.defaults(), show_dashboard=False)
+        save_settings(original)
+        loaded = load_settings()
+        assert loaded.show_dashboard is False
+        # andere Panel-Flag bleibt davon unberührt
+        assert loaded.show_audit_trail is True
+
+    def test_show_audit_trail_roundtrips_false(self) -> None:
+        original = replace(AppSettings.defaults(), show_audit_trail=False)
+        save_settings(original)
+        loaded = load_settings()
+        assert loaded.show_audit_trail is False
+        assert loaded.show_dashboard is True
+
+    def test_panel_flags_missing_keys_default_to_true(self) -> None:
+        # QSettings ohne show_*-Keys → load_settings liefert True / True.
+        loaded = load_settings()
+        assert loaded.show_dashboard is True
+        assert loaded.show_audit_trail is True

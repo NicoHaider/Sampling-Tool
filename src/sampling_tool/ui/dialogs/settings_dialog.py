@@ -88,7 +88,10 @@ class SettingsDialog(QDialog):
 
     def _build_general_tab(self, current: AppSettings) -> QWidget:
         page = QWidget()
-        form = QFormLayout(page)
+        outer = QVBoxLayout(page)
+        outer.setSpacing(10)
+
+        form = QFormLayout()
         form.setSpacing(10)
 
         self._auditor_name = QLineEdit(current.default_auditor_name)
@@ -108,6 +111,27 @@ class SettingsDialog(QDialog):
         language = QLabel("Sprache: Deutsch (weitere folgen)")
         language.setStyleSheet("color: #7F7F7F;")
         form.addRow(" ", language)
+        outer.addLayout(form)
+
+        # ---- Angezeigte Bereiche (Dashboard / AuditTrail togglen) ----
+        panels_box = QGroupBox("Angezeigte Bereiche")
+        panels_layout = QVBoxLayout(panels_box)
+        panel_tooltip = (
+            "Blendet den jeweiligen Tab im unteren Bereich des Hauptfensters "
+            "ein oder aus. Wenn weder Dashboard noch Audit-Trail aktiv sind, "
+            "wird der gesamte untere Bereich ausgeblendet und die Datentabelle "
+            "nutzt die volle Höhe."
+        )
+        self._chk_show_dashboard = QCheckBox("Dashboard anzeigen")
+        self._chk_show_dashboard.setChecked(current.show_dashboard)
+        self._chk_show_dashboard.setToolTip(panel_tooltip)
+        self._chk_show_audit_trail = QCheckBox("Audit-Trail anzeigen")
+        self._chk_show_audit_trail.setChecked(current.show_audit_trail)
+        self._chk_show_audit_trail.setToolTip(panel_tooltip)
+        panels_layout.addWidget(self._chk_show_dashboard)
+        panels_layout.addWidget(self._chk_show_audit_trail)
+        outer.addWidget(panels_box)
+        outer.addStretch(1)
         return page
 
     def _build_reports_tab(self, current: AppSettings) -> QWidget:
@@ -272,6 +296,8 @@ class SettingsDialog(QDialog):
         self._default_statistics.setChecked(defaults.default_include_statistics)
         self._radio_placeholder.setChecked(True)
         self._custom_briefpapier.clear()
+        self._chk_show_dashboard.setChecked(defaults.show_dashboard)
+        self._chk_show_audit_trail.setChecked(defaults.show_audit_trail)
         self._chk_advanced_mode.setChecked(defaults.advanced_mode)
         self._undo_depth.setValue(defaults.undo_depth)
         self._snapshot_retention.setValue(defaults.snapshot_retention_days)
@@ -297,6 +323,8 @@ class SettingsDialog(QDialog):
             default_include_briefpapier=self._default_briefpapier.isChecked(),
             default_include_statistics=self._default_statistics.isChecked(),
             custom_briefpapier_path=custom_path,
+            show_dashboard=self._chk_show_dashboard.isChecked(),
+            show_audit_trail=self._chk_show_audit_trail.isChecked(),
             advanced_mode=self._chk_advanced_mode.isChecked(),
             undo_depth=self._undo_depth.value(),
             snapshot_retention_days=self._snapshot_retention.value(),

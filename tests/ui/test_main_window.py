@@ -208,3 +208,89 @@ class TestBugReportToolbarButton:
         action = win._action_bug_report
         assert action.toolTip() == "Fehler melden oder Feedback senden"
         assert not action.icon().isNull()
+
+
+class TestPanelVisibility:
+    """Sprint 9.4: Dashboard- und AuditTrail-Tab via Settings togglebar."""
+
+    def test_default_zeigt_beide_tabs(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        # Initial sind beide Tabs aktiv (Controller-Default).
+        win.apply_panel_visibility(show_dashboard=True, show_audit_trail=True)
+        assert win._lower_tabs.indexOf(win._dashboard_view) != -1
+        assert win._lower_tabs.indexOf(win._audit_trail_view) != -1
+
+    def test_nur_dashboard(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.apply_panel_visibility(show_dashboard=True, show_audit_trail=False)
+        assert win._lower_tabs.indexOf(win._dashboard_view) != -1
+        assert win._lower_tabs.indexOf(win._audit_trail_view) == -1
+
+    def test_nur_audit_trail(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.apply_panel_visibility(show_dashboard=False, show_audit_trail=True)
+        assert win._lower_tabs.indexOf(win._dashboard_view) == -1
+        assert win._lower_tabs.indexOf(win._audit_trail_view) != -1
+
+    def test_beide_aus_versteckt_tabwidget(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.show()
+        qtbot.waitExposed(win)
+        win.apply_panel_visibility(show_dashboard=False, show_audit_trail=False)
+        # `isVisible` ist False, weil das Widget explizit versteckt wurde.
+        assert win._lower_tabs.isVisible() is False
+        # Beide Tabs sind weg
+        assert win._lower_tabs.count() == 0
+
+    def test_beide_aus_cacht_splitter_sizes(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.show()
+        qtbot.waitExposed(win)
+        # Aktuellen Splitter-Zustand merken.
+        before = win._workspace_splitter.sizes()
+        assert sum(before) > 0  # sanity: Splitter hat Größen
+        win.apply_panel_visibility(show_dashboard=False, show_audit_trail=False)
+        assert win._cached_splitter_sizes == before
+        # Untere Hälfte ist auf 0 kollabiert, Datentabelle nutzt die volle Höhe.
+        sizes_now = win._workspace_splitter.sizes()
+        assert sizes_now[1] == 0
+        assert sizes_now[0] == sum(before)
+
+    def test_roundtrip_restored_splitter_sizes(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.show()
+        qtbot.waitExposed(win)
+        before = win._workspace_splitter.sizes()
+        win.apply_panel_visibility(show_dashboard=False, show_audit_trail=False)
+        win.apply_panel_visibility(show_dashboard=True, show_audit_trail=True)
+        assert win._cached_splitter_sizes is None
+        assert win._workspace_splitter.sizes() == before
+
+    def test_toggle_einzeln_aendert_splitter_nicht(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.show()
+        qtbot.waitExposed(win)
+        before = win._workspace_splitter.sizes()
+        win.apply_panel_visibility(show_dashboard=True, show_audit_trail=False)
+        # Splitter bleibt unverändert, Cache leer (kein Collapse).
+        assert win._cached_splitter_sizes is None
+        assert win._workspace_splitter.sizes() == before
+
+    def test_save_workspace_state_nutzt_cached_sizes(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.show()
+        qtbot.waitExposed(win)
+        before = win._workspace_splitter.sizes()
+        win.apply_panel_visibility(show_dashboard=False, show_audit_trail=False)
+        # In dem Moment ist der Splitter auf [total, 0] kollabiert.
+        win._save_workspace_state()
+        # Save hat den Cache temporär gesetzt → Splitter hat echte Größen.
+        assert win._workspace_splitter.sizes() == before
