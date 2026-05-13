@@ -36,8 +36,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 9.4    | Dashboard/AuditTrail ein-/ausblendbar               | done        |
 | 9.5    | First-Run-Wizard (Standard-Ordner + Auditor-Name)   | done        |
 | 9.6    | Settings im Menü + Sample-Größe-Hint + Seed in Simple-Mode | done |
+| 9.7    | Einstellungen-Button in Toolbar                     | done        |
 
-**Sprint 9.6 abgeschlossen.**
+**Sprint 9.7 abgeschlossen.**
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -119,12 +120,17 @@ ui ──▶ controllers ──▶ core ◀── io
     Die Toolbar enthält rechtsbündig (Expanding-Spacer) einen Bug-
     Report-Button, der dieselbe `QAction`-Instanz wie der Hilfe-Menü-
     Eintrag teilt – keine Duplikation des Triggers.
-    `self._action_settings` ist eine geteilte QAction zwischen Datei-
-    Menü (sichtbar via `file_menu.addAction`) und – über
-    `setMenuRole(PreferencesRole)` – dem Mac-App-Menü. Cmd+,-Shortcut
-    via `QKeySequence.StandardKey.Preferences`. `self._file_menu` ist
-    als Attribut exponiert, damit Tests die Menü-Zugehörigkeit prüfen
-    können.
+    `self._action_settings` ist eine geteilte QAction, die an drei
+    Stellen sichtbar ist (alle teilen dieselbe Instanz, keine
+    Duplikation): Datei-Menü, Mac-App-Menü via `setMenuRole(
+    PreferencesRole)` und – seit Sprint 9.7 – Toolbar rechts vor dem
+    Bug-Report-Button (nach dem Expanding-Spacer). Cmd+,-Shortcut via
+    `QKeySequence.StandardKey.Preferences`; Toolbar-Tooltip enthält
+    den plattformnativen Shortcut-Text (`toString(NativeText)`).
+    Icon kommt aus `SP_FileDialogContentsView` – nicht
+    `SP_FileDialogDetailedView`, das ist für den Excel-Report belegt.
+    `self._file_menu` ist als Attribut exponiert, damit Tests die
+    Menü-Zugehörigkeit prüfen können.
     Sendet typisierte Signals; *kein* DB-Zugriff hier.
   - `controllers/main_controller.py` – Glue-Schicht UI ↔ Persistence/IO.
     Hält `Database`-Instanz, das aktuelle Engagement und einen
