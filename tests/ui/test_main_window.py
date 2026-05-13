@@ -179,3 +179,32 @@ class TestSwitchEngagementToolbar:
         win.show_workspace()  # Aktion ist nur enabled, wenn Workspace sichtbar.
         with qtbot.waitSignal(win.close_engagement_requested, timeout=500):
             win._action_close.trigger()
+
+
+class TestBugReportToolbarButton:
+    """Sprint 9.2: Bug-Report jetzt zusätzlich rechtsbündig in der Toolbar."""
+
+    def test_toolbar_enthaelt_bug_report_action(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        assert win._action_bug_report in win._toolbar.actions()
+
+    def test_menue_und_toolbar_teilen_dieselbe_action(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        # Identitäts-Check: dieselbe QAction-Instanz in Menü + Toolbar.
+        assert win._action_bug_report in win._help_menu.actions()
+        assert win._action_bug_report in win._toolbar.actions()
+
+    def test_toolbar_button_emittiert_bug_report_signal(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        with qtbot.waitSignal(win.bug_report_requested, timeout=500):
+            win._action_bug_report.trigger()
+
+    def test_bug_report_action_hat_tooltip_und_icon(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        action = win._action_bug_report
+        assert action.toolTip() == "Fehler melden oder Feedback senden"
+        assert not action.icon().isNull()

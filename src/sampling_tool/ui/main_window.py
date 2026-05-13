@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMenu,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QStatusBar,
@@ -450,12 +451,19 @@ class MainWindow(QMainWindow):
         # ---- Help ----
         help_menu = menu_bar.addMenu("&Hilfe")
         assert help_menu is not None
+        self._help_menu: QMenu = help_menu
 
         self._action_hotkeys = QAction("Tastatur-Shortcuts…", self)
         self._action_hotkeys.triggered.connect(self.hotkeys_requested.emit)
         help_menu.addAction(self._action_hotkeys)
 
         self._action_bug_report = QAction("Bug melden…", self)
+        self._action_bug_report.setToolTip("Fehler melden oder Feedback senden")
+        self._action_bug_report.setStatusTip("Öffnet den Bug-Report-Dialog")
+        if style is not None:
+            self._action_bug_report.setIcon(
+                style.standardIcon(QStyle.StandardPixmap.SP_MessageBoxCritical)
+            )
         self._action_bug_report.triggered.connect(self.bug_report_requested.emit)
         help_menu.addAction(self._action_bug_report)
 
@@ -505,6 +513,15 @@ class MainWindow(QMainWindow):
             )
         toolbar.addAction(self._action_excel_report)
         toolbar.addAction(self._action_html_report)
+
+        # Sekundäre Aktion – rechts abgesetzt via Expanding-Spacer, damit der
+        # Bug-Report-Button optisch nicht mit den Haupt-Aktionen konkurriert.
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+        toolbar.addAction(self._action_bug_report)
+
+        self._toolbar: QToolBar = toolbar
         self.addToolBar(toolbar)
 
     # ---- State-Helfer --------------------------------------------------
