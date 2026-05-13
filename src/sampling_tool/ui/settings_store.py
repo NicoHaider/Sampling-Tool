@@ -51,6 +51,9 @@ class AppSettings:
     snapshot_retention_days: int
     log_level: str
 
+    # Onboarding
+    first_run_completed: bool
+
     @classmethod
     def defaults(cls) -> AppSettings:
         """Werks-Default; wird genutzt, wenn `QSettings` leer ist oder Reset."""
@@ -67,6 +70,7 @@ class AppSettings:
             undo_depth=DEFAULT_UNDO_DEPTH,
             snapshot_retention_days=DEFAULT_SNAPSHOT_RETENTION_DAYS,
             log_level=DEFAULT_LOG_LEVEL,
+            first_run_completed=False,
         )
 
 
@@ -77,7 +81,14 @@ def _qsettings() -> QSettings:
 
 
 def load_settings() -> AppSettings:
-    """Lädt die `AppSettings` aus `QSettings`. Fehlende Keys → Defaults."""
+    """Lädt die `AppSettings` aus `QSettings`. Fehlende Keys → Defaults.
+
+    Für Bestandsuser ohne `first_run_completed`-Key wird über eine
+    Heuristik (eigener Engagement-Ordner oder Default-Ordner existiert)
+    entschieden, dass der First-Run-Wizard nicht mehr nötig ist – das
+    Flag wird in dem Fall sofort persistiert, damit die Heuristik beim
+    nächsten Start nicht erneut greift.
+    """
     s = _qsettings()
     base = AppSettings.defaults()
 
@@ -87,6 +98,18 @@ def load_settings() -> AppSettings:
     log_level = _str(s.value("settings/log_level", base.log_level))
     if log_level not in LOG_LEVELS:
         log_level = base.log_level
+
+    has_first_run_key = s.contains("settings/first_run_completed")
+    raw_engagements_dir = _str(s.value("settings/engagements_dir", ""))
+    if has_first_run_key:
+        first_run_completed = _bool(s.value("settings/first_run_completed", False))
+    else:
+        first_run_completed = _detect_existing_user(raw_engagements_dir, base.engagements_dir)
+        if first_run_completed:
+            # Migration einmalig persistieren – beim nächsten Start fällt
+            # die Heuristik dann nicht mehr ins Gewicht.
+            s.setValue("settings/first_run_completed", True)
+            s.sync()
 
     return replace(
         base,
@@ -109,7 +132,16 @@ def load_settings() -> AppSettings:
             base.snapshot_retention_days,
         ),
         log_level=log_level,
+        first_run_completed=first_run_completed,
     )
+
+
+def _detect_existing_user(raw_engagements_dir: str, default_dir: Path) -> bool:
+    """Bestandsuser-Heuristik: explizit gesetzter Pfad oder Default-Ordner da."""
+    explicit_dir = raw_engagements_dir and raw_engagements_dir != str(default_dir)
+    if explicit_dir:
+        return True
+    return default_dir.exists()
 
 
 def save_settings(settings: AppSettings) -> None:
@@ -127,6 +159,7 @@ def save_settings(settings: AppSettings) -> None:
     s.setValue("settings/show_dashboard", settings.show_dashboard)
     s.setValue("settings/show_audit_trail", settings.show_audit_trail)
     s.setValue("settings/advanced_mode", settings.advanced_mode)
+    s.setValue("settings/first_run_completed", settings.first_run_completed)
     s.setValue("settings/undo_depth", settings.undo_depth)
     s.setValue("settings/snapshot_retention_days", settings.snapshot_retention_days)
     s.setValue("settings/log_level", settings.log_level)

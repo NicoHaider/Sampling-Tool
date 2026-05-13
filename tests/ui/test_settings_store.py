@@ -149,3 +149,73 @@ class TestPanelVisibilityFlags:
         loaded = load_settings()
         assert loaded.show_dashboard is True
         assert loaded.show_audit_trail is True
+
+
+class TestFirstRunCompleted:
+    def test_default_is_false(self) -> None:
+        assert AppSettings.defaults().first_run_completed is False
+
+    def test_roundtrip_true(self) -> None:
+        original = replace(AppSettings.defaults(), first_run_completed=True)
+        save_settings(original)
+        loaded = load_settings()
+        assert loaded.first_run_completed is True
+
+    def test_neuinstallation_first_run_false(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Leere QSettings + Default-Ordner existiert nicht → first_run False."""
+        from sampling_tool import config
+        from sampling_tool.ui import settings_store
+
+        ghost_dir = tmp_path / "does-not-exist"
+        monkeypatch.setattr(config, "ENGAGEMENTS_DIR", ghost_dir)
+        monkeypatch.setattr(settings_store, "ENGAGEMENTS_DIR", ghost_dir)
+        # Defaults muss frisch gebaut werden, damit der monkeypatched
+        # ENGAGEMENTS_DIR in den `base` einfließt.
+        loaded = load_settings()
+        assert loaded.first_run_completed is False
+
+    def test_migration_default_dir_exists_sets_flag_true(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Leere QSettings + Default-Pfad existiert → Migration setzt True."""
+        from sampling_tool import config
+        from sampling_tool.ui import settings_store
+
+        existing = tmp_path / "existing-engagements"
+        existing.mkdir()
+        monkeypatch.setattr(config, "ENGAGEMENTS_DIR", existing)
+        monkeypatch.setattr(settings_store, "ENGAGEMENTS_DIR", existing)
+        loaded = load_settings()
+        assert loaded.first_run_completed is True
+
+    def test_migration_custom_dir_sets_flag_true(self, tmp_path: Path) -> None:
+        """QSettings hat eigenen engagements_dir, kein first_run-Key →
+        Bestandsuser, Flag wird True."""
+        s = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME)
+        s.setValue("settings/engagements_dir", str(tmp_path / "custom"))
+        s.sync()
+        loaded = load_settings()
+        assert loaded.first_run_completed is True
+
+    def test_migration_persists_flag_to_qsettings(self, tmp_path: Path) -> None:
+        """Nach Migration steht first_run_completed=True direkt in QSettings."""
+        s = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME)
+        s.setValue("settings/engagements_dir", str(tmp_path / "custom"))
+        s.sync()
+        # Vor load_settings ist der Key NICHT da.
+        assert not s.contains("settings/first_run_completed")
+        load_settings()
+        # Nach load_settings IST er da.
+        fresh = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME)
+        assert fresh.contains("settings/first_run_completed")
+        assert _to_bool(fresh.value("settings/first_run_completed")) is True
+
+
+def _to_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ("true", "1", "yes")
+    return bool(value)

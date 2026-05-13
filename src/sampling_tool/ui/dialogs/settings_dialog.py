@@ -329,6 +329,9 @@ class SettingsDialog(QDialog):
             undo_depth=self._undo_depth.value(),
             snapshot_retention_days=self._snapshot_retention.value(),
             log_level=self._log_level.currentText(),
+            # First-Run-Flag wird im Dialog NICHT verändert – einmal True,
+            # bleibt True. Wir reichen den Initial-Wert einfach durch.
+            first_run_completed=self._initial.first_run_completed,
         )
         self.accept()
 
