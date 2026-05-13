@@ -31,8 +31,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 7      | Settings, Platzhalter-Briefpapier, CI, Windows-Compat | done        |
 | 8      | PyInstaller-Build (Mac `.app` + Windows `.exe`), Release-Workflow | done |
 | 9.1    | Duplikat-Check beim Anlegen neuer Engagements        | done        |
+| 9.2    | Bug-Report als Toolbar-Button                        | done        |
 
-**Sprint 9.1 abgeschlossen.**
+**Sprint 9.2 abgeschlossen.**
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -111,6 +112,9 @@ ui ──▶ controllers ──▶ core ◀── io
     rechts vertikaler Splitter: Datentabelle oben, `QTabWidget` mit
     AuditTrail-/Dashboard-View unten). Splitter-Größen + aktiver
     Tab werden in `QSettings` (BDO / Audit Sampling Tool) persistiert.
+    Die Toolbar enthält rechtsbündig (Expanding-Spacer) einen Bug-
+    Report-Button, der dieselbe `QAction`-Instanz wie der Hilfe-Menü-
+    Eintrag teilt – keine Duplikation des Triggers.
     Sendet typisierte Signals; *kein* DB-Zugriff hier.
   - `controllers/main_controller.py` – Glue-Schicht UI ↔ Persistence/IO.
     Hält `Database`-Instanz, das aktuelle Engagement und einen
