@@ -34,8 +34,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 9.2    | Bug-Report als Toolbar-Button                        | done        |
 | 9.3    | Advanced-Mode-Toggle (Simple/Advanced Sampling)      | done        |
 | 9.4    | Dashboard/AuditTrail ein-/ausblendbar               | done        |
+| 9.5    | First-Run-Wizard (Standard-Ordner + Auditor-Name)   | done        |
 
-**Sprint 9.4 abgeschlossen.**
+**Sprint 9.5 abgeschlossen.**
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -156,6 +157,13 @@ ui ──▶ controllers ──▶ core ◀── io
     (Engagement-Block, Datasets-Liste, Samples-Liste).
   - `widgets/welcome.py` – `WelcomeScreen` (Recent-Engagement-Karten +
     Buttons) wird angezeigt, wenn keine `.db` geladen ist.
+  - `dialogs/first_run_wizard.py` – Vierseitiger `QWizard` für die
+    Erst-Einrichtung beim allerersten App-Start (Begrüßung →
+    Ordner-Auswahl → Auditor-Name → Zusammenfassung). Wird in
+    `__main__.run_first_run_wizard` aufgerufen, wenn
+    `AppSettings.first_run_completed=False`. Die Folder-Page legt das
+    Verzeichnis bei `validatePage` an; bei Cancel/Close werden Defaults
+    beibehalten und das Flag trotzdem auf `True` gesetzt.
   - `dialogs/new_engagement_dialog.py` – Modal-Dialog für die
     Pflichtfelder Auditor/Position/Mandant/Prüfungstyp +
     Save-Path-Auswahl. Optionaler `initial_engagement`-Konstruktor-
@@ -250,6 +258,14 @@ für Anwender-Präferenzen:
   gemerkt und beim Re-Show wiederhergestellt; `_save_workspace_state`
   schreibt im Collapse-Zustand die echten (gecachten) Größen, nicht
   den `[total, 0]`-Snapshot.
+- `first_run_completed` – Default `False`. Triggert beim App-Start in
+  `__main__.main` den `FirstRunWizard` (Begrüßung → Ordner → Auditor
+  → Zusammenfassung). Nach Wizard-Accept oder -Cancel wird das Flag
+  auf `True` gesetzt und persistiert. Bestands-User werden in
+  `load_settings` über eine Heuristik erkannt (eigener `engagements_dir`-
+  Key oder Default-Ordner existiert bereits) und das Flag wird in
+  dem Fall einmalig auf `True` gesetzt + sofort in QSettings geschrieben,
+  damit der Wizard nie auftaucht.
 - `undo_depth` / `snapshot_retention_days` / `log_level` – reserviert
   für spätere Erweiterungen, aktuell informativ.
 
