@@ -30,8 +30,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 6.1    | Einheitliche Export-Dialoge für alle Reports         | done        |
 | 7      | Settings, Platzhalter-Briefpapier, CI, Windows-Compat | done        |
 | 8      | PyInstaller-Build (Mac `.app` + Windows `.exe`), Release-Workflow | done |
+| 9.1    | Duplikat-Check beim Anlegen neuer Engagements        | done        |
 
-**Sprint 8 abgeschlossen. Alle 8 Sprints durch.**
+**Sprint 9.1 abgeschlossen.**
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -118,7 +119,12 @@ ui ──▶ controllers ──▶ core ◀── io
     mutierenden Aktion wird der NEUE State auf den Undo-Stack
     gelegt; bei `handle_undo` wird der Top entfernt und der
     `peek_undo`-State angewandt (leerer State, wenn der Stack
-    nach dem Pop leer ist).
+    nach dem Pop leer ist). `handle_new_engagement` prüft vor der
+    DB-Anlage, ob der Ziel-Pfad bereits existiert – bei Kollision
+    wird der `DuplicateEngagementDialog` gezeigt und je nach
+    User-Choice an `handle_open_engagement` weitergeleitet, der
+    `NewEngagementDialog` mit Prefill erneut geöffnet oder ganz
+    abgebrochen.
   - `widgets/data_table.py` – `DatasetTableModel(QAbstractTableModel)` +
     `DataTableView`. Virtuelles Model (kein QStandardItemModel) –
     100k+ Zeilen scrollen flüssig. Sample-Highlighting per
@@ -146,7 +152,13 @@ ui ──▶ controllers ──▶ core ◀── io
     Buttons) wird angezeigt, wenn keine `.db` geladen ist.
   - `dialogs/new_engagement_dialog.py` – Modal-Dialog für die
     Pflichtfelder Auditor/Position/Mandant/Prüfungstyp +
-    Save-Path-Auswahl.
+    Save-Path-Auswahl. Optionaler `initial_engagement`-Konstruktor-
+    Parameter füllt die Felder vor (RENAME-Flow nach Duplikat-Konflikt).
+  - `dialogs/duplicate_engagement_dialog.py` – `DuplicateEngagementDialog`
+    wird vom `MainController` gezeigt, wenn der gewählte Ziel-DB-Pfad
+    schon existiert. Drei Buttons (Bestehendes öffnen / Anderen Namen
+    wählen / Abbrechen) liefern ein `DuplicateEngagementChoice`-Enum
+    statt eines stumpfen Überschreiben-Ja/Nein.
   - `dialogs/sampling_dialog.py` – Sampling-Konfigurator (Simple/Cluster/
     Stratified, Filter, Seed mit Würfel, Resample-Checkbox). Liefert
     `SamplingDialogResult` mit `SampleConfig` + `from_sample_only`-Flag.

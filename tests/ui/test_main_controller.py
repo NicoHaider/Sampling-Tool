@@ -27,6 +27,10 @@ from sampling_tool.persistence.repositories import (
     SampleRepo,
 )
 from sampling_tool.ui.controllers.main_controller import MainController
+from sampling_tool.ui.dialogs.duplicate_engagement_dialog import (
+    DuplicateEngagementChoice,
+    DuplicateEngagementDialog,
+)
 from sampling_tool.ui.dialogs.new_engagement_dialog import NewEngagementDialog
 from sampling_tool.ui.main_window import MainWindow
 from sampling_tool.ui.recent import RecentEngagementsStore
@@ -115,6 +119,57 @@ def _first_item_data(list_widget: QListWidget) -> int:
     value = item.data(int(Qt.ItemDataRole.UserRole))
     assert isinstance(value, int)
     return value
+
+
+def _make_stub_new_dialog(
+    parent: MainWindow, target_db: Path, client_name: str
+) -> NewEngagementDialog:
+    """Liefert ein stub-`NewEngagementDialog`, das ohne UI-Interaktion accepted."""
+
+    class _StubDialog(NewEngagementDialog):
+        def exec(self) -> int:
+            self._db_path = target_db
+            return int(QDialog.DialogCode.Accepted)
+
+        def get_engagement(self) -> Engagement:
+            return Engagement(
+                auditor_name="Anna",
+                auditor_position="Senior",
+                client_name=client_name,
+                audit_type="ISAE 3402",
+            )
+
+    return _StubDialog(parent)
+
+
+def _make_stub_duplicate_dialog(
+    parent: MainWindow,
+    db_path: Path,
+    choice: DuplicateEngagementChoice,
+) -> DuplicateEngagementDialog:
+    """Stub des DuplicateDialogs, der ohne UI sofort das gewünschte Choice liefert."""
+
+    class _StubDuplicate(DuplicateEngagementDialog):
+        def exec(self) -> int:
+            self._choice = choice
+            return int(
+                QDialog.DialogCode.Accepted
+                if choice is not DuplicateEngagementChoice.CANCEL
+                else QDialog.DialogCode.Rejected
+            )
+
+    return _StubDuplicate(db_path, parent)
+
+
+def _record_duplicate(
+    calls: list[Path],
+    parent: MainWindow,
+    db_path: Path,
+    choice: DuplicateEngagementChoice,
+) -> DuplicateEngagementDialog:
+    """Wie `_make_stub_duplicate_dialog`, protokolliert aber den Aufruf in `calls`."""
+    calls.append(db_path)
+    return _make_stub_duplicate_dialog(parent, db_path, choice)
 
 
 class TestMainController:
@@ -214,13 +269,138 @@ class TestMainController:
         controller = MainController(
             window,
             recent_store=recent_store,
-            dialog_factory=lambda parent, _settings: _StubDialog(parent),
+            dialog_factory=lambda parent, _settings, _prefill: _StubDialog(parent),
         )
         try:
             controller.handle_new_engagement()
             assert target_db.exists()
             assert window.is_workspace_visible() is True
             assert recent_store.list()[0].path == target_db.resolve()
+        finally:
+            controller.handle_close_engagement()
+
+    def test_new_engagement_no_duplicate_skips_duplicate_dialog(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        target_db = tmp_path / "fresh.db"
+        duplicate_calls: list[Path] = []
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _make_stub_new_dialog(parent, target_db, "ACME"),
+            duplicate_dialog_factory=lambda parent, db_path: _record_duplicate(
+                duplicate_calls, parent, db_path, DuplicateEngagementChoice.CANCEL
+            ),
+        )
+        try:
+            controller.handle_new_engagement()
+            assert target_db.exists()
+            assert duplicate_calls == [], "DuplicateDialog darf nicht erscheinen"
+            assert window.is_workspace_visible() is True
+        finally:
+            controller.handle_close_engagement()
+
+    def test_new_engagement_with_duplicate_open_existing_opens_db(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _make_stub_new_dialog(
+                parent, populated_db, "ACME"
+            ),
+            duplicate_dialog_factory=lambda parent, db_path: _make_stub_duplicate_dialog(
+                parent, db_path, DuplicateEngagementChoice.OPEN_EXISTING
+            ),
+        )
+        try:
+            controller.handle_new_engagement()
+            assert window.is_workspace_visible() is True
+            # Bestehende DB nicht überschrieben → Sample-Eintrag aus Fixture noch da.
+            assert window.sidebar().datasets_widget().count() == 1
+        finally:
+            controller.handle_close_engagement()
+
+    def test_new_engagement_with_duplicate_rename_reopens_new_dialog(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        existing = tmp_path / "ACME.db"
+        existing.touch()
+        fresh = tmp_path / "ACME2.db"
+        new_dialog_calls: list[Engagement | None] = []
+
+        def _new_factory(
+            parent: MainWindow,
+            _settings: object,
+            prefill: Engagement | None,
+        ) -> NewEngagementDialog:
+            new_dialog_calls.append(prefill)
+            target = existing if len(new_dialog_calls) == 1 else fresh
+            return _make_stub_new_dialog(parent, target, "ACME")
+
+        # Erster Aufruf liefert RENAME, zweiter würde nicht mehr aufgerufen
+        # weil der zweite NewEngagementDialog `fresh` zurückgibt (existiert nicht).
+        duplicate_dialog_calls: list[Path] = []
+
+        def _dup_factory(parent: MainWindow, db_path: Path) -> DuplicateEngagementDialog:
+            duplicate_dialog_calls.append(db_path)
+            return _make_stub_duplicate_dialog(parent, db_path, DuplicateEngagementChoice.RENAME)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=_new_factory,
+            duplicate_dialog_factory=_dup_factory,
+        )
+        try:
+            controller.handle_new_engagement()
+            assert len(new_dialog_calls) == 2, "NewEngagementDialog muss erneut geöffnet werden"
+            # Zweiter Aufruf bekommt das vorher eingegebene Engagement als Prefill.
+            assert new_dialog_calls[0] is None
+            assert new_dialog_calls[1] is not None
+            assert new_dialog_calls[1].client_name == "ACME"
+            assert duplicate_dialog_calls == [existing]
+            assert fresh.exists()
+            assert window.is_workspace_visible() is True
+        finally:
+            controller.handle_close_engagement()
+
+    def test_new_engagement_with_duplicate_cancel_aborts(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        existing = tmp_path / "blocked.db"
+        existing.write_bytes(b"sentinel-bytes")
+        before = existing.read_bytes()
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _make_stub_new_dialog(
+                parent, existing, "Blocked"
+            ),
+            duplicate_dialog_factory=lambda parent, db_path: _make_stub_duplicate_dialog(
+                parent, db_path, DuplicateEngagementChoice.CANCEL
+            ),
+        )
+        try:
+            controller.handle_new_engagement()
+            assert window.is_workspace_visible() is False
+            assert existing.read_bytes() == before, (
+                "Bestehende Datei darf nicht überschrieben werden"
+            )
         finally:
             controller.handle_close_engagement()
 
