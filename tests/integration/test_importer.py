@@ -171,6 +171,55 @@ class TestPreviewUndDetectSheets:
         assert rows[0] == {"Name": "Müller", "Stadt": "Wien"}
 
 
+class TestCalamineIntegration:
+    """Sprint 10.2: ExcelImporter nutzt python-calamine als Excel-Engine."""
+
+    def test_importer_quelle_referenziert_calamine_nicht_openpyxl(self) -> None:
+        """openpyxl darf im Excel-Import-Pfad nicht mehr auftauchen."""
+        import inspect
+
+        from sampling_tool.io import importer
+
+        src = inspect.getsource(importer)
+        # Calamine ist da
+        assert "CalamineWorkbook" in src
+        # openpyxl darf nicht mehr importiert werden (Module-Level)
+        assert "from openpyxl" not in src
+        assert "import openpyxl" not in src
+
+    def test_native_python_types_aus_excel(self, simple_xlsx: Path) -> None:
+        """Zahlen, Datums-Werte und Strings kommen als Python-Native-Typen."""
+        result = ExcelImporter().import_file(simple_xlsx)
+        first = result.dataset.rows[0].values
+        # Ganzzahliger Excel-Wert → int (auch wenn Calamine intern float liefert)
+        assert isinstance(first["Betrag"], int)
+        assert first["Betrag"] == 101
+        # Echter Float bleibt float
+        assert isinstance(first["Quote"], float)
+        # datetime statt date (Calamine liefert date für 00:00:00-Werte)
+        assert isinstance(first["Buchungsdatum"], datetime)
+
+    def test_leere_zellen_als_none(self, tmp_path: Path) -> None:
+        """Calamine liefert leere Zellen als ``""`` – muss zu None normalisiert werden."""
+        path = tmp_path / "with_blanks.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.append(["A", "B", "C"])
+        ws.append(["x", None, None])
+        ws.append([None, 5, None])
+        wb.save(path)
+
+        result = ExcelImporter().import_file(path)
+        first = result.dataset.rows[0].values
+        second = result.dataset.rows[1].values
+        assert first["A"] == "x"
+        assert first["B"] is None
+        assert first["C"] is None
+        assert second["A"] is None
+        assert second["B"] == 5
+
+
 class TestProgressCallback:
     def test_callback_wird_aufgerufen(self, simple_xlsx: Path) -> None:
         events: list[tuple[int, int]] = []

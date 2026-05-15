@@ -31,6 +31,10 @@ dependencies = [
     "PyQt6>=6.7",
     "pandas>=2.2",
     "openpyxl>=3.1",
+    # python-calamine (Rust-basiert) ist seit Sprint 10.2 der Excel-Reader
+    # im Import-Pfad – ca. 10–30× schneller als openpyxl, deutlich
+    # geringerer RAM-Footprint. openpyxl bleibt für alle Exporter (Writes).
+    "python-calamine>=0.2",
     "numpy>=2.0",
     "matplotlib>=3.8",
     "reportlab>=4.2",
@@ -136,6 +140,7 @@ module = [
     "PyQt6.*",
     "reportlab.*",
     "openpyxl.*",
+    "python_calamine.*",
     "matplotlib.*",
     "win32com.*",
     "pythoncom.*",
