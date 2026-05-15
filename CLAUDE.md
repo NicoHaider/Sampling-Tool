@@ -38,8 +38,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 9.6    | Settings im Menü + Sample-Größe-Hint + Seed in Simple-Mode | done |
 | 9.7    | Einstellungen-Button in Toolbar                     | done        |
 | 10.1   | Performance-Probe (Discovery-Lauf, 10k–1M Zeilen)   | done        |
+| 10.2   | Excel-Import via python-calamine (Performance-Fix)  | done        |
 
-**Sprint 10.1 abgeschlossen.**
+**Sprint 10.2 abgeschlossen.**
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -61,10 +62,19 @@ ui ──▶ controllers ──▶ core ◀── io
   - `rng.py` – `make_rng(seed)` + `fisher_yates_shuffle` über `numpy.random.default_rng`
   - `sampling.py` – `BaseSampler` + Simple/Cluster/Stratified + `create_sampler`-Factory
 - **`io/`** – Excel-/CSV-Import, Excel-Export, PDF-Report.
-  - `importer.py` – `ExcelImporter` (read-only-Streaming via openpyxl,
-    Header-Detection, Encoding-Fallback bei CSV, Progress-Callback).
-    Liefert `ImportResult(dataset, skipped_rows, warnings)`. Native Python-
-    Typen (kein numpy/pandas-Output).
+  - `importer.py` – `ExcelImporter` nutzt seit Sprint 10.2 die Rust-
+    basierte `python-calamine`-Library für Excel-Reads (10–30× schneller
+    als openpyxl, deutlich niedrigerer RAM-Footprint, Streaming via
+    `CalamineSheet.iter_rows`). CSV-Pfad bleibt stdlib-`csv` mit
+    Encoding-Fallback. Header-Detection (≥50 % String-Anteil) +
+    Progress-Callback unverändert. Liefert weiterhin
+    `ImportResult(dataset, skipped_rows, warnings)`. Native Python-
+    Typen (kein numpy/pandas-Output). openpyxl wird im Import-Pfad
+    NICHT mehr verwendet – bleibt nur für die Exporter.
+    Calamine-Eigenheiten, die der Importer normalisiert:
+    leere Zellen kommen als `""` (→ `None`), Excel-Zahlen kommen
+    immer als `float` (ganzzahlige → `int`), Datums-Zellen ohne
+    Uhrzeit kommen als `date` (→ `datetime`).
   - `exporter.py` – `ExcelExporter`. Atomare Writes (`.tmp` → `os.replace`),
     Sheet "Sample" (BDO-rote Header) + Sheet "Metadaten" (Engagement, Seed,
     Methode). Dateiname-Schema:
@@ -478,6 +488,13 @@ Konsequenzen für den Code:
   (`QT_QPA_PLATFORM=offscreen`) – wird in CI gesetzt.
 - openpyxl wirft `DeprecationWarning` bei `data_only=True` Read von formelhaltigen Zellen
   → in `pyproject.toml` gefiltert.
+- `python-calamine` paniced (`Option::unwrap()` in src/types/sheet.rs)
+  bei `iter_rows()` auf einem komplett leeren Sheet (`sheet.start is None`).
+  `_parse_excel_sheet` fängt den Fall vor dem `iter_rows`-Call ab.
+- `python-calamine` liefert leere Zellen als `""` (empty string), nicht
+  `None`. Excel-Zahlen kommen IMMER als `float` (auch ganzzahlige), und
+  Datums-Zellen ohne Uhrzeit kommen als `date` statt `datetime`. Der
+  `_coerce_value`-Mapper im Importer normalisiert das alles.
 
 ## End-to-End-Smoke-Test
 

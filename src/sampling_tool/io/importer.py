@@ -5,10 +5,13 @@ Import-Pfad. Sie produziert ein `Dataset` (frozen Dataclass aus
 `core.models`) – der Aufrufer setzt anschließend `engagement_id` und
 übergibt das Dataset an `DatasetRepo.create()`.
 
-Architektur-Anker (siehe Sprint-3-Brief):
-- **Streaming**: `openpyxl.load_workbook(read_only=True)` für große Listen.
+Architektur-Anker:
+- **Excel-Engine**: seit Sprint 10.2 `python-calamine` (Rust-basiert,
+  Streaming-Iterator, 10–30× schneller als openpyxl bei reinen Reads,
+  signifikant niedrigerer RAM-Footprint). openpyxl wird im Import-Pfad
+  NICHT mehr verwendet – bleibt aber für alle Exporter (Writes).
 - **Header-Detection**: erste „dichte" Zeile (überwiegend Strings) gilt als
-  Header, Inhalts-Zeilen folgen. Fallback: erste Zeile.
+  Header, Inhalts-Zeilen folgen. Fallback: erste nicht-leere Zeile.
 - **Encoding-Detection** für CSV: utf-8 → utf-8-sig → latin-1 → cp1252.
 - **Native Python-Typen** im Output – kein numpy/pandas-Typ verlässt diese
   Datei.
@@ -25,8 +28,7 @@ from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any, Final
 
-from openpyxl import load_workbook
-from openpyxl.workbook import Workbook
+from python_calamine import CalamineSheet, CalamineWorkbook
 
 from sampling_tool.config import SUPPORTED_CSV_SUFFIXES, SUPPORTED_EXCEL_SUFFIXES
 from sampling_tool.core.models import Dataset, DatasetRow
@@ -104,11 +106,8 @@ class ExcelImporter:
             raise DataImportError(
                 f"Sheet-Liste nur für Excel-Dateien verfügbar (Datei: {path.name})."
             )
-        wb = load_workbook(path, read_only=True, data_only=True)
-        try:
-            return list(wb.sheetnames)
-        finally:
-            wb.close()
+        wb = CalamineWorkbook.from_path(str(path))
+        return list(wb.sheet_names)
 
     def preview(
         self,
@@ -128,12 +127,9 @@ class ExcelImporter:
             return list(columns), preview_rows
 
         if suffix in SUPPORTED_EXCEL_SUFFIXES:
-            wb = load_workbook(path, read_only=True, data_only=True)
-            try:
-                ws = _select_sheet(wb, sheet_name)
-                columns, data_rows, _skipped, _warns = _parse_excel_sheet(ws, limit=n_rows)
-            finally:
-                wb.close()
+            wb = CalamineWorkbook.from_path(str(path))
+            sheet = _select_sheet(wb, sheet_name)
+            columns, data_rows, _skipped, _warns = _parse_excel_sheet(sheet, limit=n_rows)
             preview_rows = [dict(zip(columns, r, strict=False)) for r in data_rows]
             return list(columns), preview_rows
 
@@ -142,12 +138,9 @@ class ExcelImporter:
     # ---- Excel ----------------------------------------------------------
 
     def _import_excel(self, path: Path, sheet_name: str | None) -> ImportResult:
-        wb = load_workbook(path, read_only=True, data_only=True)
-        try:
-            ws = _select_sheet(wb, sheet_name)
-            columns, data_rows, skipped, warnings = _parse_excel_sheet(ws, limit=None)
-        finally:
-            wb.close()
+        wb = CalamineWorkbook.from_path(str(path))
+        sheet = _select_sheet(wb, sheet_name)
+        columns, data_rows, skipped, warnings = _parse_excel_sheet(sheet, limit=None)
 
         if not columns:
             raise DataImportError(
@@ -217,25 +210,36 @@ class ExcelImporter:
 # ---------------------------------------------------------------------------
 
 
-def _select_sheet(wb: Workbook, sheet_name: str | None) -> Any:
-    """Liefert das gewünschte Sheet oder das aktive Default-Sheet."""
+def _select_sheet(wb: CalamineWorkbook, sheet_name: str | None) -> CalamineSheet:
+    """Liefert das gewünschte Sheet oder das erste Sheet als Default.
+
+    `CalamineWorkbook` kennt kein „aktives" Sheet – wir folgen openpyxl-
+    Konvention und nehmen das erste Sheet als Default.
+    """
+    names = list(wb.sheet_names)
+    if not names:
+        raise DataImportError("Workbook ist leer (kein aktives Arbeitsblatt).")
     if sheet_name is None:
-        ws = wb.active
-        if ws is None:
-            raise DataImportError("Workbook ist leer (kein aktives Arbeitsblatt).")
-        return ws
-    if sheet_name not in wb.sheetnames:
+        return wb.get_sheet_by_name(names[0])
+    if sheet_name not in names:
         raise DataImportError(
-            f"Sheet '{sheet_name}' existiert nicht. Verfügbar: {', '.join(wb.sheetnames)}."
+            f"Sheet '{sheet_name}' existiert nicht. Verfügbar: {', '.join(names)}."
         )
-    return wb[sheet_name]
+    return wb.get_sheet_by_name(sheet_name)
 
 
 def _parse_excel_sheet(
-    ws: Any, limit: int | None
+    sheet: CalamineSheet, limit: int | None
 ) -> tuple[list[str], list[list[Any]], int, list[str]]:
-    """Parst ein openpyxl-Worksheet und liefert (Spalten, Datenzeilen, skipped, warnings)."""
-    rows_iter: Iterator[tuple[Any, ...]] = ws.iter_rows(values_only=True)
+    """Parst ein Calamine-Sheet und liefert (Spalten, Datenzeilen, skipped, warnings)."""
+    # Calamine paniced bei `iter_rows()` auf komplett leerem Sheet
+    # (`Option::unwrap()` in src/types/sheet.rs). Erkennbar an `start is None`
+    # bzw. `total_width == 0 and total_height == 0` – ein Sheet mit nur
+    # Header-Zeile hat `total_height == 0` aber `total_width > 0`, das ist
+    # noch lesbar.
+    if sheet.start is None:
+        return [], [], 0, []
+    rows_iter: Iterator[list[Any]] = iter(sheet.iter_rows())
     header_row, leading_blanks = _detect_header(rows_iter)
     if header_row is None:
         return [], [], leading_blanks, []
@@ -256,8 +260,8 @@ def _parse_excel_sheet(
 
 
 def _detect_header(
-    rows_iter: Iterator[tuple[Any, ...]],
-) -> tuple[tuple[Any, ...] | None, int]:
+    rows_iter: Iterator[list[Any]],
+) -> tuple[list[Any] | None, int]:
     """Erste Zeile mit überwiegend Strings = Header. Leere davor zählen als skipped."""
     leading_blanks = 0
     for raw in rows_iter:
@@ -265,14 +269,14 @@ def _detect_header(
             leading_blanks += 1
             continue
         if _looks_like_header(raw):
-            return raw, leading_blanks
+            return list(raw), leading_blanks
         # Erste nicht-leere Zeile, aber nicht headerlike → trotzdem als Header
         # nehmen (Fallback). Ohne Header geht hier nichts weiter.
-        return raw, leading_blanks
+        return list(raw), leading_blanks
     return None, leading_blanks
 
 
-def _looks_like_header(row: tuple[Any, ...]) -> bool:
+def _looks_like_header(row: list[Any] | tuple[Any, ...]) -> bool:
     non_empty = [c for c in row if c is not None and str(c).strip() != ""]
     if not non_empty:
         return False
@@ -280,11 +284,11 @@ def _looks_like_header(row: tuple[Any, ...]) -> bool:
     return (string_like / len(non_empty)) >= _HEADER_STRING_RATIO
 
 
-def _is_blank(row: tuple[Any, ...]) -> bool:
+def _is_blank(row: list[Any] | tuple[Any, ...]) -> bool:
     return all(c is None or (isinstance(c, str) and c.strip() == "") for c in row)
 
 
-def _normalize_columns(header_row: tuple[Any, ...]) -> tuple[list[str], list[str]]:
+def _normalize_columns(header_row: list[Any]) -> tuple[list[str], list[str]]:
     """Stringifiziert + trimmt Spaltennamen, vergibt Suffixe bei Duplikaten."""
     raw_names: list[str] = []
     for idx, cell in enumerate(header_row, start=1):
@@ -349,24 +353,24 @@ def _parse_csv(text: str) -> tuple[list[str], list[list[Any]], int, list[str]]:
     # Leere Zeilen am Anfang strippen, davon zählen wir die ersten als
     # "leading blanks" für die skipped-Bilanz.
     leading = 0
-    while all_rows and _is_blank(tuple(all_rows[0])):
+    while all_rows and _is_blank(all_rows[0]):
         all_rows.pop(0)
         leading += 1
 
     # Trailing-Blanks ebenfalls strippen (zählen aber nicht als skipped).
-    while all_rows and _is_blank(tuple(all_rows[-1])):
+    while all_rows and _is_blank(all_rows[-1]):
         all_rows.pop()
 
     if not all_rows:
         return [], [], leading, []
 
-    header_row = tuple(all_rows[0])
+    header_row = list(all_rows[0])
     columns, warnings = _normalize_columns(header_row)
 
     data_rows: list[list[Any]] = []
     skipped = leading
     for raw in all_rows[1:]:
-        if _is_blank(tuple(raw)):
+        if _is_blank(raw):
             skipped += 1
             continue
         data_rows.append(list(raw))
@@ -380,34 +384,57 @@ def _parse_csv(text: str) -> tuple[list[str], list[list[Any]], int, list[str]]:
 
 
 def _coerce_value(value: Any) -> Any:
-    """Mappt openpyxl-/CSV-Zellwerte auf native Python-Typen.
+    """Mappt Calamine-/CSV-Zellwerte auf native Python-Typen.
 
-    Reihenfolge: None → datetime/date/time durchreichen → bool als bool →
-    int/float bleiben → numerische Strings konvertieren → sonst getrimmter
-    String. Numpy/Pandas-Typen werden bewusst NICHT erzeugt – das Dataset
+    Wichtige Calamine-Eigenheiten (Sprint 10.2):
+    - Leere Zellen kommen als ``""`` (empty string), nicht ``None``
+      → wir normalisieren auf ``None``.
+    - Excel-Zahlen kommen IMMER als ``float`` – auch ganzzahlige.
+      Wir geben ganzzahlige ``float``-Werte als ``int`` zurück, damit
+      Bestandstests und Audit-Trail-Persistenz stabil bleiben.
+    - Datums-Zellen ohne Uhrzeit liefert Calamine als ``date`` (statt
+      ``datetime`` wie openpyxl). Wir heben das auf ``datetime`` an,
+      damit downstream-Code einheitlich mit ``datetime`` arbeitet.
+
+    Numpy/Pandas-Typen werden bewusst NICHT erzeugt – das Dataset
     soll JSON-roundtrippable bleiben.
     """
     if value is None:
         return None
-    if isinstance(value, datetime | date | time):
-        return value
+    # `bool` vor `int` prüfen – bool ist subclass von int.
     if isinstance(value, bool):
         return value
-    if isinstance(value, int | float):
+    # `datetime` vor `date` prüfen – datetime ist subclass von date.
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, time(0, 0, 0))
+    if isinstance(value, time):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
         return value
     if isinstance(value, str):
-        text = value.strip()
-        if text == "":
-            return None
-        as_int = _try_int(text)
-        if as_int is not None:
-            return as_int
-        as_float = _try_float(text)
-        if as_float is not None:
-            return as_float
-        return text
+        return _coerce_string(value)
     # Letztes Mittel: stringifizieren, damit JSON-Persistierung funktioniert.
     return str(value)
+
+
+def _coerce_string(value: str) -> Any:
+    """Stringwert auf Native-Typ (int/float/str/None) abbilden."""
+    text = value.strip()
+    if text == "":
+        return None
+    as_int = _try_int(text)
+    if as_int is not None:
+        return as_int
+    as_float = _try_float(text)
+    if as_float is not None:
+        return as_float
+    return text
 
 
 def _try_int(text: str) -> int | None:
