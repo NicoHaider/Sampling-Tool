@@ -37,8 +37,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 9.5    | First-Run-Wizard (Standard-Ordner + Auditor-Name)   | done        |
 | 9.6    | Settings im Menü + Sample-Größe-Hint + Seed in Simple-Mode | done |
 | 9.7    | Einstellungen-Button in Toolbar                     | done        |
+| 10.1   | Performance-Probe (Discovery-Lauf, 10k–1M Zeilen)   | done        |
 
-**Sprint 9.7 abgeschlossen.**
+**Sprint 10.1 abgeschlossen.**
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -491,6 +492,44 @@ python scripts/demo_full_workflow.py
 
 Wenn UI-Features in Sprint 4+ ergänzt werden, dieses Skript bitte
 mitziehen – es ist der schnellste manuelle Smoke-Test über alle Layer.
+
+## Performance-Probe (Sprint 10.1)
+
+`scripts/perf_probe.py` ist ein Standalone-Discovery-Tool für
+Performance-Messungen mit großen synthetischen Datasets (10k bis
+5M Zeilen, 15 Spalten gemischt int/datetime/float/string, seed-fix
+für Reproduzierbarkeit). Misst 8 Phasen pro Größe: Setup, Import,
+DB-Speicherung, Tabelle-Anzeige, Sampling (Simple/Cluster/
+Stratified), Filter-Toggle, Highlight, Excel-/HTML-Reports,
+AuditTrail-PDF. Pro Phase: `time.perf_counter` + tracemalloc
+Peak-RAM + optional `psutil.Process().rss`-Delta als Cross-Check.
+
+Output: `PERFORMANCE.md` im Repo-Root mit Mess-Tabellen je Größe
+und automatisch detektierten Soft-Target-Verfehlungen (linear auf
+die getestete Größe skaliert). Datei wird committet, damit man
+die Baseline + Veränderungen über Sprints hinweg sieht.
+
+Aufruf:
+
+```bash
+python scripts/perf_probe.py                                  # Default 10k/100k/1M
+python scripts/perf_probe.py --sizes 100000 1000000 5000000   # größere Probe
+python scripts/perf_probe.py --sizes 100 --quick              # schneller Test
+```
+
+Soft-Targets bei 1M Zeilen (Sprint-10.2-Kriterien): Import < 60 s,
+DB-Speicherung < 30 s, Tabelle-Anzeige < 5 s, Sampling < 10–15 s,
+Filter < 2 s, Excel-Export < 60 s, PDF mit 5k Events < 30 s.
+Verfehlungen sind Kandidaten für Sprint 10.2.
+
+Zwischen-Dateien landen unter `tmp/perf/` (gitignored) und werden
+nach jedem Größen-Lauf weggeräumt – wichtig bei 5M Zeilen, da
+generierte .xlsx + .db zusammen mehrere GB werden.
+
+Der Smoke-Test `tests/integration/test_perf_probe_runs.py` ruft
+das Script als Subprozess mit `--sizes 100 --quick --audit-events 10`
+auf – läuft in <1 Minute und stellt sicher, dass sich keine
+Signaturen unbemerkt verändert haben.
 
 ## Wenn du Code schreibst
 

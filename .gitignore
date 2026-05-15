@@ -84,6 +84,10 @@ output/
 reports/
 demo_output/
 
+# Perf-Probe Zwischendateien (PERFORMANCE.md selbst wird committet)
+tmp/perf/
+tmp/
+
 # Sensible Audit-Daten
 *.xlsx
 *.xls
