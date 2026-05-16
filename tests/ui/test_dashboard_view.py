@@ -28,7 +28,6 @@ def _dataset(ds_id: int = 1) -> Dataset:
     return Dataset(
         name=f"DS{ds_id}",
         columns=("a",),
-        rows=(),
         engagement_id=1,
         id=ds_id,
     )

@@ -19,7 +19,7 @@ pytestmark = pytest.mark.ui
 
 
 def _ds(name: str, ds_id: int) -> Dataset:
-    return Dataset(name=name, columns=(), rows=(), id=ds_id, engagement_id=1)
+    return Dataset(name=name, columns=(), id=ds_id, engagement_id=1)
 
 
 def _sample(sample_id: int, size: int = 5) -> SampleResult:

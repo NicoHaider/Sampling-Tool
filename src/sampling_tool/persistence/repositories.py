@@ -11,7 +11,7 @@ Konventionen:
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time
 from typing import Any, Final
@@ -155,8 +155,17 @@ class DatasetRepo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
 
-    def create(self, dataset: Dataset) -> Dataset:
-        """Schreibt Dataset + alle Rows in einer SAVEPOINT-Transaktion."""
+    def create(
+        self,
+        dataset: Dataset,
+        rows: Sequence[DatasetRow],
+    ) -> Dataset:
+        """Schreibt Dataset-Metadaten + alle Rows in einer SAVEPOINT-Transaktion.
+
+        Sprint-11.1-API: rows kommen jetzt separat (Dataset hält keine
+        rows mehr). `dataset.row_count` wird vom Repo auf `len(rows)`
+        gesetzt – der Wert im übergebenen Dataset wird überschrieben.
+        """
         if dataset.engagement_id is None:
             raise ValueError("Dataset.engagement_id muss vor dem Persistieren gesetzt sein.")
 
@@ -170,7 +179,7 @@ class DatasetRepo:
                     dataset.name,
                     dataset.source_file,
                     dataset.imported_at,
-                    len(dataset.rows),
+                    len(rows),
                     _json_dumps(list(dataset.columns)),
                 ),
             )
@@ -181,7 +190,7 @@ class DatasetRepo:
             # vollen Listen-Buffer im RAM. Crash-Sicherheit bleibt durch
             # den umliegenden SAVEPOINT erhalten.
             def _row_params() -> Iterator[tuple[int, int, str]]:
-                for row in dataset.rows:
+                for row in rows:
                     yield (dataset_id, row.row_id, _values_to_json(row.values))
 
             self.conn.executemany(
@@ -189,36 +198,91 @@ class DatasetRepo:
                 _row_params(),
             )
 
-        return replace(dataset, id=dataset_id)
+        return replace(dataset, id=dataset_id, row_count=len(rows))
 
     def get_by_id(self, dataset_id: int) -> Dataset | None:
-        """Lädt Dataset inklusive aller Rows (sortiert nach `row_index`)."""
+        """Lädt Dataset-Metadaten (ohne Rows).
+
+        Rows separat via `get_row`, `get_rows_in_range`, `iter_rows` oder
+        `get_all_rows` ziehen.
+        """
         ds_row = self.conn.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,)).fetchone()
         if ds_row is None:
             return None
 
-        row_cursor = self.conn.execute(
-            "SELECT row_index, values_json FROM dataset_rows "
-            "WHERE dataset_id = ? ORDER BY row_index",
-            (dataset_id,),
-        )
-        rows = tuple(
-            DatasetRow(row_id=r["row_index"], values=_values_from_json(r["values_json"]))
-            for r in row_cursor
-        )
-
         return Dataset(
             name=ds_row["name"],
             columns=tuple(_json_loads(ds_row["columns_json"])),
-            rows=rows,
+            row_count=int(ds_row["row_count"]),
             source_file=ds_row["source_file"],
             imported_at=ds_row["imported_at"],
             engagement_id=ds_row["engagement_id"],
             id=ds_row["id"],
         )
 
+    # ---- Row-Zugriffe (Sprint 11.1) -------------------------------------
+
+    def get_row(self, dataset_id: int, row_id: int) -> DatasetRow | None:
+        """Holt eine einzelne Row aus dem Dataset."""
+        cur = self.conn.execute(
+            "SELECT row_index, values_json FROM dataset_rows "
+            "WHERE dataset_id = ? AND row_index = ?",
+            (dataset_id, row_id),
+        )
+        r = cur.fetchone()
+        if r is None:
+            return None
+        return DatasetRow(row_id=r["row_index"], values=_values_from_json(r["values_json"]))
+
+    def get_rows_in_range(
+        self,
+        dataset_id: int,
+        start: int,
+        end: int,
+    ) -> list[DatasetRow]:
+        """Holt Rows mit row_index ∈ [start, end) – sortiert nach row_index.
+
+        Half-open Range (start inklusive, end exklusive) – konsistent mit
+        Python-Slicing. Für UI-Pagination / Viewport-Loads in 11.2.
+        """
+        cur = self.conn.execute(
+            "SELECT row_index, values_json FROM dataset_rows "
+            "WHERE dataset_id = ? AND row_index >= ? AND row_index < ? "
+            "ORDER BY row_index",
+            (dataset_id, start, end),
+        )
+        return [
+            DatasetRow(row_id=r["row_index"], values=_values_from_json(r["values_json"]))
+            for r in cur
+        ]
+
+    def iter_rows(self, dataset_id: int) -> Iterator[DatasetRow]:
+        """Streaming-Iterator über alle Rows eines Datasets (sortiert).
+
+        Default-Eintrittspunkt für große Datasets – kein voller
+        In-Memory-Materialize.
+        """
+        cur = self.conn.execute(
+            "SELECT row_index, values_json FROM dataset_rows "
+            "WHERE dataset_id = ? ORDER BY row_index",
+            (dataset_id,),
+        )
+        for r in cur:
+            yield DatasetRow(row_id=r["row_index"], values=_values_from_json(r["values_json"]))
+
+    def get_all_rows(self, dataset_id: int) -> tuple[DatasetRow, ...]:
+        """Lädt alle Rows als Tuple.
+
+        **Übergangs-Helper** für Sprint-11.1-Migration: Stellen, die
+        früher `dataset.rows` lasen, rufen das hier auf. Wird in
+        Sprint 11.3/11.4 durch echtes Streaming (`iter_rows`) ersetzt,
+        wo der Konsument das tatsächlich braucht. NICHT für 1M-Rows
+        gedacht – nutzt linear RAM.
+        """
+        return tuple(self.iter_rows(dataset_id))
+
     def list_for_engagement(self, engagement_id: int) -> list[Dataset]:
-        """Übersicht aller Datasets eines Engagements – OHNE Rows (Performance)."""
+        """Übersicht aller Datasets eines Engagements (Metadaten only)."""
         cursor = self.conn.execute(
             "SELECT * FROM datasets WHERE engagement_id = ? ORDER BY imported_at DESC",
             (engagement_id,),
@@ -227,7 +291,7 @@ class DatasetRepo:
             Dataset(
                 name=r["name"],
                 columns=tuple(_json_loads(r["columns_json"])),
-                rows=(),
+                row_count=int(r["row_count"]),
                 source_file=r["source_file"],
                 imported_at=r["imported_at"],
                 engagement_id=r["engagement_id"],

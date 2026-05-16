@@ -8,6 +8,7 @@ laufen ausschließlich im Controller.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from PyQt6.QtCore import QByteArray, QSettings, Qt, pyqtSignal
@@ -28,7 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.config import APP_NAME, APP_ORG, ENGAGEMENTS_DIR
-from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
+from sampling_tool.core.models import AuditEvent, Dataset, DatasetRow, Engagement, SampleResult
 from sampling_tool.ui.recent import RecentEntry
 from sampling_tool.ui.widgets.audit_trail_view import AuditTrailView
 from sampling_tool.ui.widgets.dashboard_view import DashboardView
@@ -158,11 +159,14 @@ class MainWindow(QMainWindow):
         self._sidebar.set_samples(samples)
         self._action_export_sample.setEnabled(False)
 
-    def show_dataset(self, dataset: Dataset) -> None:
-        """Lädt das Dataset in die Tabelle und setzt Statusbar."""
-        self._data_table.set_dataset(dataset)
+    def show_dataset(self, dataset: Dataset, rows: Sequence[DatasetRow]) -> None:
+        """Lädt das Dataset in die Tabelle und setzt Statusbar.
+
+        Sprint-11.1: rows kommen separat (Controller lädt sie aus dem Repo).
+        """
+        self._data_table.set_dataset(dataset, rows)
         self._status_dataset.setText(dataset.name)
-        self._status_rows.setText(f"{len(dataset.rows)} Zeilen")
+        self._status_rows.setText(f"{dataset.row_count} Zeilen")
         self.set_active_sample_label(None)
         self._sidebar.set_active_sample(None)
         self._action_new_sample.setEnabled(True)

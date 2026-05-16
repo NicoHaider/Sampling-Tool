@@ -21,7 +21,6 @@ from collections.abc import Iterable
 from typing import Any
 
 from sampling_tool.core.models import (
-    Dataset,
     DatasetRow,
     SampleConfig,
     SampleResult,
@@ -57,9 +56,21 @@ class BaseSampler(ABC):
 
     # ---- öffentliche API ------------------------------------------------
 
-    def sample(self, dataset: Dataset) -> SampleResult:
-        """Führt die Ziehung auf `dataset` aus und gibt ein `SampleResult` zurück."""
-        pool = self._apply_filter(dataset.rows)
+    def sample(
+        self,
+        rows: Iterable[DatasetRow],
+        population_size: int | None = None,
+    ) -> SampleResult:
+        """Führt die Ziehung auf `rows` aus und gibt ein `SampleResult` zurück.
+
+        Sprint-11.1-API: rows kommen direkt (statt aus einem Dataset
+        gelesen zu werden). `population_size` ist optional – default ist
+        `len(rows_list)` nach Materialisierung.
+        """
+        rows_list = list(rows)
+        total_population = population_size if population_size is not None else len(rows_list)
+
+        pool = self._apply_filter(rows_list)
         if not pool:
             raise SamplingError("Nach Anwendung des Filters sind keine Datensätze mehr verfügbar.")
 
@@ -72,7 +83,7 @@ class BaseSampler(ABC):
         return SampleResult(
             config=self.config,
             selected_row_ids=tuple(sorted(selected_ids)),
-            population_size=len(dataset),
+            population_size=total_population,
         )
 
     # ---- vor-/nachgelagerte Hilfen --------------------------------------

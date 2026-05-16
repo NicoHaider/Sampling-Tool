@@ -32,15 +32,19 @@ def _engagement() -> Engagement:
     )
 
 
-def _dataset() -> Dataset:
-    return Dataset(
-        name="Buchungen",
-        columns=("Konto", "Betrag"),
-        rows=tuple(
-            DatasetRow(row_id=i, values={"Konto": f"K{i}", "Betrag": i * 10}) for i in range(1, 4)
+def _dataset() -> tuple[Dataset, tuple[DatasetRow, ...]]:
+    rows = tuple(
+        DatasetRow(row_id=i, values={"Konto": f"K{i}", "Betrag": i * 10}) for i in range(1, 4)
+    )
+    return (
+        Dataset(
+            name="Buchungen",
+            columns=("Konto", "Betrag"),
+            row_count=len(rows),
+            engagement_id=1,
+            id=1,
         ),
-        engagement_id=1,
-        id=1,
+        rows,
     )
 
 
@@ -79,7 +83,7 @@ class TestMainWindowState:
         win = MainWindow()
         qtbot.addWidget(win)
         win.show_workspace()
-        win.show_dataset(_dataset())
+        win.show_dataset(*_dataset())
         assert win._action_new_sample.isEnabled() is True
         assert win.data_table().table_model().rowCount() == 3
 
@@ -87,7 +91,7 @@ class TestMainWindowState:
         win = MainWindow()
         qtbot.addWidget(win)
         win.show_workspace()
-        win.show_dataset(_dataset())
+        win.show_dataset(*_dataset())
         win.highlight_sample(_sample())
         assert win._action_export_sample.isEnabled() is True
         assert 1 in win.data_table().table_model().highlighted_row_ids()
@@ -120,7 +124,7 @@ class TestMainWindowState:
         win = MainWindow()
         qtbot.addWidget(win)
         win.show_workspace()
-        win.show_dataset(_dataset())
+        win.show_dataset(*_dataset())
         win.set_samples([_sample()])
         win.highlight_sample(_sample())
         text = win._status_sample.text()
@@ -133,7 +137,7 @@ class TestMainWindowState:
         win = MainWindow()
         qtbot.addWidget(win)
         win.show_workspace()
-        win.show_dataset(_dataset())
+        win.show_dataset(*_dataset())
         win.set_samples([_sample()])
         win.highlight_sample(_sample())
         win.clear_active_sample()
@@ -143,7 +147,7 @@ class TestMainWindowState:
         win = MainWindow()
         qtbot.addWidget(win)
         win.show_workspace()
-        win.show_dataset(_dataset())
+        win.show_dataset(*_dataset())
         win.set_samples([_sample()])
         win.highlight_sample(_sample(), filtered=True)
         assert "– gefiltert" in win._status_sample.text()
@@ -152,7 +156,7 @@ class TestMainWindowState:
         win = MainWindow()
         qtbot.addWidget(win)
         win.show_workspace()
-        win.show_dataset(_dataset())
+        win.show_dataset(*_dataset())
         win.set_samples([_sample()])
         win.highlight_sample(_sample(), filtered=False)
         assert "gefiltert" not in win._status_sample.text()

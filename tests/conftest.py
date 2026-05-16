@@ -7,7 +7,7 @@ Repo). Scope `session`, damit jede Datei genau einmal angelegt wird.
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -68,17 +68,42 @@ def sample_id(db: Database, engagement_id: int) -> int:
     Wird von Audit- und Undo-Tests genutzt, deren FKs auf `samples(id)` greifen.
     """
     ds = DatasetRepo(db.connect()).create(
-        Dataset(
-            name="dummy",
-            columns=("a",),
-            rows=(DatasetRow(row_id=1, values={"a": 1}),),
-            engagement_id=engagement_id,
-        )
+        Dataset(name="dummy", columns=("a",), engagement_id=engagement_id),
+        (DatasetRow(row_id=1, values={"a": 1}),),
     )
     assert ds.id is not None
     cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=1)
     result = SampleResult(config=cfg, selected_row_ids=(1,), population_size=1)
     return SampleRepo(db.connect()).create_from_result(result, ds.id, "test")
+
+
+# ---------------------------------------------------------------------------
+# Sprint-11.1-Helper: kleine in-Memory Datasets bauen
+# ---------------------------------------------------------------------------
+
+
+def make_test_dataset(
+    rows: Sequence[DatasetRow],
+    *,
+    name: str = "test",
+    columns: tuple[str, ...] | None = None,
+    engagement_id: int | None = None,
+    id: int | None = None,
+) -> Dataset:
+    """Baut ein `Dataset` (Metadaten only) mit korrektem `row_count`.
+
+    Wenn `columns` nicht übergeben wird, werden sie aus den Keys der
+    ersten Row abgeleitet. Wenn rows leer ist: leere columns tuple.
+    """
+    if columns is None:
+        columns = tuple(rows[0].values.keys()) if rows else ()
+    return Dataset(
+        name=name,
+        columns=columns,
+        row_count=len(rows),
+        engagement_id=engagement_id,
+        id=id,
+    )
 
 
 # ---------------------------------------------------------------------------

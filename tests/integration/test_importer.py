@@ -24,11 +24,11 @@ class TestImportXlsx:
         assert isinstance(result, ImportResult)
         ds = result.dataset
         assert ds.columns == ("Name", "Betrag", "Quote", "Buchungsdatum")
-        assert len(ds.rows) == 10
-        assert ds.rows[0].row_id == 1
-        assert ds.rows[0].values["Name"] == "Posten 1"
-        assert ds.rows[0].values["Betrag"] == 101
-        assert isinstance(ds.rows[0].values["Buchungsdatum"], datetime)
+        assert len(result.rows) == 10
+        assert result.rows[0].row_id == 1
+        assert result.rows[0].values["Name"] == "Posten 1"
+        assert result.rows[0].values["Betrag"] == 101
+        assert isinstance(result.rows[0].values["Buchungsdatum"], datetime)
         assert ds.source_file == str(simple_xlsx)
         assert result.skipped_rows == 0
 
@@ -37,16 +37,16 @@ class TestImportXlsx:
     ) -> None:
         result = importer.import_file(xlsm_macro)
         assert result.dataset.columns == ("A", "B")
-        assert len(result.dataset.rows) == 2
-        assert result.dataset.rows[0].values == {"A": 1, "B": 2}
+        assert len(result.rows) == 2
+        assert result.rows[0].values == {"A": 1, "B": 2}
 
     def test_sheet_auswahl_bei_multi_sheet(
         self, importer: ExcelImporter, multi_sheet_xlsx: Path
     ) -> None:
         result = importer.import_file(multi_sheet_xlsx, sheet_name="Stammdaten")
         assert result.dataset.columns == ("KundenID", "Land")
-        assert len(result.dataset.rows) == 3
-        assert result.dataset.rows[0].values["Land"] == "AUT"
+        assert len(result.rows) == 3
+        assert result.rows[0].values["Land"] == "AUT"
 
     def test_default_sheet_ohne_argument(
         self, importer: ExcelImporter, multi_sheet_xlsx: Path
@@ -66,10 +66,10 @@ class TestImportXlsx:
     ) -> None:
         result = importer.import_file(leading_blank_xlsx)
         assert result.dataset.columns == ("Konto", "Bezeichnung", "Saldo")
-        assert len(result.dataset.rows) == 2
+        assert len(result.rows) == 2
         # 3 leere Vorzeilen wurden geskipped
         assert result.skipped_rows == 3
-        assert result.dataset.rows[0].values["Saldo"] == 500.50
+        assert result.rows[0].values["Saldo"] == 500.50
 
     def test_duplikat_spaltennamen_bekommen_suffix(
         self, importer: ExcelImporter, duplicate_columns_xlsx: Path
@@ -98,7 +98,7 @@ class TestImportXlsx:
         self, importer: ExcelImporter, simple_xlsx: Path
     ) -> None:
         result = importer.import_file(simple_xlsx)
-        first = result.dataset.rows[0].values
+        first = result.rows[0].values
         assert isinstance(first["Name"], str)
         assert isinstance(first["Betrag"], int)
         assert isinstance(first["Quote"], float)
@@ -109,7 +109,7 @@ class TestImportCsv:
     def test_csv_utf8(self, importer: ExcelImporter, utf8_csv: Path) -> None:
         result = importer.import_file(utf8_csv)
         assert result.dataset.columns == ("Name", "Stadt")
-        assert result.dataset.rows[0].values == {"Name": "Müller", "Stadt": "Wien"}
+        assert result.rows[0].values == {"Name": "Müller", "Stadt": "Wien"}
         # utf-8 ohne BOM erzeugt keine Encoding-Warnung
         assert not any("Encoding" in w for w in result.warnings)
 
@@ -124,7 +124,7 @@ class TestImportCsv:
         # die hier verwendeten Umlaute kompatibel mit cp1252.
         result = importer.import_file(cp1252_csv)
         assert result.dataset.columns == ("Name", "Stadt")
-        assert result.dataset.rows[0].values["Name"] == "Müller"
+        assert result.rows[0].values["Name"] == "Müller"
         assert any("Encoding" in w for w in result.warnings)
 
     def test_csv_mit_semikolon_separator(self, importer: ExcelImporter, tmp_path: Path) -> None:
@@ -132,7 +132,7 @@ class TestImportCsv:
         path.write_text("a;b;c\n1;2;3\n4;5;6\n", encoding="utf-8")
         result = importer.import_file(path)
         assert result.dataset.columns == ("a", "b", "c")
-        assert result.dataset.rows[0].values == {"a": 1, "b": 2, "c": 3}
+        assert result.rows[0].values == {"a": 1, "b": 2, "c": 3}
 
     def test_leere_csv(self, importer: ExcelImporter, tmp_path: Path) -> None:
         path = tmp_path / "empty.csv"
@@ -190,7 +190,7 @@ class TestCalamineIntegration:
     def test_native_python_types_aus_excel(self, simple_xlsx: Path) -> None:
         """Zahlen, Datums-Werte und Strings kommen als Python-Native-Typen."""
         result = ExcelImporter().import_file(simple_xlsx)
-        first = result.dataset.rows[0].values
+        first = result.rows[0].values
         # Ganzzahliger Excel-Wert → int (auch wenn Calamine intern float liefert)
         assert isinstance(first["Betrag"], int)
         assert first["Betrag"] == 101
@@ -211,8 +211,8 @@ class TestCalamineIntegration:
         wb.save(path)
 
         result = ExcelImporter().import_file(path)
-        first = result.dataset.rows[0].values
-        second = result.dataset.rows[1].values
+        first = result.rows[0].values
+        second = result.rows[1].values
         assert first["A"] == "x"
         assert first["B"] is None
         assert first["C"] is None
