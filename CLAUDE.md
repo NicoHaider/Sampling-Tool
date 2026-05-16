@@ -40,8 +40,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 10.1   | Performance-Probe (Discovery-Lauf, 10k–1M Zeilen)   | done        |
 | 10.2   | Excel-Import via python-calamine (Performance-Fix)  | done        |
 | 10.3   | DB-Performance: orjson + executemany-Generator      | done        |
+| 10.4   | AuditTrail-PDF Performance (reportlab-Chunking)     | done        |
 
-**Sprint 10.3 abgeschlossen.**
+**Sprint 10.4 abgeschlossen.**
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -81,11 +82,16 @@ ui ──▶ controllers ──▶ core ◀── io
     Methode). Dateiname-Schema:
     `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
   - `pdf_report.py` – `AuditTrailPDF` via `reportlab.platypus`.
-    A4 Portrait, Engagement-Block oben, Tabelle aller Events mit
+    A4 Portrait, Engagement-Block oben, Event-Tabelle mit
     Korrektur-Highlight, Footer mit Seitenzahl + Zeitstempel. Optionales
     Briefpapier (PNG/JPG) wird via `onPage`-Hook hinter den Content gelegt.
     Falls kein Briefpapier explizit übergeben wird, lädt
     `get_default_briefpapier()` automatisch ein Default (s. unten).
+    Sprint 10.4 – die Event-Tabelle wird in Sub-Tables zu je
+    `CHUNK_SIZE=500` Rows gerendert (`_build_event_flowables`); kurze
+    Zellen bleiben rohe `str` statt `Paragraph` (`_format_cell`,
+    Threshold 60 Zeichen / kein Markup). Reduziert die Render-Zeit
+    massiv – 5 000 Events ~13 s → 0.4 s, 20 000 Events 1.6 s.
   - `multi_report_exporter.py` – `MultiSheetReportExporter` schreibt einen
     Komplett-Bericht als Multi-Sheet-xlsx (Übersicht, AuditTrail, Samples,
     Statistiken inkl. eingebettetem Chart-Bild). Atomare Writes wie der

@@ -164,3 +164,106 @@ class TestAuditTrailPDF:
         AuditTrailPDF().render(engagement, events, out, include_statistics=False)
         text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
         assert "Statistiken" not in text
+
+
+class TestEventTableChunking:
+    """Sprint 10.4: Event-Tabelle wird in Sub-Tables zu CHUNK_SIZE gesplittet."""
+
+    def test_chunk_size_konstante_existiert(self) -> None:
+        from sampling_tool.io.pdf_report import CHUNK_SIZE
+
+        assert CHUNK_SIZE > 0
+
+    def test_500_events_landen_in_einer_sub_table(self) -> None:
+        from reportlab.platypus import Table
+
+        from sampling_tool.io.pdf_report import _build_event_table
+
+        events = [_evt("sampling", seconds=i, evt_id=i) for i in range(500)]
+        flowables = _build_event_table(events)
+        tables = [f for f in flowables if isinstance(f, Table)]
+        assert len(tables) == 1
+
+    def test_1500_events_landen_in_drei_sub_tables(self) -> None:
+        from reportlab.platypus import Table
+
+        from sampling_tool.io.pdf_report import _build_event_table
+
+        events = [_evt("sampling", seconds=i, evt_id=i) for i in range(1500)]
+        flowables = _build_event_table(events)
+        tables = [f for f in flowables if isinstance(f, Table)]
+        assert len(tables) == 3
+
+    def test_korrektur_highlight_nur_fuer_corrections(self) -> None:
+        # Drei Events, davon eines mit corrects_event_id → genau eine
+        # zusätzliche BACKGROUND-Style-Command für Korrektur-Highlight.
+        from sampling_tool.io.pdf_report import _GREY_CORRECTION, _build_chunk_style
+
+        style_one_correction = _build_chunk_style([2])
+        commands = list(style_one_correction.getCommands())
+        correction_bgs = [
+            cmd for cmd in commands if cmd[0] == "BACKGROUND" and cmd[3] == _GREY_CORRECTION
+        ]
+        assert len(correction_bgs) == 1
+        # Row 2 (Header ist Index 0)
+        assert correction_bgs[0][1] == (0, 2)
+        assert correction_bgs[0][2] == (-1, 2)
+
+        style_no_correction = _build_chunk_style([])
+        commands = list(style_no_correction.getCommands())
+        correction_bgs = [
+            cmd for cmd in commands if cmd[0] == "BACKGROUND" and cmd[3] == _GREY_CORRECTION
+        ]
+        assert correction_bgs == []
+
+
+class TestFormatCell:
+    """Sprint 10.4: Kurze Strings bleiben Strings, lange werden Paragraph."""
+
+    def test_kurze_strings_bleiben_strings(self) -> None:
+        from reportlab.lib.styles import ParagraphStyle
+
+        from sampling_tool.io.pdf_report import _format_cell
+
+        style = ParagraphStyle("dummy", fontName="Helvetica", fontSize=8)
+        assert _format_cell("Sampling", style) == "Sampling"
+        assert _format_cell("anna", style) == "anna"
+
+    def test_lange_strings_werden_paragraph(self) -> None:
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.platypus import Paragraph
+
+        from sampling_tool.io.pdf_report import _format_cell
+
+        style = ParagraphStyle("dummy", fontName="Helvetica", fontSize=8)
+        long = "x" * 200
+        result = _format_cell(long, style)
+        assert isinstance(result, Paragraph)
+
+    def test_markup_zeichen_werden_paragraph(self) -> None:
+        # `<`, `>`, `&` müssen escaped + als Paragraph gerendert werden,
+        # sonst frisst reportlab das.
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.platypus import Paragraph
+
+        from sampling_tool.io.pdf_report import _format_cell
+
+        style = ParagraphStyle("dummy", fontName="Helvetica", fontSize=8)
+        assert isinstance(_format_cell("a<b>", style), Paragraph)
+        assert isinstance(_format_cell("A & B", style), Paragraph)
+
+
+class TestPdfPerformanceSmoke:
+    """Sprint 10.4: 1k Events müssen schnell durchlaufen (Regressions-Sanity)."""
+
+    def test_render_1000_events_unter_3s(self, engagement: Engagement, tmp_path: Path) -> None:
+        import time
+
+        events = [
+            _evt("sampling", seconds=i, sample_size=i + 1, seed=i, evt_id=i) for i in range(1000)
+        ]
+        out = tmp_path / "perf_smoke.pdf"
+        t0 = time.perf_counter()
+        AuditTrailPDF().render(engagement, events, out)
+        elapsed = time.perf_counter() - t0
+        assert elapsed < 3.0, f"PDF-Render für 1000 Events brauchte {elapsed:.2f}s"

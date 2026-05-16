@@ -38,6 +38,38 @@ _BDO_RED_COLOR: Final = colors.HexColor(BDO_RED)
 _GREY_LIGHT: Final = colors.HexColor("#D9D9D9")
 _GREY_CORRECTION: Final = colors.HexColor("#FFF3D6")
 
+# Sprint 10.4 – Event-Tabelle wird in Sub-Tables zu je `CHUNK_SIZE` Rows
+# gesplittet. reportlab.platypus.Table hat quadratisches Layout-Verhalten
+# bei sehr vielen Rows in einem Block; ein moderater Chunk reduziert die
+# per-Table-Komplexität merklich. 500 ist empirischer Sweet-Spot zwischen
+# Per-Chunk-Overhead und Layout-Aufwand.
+CHUNK_SIZE: Final[int] = 500
+
+# Zellen mit kurzem Text werden als rohe Strings übergeben – das spart
+# reportlab pro Zelle die Paragraph-Layout-Berechnung. Längere Strings
+# brauchen Wrap, also Paragraph.
+_CELL_STRING_THRESHOLD: Final[int] = 60
+
+_EVENT_TABLE_COL_WIDTHS: Final[tuple[float, ...]] = (
+    33 * mm,
+    30 * mm,
+    22 * mm,
+    14 * mm,
+    16 * mm,
+    20 * mm,
+    35 * mm,
+)
+
+_EVENT_TABLE_HEADER: Final[list[str]] = [
+    "Zeitstempel",
+    "Aktion",
+    "User",
+    "Größe",
+    "%",
+    "Seed",
+    "Datei",
+]
+
 
 class AuditTrailPDF:
     """Erzeugt das AuditTrail-PDF für ein Engagement.
@@ -148,6 +180,7 @@ def _build_header(engagement: Engagement) -> list[Any]:
 
 
 def _build_event_table(events: list[AuditEvent]) -> list[Any]:
+    """Wrapper, der die Event-Liste als gechunkte Sub-Tables ausgibt."""
     styles = getSampleStyleSheet()
     if not events:
         empty = ParagraphStyle(
@@ -164,31 +197,47 @@ def _build_event_table(events: list[AuditEvent]) -> list[Any]:
             )
         ]
 
-    header = [
-        "Zeitstempel",
-        "Aktion",
-        "User",
-        "Größe",
-        "%",
-        "Seed",
-        "Datei",
-    ]
     cell_style = ParagraphStyle(
         "BDOTableCell",
         fontName="Helvetica",
         fontSize=8,
         leading=10,
     )
-    data: list[list[Any]] = [header]
-
-    # Korrektur-Events visuell markieren – wir merken uns die Zeilen-Indices.
-    correction_rows: list[int] = []
 
     # `events` darf von der Persistenz nach timestamp DESC kommen; für die
     # PDF wollen wir chronologisch (älteste zuerst) – stabil sortieren.
     chronological = sorted(events, key=lambda e: (e.timestamp, e.id or 0))
+    return _build_event_flowables(chronological, cell_style)
 
-    for i, evt in enumerate(chronological, start=1):
+
+def _build_event_flowables(
+    events: list[AuditEvent],
+    cell_style: ParagraphStyle,
+) -> list[Any]:
+    """Chunked Tabellen-Ausgabe.
+
+    Statt einer großen Table mit N Rows mehrere Sub-Tables zu je
+    `CHUNK_SIZE`. reportlab.platypus.Table skaliert bei sehr vielen
+    Rows in einem Block schlecht (per-Page-Layout-Probe ist
+    quadratisch); kleinere Chunks halten die Komplexität konstant.
+    """
+    flowables: list[Any] = []
+    for chunk_start in range(0, len(events), CHUNK_SIZE):
+        chunk = events[chunk_start : chunk_start + CHUNK_SIZE]
+        table = _build_chunk_table(chunk, cell_style)
+        flowables.append(table)
+    return flowables
+
+
+def _build_chunk_table(
+    chunk: list[AuditEvent],
+    cell_style: ParagraphStyle,
+) -> Table:
+    """Eine Sub-Table mit Header + bis zu CHUNK_SIZE Datenzeilen."""
+    data: list[list[Any]] = [list(_EVENT_TABLE_HEADER)]
+    correction_rows: list[int] = []
+
+    for i, evt in enumerate(chunk, start=1):
         action_text = evt.event_type
         if evt.corrects_event_id is not None:
             action_text = f"{evt.event_type} → #{evt.corrects_event_id}"
@@ -204,21 +253,27 @@ def _build_event_table(events: list[AuditEvent]) -> list[Any]:
 
         data.append(
             [
-                Paragraph(_escape(_format_timestamp(evt.timestamp)), cell_style),
-                Paragraph(_escape(action_text), cell_style),
-                Paragraph(_escape(evt.user_name), cell_style),
+                _format_cell(_format_timestamp(evt.timestamp), cell_style),
+                _format_cell(action_text, cell_style),
+                _format_cell(evt.user_name, cell_style),
                 size,
                 percent,
                 seed,
-                Paragraph(_escape(filename), cell_style),
+                _format_cell(filename, cell_style),
             ]
         )
 
     table = Table(
         data,
-        colWidths=[33 * mm, 30 * mm, 22 * mm, 14 * mm, 16 * mm, 20 * mm, 35 * mm],
+        colWidths=list(_EVENT_TABLE_COL_WIDTHS),
         repeatRows=1,
     )
+    table.setStyle(_build_chunk_style(correction_rows))
+    return table
+
+
+def _build_chunk_style(correction_rows: list[int]) -> TableStyle:
+    """Basisformat + Korrektur-Highlights für die betroffenen Rows."""
     style = TableStyle(
         [
             ("BACKGROUND", (0, 0), (-1, 0), _BDO_RED_COLOR),
@@ -237,9 +292,19 @@ def _build_event_table(events: list[AuditEvent]) -> list[Any]:
     )
     for row_idx in correction_rows:
         style.add("BACKGROUND", (0, row_idx), (-1, row_idx), _GREY_CORRECTION)
+    return style
 
-    table.setStyle(style)
-    return [table]
+
+def _format_cell(text: str, cell_style: ParagraphStyle) -> str | Paragraph:
+    """Kurze Strings direkt zurückgeben, lange/markup-verdächtige in Paragraph wrappen.
+
+    Paragraph-Konstruktion + Layout ist pro Zelle teuer. Bei einer
+    5 000-Event-Tabelle × 4 Text-Spalten = 20 000 Paragraph-Objekte –
+    der String-Pfad spart dort den Großteil der Render-Zeit.
+    """
+    if len(text) > _CELL_STRING_THRESHOLD or "&" in text or "<" in text or ">" in text:
+        return Paragraph(_escape(text), cell_style)
+    return text
 
 
 def _build_statistics(events: list[AuditEvent]) -> list[Any]:

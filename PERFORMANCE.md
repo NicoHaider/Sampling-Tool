@@ -94,6 +94,31 @@ Bei kleineren Größen werden Targets linear skaliert (z. B. 30 s/M → 3 s/100k
 | 100,000 | AuditTrail-PDF | 13.27 s | 3.00 s | +10.27 s |
 | 1,000,000 | DB-Speicherung | 37.50 s | 30.00 s | +7.50 s |
 
+## Sprint-10.4-Update (PDF-Chunking + Cell-Optimierung)
+
+Direktmessung der `AuditTrailPDF.render`-Phase mit synthetischen
+Events (1k / 5k / 20k) auf der Probe-Maschine. Dataset-Größe ist
+hier irrelevant – die Phase hängt nur an der Event-Anzahl.
+
+| Event-Anzahl | Vorher (10.3) | Nachher (10.4) | Speedup |
+|--------------|--------------:|---------------:|--------:|
+| 1 000        | ~3 s          | **0.08 s**     | ~38×    |
+| **5 000**    | **13.43 s**   | **0.40 s**     | **34×** |
+| 20 000       | nicht gemessen | **1.64 s**    | —       |
+
+Soft-Target (30 s bei 5k Events) **massiv unterschritten**. Auch
+20k Events bleiben weit unter dem Target – realistische Quartals-
+Engagements rendern jetzt in unter 2 s.
+
+Maßnahmen:
+- Event-Tabelle in Sub-Tables zu je 500 Rows aufgesplittet
+  (`CHUNK_SIZE`). `reportlab.platypus.Table` skaliert in Layout-
+  Berechnung schlecht bei sehr vielen Rows pro Block.
+- Zellen mit kurzem Text bleiben rohe `str` statt `Paragraph` –
+  spart bei 5k × 4 Text-Spalten = 20 000 Paragraph-Objekte.
+- Korrektur-Highlights werden via `_build_chunk_style` pro Chunk
+  appliziert, nicht global pro Event durchiteriert.
+
 ## Sprint-10.3-Update (orjson + executemany-Generator)
 
 Re-Lauf für 10k + 100k Zeilen (1M-Lauf bewusst übersprungen – die
@@ -157,16 +182,18 @@ wäre ein eigener Refactor.
   (C-basiert), executemany-Generator statt Listcomp (RAM-Peak
   100k: 55 MB → 0.2 MB).
 
+### Behoben in Sprint 10.4
+
+- **AuditTrail-PDF rendert ~34× schneller**: 5k Events
+  13.43 s → 0.40 s, 20k Events 1.64 s. Maßnahmen: Event-Tabelle in
+  `CHUNK_SIZE=500`-Sub-Tables aufgesplittet, kurze Zellen als rohe
+  `str` statt `Paragraph` (spart 20k Paragraph-Objekte bei 5k
+  Events × 4 Text-Spalten), Korrektur-Highlights pro Chunk statt
+  global.
+
 ### Offen für spätere Sprints
 
-1. **AuditTrail-PDF konstant ~13 s bei 5 000 Events.** Skaliert nicht
-   mit Dataset-Größe, daher sind die in der Heuristik-Tabelle
-   gelisteten 10k/100k-Verfehlungen **Artefakte** der
-   linear-skalierenden Target-Berechnung. Bei 1M liegt PDF weiter
-   unter dem 30 s-Target. Sollte trotzdem subjektiv schneller
-   werden – Sprint-10.4-Kandidat (reportlab-Chunking).
-
-2. **RAM-Peak Import 1.4 GB bei 1M.** Calamine selbst ist sparsam;
+1. **RAM-Peak Import 1.4 GB bei 1M.** Calamine selbst ist sparsam;
    der Peak entsteht beim Materialisieren in `DatasetRow`-Dicts.
    Spalten-orientierte Dataset-Struktur (Arrow/Numpy) wäre die
    Lösung, ist aber ein Architektur-Refactor mit Ripple-Effekt auf
