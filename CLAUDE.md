@@ -43,8 +43,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 10.4   | AuditTrail-PDF Performance (reportlab-Chunking)     | done        |
 | 11.1   | Dataset-API-Cut (rows raus, Repo-Methoden rein)     | done        |
 | 11.2   | Streaming Teil 2: UI-LRU-Cache für TableModel       | done        |
+| 11.3   | Streaming Teil 3: Excel-Import streamt direkt in DB | done        |
 
-**Sprint 11.2 abgeschlossen** (UI liest on-demand, FIFO-Cache).
+**Sprint 11.3 abgeschlossen** (Importer materialisiert nicht mehr).
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -77,14 +78,25 @@ ui ──▶ controllers ──▶ core ◀── io
     als openpyxl, deutlich niedrigerer RAM-Footprint, Streaming via
     `CalamineSheet.iter_rows`). CSV-Pfad bleibt stdlib-`csv` mit
     Encoding-Fallback. Header-Detection (≥50 % String-Anteil) +
-    Progress-Callback unverändert. Liefert weiterhin
-    `ImportResult(dataset, skipped_rows, warnings)`. Native Python-
-    Typen (kein numpy/pandas-Output). openpyxl wird im Import-Pfad
-    NICHT mehr verwendet – bleibt nur für die Exporter.
+    Progress-Callback unverändert. Native Python-Typen (kein
+    numpy/pandas-Output). openpyxl wird im Import-Pfad NICHT mehr
+    verwendet – bleibt nur für die Exporter.
     Calamine-Eigenheiten, die der Importer normalisiert:
     leere Zellen kommen als `""` (→ `None`), Excel-Zahlen kommen
     immer als `float` (ganzzahlige → `int`), Datums-Zellen ohne
     Uhrzeit kommen als `date` (→ `datetime`).
+    **Sprint 11.3 – Streaming-Import**: `ImportResult.rows` ist ein
+    **einmalig konsumierbarer `Iterator[DatasetRow]`** (nicht mehr
+    `tuple`). `ImportResult.stats` (`ImportStats`-Container) füllt
+    sich während der Iteration mit `skipped_rows`, `warnings` und
+    `processed_count` – Werte sind erst nach voller Konsumierung
+    aussagekräftig. Typischer Pfad: `dataset_repo.create(dataset,
+    result.rows)` zieht den Generator einmal durch und korrigiert
+    danach `row_count` auf die tatsächlich persistierte Anzahl
+    (wichtig, weil der Importer für `dataset.row_count` initial nur
+    eine Schätzung aus `sheet.total_height` minus Header/Leading-
+    Blanks liefert). `result.skipped_rows` und `result.warnings`
+    bleiben als Compat-Properties auf `result.stats` verfügbar.
   - `exporter.py` – `ExcelExporter`. Atomare Writes (`.tmp` → `os.replace`),
     Sheet "Sample" (BDO-rote Header) + Sheet "Metadaten" (Engagement, Seed,
     Methode). Dateiname-Schema:

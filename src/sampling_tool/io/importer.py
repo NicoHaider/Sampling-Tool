@@ -17,13 +17,24 @@ Architektur-Anker:
   Datei.
 - **Progress-Callback**: `progress(current, total)` wird in regelmäßigen
   Abständen während des Reads aufgerufen.
+
+**Sprint 11.3 – Streaming-Import**: `ImportResult.rows` ist seit
+diesem Sprint ein **einmalig konsumierbarer Iterator[DatasetRow]**.
+Rows werden direkt von der Excel-Engine durch die Coercion in den
+DB-Insert gepumpt, ohne komplette Materialisierung.
+`ImportResult.stats` füllt sich während der Iteration (skipped,
+warnings, processed_count) – Werte sind erst nach voller
+Konsumierung aussagekräftig. Der typische Aufrufer ist
+`DatasetRepo.create(dataset, result.rows)`, der den Generator
+einmalig durchgeht und am Ende den `row_count` aufgrund der echten
+Zahl korrigiert.
 """
 
 from __future__ import annotations
 
 import csv
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any, Final
@@ -41,25 +52,52 @@ _CSV_ENCODINGS: Final[tuple[str, ...]] = ("utf-8", "utf-8-sig", "latin-1", "cp12
 # Schwellwert für Header-Detection: ≥ Anteil String-Zellen einer Zeile.
 _HEADER_STRING_RATIO: Final[float] = 0.5
 
+# Progress-Frequenz beim Streaming-Read.
+_PROGRESS_INTERVAL: Final[int] = 1000
+
 
 # ---------------------------------------------------------------------------
 # Result-Container
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class ImportStats:
+    """Mutable Statistik-Container für den Streaming-Import.
+
+    Wird vom Generator während der Iteration befüllt – Werte sind erst
+    nach vollständigem Verbrauch (z. B. via `DatasetRepo.create`)
+    endgültig.
+    """
+
+    skipped_rows: int = 0
+    warnings: list[str] = field(default_factory=list)
+    processed_count: int = 0
+
+
 @dataclass(frozen=True, slots=True)
 class ImportResult:
     """Rückgabe-Wert von `ExcelImporter.import_file`.
 
-    Sprint-11.1-Cut: Dataset hält nur noch Metadaten (Spalten, row_count).
-    Die tatsächlichen Rows liegen separat in `rows` und werden vom
-    Aufrufer an `DatasetRepo.create(dataset, rows)` übergeben.
+    Sprint-11.3: `rows` ist ein einmalig konsumierbarer Iterator.
+    `stats` füllt sich während der Iteration – wer `skipped_rows` /
+    `warnings` lesen will, MUSS vorher den Iterator vollständig
+    verbraucht haben (typisch via `DatasetRepo.create`).
     """
 
     dataset: Dataset
-    rows: tuple[DatasetRow, ...]
-    skipped_rows: int
-    warnings: tuple[str, ...]
+    rows: Iterator[DatasetRow]
+    stats: ImportStats
+
+    @property
+    def skipped_rows(self) -> int:
+        """Anzahl übersprungener Leerzeilen (nach voller Iteration)."""
+        return self.stats.skipped_rows
+
+    @property
+    def warnings(self) -> tuple[str, ...]:
+        """Warnungen aus der Header-Detection + Coercion (nach voller Iteration)."""
+        return tuple(self.stats.warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +159,11 @@ class ExcelImporter:
         sheet_name: str | None = None,
         n_rows: int = 10,
     ) -> tuple[list[str], list[dict[str, Any]]]:
-        """Liefert (Spalten, erste n Zeilen) für eine UI-Vorschau – kein vollständiger Import."""
+        """Liefert (Spalten, erste n Zeilen) für eine UI-Vorschau – kein vollständiger Import.
+
+        Materialisiert intern eine kleine Liste – nicht für große
+        Dataseträume, sondern explizit für den Dialog.
+        """
         if n_rows < 0:
             raise DataImportError("preview(): n_rows muss >= 0 sein.")
 
@@ -146,7 +188,7 @@ class ExcelImporter:
     def _import_excel(self, path: Path, sheet_name: str | None) -> ImportResult:
         wb = CalamineWorkbook.from_path(str(path))
         sheet = _select_sheet(wb, sheet_name)
-        columns, data_rows, skipped, warnings = _parse_excel_sheet(sheet, limit=None)
+        columns, header_skipped, header_warnings, total_estimate = _excel_header_pass(sheet)
 
         if not columns:
             raise DataImportError(
@@ -154,19 +196,64 @@ class ExcelImporter:
                 f"(Sheet: '{sheet_name or 'Standard'}')."
             )
 
-        rows = self._materialize_rows(columns, data_rows)
+        stats = ImportStats(
+            skipped_rows=header_skipped,
+            warnings=list(header_warnings),
+        )
+        # `row_count` ist initial geschätzt (Calamine `total_height` abzüglich
+        # Header + leading-blanks). `DatasetRepo.create` korrigiert den Wert
+        # nach echter Persistierung.
         dataset = Dataset(
             name=path.stem,
             columns=tuple(columns),
-            row_count=len(rows),
+            row_count=max(0, total_estimate),
             source_file=str(path),
         )
-        return ImportResult(
-            dataset=dataset,
-            rows=rows,
-            skipped_rows=skipped,
-            warnings=tuple(warnings),
-        )
+        rows_iter = self._excel_row_generator(sheet, columns, stats, total_estimate)
+        return ImportResult(dataset=dataset, rows=rows_iter, stats=stats)
+
+    def _excel_row_generator(
+        self,
+        sheet: CalamineSheet,
+        columns: list[str],
+        stats: ImportStats,
+        total_estimate: int,
+    ) -> Iterator[DatasetRow]:
+        """Generator: liest Sheet-Rows, skipt Leerzeilen, yieldet DatasetRow.
+
+        Header-Zeile wurde vorab im `_excel_header_pass` lokalisiert; hier
+        re-iterieren wir und überspringen alle Rows bis zum ersten
+        Daten-Index (header-Position kann nicht mehr direkt zwischen den
+        Pässen weitergegeben werden – `iter_rows` liefert keinen
+        Zufallszugriff). Stattdessen detektieren wir den Header beim
+        zweiten Pass erneut und beginnen direkt danach.
+        """
+        rows_iter: Iterator[list[Any]] = iter(sheet.iter_rows())
+        header_row, _ = _detect_header(rows_iter)
+        if header_row is None:
+            # Defensiv – sollte durch `_excel_header_pass` schon abgefangen
+            # sein, aber wenn das Sheet zwischen Pässen geleert würde.
+            return
+
+        next_row_id = 1
+        for raw in rows_iter:
+            if _is_blank(raw):
+                stats.skipped_rows += 1
+                continue
+            values = {
+                col: _coerce_value(raw[i] if i < len(raw) else None)
+                for i, col in enumerate(columns)
+            }
+            row = DatasetRow(row_id=next_row_id, values=values)
+            next_row_id += 1
+            stats.processed_count += 1
+            if self.progress is not None and stats.processed_count % _PROGRESS_INTERVAL == 0:
+                self.progress(stats.processed_count, max(total_estimate, stats.processed_count))
+            yield row
+
+        # Abschluss-Tick (UIs erwarten oft ein finales current==total).
+        if self.progress is not None:
+            self.progress(stats.processed_count, stats.processed_count)
 
     # ---- CSV ------------------------------------------------------------
 
@@ -180,45 +267,38 @@ class ExcelImporter:
         if encoding != "utf-8":
             warnings = [*warnings, f"CSV-Encoding erkannt als '{encoding}'."]
 
-        rows = self._materialize_rows(columns, data_rows)
+        stats = ImportStats(skipped_rows=skipped, warnings=list(warnings))
+        total = len(data_rows)
         dataset = Dataset(
             name=path.stem,
             columns=tuple(columns),
-            row_count=len(rows),
+            row_count=total,
             source_file=str(path),
         )
-        return ImportResult(
-            dataset=dataset,
-            rows=rows,
-            skipped_rows=skipped,
-            warnings=tuple(warnings),
-        )
+        rows_iter = self._csv_row_generator(columns, data_rows, stats, total)
+        return ImportResult(dataset=dataset, rows=rows_iter, stats=stats)
 
-    # ---- Gemeinsam ------------------------------------------------------
-
-    def _materialize_rows(
+    def _csv_row_generator(
         self,
         columns: list[str],
         data_rows: list[list[Any]],
-    ) -> tuple[DatasetRow, ...]:
-        total = len(data_rows)
-        rows: list[DatasetRow] = []
+        stats: ImportStats,
+        total: int,
+    ) -> Iterator[DatasetRow]:
+        """CSV-Pfad als Generator. `data_rows` ist bereits geparst (csv.reader
+        liest Zeile für Zeile, aber wir haben den Text einmal voll im RAM)."""
         for idx, raw in enumerate(data_rows, start=1):
             values = {
                 col: _coerce_value(raw[i] if i < len(raw) else None)
                 for i, col in enumerate(columns)
             }
-            rows.append(DatasetRow(row_id=idx, values=values))
-            self._tick(idx, total)
-        # Falls das Dataset leer ist, mindestens einen 0/0-Tick senden, damit
-        # UIs einen "fertig"-Status zeichnen können.
-        if total == 0:
-            self._tick(0, 0)
-        return tuple(rows)
+            stats.processed_count += 1
+            if self.progress is not None and stats.processed_count % _PROGRESS_INTERVAL == 0:
+                self.progress(stats.processed_count, total)
+            yield DatasetRow(row_id=idx, values=values)
 
-    def _tick(self, current: int, total: int) -> None:
         if self.progress is not None:
-            self.progress(current, total)
+            self.progress(stats.processed_count, max(total, stats.processed_count))
 
 
 # ---------------------------------------------------------------------------
@@ -244,17 +324,43 @@ def _select_sheet(wb: CalamineWorkbook, sheet_name: str | None) -> CalamineSheet
     return wb.get_sheet_by_name(sheet_name)
 
 
+def _excel_header_pass(sheet: CalamineSheet) -> tuple[list[str], int, list[str], int]:
+    """Erster Mini-Pass über das Sheet: Header detektieren + Größe schätzen.
+
+    Liefert ``(columns, leading_blanks_skipped, warnings, estimated_data_rows)``.
+    Streaming-Generator macht den eigentlichen Daten-Pass.
+    """
+    if sheet.start is None:
+        # Komplett leeres Sheet – calamine paniced sonst auf `iter_rows()`.
+        return [], 0, [], 0
+
+    rows_iter: Iterator[list[Any]] = iter(sheet.iter_rows())
+    header_row, leading_blanks = _detect_header(rows_iter)
+    if header_row is None:
+        return [], leading_blanks, [], 0
+
+    columns, header_warnings = _normalize_columns(header_row)
+
+    # `total_height` ist die Anzahl Datenzeilen (ohne Header) laut calamine.
+    # Wir ziehen die Leerzeilen vor dem Header noch ab – Trailing-Empty-
+    # Rows werden vom Streaming-Generator als skipped gezählt; `row_count`
+    # wird vom Repo nach echter Persistierung korrigiert.
+    total_estimate = max(0, int(sheet.total_height) - leading_blanks)
+    return columns, leading_blanks, header_warnings, total_estimate
+
+
 def _parse_excel_sheet(
     sheet: CalamineSheet, limit: int | None
 ) -> tuple[list[str], list[list[Any]], int, list[str]]:
-    """Parst ein Calamine-Sheet und liefert (Spalten, Datenzeilen, skipped, warnings)."""
-    # Calamine paniced bei `iter_rows()` auf komplett leerem Sheet
-    # (`Option::unwrap()` in src/types/sheet.rs). Erkennbar an `start is None`
-    # bzw. `total_width == 0 and total_height == 0` – ein Sheet mit nur
-    # Header-Zeile hat `total_height == 0` aber `total_width > 0`, das ist
-    # noch lesbar.
+    """Parst ein Calamine-Sheet und liefert (Spalten, Datenzeilen, skipped, warnings).
+
+    Wird nur noch vom `preview()`-Pfad benutzt (kleine n_rows-Materialisierung
+    für den UI-Dialog). Der Hauptimport läuft über
+    `_excel_row_generator`.
+    """
     if sheet.start is None:
         return [], [], 0, []
+
     rows_iter: Iterator[list[Any]] = iter(sheet.iter_rows())
     header_row, leading_blanks = _detect_header(rows_iter)
     if header_row is None:
