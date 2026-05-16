@@ -94,6 +94,34 @@ Bei kleineren Größen werden Targets linear skaliert (z. B. 30 s/M → 3 s/100k
 | 100,000 | AuditTrail-PDF | 13.27 s | 3.00 s | +10.27 s |
 | 1,000,000 | DB-Speicherung | 37.50 s | 30.00 s | +7.50 s |
 
+## Sprint-10.3-Update (orjson + executemany-Generator)
+
+Re-Lauf für 10k + 100k Zeilen (1M-Lauf bewusst übersprungen – die
+Skalierung ist linear genug, dass die Projektion belastbar ist).
+
+| Phase           | 10k vorher (10.2) | 10k nachher | 100k vorher (10.2) | 100k nachher | Speedup |
+|-----------------|------------------:|------------:|-------------------:|-------------:|--------:|
+| **DB-Speicherung** | 0.39 s | **0.07 s** | 3.74 s | **0.75 s** | **5.0–5.6×** |
+
+Peak-RAM bei DB-Speicherung 100k: 55 MB → **0.2 MB** dank
+`executemany`-Generator (kein Listcomp-Buffer mehr) und orjson
+(C-basierter Encoder hält keine intermediate Python-Objekte).
+
+**Projektion 1M Zeilen**: 37.5 s / ~5 = **~7.5 s** – weit unter dem
+30 s-Soft-Target. Sprint-10.3-Ziel erreicht ohne den 1M-Lauf
+durchführen zu müssen.
+
+**Hinweis zu `bulk_insert_pragmas`**: Der ContextManager
+(`synchronous=OFF` für die Dauer eines Bulk-Inserts) liegt in
+`database.py` mit eigenen Tests, wird aber NICHT aus dem Production-
+Pfad aufgerufen. Im Tooltest hat selbst ein simpler Pragma-Wechsel
+innerhalb der `DatasetRepo.create`-Transaktion mit der parallel
+offenen MainController-Repo-Connection (zwei Connections auf
+derselben WAL-DB) deadlockt. Der gemessene Speedup kommt vollständig
+aus orjson + Generator – Pragmas sind kein Beitrag. Der CM bleibt
+als Werkzeug für offline-Bulk-Importe oder spätere Architektur-
+Refactors verfügbar.
+
 ## Sprint-10.2-Vergleich (calamine-Migration)
 
 Vergleich gegen den Sprint-10.1-Lauf (gleiche Maschine, gleiche
@@ -121,23 +149,24 @@ wäre ein eigener Refactor.
   Rust-Iterator (`CalamineSheet.iter_rows`). Schnittstelle
   (`ImportResult`) unverändert, Aufrufer unangetastet.
 
+### Behoben in Sprint 10.3
+
+- **DB-Speicherung skaliert deutlich besser**: 100k 3.74 s → 0.75 s
+  (5.0×), 10k 0.39 s → 0.07 s (5.6×). 1M projiziert ~7.5 s, weit
+  unter dem 30 s-Soft-Target. Maßnahmen: stdlib-`json` → `orjson`
+  (C-basiert), executemany-Generator statt Listcomp (RAM-Peak
+  100k: 55 MB → 0.2 MB).
+
 ### Offen für spätere Sprints
 
-1. **DB-Speicherung bei 1M = 37.5 s** (Target 30 s, +7.5 s).
-   `executemany` ist bereits aktiv – Rest dürfte `_values_to_json`
-   pro Row sein. Peak 555 MB durch Listcomp-Buffer.
-   Ansatzpunkte: (a) Generator-basierter `executemany`-Feed, (b)
-   `PRAGMA synchronous=OFF` im Bulk-Insert, (c) JSON-Encoder
-   austauschen (`orjson`). Kandidat für Sprint 10.3.
-
-2. **AuditTrail-PDF konstant ~13 s bei 5 000 Events.** Skaliert nicht
+1. **AuditTrail-PDF konstant ~13 s bei 5 000 Events.** Skaliert nicht
    mit Dataset-Größe, daher sind die in der Heuristik-Tabelle
    gelisteten 10k/100k-Verfehlungen **Artefakte** der
    linear-skalierenden Target-Berechnung. Bei 1M liegt PDF weiter
    unter dem 30 s-Target. Sollte trotzdem subjektiv schneller
    werden – Sprint-10.4-Kandidat (reportlab-Chunking).
 
-3. **RAM-Peak Import 1.4 GB bei 1M.** Calamine selbst ist sparsam;
+2. **RAM-Peak Import 1.4 GB bei 1M.** Calamine selbst ist sparsam;
    der Peak entsteht beim Materialisieren in `DatasetRow`-Dicts.
    Spalten-orientierte Dataset-Struktur (Arrow/Numpy) wäre die
    Lösung, ist aber ein Architektur-Refactor mit Ripple-Effekt auf

@@ -35,6 +35,10 @@ dependencies = [
     # im Import-Pfad – ca. 10–30× schneller als openpyxl, deutlich
     # geringerer RAM-Footprint. openpyxl bleibt für alle Exporter (Writes).
     "python-calamine>=0.2",
+    # orjson (C-basiert) ist seit Sprint 10.3 der JSON-Encoder in der
+    # Persistenz-Schicht – 3–10× schneller als stdlib-json bei
+    # Bulk-Inserts von DatasetRows. Hat py.typed-Marker.
+    "orjson>=3.10",
     "numpy>=2.0",
     "matplotlib>=3.8",
     "reportlab>=4.2",
