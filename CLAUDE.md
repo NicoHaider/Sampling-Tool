@@ -42,8 +42,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 10.3   | DB-Performance: orjson + executemany-Generator      | done        |
 | 10.4   | AuditTrail-PDF Performance (reportlab-Chunking)     | done        |
 | 11.1   | Dataset-API-Cut (rows raus, Repo-Methoden rein)     | done        |
+| 11.2   | Streaming Teil 2: UI-LRU-Cache für TableModel       | done        |
 
-**Sprint 11.1 abgeschlossen** (Architektur-Refactor – verhaltensneutral).
+**Sprint 11.2 abgeschlossen** (UI liest on-demand, FIFO-Cache).
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -176,6 +177,16 @@ ui ──▶ controllers ──▶ core ◀── io
     `BackgroundRole`, Filter ohne Proxy via `_visible_indices`.
     Bei leerem Model zeichnet `paintEvent` einen zentrierten
     "Keine Datensätze – Datei importieren"-Hinweis.
+    **Sprint 11.2 – Streaming-UI**: Das Model hält keine In-Memory-
+    Liste mehr, sondern liest Rows on-demand via
+    `DatasetRepo.get_rows_in_range`. FIFO-Cache mit
+    `DEFAULT_CACHE_SIZE = 1000` Rows; bei Cache-Miss lädt
+    `_ensure_cached` einen ganzen Block (Window
+    `BULK_LOAD_HALF_WINDOW = 125` davor + dahinter). RAM-Footprint
+    konstant ~3 MB, unabhängig von Dataset-Größe. `set_dataset(dataset,
+    repo)` (statt `dataset, rows`) – Caller (MainController) übergibt
+    ein frisches `DatasetRepo`. FIFO statt echtes LRU: bei sequentiellem
+    Qt-Scroll reicht das aus.
   - `widgets/audit_trail_view.py` – `AuditTrailModel` +
     `AuditTrailFilterProxy` + `AuditTrailView`. Filter-Zeile mit
     Volltextsuche und ComboBoxen (Aktion / User / Zeitraum), sortierbar.

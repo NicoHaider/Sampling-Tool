@@ -159,10 +159,6 @@ class MainController:
         self._db: Database | None = None
         self._engagement: Engagement | None = None
         self._dataset: Dataset | None = None
-        # Sprint 11.1 – rows wandern aus dem Dataset raus. Der Controller hält
-        # sie bis Sprint 11.2 als simples In-Memory-Tuple (Drop-in für
-        # bisheriges `dataset.rows`); die LRU-Cache-Variante folgt in 11.2.
-        self._rows: tuple[DatasetRow, ...] = ()
         self._sample: SampleResult | None = None
         self._datasets: list[Dataset] = []
         self._filter_active_sample_id: int | None = None
@@ -325,12 +321,12 @@ class MainController:
         self._db = None
         self._engagement = None
         self._dataset = None
-        self._rows = ()
         self._sample = None
         self._active_sample_id = None
         self._datasets = []
         self._filter_active_sample_id = None
         self._undo_manager = None
+        self.window.data_table().clear_dataset()
         self._state_repo = None
         self._restoring_state = False
         self.window.set_filter_only_sample(False)
@@ -412,12 +408,15 @@ class MainController:
             return
 
         self._dataset = dataset
-        self._rows = DatasetRepo(self._db.connect()).get_all_rows(dataset_id)
         self._filter_active_sample_id = None
         # Dataset-Wechsel setzt Filter-Status zurück – sonst wäre die Checkbox
         # an, aber die Tabelle zeigt das ganze neue Dataset.
         self.window.set_filter_only_sample(False)
-        self.window.show_dataset(dataset, self._rows)
+        # Sprint 11.2: das TableModel liest on-demand via Repo. Der Controller
+        # öffnet eine eigene Connection und übergibt das Repo durch –
+        # `DatasetTableModel.set_dataset` hält den Cache klein (~3 MB,
+        # konstant).
+        self.window.show_dataset(dataset, DatasetRepo(self._db.connect()))
 
         samples = SampleRepo(self._db.connect()).list_for_dataset(dataset_id)
         self.window.set_samples(samples)
@@ -527,8 +526,14 @@ class MainController:
         ):
             return
 
+        # Sprint 11.2: rows werden für Sampling-Dialog + Sampler frisch aus
+        # dem Repo geladen (kein Controller-In-Memory-Cache mehr). UI-Cache
+        # läuft im TableModel separat. Migration auf Streaming für Sampling
+        # folgt in 11.4 – aktuell `get_all_rows` als Übergangs-Helper.
+        repo = DatasetRepo(self._db.connect())
+        all_rows = repo.get_all_rows(self._dataset.id)
         dialog = self._sampling_factory(
-            self.window, self._dataset, self._rows, self._sample, self._settings.advanced_mode
+            self.window, self._dataset, all_rows, self._sample, self._settings.advanced_mode
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
@@ -538,7 +543,7 @@ class MainController:
 
         try:
             sampler = create_sampler(result.config)
-            effective_rows = self._build_sampling_rows(result.from_sample_only)
+            effective_rows = self._build_sampling_rows(all_rows, result.from_sample_only)
             sample_result = sampler.sample(effective_rows)
         except SamplingError as exc:
             self._error(f"Stichprobe konnte nicht gezogen werden: {exc}")
@@ -688,11 +693,15 @@ class MainController:
         if result is None:
             return
 
+        # Sprint 11.2: rows on-demand vom Repo holen (Übergangs-Helper,
+        # echtes Streaming kommt in 11.4 wenn der Exporter sample-rows
+        # direkt abfragen kann).
+        export_rows = DatasetRepo(self._db.connect()).get_all_rows(self._dataset.id)
         try:
             output_path = ExcelExporter().export_sample(
                 self._sample,
                 self._dataset,
-                self._rows,
+                export_rows,
                 columns=result.columns,
                 output_dir=result.output_dir,
                 custom_name=result.custom_name,
@@ -916,10 +925,10 @@ class MainController:
         self._db = db
         self._engagement = engagement
         self._dataset = None
-        self._rows = ()
         self._sample = None
         self._active_sample_id = None
         self._filter_active_sample_id = None
+        self.window.data_table().clear_dataset()
         if engagement.id is not None:
             self._undo_manager = UndoManager(db, engagement.id)
             self._state_repo = EngagementStateRepo(db.connect())
@@ -1051,16 +1060,20 @@ class MainController:
         self._refresh_dashboard()
         self.window.set_reports_enabled(self._engagement is not None and self._db is not None)
 
-    def _build_sampling_rows(self, from_sample_only: bool) -> tuple[DatasetRow, ...]:
+    def _build_sampling_rows(
+        self,
+        all_rows: Sequence[DatasetRow],
+        from_sample_only: bool,
+    ) -> tuple[DatasetRow, ...]:
         """Liefert die Rows, auf denen der Sampler arbeitet.
 
         Bei Resampling werden die Rows auf die Auswahl des aktuellen Samples
         eingeschränkt – ohne dass die persistierten Rows modifiziert werden.
         """
         if not from_sample_only or self._sample is None:
-            return self._rows
+            return tuple(all_rows)
         wanted = set(self._sample.selected_row_ids)
-        return tuple(r for r in self._rows if r.row_id in wanted)
+        return tuple(r for r in all_rows if r.row_id in wanted)
 
     def _push_undo_snapshot(self) -> None:
         if self._undo_manager is None:

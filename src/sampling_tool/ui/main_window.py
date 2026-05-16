@@ -8,7 +8,6 @@ laufen ausschließlich im Controller.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from pathlib import Path
 
 from PyQt6.QtCore import QByteArray, QSettings, Qt, pyqtSignal
@@ -29,7 +28,8 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.config import APP_NAME, APP_ORG, ENGAGEMENTS_DIR
-from sampling_tool.core.models import AuditEvent, Dataset, DatasetRow, Engagement, SampleResult
+from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
+from sampling_tool.persistence.repositories import DatasetRepo
 from sampling_tool.ui.recent import RecentEntry
 from sampling_tool.ui.widgets.audit_trail_view import AuditTrailView
 from sampling_tool.ui.widgets.dashboard_view import DashboardView
@@ -159,12 +159,15 @@ class MainWindow(QMainWindow):
         self._sidebar.set_samples(samples)
         self._action_export_sample.setEnabled(False)
 
-    def show_dataset(self, dataset: Dataset, rows: Sequence[DatasetRow]) -> None:
+    def show_dataset(self, dataset: Dataset, repo: DatasetRepo) -> None:
         """Lädt das Dataset in die Tabelle und setzt Statusbar.
 
-        Sprint-11.1: rows kommen separat (Controller lädt sie aus dem Repo).
+        Sprint-11.2: rows werden on-demand vom `repo` geladen
+        (FIFO-Cache im TableModel, siehe `DatasetTableModel`). Der
+        Controller übergibt das Repo statt einer materialisierten
+        Row-Liste; das hält den UI-RAM konstant.
         """
-        self._data_table.set_dataset(dataset, rows)
+        self._data_table.set_dataset(dataset, repo)
         self._status_dataset.setText(dataset.name)
         self._status_rows.setText(f"{dataset.row_count} Zeilen")
         self.set_active_sample_label(None)

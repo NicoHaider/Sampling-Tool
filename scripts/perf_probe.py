@@ -346,7 +346,10 @@ def run_probe_for_size(
     # ---- Phase 3: Tabelle-Anzeige (UI) --------------------------------
     with measured("Tabelle-Anzeige") as m:
         table = DataTableView()
-        table.set_dataset(dataset, rows)
+        # Sprint 11.2: View liest on-demand via Repo (FIFO-Cache im
+        # Model). `rows` werden nicht mehr ans Model übergeben – wir
+        # nutzen das frisch befüllte DatasetRepo der Test-DB.
+        table.set_dataset(dataset, DatasetRepo(db.connect()))
         _process_qt_events()
     result.measurements.append(m)
 
