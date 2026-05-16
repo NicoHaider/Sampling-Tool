@@ -73,7 +73,7 @@ class SamplingDialog(QDialog):
     def __init__(
         self,
         dataset: Dataset,
-        rows: Sequence[DatasetRow],
+        rows: Sequence[DatasetRow] | None = None,
         current_sample: SampleResult | None = None,
         parent: QWidget | None = None,
         *,
@@ -85,11 +85,15 @@ class SamplingDialog(QDialog):
         self.setMinimumWidth(520)
 
         self._dataset = dataset
-        self._rows: tuple[DatasetRow, ...] = tuple(rows)
+        # Sprint-11.4: rows sind optional – im Simple-Mode brauchen wir sie
+        # nicht (keine Filter-Spalte). `_max_population` zieht in dem Fall
+        # `dataset.row_count` heran, damit der Controller nicht 1M Rows
+        # nur für die Größenvalidierung in den RAM ziehen muss.
+        self._rows: tuple[DatasetRow, ...] = tuple(rows) if rows is not None else ()
         self._current_sample = current_sample
         self._result: SamplingDialogResult | None = None
         self._columns = list(dataset.columns)
-        self._max_population = max(len(self._rows), 1)
+        self._max_population = max(len(self._rows) or dataset.row_count, 1)
         self._advanced_mode = advanced_mode
 
         self._build_ui()

@@ -154,6 +154,61 @@ class TestDatasetRepo:
         )
         assert count["c"] == 0
 
+    def test_get_rows_by_ids_leere_eingabe(self, db: Database, engagement_id: int) -> None:
+        repo = DatasetRepo(db.connect())
+        ds = repo.create(_sample_dataset(engagement_id), _sample_rows())
+        assert ds.id is not None
+        assert repo.get_rows_by_ids(ds.id, []) == []
+
+    def test_get_rows_by_ids_behält_reihenfolge(self, db: Database, engagement_id: int) -> None:
+        repo = DatasetRepo(db.connect())
+        ds = repo.create(_sample_dataset(engagement_id), _sample_rows())
+        assert ds.id is not None
+        rows = repo.get_rows_by_ids(ds.id, [5, 1, 3])
+        assert [r.row_id for r in rows] == [5, 1, 3]
+
+    def test_get_rows_by_ids_ignoriert_stale(self, db: Database, engagement_id: int) -> None:
+        repo = DatasetRepo(db.connect())
+        ds = repo.create(_sample_dataset(engagement_id), _sample_rows())
+        assert ds.id is not None
+        rows = repo.get_rows_by_ids(ds.id, [1, 99999, 3])
+        # 99999 stillschweigend übersprungen, Reihenfolge bleibt
+        assert [r.row_id for r in rows] == [1, 3]
+
+    def test_get_rows_by_ids_chunking_bei_grossen_listen(
+        self, db: Database, engagement_id: int
+    ) -> None:
+        repo = DatasetRepo(db.connect())
+        many_rows = tuple(
+            DatasetRow(row_id=i, values={"Col1": f"V{i}", "Country": "AUT"}) for i in range(1, 2001)
+        )
+        ds = repo.create(
+            Dataset(
+                name="Big",
+                columns=("Col1", "Country"),
+                row_count=2000,
+                engagement_id=engagement_id,
+            ),
+            many_rows,
+        )
+        assert ds.id is not None
+        # > SQLITE_VAR_LIMIT (900) → mehrere Chunks
+        ids = list(range(1, 2001))
+        rows = repo.get_rows_by_ids(ds.id, ids)
+        assert [r.row_id for r in rows] == ids
+
+    def test_iter_row_ids_lazy_und_sortiert(self, db: Database, engagement_id: int) -> None:
+        from collections.abc import Iterator as _Iter
+
+        repo = DatasetRepo(db.connect())
+        ds = repo.create(_sample_dataset(engagement_id), _sample_rows())
+        assert ds.id is not None
+        iterator = repo.iter_row_ids(ds.id)
+        assert isinstance(iterator, _Iter)
+        assert not isinstance(iterator, list)
+        ids = list(iterator)
+        assert ids == list(range(1, 11))
+
     def test_datetime_values_roundtrip(self, db: Database, engagement_id: int) -> None:
         from datetime import date, datetime, time
 
