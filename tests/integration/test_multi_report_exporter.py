@@ -11,7 +11,6 @@ from openpyxl import load_workbook
 from sampling_tool.core.models import (
     AuditEvent,
     Dataset,
-    DatasetRow,
     Engagement,
     SampleConfig,
     SampleResult,
@@ -39,7 +38,7 @@ def datasets() -> list[Dataset]:
         Dataset(
             name="Buchungen",
             columns=("Konto", "Betrag"),
-            rows=(DatasetRow(row_id=1, values={"Konto": "K1", "Betrag": 10}),),
+            row_count=1,
             engagement_id=1,
             id=1,
         ),

@@ -30,15 +30,18 @@ from sampling_tool.persistence.repositories import (
 # ---------------------------------------------------------------------------
 
 
-def _sample_dataset(engagement_id: int) -> Dataset:
-    rows = tuple(
+def _sample_rows() -> tuple[DatasetRow, ...]:
+    return tuple(
         DatasetRow(row_id=i, values={"Col1": f"V{i}", "Country": ["AUT", "GER"][i % 2]})
         for i in range(1, 11)
     )
+
+
+def _sample_dataset(engagement_id: int) -> Dataset:
     return Dataset(
         name="Buchungssätze 2026",
         columns=("Col1", "Country"),
-        rows=rows,
+        row_count=10,
         source_file="/tmp/test.xlsx",
         engagement_id=engagement_id,
     )
@@ -91,35 +94,40 @@ class TestEngagementRepo:
 class TestDatasetRepo:
     def test_create_persists_dataset_and_rows(self, db: Database, engagement_id: int) -> None:
         repo = DatasetRepo(db.connect())
-        ds = repo.create(_sample_dataset(engagement_id))
+        ds = repo.create(_sample_dataset(engagement_id), _sample_rows())
         assert ds.id is not None
+        assert ds.row_count == 10
 
         roundtrip = repo.get_by_id(ds.id)
         assert roundtrip is not None
         assert roundtrip.name == "Buchungssätze 2026"
-        assert len(roundtrip.rows) == 10
-        assert roundtrip.rows[0].values["Country"] == "GER"  # row_id=1, 1%2=1
+        assert roundtrip.row_count == 10
         assert roundtrip.columns == ("Col1", "Country")
+
+        rows = repo.get_all_rows(ds.id)
+        assert len(rows) == 10
+        assert rows[0].values["Country"] == "GER"  # row_id=1, 1%2=1
 
     def test_get_by_id_unknown_returns_none(self, db: Database) -> None:
         assert DatasetRepo(db.connect()).get_by_id(42) is None
 
     def test_create_without_engagement_id_raises(self, db: Database) -> None:
         repo = DatasetRepo(db.connect())
-        ds = Dataset(name="X", columns=("a",), rows=())
+        ds = Dataset(name="X", columns=("a",))
         with pytest.raises(ValueError, match="engagement_id"):
-            repo.create(ds)
+            repo.create(ds, ())
 
     def test_list_for_engagement_excludes_rows(self, db: Database, engagement_id: int) -> None:
         repo = DatasetRepo(db.connect())
-        repo.create(_sample_dataset(engagement_id))
+        repo.create(_sample_dataset(engagement_id), _sample_rows())
         listed = repo.list_for_engagement(engagement_id)
         assert len(listed) == 1
-        assert listed[0].rows == ()  # Übersicht ohne Rows
+        # Übersicht hat row_count, aber keine Rows-Materialisierung
+        assert listed[0].row_count == 10
 
     def test_delete_cascades_rows(self, db: Database, engagement_id: int) -> None:
         repo = DatasetRepo(db.connect())
-        ds = repo.create(_sample_dataset(engagement_id))
+        ds = repo.create(_sample_dataset(engagement_id), _sample_rows())
         assert ds.id is not None
         repo.delete(ds.id)
 
@@ -137,14 +145,10 @@ class TestDatasetRepo:
         repo = DatasetRepo(db.connect())
         # ein Row mit nicht-serialisierbarem Wert lässt INSERT auf dataset_rows
         # scheitern → Dataset darf nicht zurückbleiben.
-        bad = Dataset(
-            name="bad",
-            columns=("a",),
-            rows=(DatasetRow(row_id=1, values={"a": object()}),),
-            engagement_id=engagement_id,
-        )
+        bad = Dataset(name="bad", columns=("a",), engagement_id=engagement_id)
+        bad_rows = (DatasetRow(row_id=1, values={"a": object()}),)
         with pytest.raises(TypeError):
-            repo.create(bad)
+            repo.create(bad, bad_rows)
         count = (
             db.connect().execute("SELECT COUNT(*) AS c FROM datasets WHERE name = 'bad'").fetchone()
         )
@@ -157,23 +161,22 @@ class TestDatasetRepo:
         ds = Dataset(
             name="dt-test",
             columns=("Datum", "Uhrzeit", "Tag"),
-            rows=(
-                DatasetRow(
-                    row_id=1,
-                    values={
-                        "Datum": datetime(2026, 5, 11, 14, 30, 0),
-                        "Uhrzeit": time(8, 15, 30),
-                        "Tag": date(2026, 5, 11),
-                    },
-                ),
-            ),
             engagement_id=engagement_id,
         )
-        created = repo.create(ds)
+        rows = (
+            DatasetRow(
+                row_id=1,
+                values={
+                    "Datum": datetime(2026, 5, 11, 14, 30, 0),
+                    "Uhrzeit": time(8, 15, 30),
+                    "Tag": date(2026, 5, 11),
+                },
+            ),
+        )
+        created = repo.create(ds, rows)
         assert created.id is not None
-        loaded = repo.get_by_id(created.id)
-        assert loaded is not None
-        first = loaded.rows[0].values
+        loaded_rows = repo.get_all_rows(created.id)
+        first = loaded_rows[0].values
         assert first["Datum"] == datetime(2026, 5, 11, 14, 30, 0)
         assert first["Uhrzeit"] == time(8, 15, 30)
         assert first["Tag"] == date(2026, 5, 11)
@@ -185,7 +188,7 @@ class TestDatasetRepo:
 
 
 def _persist_dataset(db: Database, engagement_id: int) -> int:
-    ds = DatasetRepo(db.connect()).create(_sample_dataset(engagement_id))
+    ds = DatasetRepo(db.connect()).create(_sample_dataset(engagement_id), _sample_rows())
     assert ds.id is not None
     return ds.id
 

@@ -14,7 +14,6 @@ import pytest
 from sampling_tool.core import (
     BaseSampler,
     ClusterSampler,
-    Dataset,
     DatasetRow,
     SampleConfig,
     SamplingError,
@@ -54,13 +53,8 @@ def rows_100() -> tuple[DatasetRow, ...]:
     )
 
 
-@pytest.fixture
-def dataset_100(rows_100: tuple[DatasetRow, ...]) -> Dataset:
-    return Dataset(
-        name="Test-Dataset",
-        columns=("Column1", "Column2", "Column3", "Country"),
-        rows=rows_100,
-    )
+# Sprint 11.1: Sampler arbeiten direkt auf rows-Tuples – die alte
+# `dataset_100`-Fixture wurde entfernt.
 
 
 # ---------------------------------------------------------------------------
@@ -69,42 +63,42 @@ def dataset_100(rows_100: tuple[DatasetRow, ...]) -> Dataset:
 
 
 class TestSimpleSampler:
-    def test_returns_correct_size(self, dataset_100: Dataset) -> None:
+    def test_returns_correct_size(self, rows_100: tuple[DatasetRow, ...]) -> None:
         cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=25, seed=42)
-        result = SimpleSampler(cfg).sample(dataset_100)
+        result = SimpleSampler(cfg).sample(rows_100)
 
         assert result.actual_size == 25
         assert result.population_size == 100
 
-    def test_reproducible_with_same_seed(self, dataset_100: Dataset) -> None:
+    def test_reproducible_with_same_seed(self, rows_100: tuple[DatasetRow, ...]) -> None:
         cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=30, seed=12345)
 
-        first = SimpleSampler(cfg).sample(dataset_100).selected_row_ids
-        second = SimpleSampler(cfg).sample(dataset_100).selected_row_ids
+        first = SimpleSampler(cfg).sample(rows_100).selected_row_ids
+        second = SimpleSampler(cfg).sample(rows_100).selected_row_ids
 
         assert first == second  # bit-genau identisch
 
-    def test_different_seed_yields_different_result(self, dataset_100: Dataset) -> None:
+    def test_different_seed_yields_different_result(self, rows_100: tuple[DatasetRow, ...]) -> None:
         cfg_a = SampleConfig(method=SamplingMethod.SIMPLE, size=30, seed=1)
         cfg_b = SampleConfig(method=SamplingMethod.SIMPLE, size=30, seed=2)
 
-        a = SimpleSampler(cfg_a).sample(dataset_100).selected_row_ids
-        b = SimpleSampler(cfg_b).sample(dataset_100).selected_row_ids
+        a = SimpleSampler(cfg_a).sample(rows_100).selected_row_ids
+        b = SimpleSampler(cfg_b).sample(rows_100).selected_row_ids
 
         assert a != b
 
-    def test_no_duplicates(self, dataset_100: Dataset) -> None:
+    def test_no_duplicates(self, rows_100: tuple[DatasetRow, ...]) -> None:
         cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=50, seed=7)
-        ids = SimpleSampler(cfg).sample(dataset_100).selected_row_ids
+        ids = SimpleSampler(cfg).sample(rows_100).selected_row_ids
 
         assert len(set(ids)) == len(ids)
 
-    def test_oversample_raises(self, dataset_100: Dataset) -> None:
+    def test_oversample_raises(self, rows_100: tuple[DatasetRow, ...]) -> None:
         cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=101, seed=42)
         with pytest.raises(SamplingError, match="größer als die verfügbare Population"):
-            SimpleSampler(cfg).sample(dataset_100)
+            SimpleSampler(cfg).sample(rows_100)
 
-    def test_filter_reduces_pool(self, dataset_100: Dataset) -> None:
+    def test_filter_reduces_pool(self, rows_100: tuple[DatasetRow, ...]) -> None:
         # Country=AUT trifft jede dritte Zeile (1, 4, 7, …) → ca. 34 Stück.
         cfg = SampleConfig(
             method=SamplingMethod.SIMPLE,
@@ -113,10 +107,10 @@ class TestSimpleSampler:
             filter_field="Country",
             filter_value="AUT",
         )
-        result = SimpleSampler(cfg).sample(dataset_100)
+        result = SimpleSampler(cfg).sample(rows_100)
         ids = set(result.selected_row_ids)
 
-        austria_ids = {r.row_id for r in dataset_100.rows if r.get("Country") == "AUT"}
+        austria_ids = {r.row_id for r in rows_100 if r.get("Country") == "AUT"}
         assert ids.issubset(austria_ids)
         assert len(ids) == 10
 
@@ -131,7 +125,7 @@ class TestSimpleSampler:
 
 
 class TestClusterSampler:
-    def test_returns_full_clusters(self, dataset_100: Dataset) -> None:
+    def test_returns_full_clusters(self, rows_100: tuple[DatasetRow, ...]) -> None:
         # 2 von 3 Clustern → es müssen ALLE Zeilen dieser zwei Cluster gezogen werden
         cfg = SampleConfig(
             method=SamplingMethod.CLUSTER,
@@ -139,45 +133,45 @@ class TestClusterSampler:
             seed=42,
             cluster_field="Country",
         )
-        result = ClusterSampler(cfg).sample(dataset_100)
+        result = ClusterSampler(cfg).sample(rows_100)
         countries_drawn = {
-            r.get("Country") for r in dataset_100.rows if r.row_id in set(result.selected_row_ids)
+            r.get("Country") for r in rows_100 if r.row_id in set(result.selected_row_ids)
         }
 
         assert len(countries_drawn) == 2
 
         # Für jedes gezogene Land müssen ALLE seine Zeilen drin sein
         for country in countries_drawn:
-            country_ids = {r.row_id for r in dataset_100.rows if r.get("Country") == country}
+            country_ids = {r.row_id for r in rows_100 if r.get("Country") == country}
             assert country_ids.issubset(set(result.selected_row_ids))
 
-    def test_reproducible(self, dataset_100: Dataset) -> None:
+    def test_reproducible(self, rows_100: tuple[DatasetRow, ...]) -> None:
         cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=2, seed=99, cluster_field="Country")
-        a = ClusterSampler(cfg).sample(dataset_100).selected_row_ids
-        b = ClusterSampler(cfg).sample(dataset_100).selected_row_ids
+        a = ClusterSampler(cfg).sample(rows_100).selected_row_ids
+        b = ClusterSampler(cfg).sample(rows_100).selected_row_ids
         assert a == b
 
-    def test_too_many_clusters_raises(self, dataset_100: Dataset) -> None:
+    def test_too_many_clusters_raises(self, rows_100: tuple[DatasetRow, ...]) -> None:
         cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=4, seed=1, cluster_field="Country")
         with pytest.raises(SamplingError, match="nur 3 sind im Datensatz"):
-            ClusterSampler(cfg).sample(dataset_100)
+            ClusterSampler(cfg).sample(rows_100)
 
     def test_missing_cluster_field_raises(self) -> None:
         cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=1, seed=1)
         with pytest.raises(SamplingError, match="Cluster-Feldes"):
             ClusterSampler(cfg)
 
-    def test_different_seed_changes_clusters(self, dataset_100: Dataset) -> None:
+    def test_different_seed_changes_clusters(self, rows_100: tuple[DatasetRow, ...]) -> None:
         cfg_a = SampleConfig(method=SamplingMethod.CLUSTER, size=1, seed=1, cluster_field="Country")
         cfg_b = SampleConfig(method=SamplingMethod.CLUSTER, size=1, seed=2, cluster_field="Country")
 
         results = {
-            tuple(ClusterSampler(c).sample(dataset_100).selected_row_ids) for c in (cfg_a, cfg_b)
+            tuple(ClusterSampler(c).sample(rows_100).selected_row_ids) for c in (cfg_a, cfg_b)
         }
         # Mindestens ein anderer Cluster bei anderen Seeds erwartet
         assert len(results) >= 1  # immer wahr; Strenge folgt:
-        a = ClusterSampler(cfg_a).sample(dataset_100).selected_row_ids
-        b = ClusterSampler(cfg_b).sample(dataset_100).selected_row_ids
+        a = ClusterSampler(cfg_a).sample(rows_100).selected_row_ids
+        b = ClusterSampler(cfg_b).sample(rows_100).selected_row_ids
         # 1 von 3 Clustern – mit den Seeds 1 und 2 unterschiedlich (manuell verifiziert)
         assert a != b
 
@@ -188,7 +182,7 @@ class TestClusterSampler:
 
 
 class TestStratifiedSampler:
-    def test_proportional_distribution(self, dataset_100: Dataset) -> None:
+    def test_proportional_distribution(self, rows_100: tuple[DatasetRow, ...]) -> None:
         # Country: AUT 34, GER 33, FRA 33  → bei size=30 etwa 10/10/10
         cfg = SampleConfig(
             method=SamplingMethod.STRATIFIED,
@@ -197,10 +191,10 @@ class TestStratifiedSampler:
             stratum_field="Country",
             stratify_mode=StratifyMode.PROPORTIONAL,
         )
-        result = StratifiedSampler(cfg).sample(dataset_100)
+        result = StratifiedSampler(cfg).sample(rows_100)
 
         per_country: dict[str, int] = {c: 0 for c in COUNTRIES}
-        for r in dataset_100.rows:
+        for r in rows_100:
             if r.row_id in set(result.selected_row_ids):
                 per_country[r.get("Country")] += 1
 
@@ -208,7 +202,7 @@ class TestStratifiedSampler:
         # proportional zu (34, 33, 33) → 10/10/10 (Largest-Remainder)
         assert per_country == {"AUT": 10, "GER": 10, "FRA": 10}
 
-    def test_equal_distribution_yields_equal_counts(self, dataset_100: Dataset) -> None:
+    def test_equal_distribution_yields_equal_counts(self, rows_100: tuple[DatasetRow, ...]) -> None:
         cfg = SampleConfig(
             method=SamplingMethod.STRATIFIED,
             size=30,
@@ -216,10 +210,10 @@ class TestStratifiedSampler:
             stratum_field="Country",
             stratify_mode=StratifyMode.EQUAL,
         )
-        result = StratifiedSampler(cfg).sample(dataset_100)
+        result = StratifiedSampler(cfg).sample(rows_100)
 
         per_country: dict[str, int] = {c: 0 for c in COUNTRIES}
-        for r in dataset_100.rows:
+        for r in rows_100:
             if r.row_id in set(result.selected_row_ids):
                 per_country[r.get("Country")] += 1
 
@@ -227,7 +221,7 @@ class TestStratifiedSampler:
         assert per_country == {"AUT": 10, "GER": 10, "FRA": 10}
         assert sum(per_country.values()) == 30
 
-    def test_equal_distribution_handles_uneven_size(self, dataset_100: Dataset) -> None:
+    def test_equal_distribution_handles_uneven_size(self, rows_100: tuple[DatasetRow, ...]) -> None:
         # 31 / 3 = 10.33  → Largest-Remainder: 11/10/10
         cfg = SampleConfig(
             method=SamplingMethod.STRATIFIED,
@@ -236,21 +230,21 @@ class TestStratifiedSampler:
             stratum_field="Country",
             stratify_mode=StratifyMode.EQUAL,
         )
-        result = StratifiedSampler(cfg).sample(dataset_100)
+        result = StratifiedSampler(cfg).sample(rows_100)
         assert result.actual_size == 31
 
-    def test_reproducible(self, dataset_100: Dataset) -> None:
+    def test_reproducible(self, rows_100: tuple[DatasetRow, ...]) -> None:
         cfg = SampleConfig(
             method=SamplingMethod.STRATIFIED,
             size=30,
             seed=2024,
             stratum_field="Country",
         )
-        a = StratifiedSampler(cfg).sample(dataset_100).selected_row_ids
-        b = StratifiedSampler(cfg).sample(dataset_100).selected_row_ids
+        a = StratifiedSampler(cfg).sample(rows_100).selected_row_ids
+        b = StratifiedSampler(cfg).sample(rows_100).selected_row_ids
         assert a == b
 
-    def test_size_below_strata_count_raises(self, dataset_100: Dataset) -> None:
+    def test_size_below_strata_count_raises(self, rows_100: tuple[DatasetRow, ...]) -> None:
         # 3 Schichten, size=2 → unmöglich
         cfg = SampleConfig(
             method=SamplingMethod.STRATIFIED,
@@ -259,7 +253,7 @@ class TestStratifiedSampler:
             stratum_field="Country",
         )
         with pytest.raises(SamplingError, match="kleiner als die Anzahl der Schichten"):
-            StratifiedSampler(cfg).sample(dataset_100)
+            StratifiedSampler(cfg).sample(rows_100)
 
     def test_missing_stratum_field_raises(self) -> None:
         cfg = SampleConfig(method=SamplingMethod.STRATIFIED, size=10, seed=1)

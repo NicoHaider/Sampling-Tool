@@ -103,15 +103,16 @@ def main() -> None:
 
     importer = ExcelImporter()
     result = importer.import_file(source_xlsx)
-    # Importer kennt das Engagement nicht – wir setzen es vor dem Persistieren.
+    # Sprint 11.1: Importer trennt Dataset (Metadaten) von rows.
     dataset = replace(result.dataset, engagement_id=engagement.id)
-    dataset = DatasetRepo(db.connect()).create(dataset)
+    dataset = DatasetRepo(db.connect()).create(dataset, result.rows)
     audit_logger.log_import(dataset)
     print(
-        f"    → {len(dataset.rows)} Zeilen, "
+        f"    → {dataset.row_count} Zeilen, "
         f"{len(dataset.columns)} Spalten, "
         f"{result.skipped_rows} übersprungen"
     )
+    rows = result.rows
 
     step(4, "Simple-Sampling (25 von 200) ziehen + persistieren")
     simple_cfg = SampleConfig(
@@ -120,7 +121,7 @@ def main() -> None:
         seed=42,
         description="Demo: 25 zufällige Buchungen",
     )
-    simple_result = create_sampler(simple_cfg).sample(dataset)
+    simple_result = create_sampler(simple_cfg).sample(rows)
     assert dataset.id is not None
     simple_id = SampleRepo(db.connect()).create_from_result(simple_result, dataset.id, "anna")
     audit_logger.log_sampling(simple_result, sample_id=simple_id)
@@ -135,7 +136,7 @@ def main() -> None:
         stratify_mode=StratifyMode.PROPORTIONAL,
         description="Demo: 15 Buchungen, proportional pro Land",
     )
-    strat_result = create_sampler(strat_cfg).sample(dataset)
+    strat_result = create_sampler(strat_cfg).sample(rows)
     strat_id = SampleRepo(db.connect()).create_from_result(strat_result, dataset.id, "anna")
     audit_logger.log_sampling(strat_result, sample_id=strat_id)
     print(f"    → Sample #{strat_id}, gezogen: {strat_result.actual_size} Zeilen")
@@ -145,6 +146,7 @@ def main() -> None:
     out_simple = exporter.export_sample(
         sample=simple_result,
         dataset=dataset,
+        rows=rows,
         columns=["BuchungsID", "Datum", "Betrag", "Land"],
         output_dir=DEMO_DIR,
         custom_name="DemoSimple",
@@ -157,6 +159,7 @@ def main() -> None:
     out_strat = exporter.export_sample(
         sample=strat_result,
         dataset=dataset,
+        rows=rows,
         columns=["BuchungsID", "Land", "Konto", "Betrag"],
         output_dir=DEMO_DIR,
         custom_name="DemoStratified",

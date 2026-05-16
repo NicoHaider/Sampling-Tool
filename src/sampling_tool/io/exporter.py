@@ -15,7 +15,7 @@ Schreiben kein halbes File zurück.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Final
@@ -26,7 +26,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from sampling_tool.config import BDO_RED
-from sampling_tool.core.models import Dataset, Engagement, SampleResult
+from sampling_tool.core.models import Dataset, DatasetRow, Engagement, SampleResult
 
 ProgressCallback = Callable[[int, int], None]
 
@@ -50,6 +50,7 @@ class ExcelExporter:
         self,
         sample: SampleResult,
         dataset: Dataset,
+        rows: Sequence[DatasetRow],
         columns: list[str],
         output_dir: Path,
         custom_name: str,
@@ -61,8 +62,13 @@ class ExcelExporter:
         Liefert den vollen Pfad zur erzeugten Datei zurück. Der Dateiname
         folgt dem VBA-Schema `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
 
-        `engagement` ist optional – wird im Metadaten-Sheet ausgewertet, wenn
-        gesetzt. Damit kann der Exporter auch standalone genutzt werden.
+        Sprint-11.1-API: `rows` werden separat übergeben (Dataset hält
+        keine rows mehr). Caller lädt sie typischerweise über
+        `DatasetRepo.get_all_rows(dataset.id)` oder einen Cache.
+
+        `engagement` ist optional – wird im Metadaten-Sheet ausgewertet,
+        wenn gesetzt. Damit kann der Exporter auch standalone genutzt
+        werden.
         """
         self._validate(columns, dataset)
 
@@ -73,7 +79,7 @@ class ExcelExporter:
 
         wb = Workbook()
         try:
-            self._write_sample_sheet(wb, sample, dataset, columns)
+            self._write_sample_sheet(wb, sample, rows, columns)
             self._write_metadata_sheet(wb, sample, dataset, engagement)
             wb.save(tmp)
         except Exception:
@@ -114,7 +120,7 @@ class ExcelExporter:
         self,
         wb: Workbook,
         sample: SampleResult,
-        dataset: Dataset,
+        rows: Sequence[DatasetRow],
         columns: list[str],
     ) -> None:
         ws = wb.active
@@ -136,7 +142,7 @@ class ExcelExporter:
             cell.alignment = header_align
 
         selected_ids = set(sample.selected_row_ids)
-        rows_to_write = [r for r in dataset.rows if r.row_id in selected_ids]
+        rows_to_write = [r for r in rows if r.row_id in selected_ids]
         # Stabile Reihenfolge: nach row_id (matcht selected_row_ids-Sortierung)
         rows_to_write.sort(key=lambda r: r.row_id)
 

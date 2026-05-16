@@ -314,7 +314,8 @@ def run_probe_for_size(
         importer = ExcelImporter()
         import_result = importer.import_file(xlsx_path)
     dataset = import_result.dataset
-    m.note = f"{len(dataset.rows):,} rows, {import_result.skipped_rows} skipped"
+    rows = import_result.rows
+    m.note = f"{len(rows):,} rows, {import_result.skipped_rows} skipped"
     result.measurements.append(m)
 
     # ---- Phase 2: DB-Speicherung --------------------------------------
@@ -332,7 +333,7 @@ def run_probe_for_size(
         )
         assert engagement.id is not None
         dataset = replace(dataset, engagement_id=engagement.id)
-        dataset = DatasetRepo(db.connect()).create(dataset)
+        dataset = DatasetRepo(db.connect()).create(dataset, rows)
     result.measurements.append(m)
 
     audit_logger = AuditLogger(
@@ -345,7 +346,7 @@ def run_probe_for_size(
     # ---- Phase 3: Tabelle-Anzeige (UI) --------------------------------
     with measured("Tabelle-Anzeige") as m:
         table = DataTableView()
-        table.set_dataset(dataset)
+        table.set_dataset(dataset, rows)
         _process_qt_events()
     result.measurements.append(m)
 
@@ -393,7 +394,7 @@ def run_probe_for_size(
     simple_result = None
     for label, cfg in sample_specs:
         with measured(label) as m:
-            sampled = create_sampler(cfg).sample(dataset)
+            sampled = create_sampler(cfg).sample(rows)
         assert dataset.id is not None
         sid = sample_repo.create_from_result(sampled, dataset.id, "perf")
         sample_ids.append(sid)
@@ -434,6 +435,7 @@ def run_probe_for_size(
         ExcelExporter().export_sample(
             sample=simple_result,
             dataset=dataset,
+            rows=rows,
             columns=list(dataset.columns[:8]),
             output_dir=export_dir,
             custom_name="PerfSample",

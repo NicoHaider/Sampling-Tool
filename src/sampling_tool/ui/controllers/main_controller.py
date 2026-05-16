@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import getpass
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -83,7 +83,10 @@ logger = logging.getLogger(__name__)
 
 DialogFactory = Callable[["MainWindow", AppSettings, Engagement | None], NewEngagementDialog]
 DuplicateDialogFactory = Callable[["MainWindow", Path], DuplicateEngagementDialog]
-SamplingDialogFactory = Callable[["MainWindow", Dataset, SampleResult | None, bool], SamplingDialog]
+SamplingDialogFactory = Callable[
+    ["MainWindow", Dataset, Sequence[DatasetRow], SampleResult | None, bool],
+    SamplingDialog,
+]
 ExportDialogFactory = Callable[["MainWindow", Dataset, str, str, Path | None], ExportSampleDialog]
 AuditPdfDialogFactory = Callable[
     ["MainWindow", Engagement, list[str], bool, Path | None, bool, bool],
@@ -156,6 +159,10 @@ class MainController:
         self._db: Database | None = None
         self._engagement: Engagement | None = None
         self._dataset: Dataset | None = None
+        # Sprint 11.1 – rows wandern aus dem Dataset raus. Der Controller hält
+        # sie bis Sprint 11.2 als simples In-Memory-Tuple (Drop-in für
+        # bisheriges `dataset.rows`); die LRU-Cache-Variante folgt in 11.2.
+        self._rows: tuple[DatasetRow, ...] = ()
         self._sample: SampleResult | None = None
         self._datasets: list[Dataset] = []
         self._filter_active_sample_id: int | None = None
@@ -318,6 +325,7 @@ class MainController:
         self._db = None
         self._engagement = None
         self._dataset = None
+        self._rows = ()
         self._sample = None
         self._active_sample_id = None
         self._datasets = []
@@ -362,7 +370,7 @@ class MainController:
         dataset = replace(result.dataset, engagement_id=self._engagement.id)
         try:
             with self._db.session() as conn:
-                stored = DatasetRepo(conn).create(dataset)
+                stored = DatasetRepo(conn).create(dataset, result.rows)
                 AuditLogger(AuditRepo(conn), self._user_name(), self._engagement.id).log_import(
                     stored
                 )
@@ -404,11 +412,12 @@ class MainController:
             return
 
         self._dataset = dataset
+        self._rows = DatasetRepo(self._db.connect()).get_all_rows(dataset_id)
         self._filter_active_sample_id = None
         # Dataset-Wechsel setzt Filter-Status zurück – sonst wäre die Checkbox
         # an, aber die Tabelle zeigt das ganze neue Dataset.
         self.window.set_filter_only_sample(False)
-        self.window.show_dataset(dataset)
+        self.window.show_dataset(dataset, self._rows)
 
         samples = SampleRepo(self._db.connect()).list_for_dataset(dataset_id)
         self.window.set_samples(samples)
@@ -519,7 +528,7 @@ class MainController:
             return
 
         dialog = self._sampling_factory(
-            self.window, self._dataset, self._sample, self._settings.advanced_mode
+            self.window, self._dataset, self._rows, self._sample, self._settings.advanced_mode
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
@@ -529,8 +538,8 @@ class MainController:
 
         try:
             sampler = create_sampler(result.config)
-            effective_dataset = self._build_sampling_dataset(result.from_sample_only)
-            sample_result = sampler.sample(effective_dataset)
+            effective_rows = self._build_sampling_rows(result.from_sample_only)
+            sample_result = sampler.sample(effective_rows)
         except SamplingError as exc:
             self._error(f"Stichprobe konnte nicht gezogen werden: {exc}")
             return
@@ -683,6 +692,7 @@ class MainController:
             output_path = ExcelExporter().export_sample(
                 self._sample,
                 self._dataset,
+                self._rows,
                 columns=result.columns,
                 output_dir=result.output_dir,
                 custom_name=result.custom_name,
@@ -906,6 +916,7 @@ class MainController:
         self._db = db
         self._engagement = engagement
         self._dataset = None
+        self._rows = ()
         self._sample = None
         self._active_sample_id = None
         self._filter_active_sample_id = None
@@ -1040,20 +1051,16 @@ class MainController:
         self._refresh_dashboard()
         self.window.set_reports_enabled(self._engagement is not None and self._db is not None)
 
-    def _build_sampling_dataset(self, from_sample_only: bool) -> Dataset:
-        """Liefert das Dataset, auf dem der Sampler arbeitet.
+    def _build_sampling_rows(self, from_sample_only: bool) -> tuple[DatasetRow, ...]:
+        """Liefert die Rows, auf denen der Sampler arbeitet.
 
         Bei Resampling werden die Rows auf die Auswahl des aktuellen Samples
-        eingeschränkt – ohne dass das Persistenz-Dataset selbst modifiziert wird.
+        eingeschränkt – ohne dass die persistierten Rows modifiziert werden.
         """
-        assert self._dataset is not None
         if not from_sample_only or self._sample is None:
-            return self._dataset
+            return self._rows
         wanted = set(self._sample.selected_row_ids)
-        filtered: tuple[DatasetRow, ...] = tuple(
-            r for r in self._dataset.rows if r.row_id in wanted
-        )
-        return replace(self._dataset, rows=filtered)
+        return tuple(r for r in self._rows if r.row_id in wanted)
 
     def _push_undo_snapshot(self) -> None:
         if self._undo_manager is None:
@@ -1185,11 +1192,13 @@ def _default_duplicate_dialog_factory(
 def _default_sampling_factory(
     parent: MainWindow,
     dataset: Dataset,
+    rows: Sequence[DatasetRow],
     current_sample: SampleResult | None,
     advanced_mode: bool,
 ) -> SamplingDialog:
     return SamplingDialog(
         dataset,
+        rows,
         current_sample=current_sample,
         parent=parent,
         advanced_mode=advanced_mode,

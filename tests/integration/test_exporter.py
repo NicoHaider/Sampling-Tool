@@ -21,8 +21,8 @@ from sampling_tool.io.exporter import ExcelExporter, ExportError
 
 
 @pytest.fixture
-def dataset() -> Dataset:
-    rows = tuple(
+def rows() -> tuple[DatasetRow, ...]:
+    return tuple(
         DatasetRow(
             row_id=i,
             values={
@@ -34,10 +34,14 @@ def dataset() -> Dataset:
         )
         for i in range(1, 11)
     )
+
+
+@pytest.fixture
+def dataset(rows: tuple[DatasetRow, ...]) -> Dataset:
     return Dataset(
         name="TestData",
         columns=("Name", "Betrag", "Land", "Datum"),
-        rows=rows,
+        row_count=len(rows),
         source_file="/tmp/source.xlsx",
         engagement_id=1,
         id=42,
@@ -81,11 +85,13 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        rows: tuple[DatasetRow, ...],
         tmp_path: Path,
     ) -> None:
         out = exporter.export_sample(
             sample=sample,
             dataset=dataset,
+            rows=rows,
             columns=["Name", "Betrag"],
             output_dir=tmp_path,
             custom_name="NewHires_Q2_2026",
@@ -104,11 +110,13 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        rows: tuple[DatasetRow, ...],
         tmp_path: Path,
     ) -> None:
         out = exporter.export_sample(
             sample=sample,
             dataset=dataset,
+            rows=rows,
             columns=["Land", "Name"],  # bewusst andere Reihenfolge
             output_dir=tmp_path,
             custom_name="X",
@@ -129,12 +137,14 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        rows: tuple[DatasetRow, ...],
         engagement: Engagement,
         tmp_path: Path,
     ) -> None:
         out = exporter.export_sample(
             sample=sample,
             dataset=dataset,
+            rows=rows,
             columns=["Name"],
             output_dir=tmp_path,
             custom_name="X",
@@ -157,6 +167,7 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        rows: tuple[DatasetRow, ...],
         tmp_path: Path,
     ) -> None:
         # openpyxl-Save soll fehlschlagen → die Tmp-Datei muss verschwinden,
@@ -168,6 +179,7 @@ class TestExportSample:
             exporter.export_sample(
                 sample=sample,
                 dataset=dataset,
+                rows=rows,
                 columns=["Name"],
                 output_dir=tmp_path,
                 custom_name="X",
@@ -181,11 +193,13 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        rows: tuple[DatasetRow, ...],
         tmp_path: Path,
     ) -> None:
         out = exporter.export_sample(
             sample=sample,
             dataset=dataset,
+            rows=rows,
             columns=["Name", "Betrag"],
             output_dir=tmp_path,
             custom_name="X",
@@ -203,11 +217,13 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        rows: tuple[DatasetRow, ...],
         tmp_path: Path,
     ) -> None:
         out = exporter.export_sample(
             sample=sample,
             dataset=dataset,
+            rows=rows,
             columns=["Name"],
             output_dir=tmp_path,
             custom_name="X",
@@ -227,12 +243,14 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        rows: tuple[DatasetRow, ...],
         tmp_path: Path,
     ) -> None:
         umlaut_dir = tmp_path / "Prüfung_Müller_2026"
         out = exporter.export_sample(
             sample=sample,
             dataset=dataset,
+            rows=rows,
             columns=["Name"],
             output_dir=umlaut_dir,
             custom_name="Stichprobe_März",
@@ -246,6 +264,7 @@ class TestExportSample:
         self,
         sample: SampleResult,
         dataset: Dataset,
+        rows: tuple[DatasetRow, ...],
         tmp_path: Path,
     ) -> None:
         events: list[tuple[int, int]] = []
@@ -253,6 +272,7 @@ class TestExportSample:
         exp.export_sample(
             sample=sample,
             dataset=dataset,
+            rows=rows,
             columns=["Name"],
             output_dir=tmp_path,
             custom_name="X",
@@ -267,12 +287,14 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        rows: tuple[DatasetRow, ...],
         tmp_path: Path,
     ) -> None:
         with pytest.raises(ExportError, match="existieren nicht"):
             exporter.export_sample(
                 sample=sample,
                 dataset=dataset,
+                rows=rows,
                 columns=["GibtsNicht"],
                 output_dir=tmp_path,
                 custom_name="X",
@@ -284,12 +306,14 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        rows: tuple[DatasetRow, ...],
         tmp_path: Path,
     ) -> None:
         with pytest.raises(ExportError, match="Mindestens eine"):
             exporter.export_sample(
                 sample=sample,
                 dataset=dataset,
+                rows=rows,
                 columns=[],
                 output_dir=tmp_path,
                 custom_name="X",

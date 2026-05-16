@@ -9,7 +9,6 @@ import pytest
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.core.models import (
     Dataset,
-    DatasetRow,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -67,7 +66,7 @@ class TestLogImport:
         ds = Dataset(
             name="Dataset X",
             columns=("a", "b"),
-            rows=(DatasetRow(row_id=1, values={"a": 1, "b": 2}),),
+            row_count=1,
             source_file="/tmp/x.xlsx",
             engagement_id=engagement_id,
             id=7,

@@ -22,7 +22,7 @@ from PyQt6.QtGui import QBrush, QColor, QPainter, QPaintEvent
 from PyQt6.QtWidgets import QHeaderView, QTableView, QWidget
 
 from sampling_tool.config import SAMPLE_HIGHLIGHT_ALPHA, SAMPLE_HIGHLIGHT_COLOR
-from sampling_tool.core.models import Dataset
+from sampling_tool.core.models import Dataset, DatasetRow
 
 HIGHLIGHT_COLOR: str = SAMPLE_HIGHLIGHT_COLOR
 HIGHLIGHT_ALPHA: int = SAMPLE_HIGHLIGHT_ALPHA
@@ -38,10 +38,12 @@ class DatasetTableModel(QAbstractTableModel):
     def __init__(
         self,
         dataset: Dataset | None = None,
+        rows: Sequence[DatasetRow] = (),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._dataset: Dataset | None = None
+        self._rows: tuple[DatasetRow, ...] = ()
         self._columns: tuple[str, ...] = ()
         self._visible_indices: list[int] = []
         self._highlight: frozenset[int] = frozenset()
@@ -49,16 +51,22 @@ class DatasetTableModel(QAbstractTableModel):
         color.setAlpha(HIGHLIGHT_ALPHA)
         self._highlight_brush = QBrush(color)
         if dataset is not None:
-            self.set_dataset(dataset)
+            self.set_dataset(dataset, rows)
 
     # ---- Public API -----------------------------------------------------
 
-    def set_dataset(self, dataset: Dataset) -> None:
-        """Ersetzt den dargestellten Datenbestand (komplettes Reset)."""
+    def set_dataset(self, dataset: Dataset, rows: Sequence[DatasetRow]) -> None:
+        """Ersetzt den dargestellten Datenbestand (komplettes Reset).
+
+        Sprint-11.1-API: rows kommen separat (Dataset hält keine rows
+        mehr). Caller (typischerweise `MainController`) lädt rows via
+        `DatasetRepo.get_all_rows(dataset.id)` und gibt sie weiter.
+        """
         self.beginResetModel()
         self._dataset = dataset
+        self._rows = tuple(rows)
         self._columns = dataset.columns
-        self._visible_indices = list(range(len(dataset.rows)))
+        self._visible_indices = list(range(len(self._rows)))
         self._highlight = frozenset()
         self.endResetModel()
 
@@ -66,6 +74,7 @@ class DatasetTableModel(QAbstractTableModel):
         """Leert das Modell vollständig."""
         self.beginResetModel()
         self._dataset = None
+        self._rows = ()
         self._columns = ()
         self._visible_indices = []
         self._highlight = frozenset()
@@ -89,7 +98,7 @@ class DatasetTableModel(QAbstractTableModel):
             return
         wanted = set(row_ids)
         self.beginResetModel()
-        self._visible_indices = [i for i, r in enumerate(self._dataset.rows) if r.row_id in wanted]
+        self._visible_indices = [i for i, r in enumerate(self._rows) if r.row_id in wanted]
         self.endResetModel()
 
     def clear_filter(self) -> None:
@@ -97,7 +106,7 @@ class DatasetTableModel(QAbstractTableModel):
         if self._dataset is None:
             return
         self.beginResetModel()
-        self._visible_indices = list(range(len(self._dataset.rows)))
+        self._visible_indices = list(range(len(self._rows)))
         self.endResetModel()
 
     def view_row_for_row_id(self, row_id: int) -> int | None:
@@ -105,7 +114,7 @@ class DatasetTableModel(QAbstractTableModel):
         if self._dataset is None:
             return None
         for view_idx, ds_idx in enumerate(self._visible_indices):
-            if self._dataset.rows[ds_idx].row_id == row_id:
+            if self._rows[ds_idx].row_id == row_id:
                 return view_idx
         return None
 
@@ -137,7 +146,7 @@ class DatasetTableModel(QAbstractTableModel):
         if not index.isValid() or self._dataset is None:
             return None
         ds_idx = self._visible_indices[index.row()]
-        row = self._dataset.rows[ds_idx]
+        row = self._rows[ds_idx]
         column = self._columns[index.column()]
 
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
@@ -169,7 +178,7 @@ class DatasetTableModel(QAbstractTableModel):
             and 0 <= section < len(self._visible_indices)
         ):
             ds_idx = self._visible_indices[section]
-            return str(self._dataset.rows[ds_idx].row_id)
+            return str(self._rows[ds_idx].row_id)
         return None
 
 
@@ -200,9 +209,12 @@ class DataTableView(QTableView):
 
     # ---- Public API -----------------------------------------------------
 
-    def set_dataset(self, dataset: Dataset) -> None:
-        """Lädt das Dataset und passt die Spaltenbreiten automatisch an."""
-        self._model.set_dataset(dataset)
+    def set_dataset(self, dataset: Dataset, rows: Sequence[DatasetRow]) -> None:
+        """Lädt das Dataset und passt die Spaltenbreiten automatisch an.
+
+        Sprint-11.1: rows kommen separat (Caller lädt sie aus dem Repo).
+        """
+        self._model.set_dataset(dataset, rows)
         self._autosize_columns()
 
     def clear_dataset(self) -> None:

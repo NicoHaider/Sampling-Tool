@@ -41,8 +41,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 10.2   | Excel-Import via python-calamine (Performance-Fix)  | done        |
 | 10.3   | DB-Performance: orjson + executemany-Generator      | done        |
 | 10.4   | AuditTrail-PDF Performance (reportlab-Chunking)     | done        |
+| 11.1   | Dataset-API-Cut (rows raus, Repo-Methoden rein)     | done        |
 
-**Sprint 10.4 abgeschlossen.**
+**Sprint 11.1 abgeschlossen** (Architektur-Refactor – verhaltensneutral).
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -60,7 +61,13 @@ ui ──▶ controllers ──▶ core ◀── io
 
 - **`core/`** – reine Domain-Logik. Keine I/O, kein Qt, keine SQL. Alles deterministisch
   und unit-test-bar ohne Mocks.
-  - `models.py` – frozen Dataclasses (Engagement, Dataset, SampleConfig, …)
+  - `models.py` – frozen Dataclasses (Engagement, Dataset, SampleConfig, …).
+    **Sprint 11.1**: `Dataset` enthält keine `rows` mehr, sondern nur Metadaten
+    (`columns`, `row_count: int`, `source_file`, Engagement-FK). Rows leben in
+    `dataset_rows` und werden bei Bedarf via `DatasetRepo.get_row` /
+    `iter_rows` / `get_all_rows` (Übergangs-Helper) / `get_rows_in_range`
+    geladen. `Sampler.sample(rows, population_size=None)` nimmt Rows direkt
+    entgegen statt Dataset.
   - `rng.py` – `make_rng(seed)` + `fisher_yates_shuffle` über `numpy.random.default_rng`
   - `sampling.py` – `BaseSampler` + Simple/Cluster/Stratified + `create_sampler`-Factory
 - **`io/`** – Excel-/CSV-Import, Excel-Export, PDF-Report.
@@ -433,9 +440,16 @@ Drei Kerndogmen, die sich durch die ganze DB-Schicht ziehen:
 
 **Repositories als Eintrittspunkt für Sprint 3 (I/O):**
 
-- Excel-Importer (Sprint 3) konstruiert ein `Dataset` (engagement_id setzen!) und
-  ruft `DatasetRepo.create(dataset)`. Atomar – schlägt das fehl, bleibt nichts
-  zurück. Danach `AuditLogger.log_import(dataset)`.
+- Excel-Importer (Sprint 3, in 11.1 refaktoriert) konstruiert ein `Dataset`
+  (Metadaten) + ein `tuple[DatasetRow, ...]` separat. Aufrufer ruft
+  `DatasetRepo.create(dataset, rows)`. Atomar – schlägt das fehl, bleibt
+  nichts zurück. `dataset.row_count` wird vom Repo auf `len(rows)` gesetzt.
+  Danach `AuditLogger.log_import(dataset)`.
+- Sprint-11.1-Row-Zugriffe: `DatasetRepo.get_row(dataset_id, row_id)`,
+  `get_rows_in_range(dataset_id, start, end)` (half-open),
+  `iter_rows(dataset_id)` (Streaming-Generator), `get_all_rows(dataset_id)`
+  (Übergangs-Helper für Stellen, die früher `dataset.rows` lasen – bis 11.3
+  durch echtes Streaming ersetzt).
 - UI-Controller (Sprint 4+) bekommt `Database`-Instanz, baut bei Bedarf eigene
   Repo-Instanzen pro Operation. Connection-Lebensdauer = App-Sitzung.
 - `UndoManager(db, engagement_id)` ist persistiert (überlebt Connection-Wechsel).

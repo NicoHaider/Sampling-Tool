@@ -49,9 +49,15 @@ _HEADER_STRING_RATIO: Final[float] = 0.5
 
 @dataclass(frozen=True, slots=True)
 class ImportResult:
-    """Rückgabe-Wert von `ExcelImporter.import_file`."""
+    """Rückgabe-Wert von `ExcelImporter.import_file`.
+
+    Sprint-11.1-Cut: Dataset hält nur noch Metadaten (Spalten, row_count).
+    Die tatsächlichen Rows liegen separat in `rows` und werden vom
+    Aufrufer an `DatasetRepo.create(dataset, rows)` übergeben.
+    """
 
     dataset: Dataset
+    rows: tuple[DatasetRow, ...]
     skipped_rows: int
     warnings: tuple[str, ...]
 
@@ -152,10 +158,15 @@ class ExcelImporter:
         dataset = Dataset(
             name=path.stem,
             columns=tuple(columns),
-            rows=rows,
+            row_count=len(rows),
             source_file=str(path),
         )
-        return ImportResult(dataset=dataset, skipped_rows=skipped, warnings=tuple(warnings))
+        return ImportResult(
+            dataset=dataset,
+            rows=rows,
+            skipped_rows=skipped,
+            warnings=tuple(warnings),
+        )
 
     # ---- CSV ------------------------------------------------------------
 
@@ -173,10 +184,15 @@ class ExcelImporter:
         dataset = Dataset(
             name=path.stem,
             columns=tuple(columns),
-            rows=rows,
+            row_count=len(rows),
             source_file=str(path),
         )
-        return ImportResult(dataset=dataset, skipped_rows=skipped, warnings=tuple(warnings))
+        return ImportResult(
+            dataset=dataset,
+            rows=rows,
+            skipped_rows=skipped,
+            warnings=tuple(warnings),
+        )
 
     # ---- Gemeinsam ------------------------------------------------------
 
