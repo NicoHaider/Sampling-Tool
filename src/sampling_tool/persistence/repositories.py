@@ -11,7 +11,7 @@ Konventionen:
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time
 from typing import Any, Final
@@ -158,13 +158,18 @@ class DatasetRepo:
     def create(
         self,
         dataset: Dataset,
-        rows: Sequence[DatasetRow],
+        rows: Iterable[DatasetRow],
     ) -> Dataset:
         """Schreibt Dataset-Metadaten + alle Rows in einer SAVEPOINT-Transaktion.
 
-        Sprint-11.1-API: rows kommen jetzt separat (Dataset hält keine
-        rows mehr). `dataset.row_count` wird vom Repo auf `len(rows)`
-        gesetzt – der Wert im übergebenen Dataset wird überschrieben.
+        Sprint-11.1-API: rows kommen separat (Dataset hält keine rows mehr).
+        Sprint-11.3-Streaming: `rows` darf jetzt ein **einmalig
+        konsumierbarer Iterator** sein (z. B. von `ExcelImporter`).
+        `dataset.row_count` wird nach echter Persistierung mit der
+        tatsächlich geschriebenen Anzahl überschrieben – wichtig, weil
+        ein Streaming-Importer Empty-Rows erst beim Lesen entdeckt und
+        die Estimate aus `sheet.total_height` typischerweise zu hoch
+        ist.
         """
         if dataset.engagement_id is None:
             raise ValueError("Dataset.engagement_id muss vor dem Persistieren gesetzt sein.")
@@ -179,7 +184,8 @@ class DatasetRepo:
                     dataset.name,
                     dataset.source_file,
                     dataset.imported_at,
-                    len(rows),
+                    # Vorläufig die Estimate – wird unten korrigiert.
+                    dataset.row_count,
                     _json_dumps(list(dataset.columns)),
                 ),
             )
@@ -187,10 +193,16 @@ class DatasetRepo:
             assert dataset_id is not None
 
             # Generator statt Listcomp → spart bei großen Datasets den
-            # vollen Listen-Buffer im RAM. Crash-Sicherheit bleibt durch
-            # den umliegenden SAVEPOINT erhalten.
+            # vollen Listen-Buffer im RAM. Akzeptiert auch einen
+            # einmalig konsumierbaren Iterator (Streaming-Import 11.3).
+            # `actual_count` zählt mit, weil wir am Ende den row_count
+            # in der DB korrigieren müssen.
+            actual_count = 0
+
             def _row_params() -> Iterator[tuple[int, int, str]]:
+                nonlocal actual_count
                 for row in rows:
+                    actual_count += 1
                     yield (dataset_id, row.row_id, _values_to_json(row.values))
 
             self.conn.executemany(
@@ -198,7 +210,13 @@ class DatasetRepo:
                 _row_params(),
             )
 
-        return replace(dataset, id=dataset_id, row_count=len(rows))
+            if actual_count != dataset.row_count:
+                self.conn.execute(
+                    "UPDATE datasets SET row_count = ? WHERE id = ?",
+                    (actual_count, dataset_id),
+                )
+
+        return replace(dataset, id=dataset_id, row_count=actual_count)
 
     def get_by_id(self, dataset_id: int) -> Dataset | None:
         """Lädt Dataset-Metadaten (ohne Rows).
