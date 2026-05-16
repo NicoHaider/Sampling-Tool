@@ -39,8 +39,9 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 9.7    | Einstellungen-Button in Toolbar                     | done        |
 | 10.1   | Performance-Probe (Discovery-Lauf, 10k–1M Zeilen)   | done        |
 | 10.2   | Excel-Import via python-calamine (Performance-Fix)  | done        |
+| 10.3   | DB-Performance: orjson + executemany-Generator      | done        |
 
-**Sprint 10.2 abgeschlossen.**
+**Sprint 10.3 abgeschlossen.**
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -453,13 +454,34 @@ Während `_restore_state` läuft, blockiert `_restoring_state` die
 gespeicherte State nicht zwischenüberschrieben wird.
 
 **JSON-Spalten:** `columns_json`, `values_json`, `details_json` sowie `filter_value`,
-`visible_rows`, `highlighted_rows` sind alle `json.dumps`-/`json.loads`-Roundtrip,
+`visible_rows`, `highlighted_rows` sind alle JSON-Roundtrip,
 um Typ-Information (int vs. str vs. nested dict) zu erhalten.
 `dataset_rows.values_json` nutzt zusätzlich einen tagged Encoder
 (`_values_to_json` / `_values_from_json` in `repositories.py`), damit
 `datetime`/`date`/`time`-Werte aus dem Excel-Import roundtrip-sicher
-persistiert werden – das normale `json.dumps` würde sie nicht
-serialisieren können.
+persistiert werden – ohne Tagging würden diese Typen nicht
+serialisieren.
+
+**Encoder seit Sprint 10.3: `orjson` (C-basiert)** statt stdlib-json.
+3–10× schneller bei Bulk-Inserts, gleicher Tagged-Encoder-Pattern.
+`orjson.dumps` liefert `bytes` – die zentralen Helper `_json_dumps` /
+`_json_loads` in `repositories.py` konvertieren auf `str`, weil
+SQLite-TEXT-Spalten str erwarten (bytes würde als BLOB landen).
+
+**Bulk-Insert-Pragmas:** `bulk_insert_pragmas(conn)` in
+`database.py` setzt temporär `synchronous=OFF` und ist als Werkzeug
+für isolierte Offline-Bulk-Importe verfügbar. Wird AKTUELL NICHT
+aus dem Production-Pfad aufgerufen: bereits ein einfacher Pragma-
+Wechsel innerhalb der `DatasetRepo.create`-Transaktion hat mit der
+parallel offenen MainController-Repo-Connection (zwei Connections
+auf derselben WAL-DB) deadlockt. Den Speedup auf der DB-Seite holen
+sich orjson + executemany-Generator (siehe PERFORMANCE.md
+Sprint 10.3).
+
+**executemany mit Generator:** `DatasetRepo.create` füttert
+`executemany` mit einem Generator, der pro Row einen JSON-String
+yieldet. Spart bei großen Datasets den vollen Listcomp-Buffer im
+RAM (100k Rows: 55 MB → 0.2 MB Peak).
 
 ## Reproduzierbarkeit (kritisch!)
 
@@ -495,6 +517,19 @@ Konsequenzen für den Code:
   `None`. Excel-Zahlen kommen IMMER als `float` (auch ganzzahlige), und
   Datums-Zellen ohne Uhrzeit kommen als `date` statt `datetime`. Der
   `_coerce_value`-Mapper im Importer normalisiert das alles.
+- `orjson.dumps` liefert `bytes`, nicht `str`. SQLite-TEXT-Spalten
+  brauchen `str` – der `_json_dumps`-Helper konvertiert via
+  `.decode("utf-8")`. Wer direkt mit `orjson` arbeitet, muss daran
+  denken.
+- `journal_mode`-Wechsel auf einer WAL-DB mit parallel offenen
+  Connections kann deadlocken (Tooltest Sprint 10.3). Deshalb setzt
+  `bulk_insert_pragmas` nur `synchronous=OFF`, kein `journal_mode`.
+  Selbst dieser CM ist aktuell nicht aus Production aufgerufen.
+- Beim Aufruf von `PRAGMA <name>=<value>` IMMER `.fetchall()`
+  hinterherschicken – manche Pragmas (z. B. `journal_mode`) geben
+  eine Result-Row zurück. Ohne Fetch bleibt das Cursor-Statement
+  offen und ein nachfolgendes `SAVEPOINT` crasht mit "SQL statements
+  in progress".
 
 ## End-to-End-Smoke-Test
 

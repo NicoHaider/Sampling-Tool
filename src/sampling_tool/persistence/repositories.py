@@ -10,11 +10,13 @@ Konventionen:
 
 from __future__ import annotations
 
-import json
 import sqlite3
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time
 from typing import Any, Final
+
+import orjson
 
 from sampling_tool.core.models import (
     AuditEvent,
@@ -27,6 +29,17 @@ from sampling_tool.core.models import (
     StratifyMode,
 )
 from sampling_tool.persistence.database import savepoint
+
+
+def _json_dumps(value: Any) -> str:
+    """orjson dump → str (SQLite-TEXT-Spalten brauchen str, nicht bytes)."""
+    return orjson.dumps(value).decode("utf-8")
+
+
+def _json_loads(text: str | bytes) -> Any:
+    """orjson load – akzeptiert str und bytes."""
+    return orjson.loads(text)
+
 
 # ===========================================================================
 # Engagement
@@ -158,15 +171,22 @@ class DatasetRepo:
                     dataset.source_file,
                     dataset.imported_at,
                     len(dataset.rows),
-                    json.dumps(list(dataset.columns)),
+                    _json_dumps(list(dataset.columns)),
                 ),
             )
             dataset_id = cur.lastrowid
             assert dataset_id is not None
 
+            # Generator statt Listcomp → spart bei großen Datasets den
+            # vollen Listen-Buffer im RAM. Crash-Sicherheit bleibt durch
+            # den umliegenden SAVEPOINT erhalten.
+            def _row_params() -> Iterator[tuple[int, int, str]]:
+                for row in dataset.rows:
+                    yield (dataset_id, row.row_id, _values_to_json(row.values))
+
             self.conn.executemany(
                 "INSERT INTO dataset_rows (dataset_id, row_index, values_json) VALUES (?, ?, ?)",
-                [(dataset_id, row.row_id, _values_to_json(row.values)) for row in dataset.rows],
+                _row_params(),
             )
 
         return replace(dataset, id=dataset_id)
@@ -189,7 +209,7 @@ class DatasetRepo:
 
         return Dataset(
             name=ds_row["name"],
-            columns=tuple(json.loads(ds_row["columns_json"])),
+            columns=tuple(_json_loads(ds_row["columns_json"])),
             rows=rows,
             source_file=ds_row["source_file"],
             imported_at=ds_row["imported_at"],
@@ -206,7 +226,7 @@ class DatasetRepo:
         return [
             Dataset(
                 name=r["name"],
-                columns=tuple(json.loads(r["columns_json"])),
+                columns=tuple(_json_loads(r["columns_json"])),
                 rows=(),
                 source_file=r["source_file"],
                 imported_at=r["imported_at"],
@@ -369,7 +389,7 @@ class AuditRepo:
                 event.seed,
                 event.import_file,
                 event.export_file,
-                json.dumps(event.details) if event.details else None,
+                _json_dumps(event.details) if event.details else None,
                 event.corrects_event_id,
             ),
         )
@@ -401,7 +421,7 @@ class AuditRepo:
     @staticmethod
     def _to_model(row: sqlite3.Row) -> AuditEvent:
         details_raw = row["details_json"]
-        details: dict[str, Any] = json.loads(details_raw) if details_raw else {}
+        details: dict[str, Any] = _json_loads(details_raw) if details_raw else {}
         return AuditEvent(
             event_type=row["event_type"],
             engagement_id=row["engagement_id"],
@@ -517,7 +537,7 @@ class EngagementStateRepo:
 
 def _json_or_none(value: Any) -> str | None:
     """Serialisiert primitive Werte zu JSON, gibt None bei None zurück."""
-    return None if value is None else json.dumps(value)
+    return None if value is None else _json_dumps(value)
 
 
 def _json_or_none_load(text: str | None) -> Any:
@@ -525,8 +545,8 @@ def _json_or_none_load(text: str | None) -> Any:
     if text is None:
         return None
     try:
-        return json.loads(text)
-    except (TypeError, json.JSONDecodeError):
+        return _json_loads(text)
+    except (TypeError, orjson.JSONDecodeError):
         return text
 
 
@@ -569,9 +589,9 @@ def _decode_value(value: Any) -> Any:
 
 
 def _values_to_json(values: dict[str, Any]) -> str:
-    return json.dumps({k: _encode_value(v) for k, v in values.items()})
+    return _json_dumps({k: _encode_value(v) for k, v in values.items()})
 
 
 def _values_from_json(text: str) -> dict[str, Any]:
-    raw = json.loads(text)
+    raw = _json_loads(text)
     return {k: _decode_value(v) for k, v in raw.items()}

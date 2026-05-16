@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
@@ -176,3 +176,38 @@ def savepoint(conn: sqlite3.Connection, name: str = "sp") -> Iterator[None]:
         raise
     else:
         conn.execute(f"RELEASE SAVEPOINT {name}")
+
+
+# ---------------------------------------------------------------------------
+# Bulk-Insert-Pragmas (Sprint 10.3)
+#
+# Werkzeug für ISOLIERTE Bulk-Operationen, bei denen der Caller die
+# Connection-Topologie kontrolliert. Setzt `synchronous=OFF` für die
+# Dauer des Blocks und restored den Vor-Zustand im finally.
+#
+# Wird AKTUELL NICHT aus dem Production-Pfad aufgerufen: im Sprint-
+# 10.3-Tooltest hat selbst ein einfacher Pragma-Wechsel innerhalb der
+# `DatasetRepo.create`-Transaktion mit der parallel offenen
+# MainController-Repo-Connection deadlockt (zwei Connections auf
+# derselben WAL-DB). Der CM bleibt im Code als Werkzeug für offline-
+# Bulk-Importe und ggf. spätere Architektur-Refactors verfügbar.
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def bulk_insert_pragmas(conn: sqlite3.Connection) -> Iterator[None]:
+    """Temporäres `synchronous=OFF` für isolierte Bulk-Inserts.
+
+    Nur sinnvoll, wenn auf der DB-Datei keine zweite Connection parallel
+    aktiv ist – sonst kann der Pragma-Wechsel mit dem WAL-Locking
+    deadlocken. Crash-Sicherheit muss der Caller über eine umliegende
+    Transaktion herstellen.
+    """
+    prev_sync = conn.execute("PRAGMA synchronous").fetchall()[0][0]
+    try:
+        conn.execute("PRAGMA synchronous=OFF").fetchall()
+        yield
+    finally:
+        # Restore darf den Hauptpfad nie crashen – defensiv via `suppress`.
+        with suppress(sqlite3.Error):
+            conn.execute(f"PRAGMA synchronous={int(prev_sync)}").fetchall()
