@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import getpass
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -84,7 +84,7 @@ logger = logging.getLogger(__name__)
 DialogFactory = Callable[["MainWindow", AppSettings, Engagement | None], NewEngagementDialog]
 DuplicateDialogFactory = Callable[["MainWindow", Path], DuplicateEngagementDialog]
 SamplingDialogFactory = Callable[
-    ["MainWindow", Dataset, Sequence[DatasetRow], SampleResult | None, bool],
+    ["MainWindow", Dataset, Sequence[DatasetRow] | None, SampleResult | None, bool],
     SamplingDialog,
 ]
 ExportDialogFactory = Callable[["MainWindow", Dataset, str, str, Path | None], ExportSampleDialog]
@@ -526,14 +526,16 @@ class MainController:
         ):
             return
 
-        # Sprint 11.2: rows werden für Sampling-Dialog + Sampler frisch aus
-        # dem Repo geladen (kein Controller-In-Memory-Cache mehr). UI-Cache
-        # läuft im TableModel separat. Migration auf Streaming für Sampling
-        # folgt in 11.4 – aktuell `get_all_rows` als Übergangs-Helper.
+        # Sprint 11.4: Dialog-Rows nur noch im Advanced-Mode laden – dort
+        # braucht das UI distinct-Werte fürs Filter-Dropdown. Im Simple-
+        # Mode reicht `dataset.row_count` für die Größenvalidierung, also
+        # kein voller Materialisierung des Datasets nur für den Dialog.
         repo = DatasetRepo(self._db.connect())
-        all_rows = repo.get_all_rows(self._dataset.id)
+        dialog_rows: tuple[DatasetRow, ...] | None = (
+            repo.get_all_rows(self._dataset.id) if self._settings.advanced_mode else None
+        )
         dialog = self._sampling_factory(
-            self.window, self._dataset, all_rows, self._sample, self._settings.advanced_mode
+            self.window, self._dataset, dialog_rows, self._sample, self._settings.advanced_mode
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
@@ -543,8 +545,10 @@ class MainController:
 
         try:
             sampler = create_sampler(result.config)
-            effective_rows = self._build_sampling_rows(all_rows, result.from_sample_only)
-            sample_result = sampler.sample(effective_rows)
+            effective_rows, population_size = self._build_sampling_iterator(
+                repo, self._dataset, result.from_sample_only
+            )
+            sample_result = sampler.sample(effective_rows, population_size=population_size)
         except SamplingError as exc:
             self._error(f"Stichprobe konnte nicht gezogen werden: {exc}")
             return
@@ -693,15 +697,15 @@ class MainController:
         if result is None:
             return
 
-        # Sprint 11.2: rows on-demand vom Repo holen (Übergangs-Helper,
-        # echtes Streaming kommt in 11.4 wenn der Exporter sample-rows
-        # direkt abfragen kann).
-        export_rows = DatasetRepo(self._db.connect()).get_all_rows(self._dataset.id)
+        # Sprint 11.4: Exporter zieht sich die Sample-Rows on-demand via
+        # `get_rows_by_ids` – kein voll materialisiertes Dataset mehr.
+        # Bei 1M-Dataset und 1k-Sample werden nur 1k Rows aus der DB
+        # geholt statt 1M.
         try:
             output_path = ExcelExporter().export_sample(
                 self._sample,
                 self._dataset,
-                export_rows,
+                DatasetRepo(self._db.connect()),
                 columns=result.columns,
                 output_dir=result.output_dir,
                 custom_name=result.custom_name,
@@ -1060,20 +1064,30 @@ class MainController:
         self._refresh_dashboard()
         self.window.set_reports_enabled(self._engagement is not None and self._db is not None)
 
-    def _build_sampling_rows(
+    def _build_sampling_iterator(
         self,
-        all_rows: Sequence[DatasetRow],
+        repo: DatasetRepo,
+        dataset: Dataset,
         from_sample_only: bool,
-    ) -> tuple[DatasetRow, ...]:
-        """Liefert die Rows, auf denen der Sampler arbeitet.
+    ) -> tuple[Iterable[DatasetRow], int]:
+        """Liefert (Iterator, Population-Size) für den Sampler.
 
-        Bei Resampling werden die Rows auf die Auswahl des aktuellen Samples
-        eingeschränkt – ohne dass die persistierten Rows modifiziert werden.
+        Sprint-11.4-Streaming: kein voll materialisiertes Row-Tuple mehr,
+        sondern entweder
+        - bei Sub-Sampling: `get_rows_by_ids` mit den Sample-IDs (klein,
+          typischerweise 50–5000 Rows), oder
+        - bei normalem Sampling: `iter_rows` als Generator über die ganze
+          Tabelle (kein voller RAM-Footprint).
+
+        Population-Size kommt für den Full-Dataset-Fall aus den Metadaten
+        (`dataset.row_count`), damit Sub-Sample-Population korrekt
+        dokumentiert wird.
         """
-        if not from_sample_only or self._sample is None:
-            return tuple(all_rows)
-        wanted = set(self._sample.selected_row_ids)
-        return tuple(r for r in all_rows if r.row_id in wanted)
+        assert dataset.id is not None
+        if from_sample_only and self._sample is not None:
+            sample_ids = list(self._sample.selected_row_ids)
+            return repo.get_rows_by_ids(dataset.id, sample_ids), len(sample_ids)
+        return repo.iter_rows(dataset.id), dataset.row_count
 
     def _push_undo_snapshot(self) -> None:
         if self._undo_manager is None:
@@ -1205,7 +1219,7 @@ def _default_duplicate_dialog_factory(
 def _default_sampling_factory(
     parent: MainWindow,
     dataset: Dataset,
-    rows: Sequence[DatasetRow],
+    rows: Sequence[DatasetRow] | None,
     current_sample: SampleResult | None,
     advanced_mode: bool,
 ) -> SamplingDialog:

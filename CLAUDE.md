@@ -44,8 +44,11 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 11.1   | Dataset-API-Cut (rows raus, Repo-Methoden rein)     | done        |
 | 11.2   | Streaming Teil 2: UI-LRU-Cache für TableModel       | done        |
 | 11.3   | Streaming Teil 3: Excel-Import streamt direkt in DB | done        |
+| 11.4   | Streaming Teil 4: Sampler/Exporter auf iter_rows    | done        |
 
-**Sprint 11.3 abgeschlossen** (Importer materialisiert nicht mehr).
+**Sprint 11.4 abgeschlossen** (Sample-Export liest nur noch Sample-Rows statt
+volles Dataset; Sampler-Pfad nutzt `iter_rows`; Dialog im Simple-Mode ohne
+Row-Materialisierung).
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
 
@@ -67,11 +70,20 @@ ui ──▶ controllers ──▶ core ◀── io
     **Sprint 11.1**: `Dataset` enthält keine `rows` mehr, sondern nur Metadaten
     (`columns`, `row_count: int`, `source_file`, Engagement-FK). Rows leben in
     `dataset_rows` und werden bei Bedarf via `DatasetRepo.get_row` /
-    `iter_rows` / `get_all_rows` (Übergangs-Helper) / `get_rows_in_range`
-    geladen. `Sampler.sample(rows, population_size=None)` nimmt Rows direkt
-    entgegen statt Dataset.
+    `iter_rows` / `get_all_rows` (Test-Convenience) / `get_rows_in_range` /
+    `get_rows_by_ids` / `iter_row_ids` geladen. `Sampler.sample(rows,
+    population_size=None)` nimmt Rows direkt entgegen statt Dataset.
   - `rng.py` – `make_rng(seed)` + `fisher_yates_shuffle` über `numpy.random.default_rng`
-  - `sampling.py` – `BaseSampler` + Simple/Cluster/Stratified + `create_sampler`-Factory
+  - `sampling.py` – `BaseSampler` + Simple/Cluster/Stratified + `create_sampler`-Factory.
+    **Sprint 11.4 – Streaming**: `BaseSampler.sample(rows, population_size=None)`
+    akzeptiert einen einmalig-konsumierbaren Iterator. `_collect_pool` macht
+    Single-Pass-Filter (zählt parallel die durchgereichten Rows für den
+    Pre-Filter-Total, damit `population_size`-Default die Universumsgröße
+    ist – nicht die Filter-Pool-Größe). Spart gegenüber 11.1 das doppelte
+    Materialize (vorher: `list(rows)` + Filter-Listcomp). Production-Caller
+    setzen `population_size=dataset.row_count` explizit, damit auch beim
+    Sub-Sampling (from_sample_only) die Original-Population dokumentiert
+    bleibt.
 - **`io/`** – Excel-/CSV-Import, Excel-Export, PDF-Report.
   - `importer.py` – `ExcelImporter` nutzt seit Sprint 10.2 die Rust-
     basierte `python-calamine`-Library für Excel-Reads (10–30× schneller
@@ -101,6 +113,14 @@ ui ──▶ controllers ──▶ core ◀── io
     Sheet "Sample" (BDO-rote Header) + Sheet "Metadaten" (Engagement, Seed,
     Methode). Dateiname-Schema:
     `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
+    **Sprint 11.4 – Streaming**: `export_sample(sample, dataset, dataset_repo,
+    ...)` nimmt jetzt das `DatasetRepo` statt einer voll-materialisierten
+    Row-Liste. Intern wird `dataset_repo.get_rows_by_ids(dataset.id,
+    sample.selected_row_ids)` aufgerufen – bei 1M-Dataset und 1k-Sample
+    werden also nur 1k Rows aus der DB geholt statt 1M. Davor lief die
+    Pipeline `get_all_rows` → 1M Rows materialisieren → in Python auf
+    1k filtern, was das gesamte Streaming der vorherigen Sprints für
+    den Export wieder zunichte gemacht hat.
   - `pdf_report.py` – `AuditTrailPDF` via `reportlab.platypus`.
     A4 Portrait, Engagement-Block oben, Event-Tabelle mit
     Korrektur-Highlight, Footer mit Seitenzahl + Zeitstempel. Optionales
@@ -183,6 +203,14 @@ ui ──▶ controllers ──▶ core ◀── io
     User-Choice an `handle_open_engagement` weitergeleitet, der
     `NewEngagementDialog` mit Prefill erneut geöffnet oder ganz
     abgebrochen.
+    **Sprint 11.4 – Sampling-Streaming**: `_build_sampling_iterator(repo,
+    dataset, from_sample_only)` liefert `(Iterable[DatasetRow], int)`:
+    bei `from_sample_only` → `get_rows_by_ids` mit den IDs des aktiven
+    Samples + Sample-Größe; sonst → `iter_rows`-Generator + `dataset.
+    row_count`. `handle_new_sampling` reicht das in
+    `sampler.sample(rows, population_size=...)` durch. `handle_export_
+    sample` übergibt dem `ExcelExporter` nur noch das `DatasetRepo` –
+    der Exporter holt sich die Sample-Rows selbst.
   - `widgets/data_table.py` – `DatasetTableModel(QAbstractTableModel)` +
     `DataTableView`. Virtuelles Model (kein QStandardItemModel) –
     100k+ Zeilen scrollen flüssig. Sample-Highlighting per
@@ -264,6 +292,13 @@ ui ──▶ controllers ──▶ core ◀── io
     Verbleibender Unterschied Simple/Advanced: nur noch Methodenwahl +
     method-spezifische Felder (Cluster-/Schicht-Feld, Stratify-Mode,
     Spalten-Filter).
+    **Sprint 11.4**: Konstruktor-Parameter `rows: Sequence[DatasetRow] |
+    None`. Im Simple-Mode wird `None` übergeben – kein voller
+    Row-Materialize nur für die Größen-Validierung; stattdessen zieht
+    `_max_population` `dataset.row_count`. Nur im Advanced-Mode (wenn
+    das Filter-Dropdown distinct-Werte braucht) lädt der Controller
+    weiterhin `get_all_rows` und reicht sie an den Dialog durch.
+    `MainController.handle_new_sampling` orchestriert das.
   - `dialogs/export_sample_dialog.py` – Spaltenauswahl (Checkboxen) +
     Filename/ID + Zielordner. Vorschau-Label live mit
     `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
@@ -473,6 +508,18 @@ Drei Kerndogmen, die sich durch die ganze DB-Schicht ziehen:
   `iter_rows(dataset_id)` (Streaming-Generator), `get_all_rows(dataset_id)`
   (Übergangs-Helper für Stellen, die früher `dataset.rows` lasen – bis 11.3
   durch echtes Streaming ersetzt).
+- **Sprint-11.4-Row-Zugriffe**:
+  - `iter_row_ids(dataset_id)` – Streaming-Iterator nur über `row_index`,
+    ohne JSON-Parsing. Light-weight Variante von `iter_rows` für Code,
+    der nur die Pool-Größe/IDs braucht.
+  - `get_rows_by_ids(dataset_id, row_ids)` – holt die genannten Rows
+    in einem (oder mehreren) Query(s). Behält Eingabe-Reihenfolge bei,
+    stale IDs werden stillschweigend übersprungen. Chunkt bei
+    `_SQLITE_VAR_LIMIT = 900` Parametern auf mehrere Statements (SQLite-
+    Default-Limit ist 999). Eintrittspunkt für `ExcelExporter` und für
+    Sub-Sampling (`from_sample_only`).
+  - `get_all_rows` ist nach 11.4 in der Production-Code-Base nicht mehr
+    aufgerufen (Test-Convenience + Advanced-Mode-SamplingDialog noch).
 - UI-Controller (Sprint 4+) bekommt `Database`-Instanz, baut bei Bedarf eigene
   Repo-Instanzen pro Operation. Connection-Lebensdauer = App-Sitzung.
 - `UndoManager(db, engagement_id)` ist persistiert (überlebt Connection-Wechsel).

@@ -11,10 +11,10 @@ Konventionen:
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time
-from typing import Any, Final
+from typing import Any, ClassVar, Final
 
 import orjson
 
@@ -287,6 +287,54 @@ class DatasetRepo:
         )
         for r in cur:
             yield DatasetRow(row_id=r["row_index"], values=_values_from_json(r["values_json"]))
+
+    def iter_row_ids(self, dataset_id: int) -> Iterator[int]:
+        """Streaming-Iterator über alle row_ids eines Datasets (sortiert).
+
+        Leichtgewichtige Variante von `iter_rows` – lädt nur die IDs, kein
+        JSON-Parsing. Eintrittspunkt für SimpleSampler ohne Filter, der
+        nur die Pool-Größe und shufflebare IDs braucht.
+        """
+        cur = self.conn.execute(
+            "SELECT row_index FROM dataset_rows WHERE dataset_id = ? ORDER BY row_index",
+            (dataset_id,),
+        )
+        for r in cur:
+            yield int(r["row_index"])
+
+    _SQLITE_VAR_LIMIT: ClassVar[int] = 900
+
+    def get_rows_by_ids(
+        self,
+        dataset_id: int,
+        row_ids: Sequence[int],
+    ) -> list[DatasetRow]:
+        """Holt die genannten Rows in einem (oder mehreren) Query(s).
+
+        Behält die Eingabe-Reihenfolge bei. Stale row_ids (im Dataset nicht
+        vorhanden) werden stillschweigend übersprungen – wichtig für
+        EngagementState-Restore mit zwischenzeitlich gelöschten Rows.
+
+        Bei sehr großen Listen wird gechunkt (SQLite-Default-Limit für
+        Bind-Parameter = 999, konservativ auf 900 gesetzt).
+        """
+        if not row_ids:
+            return []
+
+        by_id: dict[int, DatasetRow] = {}
+        for chunk_start in range(0, len(row_ids), self._SQLITE_VAR_LIMIT):
+            chunk = row_ids[chunk_start : chunk_start + self._SQLITE_VAR_LIMIT]
+            placeholders = ",".join("?" * len(chunk))
+            cur = self.conn.execute(
+                f"SELECT row_index, values_json FROM dataset_rows "
+                f"WHERE dataset_id = ? AND row_index IN ({placeholders})",
+                [dataset_id, *chunk],
+            )
+            for r in cur:
+                rid = int(r["row_index"])
+                by_id[rid] = DatasetRow(row_id=rid, values=_values_from_json(r["values_json"]))
+
+        return [by_id[rid] for rid in row_ids if rid in by_id]
 
     def get_all_rows(self, dataset_id: int) -> tuple[DatasetRow, ...]:
         """Lädt alle Rows als Tuple.

@@ -266,6 +266,57 @@ class TestStratifiedSampler:
 # ---------------------------------------------------------------------------
 
 
+class TestStreamingIteratorInput:
+    """Sprint 11.4: BaseSampler.sample akzeptiert einmal-konsumierbare Iteratoren."""
+
+    def test_simple_sampler_konsumiert_generator(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=10, seed=42)
+        gen = (r for r in rows_100)
+        result = SimpleSampler(cfg).sample(gen)
+        assert result.actual_size == 10
+        assert result.population_size == 100
+
+    def test_stratified_sampler_konsumiert_generator(
+        self, rows_100: tuple[DatasetRow, ...]
+    ) -> None:
+        cfg = SampleConfig(
+            method=SamplingMethod.STRATIFIED,
+            size=30,
+            seed=42,
+            stratum_field="Country",
+        )
+        gen = (r for r in rows_100)
+        result = StratifiedSampler(cfg).sample(gen)
+        assert result.actual_size == 30
+
+    def test_population_size_override_dokumentiert_dataset_groesse(
+        self, rows_100: tuple[DatasetRow, ...]
+    ) -> None:
+        """Sub-Sampling: rows ist eine Teilmenge, aber population_size
+        dokumentiert die ursprüngliche Dataset-Größe."""
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=5, seed=1)
+        subset = rows_100[:20]
+        result = SimpleSampler(cfg).sample(subset, population_size=100)
+        assert result.actual_size == 5
+        assert result.population_size == 100  # override sticht
+
+    def test_single_pass_filter_zaehlt_pre_filter_total(
+        self, rows_100: tuple[DatasetRow, ...]
+    ) -> None:
+        """Ohne expliziten population_size wird der Pre-Filter-Count
+        verwendet, nicht der Post-Filter-Count."""
+        cfg = SampleConfig(
+            method=SamplingMethod.SIMPLE,
+            size=5,
+            seed=1,
+            filter_field="Country",
+            filter_value="AUT",
+        )
+        result = SimpleSampler(cfg).sample(iter(rows_100))
+        # Population = 100 (alle Rows durchgereicht), nicht 34 (Filter-Pool)
+        assert result.population_size == 100
+
+
 class TestCreateSampler:
     def test_simple(self) -> None:
         sampler = create_sampler(SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=1))
