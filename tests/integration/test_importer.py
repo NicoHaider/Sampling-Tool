@@ -31,7 +31,7 @@ class TestImportXlsx:
         assert rows[0].values["Betrag"] == 101
         assert isinstance(rows[0].values["Buchungsdatum"], datetime)
         assert ds.source_file == str(simple_xlsx)
-        assert result.skipped_rows == 0
+        assert result.stats.skipped_rows == 0
 
     def test_importiert_xlsm_und_ignoriert_makros(
         self, importer: ExcelImporter, xlsm_macro: Path
@@ -73,7 +73,7 @@ class TestImportXlsx:
         assert result.dataset.columns == ("Konto", "Bezeichnung", "Saldo")
         assert len(rows) == 2
         # 3 leere Vorzeilen wurden geskipped
-        assert result.skipped_rows == 3
+        assert result.stats.skipped_rows == 3
         assert rows[0].values["Saldo"] == 500.50
 
     def test_duplikat_spaltennamen_bekommen_suffix(
@@ -82,7 +82,7 @@ class TestImportXlsx:
         result = importer.import_file(duplicate_columns_xlsx)
         list(result.rows)
         assert result.dataset.columns == ("Betrag", "Betrag_2", "Betrag_3")
-        assert any("Doppelter Spaltenname" in w for w in result.warnings)
+        assert any("Doppelter Spaltenname" in w for w in result.stats.warnings)
 
     def test_leere_xlsx_wirft_fachlichen_fehler(
         self, importer: ExcelImporter, empty_xlsx: Path
@@ -119,14 +119,14 @@ class TestImportCsv:
         assert result.dataset.columns == ("Name", "Stadt")
         assert rows[0].values == {"Name": "Müller", "Stadt": "Wien"}
         # utf-8 ohne BOM erzeugt keine Encoding-Warnung
-        assert not any("Encoding" in w for w in result.warnings)
+        assert not any("Encoding" in w for w in result.stats.warnings)
 
     def test_csv_utf8_bom(self, importer: ExcelImporter, utf8_bom_csv: Path) -> None:
         result = importer.import_file(utf8_bom_csv)
         list(result.rows)
         assert result.dataset.columns == ("Name", "Stadt")
         # utf-8-sig wurde gewählt → Warnung
-        assert any("utf-8-sig" in w for w in result.warnings)
+        assert any("utf-8-sig" in w for w in result.stats.warnings)
 
     def test_csv_cp1252(self, importer: ExcelImporter, cp1252_csv: Path) -> None:
         # latin-1 nimmt jedes Byte und liest in dem Zeichensatz – das ist für
@@ -135,7 +135,7 @@ class TestImportCsv:
         rows = list(result.rows)
         assert result.dataset.columns == ("Name", "Stadt")
         assert rows[0].values["Name"] == "Müller"
-        assert any("Encoding" in w for w in result.warnings)
+        assert any("Encoding" in w for w in result.stats.warnings)
 
     def test_csv_mit_semikolon_separator(self, importer: ExcelImporter, tmp_path: Path) -> None:
         path = tmp_path / "semi.csv"
@@ -290,13 +290,6 @@ class TestStreamingImport:
         # 3 Leerzeilen vorm Header werden beim Header-Pass schon erkannt.
         assert result.stats.skipped_rows == 3
         assert result.stats.processed_count == 2
-
-    def test_stats_property_compat(self, leading_blank_xlsx: Path) -> None:
-        # Backwards-Compat-Properties (ImportResult.skipped_rows / .warnings).
-        result = ExcelImporter().import_file(leading_blank_xlsx)
-        list(result.rows)
-        assert result.skipped_rows == 3
-        assert isinstance(result.warnings, tuple)
 
 
 class TestRepoStreamingRowCount:

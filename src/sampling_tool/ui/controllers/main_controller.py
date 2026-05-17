@@ -380,11 +380,12 @@ class MainController:
             self.handle_dataset_selected(stored.id)
         self._refresh_views()
 
+        stats = result.stats
         warning_text = ""
-        if result.skipped_rows:
-            warning_text += f"{result.skipped_rows} Leerzeile(n) übersprungen.\n"
-        if result.warnings:
-            warning_text += "\n".join(result.warnings)
+        if stats.skipped_rows:
+            warning_text += f"{stats.skipped_rows} Leerzeile(n) übersprungen.\n"
+        if stats.warnings:
+            warning_text += "\n".join(stats.warnings)
         if warning_text:
             QMessageBox.information(self.window, "Import abgeschlossen", warning_text.strip())
 

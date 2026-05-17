@@ -221,8 +221,8 @@ class DatasetRepo:
     def get_by_id(self, dataset_id: int) -> Dataset | None:
         """Lädt Dataset-Metadaten (ohne Rows).
 
-        Rows separat via `get_row`, `get_rows_in_range`, `iter_rows` oder
-        `get_all_rows` ziehen.
+        Rows separat via `get_row`, `get_rows_in_range`, `iter_rows`,
+        `iter_row_ids` oder `get_rows_by_ids` ziehen.
         """
         ds_row = self.conn.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,)).fetchone()
         if ds_row is None:
@@ -337,13 +337,25 @@ class DatasetRepo:
         return [by_id[rid] for rid in row_ids if rid in by_id]
 
     def get_all_rows(self, dataset_id: int) -> tuple[DatasetRow, ...]:
-        """Lädt alle Rows als Tuple.
+        """Lädt alle Rows als Tuple. **In Production grundsätzlich vermeiden.**
 
-        **Übergangs-Helper** für Sprint-11.1-Migration: Stellen, die
-        früher `dataset.rows` lasen, rufen das hier auf. Wird in
-        Sprint 11.3/11.4 durch echtes Streaming (`iter_rows`) ersetzt,
-        wo der Konsument das tatsächlich braucht. NICHT für 1M-Rows
-        gedacht – nutzt linear RAM.
+        Materialisiert das gesamte Dataset im RAM – bei 1M-Zeilen-Datasets
+        sprengt das den Footprint (siehe PERFORMANCE.md). Production-Code
+        nutzt stattdessen `iter_rows`, `get_rows_in_range` oder
+        `get_rows_by_ids`.
+
+        Legitime Use-Cases (Sprint 11.5 verifiziert):
+        - Tests / Convenience-Asserts.
+        - SamplingDialog im Advanced-Mode: distinct-Werte-Sammlung für die
+          Cluster-/Stratum-ComboBoxen. Eine streamende Alternative über
+          SQLite `json_extract` wurde geprüft, scheitert aber am
+          tagged-Encoder für datetime-Spalten (sie wären sonst nur als
+          JSON-String pro Row aufrufbar). Bei realistischen Audit-Datasets
+          (<200k Zeilen, wenige Cluster-Werte) ist der Footprint hier
+          tolerabel; bei sehr großen Datasets bleibt der Advanced-Modus
+          der einzige RAM-relevante Pfad – wird ggf. in einem Folge-Sprint
+          via dedizierter `distinct_values_in_column`-Implementierung
+          gelöst.
         """
         return tuple(self.iter_rows(dataset_id))
 

@@ -45,12 +45,64 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 11.2   | Streaming Teil 2: UI-LRU-Cache für TableModel       | done        |
 | 11.3   | Streaming Teil 3: Excel-Import streamt direkt in DB | done        |
 | 11.4   | Streaming Teil 4: Sampler/Exporter auf iter_rows    | done        |
+| 11.5   | Streaming Cleanup + Konsolidierung                  | done        |
 
-**Sprint 11.4 abgeschlossen** (Sample-Export liest nur noch Sample-Rows statt
-volles Dataset; Sampler-Pfad nutzt `iter_rows`; Dialog im Simple-Mode ohne
-Row-Materialisierung).
+**Sprint 11.x abgeschlossen** – Streaming-Architektur komplett (siehe
+nächster Abschnitt). Dataset lebt in SQLite, Code-Pfade arbeiten mit
+Generatoren / Range-Queries / Bulk-ID-Lookups. RAM-Footprint ist nicht
+mehr proportional zur Dataset-Größe.
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
+
+## Streaming-Architektur (Sprint 11.x)
+
+Zentraler Designgrundsatz nach Sprint 11.x: **das Tool hält Dataset-Rows
+nicht im RAM**, sondern in SQLite. Alle Code-Pfade arbeiten mit
+Generatoren / Range-Queries / Bulk-ID-Lookups, nicht mit
+voll-materialisierten Listen.
+
+**Was lebt wo:**
+- `Dataset` (frozen Dataclass): Metadaten + `row_count`, KEINE rows.
+- Rows: in `dataset_rows`-Tabelle, abgerufen via `DatasetRepo`.
+- `DatasetTableModel` (UI): FIFO-Cache mit 1000 Rows, Bulk-Load 250
+  pro Cache-Miss (Window davor + dahinter). RAM konstant ~3 MB.
+- `ExcelImporter`: liefert `ImportResult.rows` als einmal-konsumierbaren
+  `Iterator[DatasetRow]`; `DatasetRepo.create` zieht ihn einmal durch
+  und korrigiert `row_count` auf die tatsächliche Anzahl.
+- `BaseSampler.sample(rows, population_size)`: Single-Pass-Filter über
+  Iterator, `population_size` dokumentiert die Universumsgröße (auch
+  bei Sub-Sampling).
+- `ExcelExporter.export_sample(sample, dataset, dataset_repo, ...)`:
+  holt nur die Sample-Rows on-demand via `get_rows_by_ids`.
+
+**Repo-API für Row-Zugriffe:**
+- `create(dataset, rows: Iterable[DatasetRow])` – Generator akzeptiert,
+  `row_count` wird nach echter Persistierung korrigiert.
+- `get_by_id(dataset_id)` – nur Metadaten, keine Rows.
+- `get_row(dataset_id, row_id)` – einzelne Row.
+- `get_rows_in_range(dataset_id, start, end)` – half-open Range, für
+  UI-Pagination / TableModel-Cache.
+- `iter_rows(dataset_id)` – Streaming-Generator (sortiert).
+- `iter_row_ids(dataset_id)` – Light-Streaming nur über `row_index`,
+  ohne JSON-Parsing.
+- `get_rows_by_ids(dataset_id, row_ids)` – Bulk-Lookup, behält
+  Eingabe-Reihenfolge, ignoriert stale IDs, chunkt bei >900 Parametern
+  (SQLite-Bind-Limit 999).
+- `get_all_rows(dataset_id)` – Tests-Convenience. **In Production
+  nur** im SamplingDialog-Advanced-Mode für distinct-Werte-Sammlung
+  (siehe Docstring im Repo). Streaming-Alternative via SQLite
+  `json_extract` wurde geprüft, am tagged-Encoder für datetime-Spalten
+  gescheitert; tolerabler RAM-Footprint bei realistischen Audit-Datasets.
+
+**Was nicht streamt (legitime Ausnahmen):**
+- Advanced-SamplingDialog: distinct-Werte für Cluster/Stratum-ComboBoxen.
+  Controller lädt `get_all_rows` nur wenn `advanced_mode=True`.
+- ImportResult.dataset (Metadaten) – klein, keine Rows.
+
+**Reproduzierbarkeit bleibt gewahrt**: `row_id` ist die stabile
+Sortier-Ordnung, `iter_rows` sortiert per `ORDER BY row_index`,
+Sampler nutzen row_id-basierte Indices. Generator-Konsum ist
+deterministisch.
 
 ## Architektur
 
@@ -67,23 +119,17 @@ ui ──▶ controllers ──▶ core ◀── io
 - **`core/`** – reine Domain-Logik. Keine I/O, kein Qt, keine SQL. Alles deterministisch
   und unit-test-bar ohne Mocks.
   - `models.py` – frozen Dataclasses (Engagement, Dataset, SampleConfig, …).
-    **Sprint 11.1**: `Dataset` enthält keine `rows` mehr, sondern nur Metadaten
-    (`columns`, `row_count: int`, `source_file`, Engagement-FK). Rows leben in
-    `dataset_rows` und werden bei Bedarf via `DatasetRepo.get_row` /
-    `iter_rows` / `get_all_rows` (Test-Convenience) / `get_rows_in_range` /
-    `get_rows_by_ids` / `iter_row_ids` geladen. `Sampler.sample(rows,
-    population_size=None)` nimmt Rows direkt entgegen statt Dataset.
+    `Dataset` ist seit Sprint 11.1 nur Metadaten (`columns`, `row_count`,
+    `source_file`, Engagement-FK) – Rows leben im Repo (siehe Block
+    "Streaming-Architektur" oben).
   - `rng.py` – `make_rng(seed)` + `fisher_yates_shuffle` über `numpy.random.default_rng`
   - `sampling.py` – `BaseSampler` + Simple/Cluster/Stratified + `create_sampler`-Factory.
-    **Sprint 11.4 – Streaming**: `BaseSampler.sample(rows, population_size=None)`
-    akzeptiert einen einmalig-konsumierbaren Iterator. `_collect_pool` macht
-    Single-Pass-Filter (zählt parallel die durchgereichten Rows für den
-    Pre-Filter-Total, damit `population_size`-Default die Universumsgröße
-    ist – nicht die Filter-Pool-Größe). Spart gegenüber 11.1 das doppelte
-    Materialize (vorher: `list(rows)` + Filter-Listcomp). Production-Caller
-    setzen `population_size=dataset.row_count` explizit, damit auch beim
-    Sub-Sampling (from_sample_only) die Original-Population dokumentiert
-    bleibt.
+    `sample(rows, population_size=None)` akzeptiert einen einmalig-
+    konsumierbaren Iterator, `_collect_pool` ist Single-Pass-Filter
+    (zählt parallel den Pre-Filter-Total für den `population_size`-
+    Default). Production-Caller setzen `population_size=dataset.row_count`
+    explizit, damit auch bei Sub-Sampling die Original-Population
+    dokumentiert bleibt. Details siehe Streaming-Architektur-Block.
 - **`io/`** – Excel-/CSV-Import, Excel-Export, PDF-Report.
   - `importer.py` – `ExcelImporter` nutzt seit Sprint 10.2 die Rust-
     basierte `python-calamine`-Library für Excel-Reads (10–30× schneller
@@ -97,30 +143,23 @@ ui ──▶ controllers ──▶ core ◀── io
     leere Zellen kommen als `""` (→ `None`), Excel-Zahlen kommen
     immer als `float` (ganzzahlige → `int`), Datums-Zellen ohne
     Uhrzeit kommen als `date` (→ `datetime`).
-    **Sprint 11.3 – Streaming-Import**: `ImportResult.rows` ist ein
-    **einmalig konsumierbarer `Iterator[DatasetRow]`** (nicht mehr
-    `tuple`). `ImportResult.stats` (`ImportStats`-Container) füllt
-    sich während der Iteration mit `skipped_rows`, `warnings` und
-    `processed_count` – Werte sind erst nach voller Konsumierung
-    aussagekräftig. Typischer Pfad: `dataset_repo.create(dataset,
-    result.rows)` zieht den Generator einmal durch und korrigiert
-    danach `row_count` auf die tatsächlich persistierte Anzahl
-    (wichtig, weil der Importer für `dataset.row_count` initial nur
-    eine Schätzung aus `sheet.total_height` minus Header/Leading-
-    Blanks liefert). `result.skipped_rows` und `result.warnings`
-    bleiben als Compat-Properties auf `result.stats` verfügbar.
+    **Streaming-Import**: `ImportResult.rows` ist ein einmalig
+    konsumierbarer `Iterator[DatasetRow]`, `ImportResult.stats`
+    (`ImportStats`-Container) füllt sich während der Iteration
+    (`skipped_rows`, `warnings`, `processed_count` – erst nach voller
+    Konsumierung aussagekräftig). Typischer Pfad: `dataset_repo.create(
+    dataset, result.rows)` zieht den Generator einmal durch und
+    korrigiert `row_count` auf die tatsächlich persistierte Anzahl
+    (Initial-Estimate aus `sheet.total_height` ist oft zu hoch).
+    Sprint 11.5 – die Compat-Properties `result.skipped_rows` /
+    `result.warnings` sind weg, Caller lesen `result.stats.*` direkt.
   - `exporter.py` – `ExcelExporter`. Atomare Writes (`.tmp` → `os.replace`),
     Sheet "Sample" (BDO-rote Header) + Sheet "Metadaten" (Engagement, Seed,
     Methode). Dateiname-Schema:
     `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
-    **Sprint 11.4 – Streaming**: `export_sample(sample, dataset, dataset_repo,
-    ...)` nimmt jetzt das `DatasetRepo` statt einer voll-materialisierten
-    Row-Liste. Intern wird `dataset_repo.get_rows_by_ids(dataset.id,
-    sample.selected_row_ids)` aufgerufen – bei 1M-Dataset und 1k-Sample
-    werden also nur 1k Rows aus der DB geholt statt 1M. Davor lief die
-    Pipeline `get_all_rows` → 1M Rows materialisieren → in Python auf
-    1k filtern, was das gesamte Streaming der vorherigen Sprints für
-    den Export wieder zunichte gemacht hat.
+    `export_sample(sample, dataset, dataset_repo, ...)` nimmt das
+    `DatasetRepo` und holt nur `sample.selected_row_ids` via
+    `get_rows_by_ids` – siehe Streaming-Architektur-Block.
   - `pdf_report.py` – `AuditTrailPDF` via `reportlab.platypus`.
     A4 Portrait, Engagement-Block oben, Event-Tabelle mit
     Korrektur-Highlight, Footer mit Seitenzahl + Zeitstempel. Optionales
@@ -503,23 +542,9 @@ Drei Kerndogmen, die sich durch die ganze DB-Schicht ziehen:
   `DatasetRepo.create(dataset, rows)`. Atomar – schlägt das fehl, bleibt
   nichts zurück. `dataset.row_count` wird vom Repo auf `len(rows)` gesetzt.
   Danach `AuditLogger.log_import(dataset)`.
-- Sprint-11.1-Row-Zugriffe: `DatasetRepo.get_row(dataset_id, row_id)`,
-  `get_rows_in_range(dataset_id, start, end)` (half-open),
-  `iter_rows(dataset_id)` (Streaming-Generator), `get_all_rows(dataset_id)`
-  (Übergangs-Helper für Stellen, die früher `dataset.rows` lasen – bis 11.3
-  durch echtes Streaming ersetzt).
-- **Sprint-11.4-Row-Zugriffe**:
-  - `iter_row_ids(dataset_id)` – Streaming-Iterator nur über `row_index`,
-    ohne JSON-Parsing. Light-weight Variante von `iter_rows` für Code,
-    der nur die Pool-Größe/IDs braucht.
-  - `get_rows_by_ids(dataset_id, row_ids)` – holt die genannten Rows
-    in einem (oder mehreren) Query(s). Behält Eingabe-Reihenfolge bei,
-    stale IDs werden stillschweigend übersprungen. Chunkt bei
-    `_SQLITE_VAR_LIMIT = 900` Parametern auf mehrere Statements (SQLite-
-    Default-Limit ist 999). Eintrittspunkt für `ExcelExporter` und für
-    Sub-Sampling (`from_sample_only`).
-  - `get_all_rows` ist nach 11.4 in der Production-Code-Base nicht mehr
-    aufgerufen (Test-Convenience + Advanced-Mode-SamplingDialog noch).
+- Row-Zugriffe siehe Streaming-Architektur-Block oben (`get_row`,
+  `get_rows_in_range`, `iter_rows`, `iter_row_ids`, `get_rows_by_ids`,
+  `get_all_rows` als Ausnahme).
 - UI-Controller (Sprint 4+) bekommt `Database`-Instanz, baut bei Bedarf eigene
   Repo-Instanzen pro Operation. Connection-Lebensdauer = App-Sitzung.
 - `UndoManager(db, engagement_id)` ist persistiert (überlebt Connection-Wechsel).
