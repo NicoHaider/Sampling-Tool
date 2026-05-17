@@ -99,15 +99,16 @@ class DatasetRow:
 class Dataset:
     """Eine importierte Datenmenge innerhalb eines Engagements.
 
-    **Sprint 11.1 Architektur-Cut:** Das Dataset hält KEINE rows mehr –
-    nur Metadaten (Spalten, row_count, source_file, Engagement-FK).
-    Rows leben in `dataset_rows` und werden bei Bedarf via
-    `DatasetRepo.get_row` / `iter_rows` / `get_all_rows` geladen.
+    **Streaming-Architektur (Sprint 11.x):** Das Dataset hält KEINE rows
+    mehr – nur Metadaten (Spalten, row_count, source_file, Engagement-FK).
+    Rows leben in `dataset_rows` und werden bei Bedarf via `DatasetRepo`
+    geladen (`get_row`, `iter_rows`, `get_rows_in_range`,
+    `get_rows_by_ids`, `iter_row_ids`). `get_all_rows` ist nur für
+    Tests / SamplingDialog-Advanced-Mode legitim, sonst Streaming.
 
     Hintergrund: bei realistischen Audit-Dateien (1M+ Buchungssätze)
     sprengt das Laden aller Rows als Python-Dicts den RAM (siehe
-    PERFORMANCE.md Sprint 10.1). Die Streaming-Architektur folgt in
-    Sprint 11.3/11.4 – 11.1 cuttet nur die API.
+    PERFORMANCE.md).
     """
 
     name: str

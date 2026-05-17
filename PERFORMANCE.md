@@ -94,6 +94,46 @@ Bei kleineren Größen werden Targets linear skaliert (z. B. 30 s/M → 3 s/100k
 | 100,000 | AuditTrail-PDF | 13.27 s | 3.00 s | +10.27 s |
 | 1,000,000 | DB-Speicherung | 37.50 s | 30.00 s | +7.50 s |
 
+## Sprint-11.x-Update (Streaming-Architektur)
+
+Die fünf Sub-Sprints 11.1-11.5 haben das In-Memory-Halten von
+Dataset-Rows komplett abgeschafft. Der RAM-Footprint ist nicht mehr
+proportional zur Dataset-Größe, sondern konstant (UI-Cache) bzw.
+linear-in-Sample-Größe (Export). Nur der SamplingDialog im Advanced-
+Mode lädt noch die ganze Tabelle (distinct-Werte-Sammlung).
+
+**Erwartete RAM-Reduktionen bei 1M-Zeilen-Dataset** (Mess-Lauf via
+`scripts/perf_probe.py --sizes 1000000` nach Final-Merge manuell):
+
+| Phase                | Vor 11.x (Sprint 10.x) | Nach 11.x        | Mechanismus                       |
+|----------------------|-----------------------:|-----------------:|-----------------------------------|
+| Excel-Import (Peak)  | ~1.4 GB                | _<TODO: messen>_ | Streaming-Generator (kein Materialisieren) |
+| Tabelle-Anzeige (UI) | proportional zu n      | ~3 MB konstant   | LRU-Cache 1000 Rows               |
+| Sample-Sampling      | proportional zu n      | proportional zu n* | Generator über `iter_rows`        |
+| Sample-Export        | proportional zu n      | linear-in-Sample | `get_rows_by_ids` statt all       |
+| AuditTrail-PDF       | unverändert            | unverändert      | (Sprint 10.4 fix)                 |
+
+*Sampling bleibt O(n) im Pool wegen Filter+Sort vor Ziehung. Single-
+Pass-Filter (11.4) spart das doppelte Materialisieren.
+
+**Architektur-Cuts pro Sub-Sprint:**
+
+| Sprint | Was sich änderte                                          |
+|-------:|----------------------------------------------------------|
+| 11.1   | `Dataset` ohne Rows, Repo-Row-Zugriffsmethoden            |
+| 11.2   | UI-TableModel mit FIFO-Cache + Bulk-Window                |
+| 11.3   | Excel-/CSV-Import streamt via Generator in DB             |
+| 11.4   | Sampler single-pass; Exporter `get_rows_by_ids`           |
+| 11.5   | Cleanup: ImportResult-Compat-Properties weg, Doku/Konsolidierung |
+
+**Mess-Lauf**: Wegen Setup-Aufwand (xlsx-Generierung 7+ min bei 1M)
+manuell vor dem Final-Merge nach main durchführen und die Zahlen in
+die Tabelle oben eintragen. Vorlage:
+
+```bash
+python scripts/perf_probe.py --sizes 1000000 --audit-events 5000
+```
+
 ## Sprint-10.4-Update (PDF-Chunking + Cell-Optimierung)
 
 Direktmessung der `AuditTrailPDF.render`-Phase mit synthetischen
@@ -191,13 +231,26 @@ wäre ein eigener Refactor.
   Events × 4 Text-Spalten), Korrektur-Highlights pro Chunk statt
   global.
 
+### Behoben in Sprint 11.x (Streaming-Architektur)
+
+- **RAM-Peak Import 1.4 GB bei 1M** durch Streaming-Generator in
+  11.3 deutlich reduziert (Mess-Lauf ausstehend, siehe oben).
+- **Tabelle-Anzeige RAM proportional zur Dataset-Größe** durch
+  LRU-Cache (11.2) auf ~3 MB konstant gesenkt.
+- **Sample-Export materialisiert volles Dataset** durch
+  `get_rows_by_ids` (11.4) auf linear-in-Sample-Größe gesenkt.
+
 ### Offen für spätere Sprints
 
-1. **RAM-Peak Import 1.4 GB bei 1M.** Calamine selbst ist sparsam;
-   der Peak entsteht beim Materialisieren in `DatasetRow`-Dicts.
-   Spalten-orientierte Dataset-Struktur (Arrow/Numpy) wäre die
-   Lösung, ist aber ein Architektur-Refactor mit Ripple-Effekt auf
-   Sampling/Export. Nicht jetzt.
+1. **SamplingDialog im Advanced-Mode** lädt weiter volles Dataset für
+   distinct-Werte. Streaming-Alternative via SQLite `json_extract`
+   wurde geprüft, scheitert am tagged-Encoder für datetime-Spalten.
+   Bei realistischen Audit-Datasets (<200k Zeilen, wenige Cluster-
+   Werte) tolerabel, bei sehr großen ggf. via dedizierter
+   `distinct_values_in_column`-Implementierung.
+2. **Spalten-orientierte Dataset-Struktur** (Arrow/Numpy) wäre
+   weitere RAM-Reduktion, aber Architektur-Refactor mit
+   Ripple-Effekt auf Sampling/Export. Nicht jetzt.
 
 ### Bekannte Schwächen der Heuristik
 

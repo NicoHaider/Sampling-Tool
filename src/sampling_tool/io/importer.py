@@ -80,24 +80,16 @@ class ImportResult:
     """Rückgabe-Wert von `ExcelImporter.import_file`.
 
     Sprint-11.3: `rows` ist ein einmalig konsumierbarer Iterator.
-    `stats` füllt sich während der Iteration – wer `skipped_rows` /
-    `warnings` lesen will, MUSS vorher den Iterator vollständig
-    verbraucht haben (typisch via `DatasetRepo.create`).
+    Sprint-11.5: keine Compat-Properties mehr – Caller lesen
+    `result.stats.skipped_rows` und `result.stats.warnings` direkt.
+    `stats` füllt sich während der Iteration – Werte sind erst nach
+    vollem Generator-Verbrauch (typisch via `DatasetRepo.create`)
+    endgültig.
     """
 
     dataset: Dataset
     rows: Iterator[DatasetRow]
     stats: ImportStats
-
-    @property
-    def skipped_rows(self) -> int:
-        """Anzahl übersprungener Leerzeilen (nach voller Iteration)."""
-        return self.stats.skipped_rows
-
-    @property
-    def warnings(self) -> tuple[str, ...]:
-        """Warnungen aus der Header-Detection + Coercion (nach voller Iteration)."""
-        return tuple(self.stats.warnings)
 
 
 # ---------------------------------------------------------------------------
