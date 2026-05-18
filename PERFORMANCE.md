@@ -9,8 +9,7 @@ psutil RSS-Cross-Check: aus
 
 | Phase | Target |
 |-------|-------:|
-| Import | < 60 s |
-| DB-Speicherung | < 30 s |
+| Import + DB-Speicherung (Pipeline-Total) | < 90 s |
 | Tabelle-Anzeige | < 5 s |
 | Sampling Simple | < 10 s |
 | Sampling Cluster | < 15 s |
@@ -24,6 +23,20 @@ psutil RSS-Cross-Check: aus
 | AuditTrail-PDF | < 30 s |
 
 Bei kleineren Größen werden Targets linear skaliert (z. B. 30 s/M → 3 s/100k); reine Heuristik.
+
+**Sprint 12.1 / P-007 – Phasen-Verlagerung:** seit Sprint 11.3 (Streaming-Import)
+gehört die Cell-Coercion + JSON-Encode-Arbeit zum DB-Insert-Generator, nicht mehr
+zur Import-Phase. Die historischen Einzeltargets (`Import < 60 s`,
+`DB-Speicherung < 30 s`) wurden deshalb zu einem Pipeline-Total `< 90 s`
+konsolidiert. Die Einzelphasen-Zeiten bleiben in den Mess-Tabellen sichtbar,
+werden aber NICHT mehr in der Verfehlungsübersicht bewertet.
+
+Historische Pre-Streaming-Targets (nur Sprint-10.x-Vergleichbarkeit):
+
+| Phase | Legacy-Target |
+|-------|--------------:|
+| Import | < 60 s |
+| DB-Speicherung | < 30 s |
 
 ## Messung 1,000,000 Zeilen
 

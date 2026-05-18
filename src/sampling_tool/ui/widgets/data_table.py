@@ -300,6 +300,12 @@ class DataTableView(QTableView):
         h_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         h_header.setStretchLastSection(False)
         h_header.setHighlightSections(False)
+        # Qt6 sampelt für resizeColumnsToContents default ALLE Rows (rowCount=-1).
+        # Bei 1M Zeilen × 15 Spalten = 15M data()-Calls, was bei unserem
+        # FIFO-Cache (1000 Rows) zu ~56k SQLite-Queries führt → 34 s Freeze
+        # (Pass 3 v2 P-001). 100 Rows reichen für eine sinnvolle Breiten-
+        # Heuristik, die teure Voll-Iteration entfällt.
+        h_header.setResizeContentsPrecision(100)
         v_header = self.verticalHeader()
         assert v_header is not None
         v_header.setDefaultSectionSize(22)
@@ -374,10 +380,11 @@ class DataTableView(QTableView):
     def _autosize_columns(self) -> None:
         """Heuristik: schmale Spalten an Inhalt, breite an Max-Wert.
 
-        Sprint 11.2: `resizeColumnsToContents` triggert `data()` für alle
-        sichtbaren Zellen – das reicht aus, um den ersten Bulk-Load
-        anzustoßen. Spalten ohne Inhalt im Viewport bekommen die
-        `_MIN_COLUMN_WIDTH`.
+        Sprint 12.1: `setResizeContentsPrecision(100)` im Konstruktor begrenzt
+        die Qt-Sample-Anzahl pro Spalte – sonst würde `resizeColumnsToContents`
+        bei 1M-Datasets alle Rows durchgehen und 56k SQLite-Queries
+        produzieren (Pass 3 v2 P-001). Spalten ohne Inhalt im Viewport
+        bekommen die `_MIN_COLUMN_WIDTH`.
         """
         self.resizeColumnsToContents()
         header = self.horizontalHeader()

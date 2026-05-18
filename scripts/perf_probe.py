@@ -54,7 +54,7 @@ from sampling_tool.core.models import (  # noqa: E402
     SamplingMethod,
     StratifyMode,
 )
-from sampling_tool.core.sampling import create_sampler  # noqa: E402
+from sampling_tool.core.sampling import SimpleSampler, create_sampler  # noqa: E402
 from sampling_tool.io import (  # noqa: E402
     AuditTrailPDF,
     ExcelExporter,
@@ -79,10 +79,19 @@ except ImportError:  # pragma: no cover - psutil ist optional
     _HAS_PSUTIL = False
 
 
-# Soft-Targets bei 1M Zeilen – Sprint-10.2-Kriterien.
+# Sprint 12.1 / P-007: Pipeline-Total-Label für Import + DB-Speicherung.
+# Seit Sprint 11.3 (Streaming-Import) wandert die Cell-Coercion + JSON-Encode-
+# Arbeit aus der Import-Phase in den DB-Insert-Generator. Die historischen
+# Einzeltargets (Import < 60 s, DB < 30 s) sind dadurch strukturell verschoben:
+# Import misst nur noch den Header-Pass, DB-Speicherung trägt die Coerce-Last.
+# Die Bewertung erfolgt deshalb am Pipeline-Total – die Einzelphasen bleiben
+# nur in `LEGACY_PRE_STREAMING_TARGETS_1M_SECONDS` für Sprint-10.x-Vergleich.
+PIPELINE_TOTAL_LABEL: str = "Import + DB-Speicherung (Pipeline-Total)"
+PIPELINE_TOTAL_PHASES: tuple[str, ...] = ("Import", "DB-Speicherung")
+
+# Aktuelle Soft-Targets bei 1M Zeilen (Sprint 11.3+).
 SOFT_TARGETS_1M_SECONDS: dict[str, float] = {
-    "Import": 60.0,
-    "DB-Speicherung": 30.0,
+    PIPELINE_TOTAL_LABEL: 90.0,
     "Tabelle-Anzeige": 5.0,
     "Sampling Simple": 10.0,
     "Sampling Cluster": 15.0,
@@ -94,6 +103,13 @@ SOFT_TARGETS_1M_SECONDS: dict[str, float] = {
     "Excel-Report (Multi-Sheet)": 60.0,
     "HTML-Report": 30.0,
     "AuditTrail-PDF": 30.0,
+}
+
+# Pre-Streaming-Einzeltargets – nur für historische Sprint-10.x-Vergleichbarkeit.
+# Werden NICHT in `detect_violations` ausgewertet.
+LEGACY_PRE_STREAMING_TARGETS_1M_SECONDS: dict[str, float] = {
+    "Import": 60.0,
+    "DB-Speicherung": 30.0,
 }
 
 # 15 Spalten gemischt – orientiert sich an typischen Buchungssatz-Daten.
@@ -409,11 +425,22 @@ def run_probe_for_size(
         # frischer Stream – derselbe Pfad, den auch der MainController
         # nutzt. population_size dokumentiert die Universumsgröße.
         sampling_repo = DatasetRepo(db.connect())
+        sampler = create_sampler(cfg)
+        # Sprint 12.1 / P-002: SimpleSampler ohne Filter konsumiert nur
+        # row_ids (kein DatasetRow-Materialize). Spiegelt den Controller-
+        # Pfad (`handle_new_sampling`) – sonst würde der Probe-Lauf den
+        # RAM-Fix nicht messen.
         with measured(label) as m:
-            sampled = create_sampler(cfg).sample(
-                sampling_repo.iter_rows(dataset.id),
-                population_size=dataset.row_count,
-            )
+            if isinstance(sampler, SimpleSampler) and cfg.filter_field is None:
+                sampled = sampler.sample_ids(
+                    sampling_repo.iter_row_ids(dataset.id),
+                    population_size=dataset.row_count,
+                )
+            else:
+                sampled = sampler.sample(
+                    sampling_repo.iter_rows(dataset.id),
+                    population_size=dataset.row_count,
+                )
         sid = sample_repo.create_from_result(sampled, dataset.id, "perf")
         sample_ids.append(sid)
         if cfg.method == SamplingMethod.SIMPLE:
@@ -536,17 +563,35 @@ def detect_violations(results: list[SizeResult]) -> list[tuple[int, str, float, 
     Soft-Targets sind für 1M Zeilen definiert. Bei kleineren Größen
     skalieren wir linear (z. B. 30s/M = 3s/100k) – simple Heuristik,
     aber gibt einen ersten Hinweis auf Skalierungsprobleme.
+
+    Sprint 12.1 / P-007: Import + DB-Speicherung werden zu einem
+    Pipeline-Total aggregiert (siehe `PIPELINE_TOTAL_LABEL`), weil
+    Sprint-11.3-Streaming die Cell-Coercion zwischen den Phasen
+    verschoben hat. Einzelphasen-Verfehlungen für Import/DB werden
+    NICHT mehr gemeldet – nur der Total.
     """
     violations: list[tuple[int, str, float, float]] = []
+    pipeline_skip = set(PIPELINE_TOTAL_PHASES)
     for r in results:
         scale = r.size / 1_000_000
+        by_label = {m.label: m.elapsed_s for m in r.measurements}
         for m in r.measurements:
+            if m.label in pipeline_skip:
+                continue  # Einzelphase: nicht eigenständig bewertet (P-007)
             target = SOFT_TARGETS_1M_SECONDS.get(m.label)
             if target is None:
                 continue
             scaled_target = target * max(scale, 0.1)  # Mindest-Toleranz für Kleinst-Datasets
             if m.elapsed_s > scaled_target:
                 violations.append((r.size, m.label, m.elapsed_s, scaled_target))
+
+        # Pipeline-Total: nur prüfen, wenn beide Einzelphasen gemessen wurden.
+        pipeline_target = SOFT_TARGETS_1M_SECONDS.get(PIPELINE_TOTAL_LABEL)
+        if pipeline_target is not None and all(p in by_label for p in PIPELINE_TOTAL_PHASES):
+            pipeline_elapsed = sum(by_label[p] for p in PIPELINE_TOTAL_PHASES)
+            scaled_pipeline = pipeline_target * max(scale, 0.1)
+            if pipeline_elapsed > scaled_pipeline:
+                violations.append((r.size, PIPELINE_TOTAL_LABEL, pipeline_elapsed, scaled_pipeline))
     return violations
 
 
@@ -589,6 +634,23 @@ def write_report(path: Path, results: list[SizeResult]) -> None:
         "Bei kleineren Größen werden Targets linear skaliert "
         "(z. B. 30 s/M → 3 s/100k); reine Heuristik."
     )
+    lines.append("")
+    lines.append(
+        "**Sprint 12.1 / P-007 – Phasen-Verlagerung:** seit Sprint 11.3 (Streaming-"
+        "Import) gehört die Cell-Coercion + JSON-Encode-Arbeit zum DB-Insert-"
+        "Generator, nicht mehr zur Import-Phase. Die historischen Einzeltargets "
+        "(`Import < 60 s`, `DB-Speicherung < 30 s`) wurden deshalb zu einem "
+        "Pipeline-Total `< 90 s` konsolidiert. Die Einzelphasen-Zeiten bleiben "
+        "in den Mess-Tabellen sichtbar, werden aber NICHT mehr in der "
+        "Verfehlungsübersicht bewertet."
+    )
+    lines.append("")
+    lines.append("Historische Pre-Streaming-Targets (nur Sprint-10.x-Vergleichbarkeit):")
+    lines.append("")
+    lines.append("| Phase | Legacy-Target |")
+    lines.append("|-------|--------------:|")
+    for label, target in LEGACY_PRE_STREAMING_TARGETS_1M_SECONDS.items():
+        lines.append(f"| {label} | < {target:.0f} s |")
     lines.append("")
 
     for r in results:

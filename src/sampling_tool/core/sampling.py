@@ -151,6 +151,52 @@ class SimpleSampler(BaseSampler):
         shuffled = fisher_yates_shuffle(list(pool), rng)
         return [row.row_id for row in shuffled[:n]]
 
+    def sample_ids(
+        self,
+        row_ids: Iterable[int],
+        population_size: int,
+    ) -> SampleResult:
+        """Spezialpfad ohne DatasetRow-Materialization (Sprint 12.1 / P-002).
+
+        Bit-genau identisch zu `sample(rows)` bei ungefiltertem Pool: der
+        Fisher-Yates-Shuffle verbraucht für eine Pool-Länge N immer dieselbe
+        RNG-Index-Sequenz, unabhängig vom Listen-Inhalt. Da SimpleSampler
+        in `_select` nur `row.row_id` aus den shuffled DatasetRows liest,
+        liefert ein Shuffle direkt über die row_ids dasselbe Ergebnis.
+
+        Voraussetzung: `config.filter_field is None`. Mit Filter wirft
+        die Methode `SamplingError`, weil ein Filter auf das Value-Dict
+        zugreifen muss – dann ist der reguläre `sample(rows)`-Pfad nötig.
+
+        RAM-Wirkung bei 1M-Datasets: 1.07 GB (DatasetRow-Pool) → ~8 MB
+        (int-Pool). Reproducibility unverändert – Tests in
+        `test_sampling.py::TestSimpleSamplerIdsPath` weisen Bit-Gleichheit
+        nach.
+        """
+        if self.config.filter_field is not None:
+            raise SamplingError(
+                "sample_ids ist nur für ungefiltertes Sampling – mit Filter "
+                "bitte sample(rows) verwenden, da die Filter-Bedingung auf "
+                "die Row-Values zugreift."
+            )
+        pool_ids = sorted(row_ids)
+        if not pool_ids:
+            raise SamplingError("Nach Anwendung des Filters sind keine Datensätze mehr verfügbar.")
+
+        n = self.config.size
+        if n > len(pool_ids):
+            raise SamplingError(
+                f"Stichprobengröße ({n}) ist größer als die verfügbare Population "
+                f"({len(pool_ids)}). Bitte Größe reduzieren oder Filter anpassen."
+            )
+        rng = make_rng(self.config.seed)
+        shuffled = fisher_yates_shuffle(list(pool_ids), rng)
+        return SampleResult(
+            config=self.config,
+            selected_row_ids=tuple(sorted(shuffled[:n])),
+            population_size=population_size,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Cluster Sampling

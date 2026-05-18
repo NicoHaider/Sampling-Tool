@@ -9,6 +9,8 @@ Pflichten dieser Suite:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 from sampling_tool.core import (
@@ -117,6 +119,85 @@ class TestSimpleSampler:
     def test_invalid_size_raises(self) -> None:
         with pytest.raises(SamplingError, match="Stichprobengröße muss"):
             SimpleSampler(SampleConfig(method=SamplingMethod.SIMPLE, size=0, seed=1))
+
+
+class TestSimpleSamplerIdsPath:
+    """Sprint 12.1 / P-002: Spezialpfad `sample_ids` ohne DatasetRow-Materialize."""
+
+    def test_reproducibility_matches_classic_path_unfiltered(
+        self, rows_100: tuple[DatasetRow, ...]
+    ) -> None:
+        """`sample_ids(ids)` muss bit-genau dasselbe Ergebnis wie `sample(rows)`
+        liefern – sonst wäre die ISAE-3402-Reproduzierbarkeit verletzt."""
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=30, seed=12345)
+        sampler = SimpleSampler(cfg)
+
+        classic = sampler.sample(rows_100).selected_row_ids
+        ids_path = sampler.sample_ids(
+            (r.row_id for r in rows_100), population_size=len(rows_100)
+        ).selected_row_ids
+
+        assert classic == ids_path
+
+    @pytest.mark.parametrize("seed", [0, 1, 42, 12345, 2**31 - 1])
+    def test_reproducibility_across_seeds(
+        self, rows_100: tuple[DatasetRow, ...], seed: int
+    ) -> None:
+        """Bit-Gleichheit über repräsentative Seed-Werte (Edge-Cases inkl. 0)."""
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=25, seed=seed)
+        sampler = SimpleSampler(cfg)
+
+        classic = sampler.sample(rows_100).selected_row_ids
+        ids_path = sampler.sample_ids(
+            [r.row_id for r in rows_100], population_size=len(rows_100)
+        ).selected_row_ids
+
+        assert classic == ids_path
+
+    def test_population_size_is_used_verbatim(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        """`population_size` wird 1:1 ins Result übernommen (Sub-Sampling-Dokumentation)."""
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=10, seed=7)
+        result = SimpleSampler(cfg).sample_ids(
+            [r.row_id for r in rows_100], population_size=999_999
+        )
+        assert result.population_size == 999_999
+
+    def test_filter_field_set_rejects_ids_path(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        """Mit Filter ist `sample_ids` nicht erlaubt – Caller muss `sample(rows)` nehmen."""
+        cfg = SampleConfig(
+            method=SamplingMethod.SIMPLE,
+            size=10,
+            seed=42,
+            filter_field="Country",
+            filter_value="AUT",
+        )
+        with pytest.raises(SamplingError, match="sample_ids ist nur für ungefiltertes"):
+            SimpleSampler(cfg).sample_ids([r.row_id for r in rows_100], population_size=100)
+
+    def test_oversample_raises(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=101, seed=42)
+        with pytest.raises(SamplingError, match="größer als die verfügbare Population"):
+            SimpleSampler(cfg).sample_ids(
+                [r.row_id for r in rows_100], population_size=len(rows_100)
+            )
+
+    def test_empty_pool_raises(self) -> None:
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=42)
+        with pytest.raises(SamplingError, match="keine Datensätze"):
+            SimpleSampler(cfg).sample_ids([], population_size=0)
+
+    def test_accepts_generator_input(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        """Iterator-Konsum (einmal-konsumierbar) ist die Production-Form
+        (`DatasetRepo.iter_row_ids` ist ein Generator)."""
+
+        def _gen() -> Iterator[int]:
+            for r in rows_100:
+                yield r.row_id
+
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=15, seed=99)
+        result = SimpleSampler(cfg).sample_ids(_gen(), population_size=len(rows_100))
+        assert result.actual_size == 15
+        assert len(set(result.selected_row_ids)) == 15
 
 
 # ---------------------------------------------------------------------------

@@ -39,7 +39,7 @@ from sampling_tool.core.models import (
     SampleResult,
     Snapshot,
 )
-from sampling_tool.core.sampling import SamplingError, create_sampler
+from sampling_tool.core.sampling import SamplingError, SimpleSampler, create_sampler
 from sampling_tool.core.undo import UndoManager
 from sampling_tool.io.briefpapier import (
     BriefpapierConfig,
@@ -546,10 +546,24 @@ class MainController:
 
         try:
             sampler = create_sampler(result.config)
-            effective_rows, population_size = self._build_sampling_iterator(
-                repo, self._dataset, result.from_sample_only
-            )
-            sample_result = sampler.sample(effective_rows, population_size=population_size)
+            # Sprint 12.1 / P-002: SimpleSampler ohne Filter + ohne Sub-Sampling
+            # bekommt nur die row_ids (kein DatasetRow-Materialize).
+            # Cluster/Stratified und gefilterte Samples brauchen die Row-Values
+            # und gehen weiterhin durch den klassischen Streaming-Pfad.
+            if (
+                isinstance(sampler, SimpleSampler)
+                and result.config.filter_field is None
+                and not result.from_sample_only
+            ):
+                sample_result = sampler.sample_ids(
+                    repo.iter_row_ids(self._dataset.id),
+                    population_size=self._dataset.row_count,
+                )
+            else:
+                effective_rows, population_size = self._build_sampling_iterator(
+                    repo, self._dataset, result.from_sample_only
+                )
+                sample_result = sampler.sample(effective_rows, population_size=population_size)
         except SamplingError as exc:
             self._error(f"Stichprobe konnte nicht gezogen werden: {exc}")
             return
