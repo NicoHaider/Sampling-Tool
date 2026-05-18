@@ -216,6 +216,20 @@ class TestDataTableView:
         view.set_dataset(ds, repo)
         assert view.table_model().rowCount() == 4
 
+    def test_horizontal_header_uses_resize_precision_100(self, qtbot: QtBot) -> None:
+        """Regression-Schutz für Sprint 12.1 / P-001 + Pass-4 T-003.
+
+        Ohne setResizeContentsPrecision(100) iteriert Qt6 in
+        resizeColumnsToContents über ALLE Rows pro Spalte → bei 1M-
+        Datasets ~56k SQLite-Queries → 34 s UI-Freeze. Mit Precision 100
+        sampelt Qt nur die ersten 100 Rows → <1 s.
+        """
+        view = DataTableView()
+        qtbot.addWidget(view)
+        header = view.horizontalHeader()
+        assert header is not None
+        assert header.resizeContentsPrecision() == 100
+
     def test_highlight_rows_marks_first(
         self, qtbot: QtBot, db_with_engagement: tuple[Database, int]
     ) -> None:

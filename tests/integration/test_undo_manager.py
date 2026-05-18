@@ -1,4 +1,10 @@
-"""Integration: UndoManager – persistierter Undo-/Redo-Stack."""
+"""Integration: UndoManager + UndoRepo – persistierter Undo-/Redo-Stack.
+
+Sprint 12.2 / F-002: `UndoManager` ist jetzt SQL-frei und delegiert an
+`UndoRepo`. Diese Tests verifizieren das End-to-End-Zusammenspiel
+(Manager → Repo → SQLite). DB-freie Manager-Logik-Tests siehe
+`tests/unit/test_undo.py`.
+"""
 
 from __future__ import annotations
 
@@ -7,14 +13,19 @@ from pathlib import Path
 from sampling_tool.core.models import Engagement, UndoStack
 from sampling_tool.core.undo import UndoManager
 from sampling_tool.persistence.database import Database
-from sampling_tool.persistence.repositories import EngagementRepo
+from sampling_tool.persistence.repositories import EngagementRepo, UndoRepo
+
+
+def _mgr(db: Database, engagement_id: int) -> UndoManager:
+    """Production-Konstruktion: UndoManager mit echter UndoRepo."""
+    return UndoManager(UndoRepo(db.connect(), engagement_id))
 
 
 class TestPushUndoRedo:
     def test_push_creates_undo_snapshot(
         self, db: Database, engagement_id: int, sample_id: int
     ) -> None:
-        mgr = UndoManager(db, engagement_id)
+        mgr = _mgr(db, engagement_id)
         snap = mgr.push(sample_id=sample_id, visible_rows=[1, 2, 3], highlighted_rows=[2])
         assert snap.stack_type == UndoStack.UNDO
         assert snap.visible_rows == (1, 2, 3)
@@ -24,7 +35,7 @@ class TestPushUndoRedo:
         assert mgr.can_redo() is False
 
     def test_undo_then_redo_cycle(self, db: Database, engagement_id: int) -> None:
-        mgr = UndoManager(db, engagement_id)
+        mgr = _mgr(db, engagement_id)
         # sample_id=None ist erlaubt – Spalte ist nullable.
         mgr.push(sample_id=None, visible_rows=[1, 2], highlighted_rows=[])
         mgr.push(sample_id=None, visible_rows=[3, 4], highlighted_rows=[])
@@ -42,12 +53,12 @@ class TestPushUndoRedo:
         assert mgr.can_redo() is False
 
     def test_undo_on_empty_stack_returns_none(self, db: Database, engagement_id: int) -> None:
-        mgr = UndoManager(db, engagement_id)
+        mgr = _mgr(db, engagement_id)
         assert mgr.undo() is None
         assert mgr.redo() is None
 
     def test_push_clears_redo_stack(self, db: Database, engagement_id: int) -> None:
-        mgr = UndoManager(db, engagement_id)
+        mgr = _mgr(db, engagement_id)
         mgr.push(sample_id=None, visible_rows=[1], highlighted_rows=[])
         mgr.push(sample_id=None, visible_rows=[2], highlighted_rows=[])
         mgr.undo()  # zweiter Push wandert in den Redo-Stack
@@ -58,7 +69,7 @@ class TestPushUndoRedo:
         assert mgr.can_redo() is False
 
     def test_clear_empties_both_stacks(self, db: Database, engagement_id: int) -> None:
-        mgr = UndoManager(db, engagement_id)
+        mgr = _mgr(db, engagement_id)
         mgr.push(sample_id=None, visible_rows=[1], highlighted_rows=[])
         mgr.push(sample_id=None, visible_rows=[2], highlighted_rows=[])
         mgr.undo()
@@ -69,7 +80,7 @@ class TestPushUndoRedo:
 
 class TestMaxDepth:
     def test_pushes_above_max_drop_oldest(self, db: Database, engagement_id: int) -> None:
-        mgr = UndoManager(db, engagement_id)
+        mgr = _mgr(db, engagement_id)
         for i in range(UndoManager.MAX_DEPTH + 5):
             mgr.push(sample_id=None, visible_rows=[i], highlighted_rows=[])
 
@@ -90,7 +101,7 @@ class TestMaxDepth:
         assert top.visible_rows == (UndoManager.MAX_DEPTH + 4,)
 
     def test_oldest_pushed_is_dropped_first(self, db: Database, engagement_id: int) -> None:
-        mgr = UndoManager(db, engagement_id)
+        mgr = _mgr(db, engagement_id)
         # MAX_DEPTH+1 pushes; visible_rows=[i] dient als Identifier.
         for i in range(UndoManager.MAX_DEPTH + 1):
             mgr.push(sample_id=None, visible_rows=[i], highlighted_rows=[])
@@ -119,12 +130,14 @@ class TestPersistence:
             Engagement(auditor_name="A", client_name="X")
         )
         assert eng.id is not None
-        UndoManager(db1, eng.id).push(sample_id=None, visible_rows=[1, 2, 3], highlighted_rows=[2])
+        UndoManager(UndoRepo(db1.connect(), eng.id)).push(
+            sample_id=None, visible_rows=[1, 2, 3], highlighted_rows=[2]
+        )
         db1.close()
 
         db2 = Database(db_path)
         try:
-            mgr = UndoManager(db2, eng.id)
+            mgr = UndoManager(UndoRepo(db2.connect(), eng.id))
             assert mgr.can_undo() is True
             snap = mgr.undo()
             assert snap is not None
