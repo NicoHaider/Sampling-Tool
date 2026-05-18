@@ -1716,3 +1716,225 @@ class TestPanelVisibilityWiring:
         # Beide Tabs sind weg.
         assert window._lower_tabs.count() == 0
         assert window._lower_tabs.isVisible() is False
+
+
+# ---------------------------------------------------------------------------
+# Sprint 14 / T-007: Pfad-Auswahl im Sampling-Dispatch
+# ---------------------------------------------------------------------------
+#
+# Hintergrund: Sprint 12.1 / P-002 hat den `SimpleSampler.sample_ids`-
+# Spezialpfad eingeführt (RAM-Fix bei 1M-Datasets: ~1 GB → ~8 MB). Pass 4
+# (T-007) hat festgestellt, dass kein Test verifiziert, ob der Controller
+# bei Live-Aufruf den richtigen Pfad nimmt — würde jemand die
+# `isinstance(sampler, SimpleSampler)`-Bedingung in
+# `handle_new_sampling` entfernen, bliebe alles grün, aber der RAM-Fix
+# wäre weg. Diese Tests sichern die Pfad-Auswahl als
+# Regressions-Schutz ab.
+
+
+def _spy_create_sampler(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Patcht `create_sampler` im workspace_controller-Modul so, dass jeder
+    `sample`/`sample_ids`-Aufruf in der zurückgegebenen Liste landet.
+
+    Sprint 13: `handle_new_sampling` lebt seit dem MainController-Split in
+    `WorkspaceController`. Patch-Pfad zeigt deshalb auf die Use-Site
+    `sampling_tool.ui.controllers.workspace_controller.create_sampler`,
+    nicht mehr auf `main_controller`.
+
+    Die eigentliche Sampler-Logik läuft normal weiter – nur die
+    Methoden-Aufrufe werden zusätzlich protokolliert. `isinstance`-Checks
+    im Controller bleiben gültig, weil der Subtyp unverändert ist.
+    """
+    from typing import Any
+
+    from sampling_tool.core.sampling import BaseSampler
+    from sampling_tool.core.sampling import create_sampler as real_create_sampler
+
+    calls: list[str] = []
+
+    def spy_create_sampler(cfg: SampleConfig) -> BaseSampler:
+        sampler = real_create_sampler(cfg)
+        orig_sample = sampler.sample
+        orig_sample_ids = getattr(sampler, "sample_ids", None)
+
+        def track_sample(*args: Any, **kwargs: Any) -> Any:
+            calls.append("sample")
+            return orig_sample(*args, **kwargs)
+
+        sampler.sample = track_sample  # type: ignore[method-assign]
+
+        if orig_sample_ids is not None:
+
+            def track_sample_ids(*args: Any, **kwargs: Any) -> Any:
+                calls.append("sample_ids")
+                return orig_sample_ids(*args, **kwargs)
+
+            sampler.sample_ids = track_sample_ids  # type: ignore[attr-defined]
+
+        return sampler
+
+    monkeypatch.setattr(
+        "sampling_tool.ui.controllers.workspace_controller.create_sampler",
+        spy_create_sampler,
+    )
+    return calls
+
+
+class TestSamplingPathDispatch:
+    """T-007: handle_new_sampling muss die korrekte Sampler-Methode wählen."""
+
+    def test_simple_unfiltered_uses_sample_ids_path(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        calls = _spy_create_sampler(monkeypatch)
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=42),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            assert calls == ["sample_ids"]
+        finally:
+            controller.handle_close_engagement()
+
+    def test_simple_with_filter_uses_classic_path(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        calls = _spy_create_sampler(monkeypatch)
+        # Konto=K1 trifft genau 1 Zeile im populated_db (siehe Fixture).
+        result = SamplingDialogResult(
+            config=SampleConfig(
+                method=SamplingMethod.SIMPLE,
+                size=1,
+                seed=42,
+                filter_field="Konto",
+                filter_value="K1",
+            ),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            assert calls == ["sample"]
+        finally:
+            controller.handle_close_engagement()
+
+    def test_simple_with_from_sample_only_uses_classic_path(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        calls = _spy_create_sampler(monkeypatch)
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=42),
+            from_sample_only=True,
+        )
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            # Vorhandenes Sample (row_ids 2,4 aus dem Fixture) auswählen.
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.handle_new_sampling()
+            assert calls == ["sample"]
+        finally:
+            controller.handle_close_engagement()
+
+    def test_cluster_always_uses_classic_path(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        calls = _spy_create_sampler(monkeypatch)
+        # populated_db hat 5 distinct Konto-Werte → Cluster mit size=1 zieht 1 Cluster.
+        result = SamplingDialogResult(
+            config=SampleConfig(
+                method=SamplingMethod.CLUSTER,
+                size=1,
+                seed=42,
+                cluster_field="Konto",
+            ),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            assert calls == ["sample"]
+        finally:
+            controller.handle_close_engagement()
+
+    def test_stratified_always_uses_classic_path(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        calls = _spy_create_sampler(monkeypatch)
+        # 5 distinct Konto → size=5 ≥ #Strata, jede Schicht hat genau 1 Element.
+        result = SamplingDialogResult(
+            config=SampleConfig(
+                method=SamplingMethod.STRATIFIED,
+                size=5,
+                seed=42,
+                stratum_field="Konto",
+            ),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            assert calls == ["sample"]
+        finally:
+            controller.handle_close_engagement()

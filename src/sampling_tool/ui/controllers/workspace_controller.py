@@ -33,6 +33,7 @@ from sampling_tool.persistence.repositories import (
 )
 from sampling_tool.ui.controllers._factories import ControllerFactories
 from sampling_tool.ui.controllers.workspace_session import WorkspaceSession
+from sampling_tool.ui.dialogs.progress_dialog import TaskProgressDialog
 
 logger = logging.getLogger(__name__)
 
@@ -66,21 +67,30 @@ class WorkspaceController:
             return
         path = Path(path_str)
 
+        # Sprint 14 / T-001: Progress-Dialog wickelt den Streaming-Import
+        # (Read + DB-Insert) ein. `setMinimumDuration(300)` zeigt ihn erst bei
+        # spürbar langen Imports.
+        progress_dialog = TaskProgressDialog(f"Importiere {path.name}…", s.window)
         try:
-            result = ExcelImporter().import_file(path)
-        except DataImportError as exc:
-            s.error(f"Import fehlgeschlagen: {exc}")
-            return
+            try:
+                result = ExcelImporter(progress=progress_dialog.progress_callback()).import_file(
+                    path
+                )
+            except DataImportError as exc:
+                s.error(f"Import fehlgeschlagen: {exc}")
+                return
 
-        dataset = replace(result.dataset, engagement_id=s.engagement.id)
-        try:
-            with s.db.session() as conn:
-                stored = DatasetRepo(conn).create(dataset, result.rows)
-                AuditLogger(AuditRepo(conn), s.user_name(), s.engagement.id).log_import(stored)
-        except Exception as exc:  # pragma: no cover – defensiv
-            logger.exception("Dataset persistieren fehlgeschlagen")
-            s.error(f"Dataset konnte nicht gespeichert werden: {exc}")
-            return
+            dataset = replace(result.dataset, engagement_id=s.engagement.id)
+            try:
+                with s.db.session() as conn:
+                    stored = DatasetRepo(conn).create(dataset, result.rows)
+                    AuditLogger(AuditRepo(conn), s.user_name(), s.engagement.id).log_import(stored)
+            except Exception as exc:  # pragma: no cover – defensiv
+                logger.exception("Dataset persistieren fehlgeschlagen")
+                s.error(f"Dataset konnte nicht gespeichert werden: {exc}")
+                return
+        finally:
+            progress_dialog.close()
 
         s.reload_datasets()
         if stored.id is not None:
