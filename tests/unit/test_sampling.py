@@ -420,3 +420,221 @@ class TestCreateSampler:
         # Cluster ohne cluster_field → Subtyp-Validierung muss greifen
         with pytest.raises(SamplingError):
             create_sampler(SampleConfig(method=SamplingMethod.CLUSTER, size=1, seed=1))
+
+
+# ---------------------------------------------------------------------------
+# Edge-Cases (Sprint 14 / T-005, ISAE-kritisch)
+# ---------------------------------------------------------------------------
+#
+# Hintergrund: Pass 4 (REVIEW_TESTS.md, T-005) hat fehlende Edge-Case-Tests
+# für extreme `n`-Werte und degenerierte Populationsstrukturen als SEV-2-Lücke
+# markiert. Reproduzierbarkeit (fester Seed → bit-genaues Ergebnis) wird in
+# jedem Test verifiziert. Bei `n=0` greift bereits die Validation im
+# Konstruktor – das ist in `test_invalid_size_raises` abgedeckt; die Tests
+# unten decken die *gültigen* unteren/oberen Ränder ab.
+
+
+class TestSimpleSamplerEdgeCases:
+    """Sprint 14 / T-005: SimpleSampler an den Rändern."""
+
+    def test_n_equals_one_returns_single_row(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=42)
+        result = SimpleSampler(cfg).sample(rows_100)
+        assert result.actual_size == 1
+        # Reproduzierbarkeit: gleicher Seed → gleicher Single-Pick.
+        again = SimpleSampler(cfg).sample(rows_100).selected_row_ids
+        assert result.selected_row_ids == again
+
+    def test_n_equals_population_size_returns_all_rows(
+        self, rows_100: tuple[DatasetRow, ...]
+    ) -> None:
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=100, seed=42)
+        result = SimpleSampler(cfg).sample(rows_100)
+        assert result.actual_size == 100
+        # Alle row_ids müssen drin sein (nur Reihenfolge wäre theoretisch
+        # gemischt – aber selected_row_ids sind sortiert).
+        assert set(result.selected_row_ids) == {r.row_id for r in rows_100}
+
+    def test_n_greater_than_population_raises(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=101, seed=42)
+        with pytest.raises(SamplingError, match="größer als die verfügbare Population"):
+            SimpleSampler(cfg).sample(rows_100)
+
+    def test_empty_pool_unfiltered_raises(self) -> None:
+        """Streaming-Pfad mit row_count=0 (leere Iteration) muss SamplingError werfen.
+
+        Die Zeile 81 in sampling.py war laut Pass-4 uncovered – sie greift
+        nur bei einem leeren Pool ohne aktiven Filter, was im Streaming-
+        Modus durchaus auftritt (Dataset frisch importiert, 0 Datenzeilen).
+        """
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=42)
+        with pytest.raises(SamplingError, match="keine Datensätze"):
+            SimpleSampler(cfg).sample([])
+
+    def test_empty_pool_with_active_filter_raises(self) -> None:
+        """Filter, der alle Rows aussortiert → Pool leer → SamplingError."""
+        rows = (DatasetRow(row_id=1, values={"X": "a"}),)
+        cfg = SampleConfig(
+            method=SamplingMethod.SIMPLE,
+            size=1,
+            seed=42,
+            filter_field="X",
+            filter_value="b",
+        )
+        with pytest.raises(SamplingError, match="keine Datensätze"):
+            SimpleSampler(cfg).sample(rows)
+
+
+class TestSimpleSamplerIdsPathEdgeCases:
+    """Sprint 14 / T-005: SimpleSampler.sample_ids an den Rändern."""
+
+    def test_n_equals_one_via_sample_ids(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=42)
+        result = SimpleSampler(cfg).sample_ids([r.row_id for r in rows_100], population_size=100)
+        assert result.actual_size == 1
+        # Bit-Gleichheit zum klassischen Pfad bei n=1.
+        classic = SimpleSampler(cfg).sample(rows_100).selected_row_ids
+        assert result.selected_row_ids == classic
+
+    def test_n_equals_population_size_via_sample_ids(
+        self, rows_100: tuple[DatasetRow, ...]
+    ) -> None:
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=100, seed=42)
+        result = SimpleSampler(cfg).sample_ids([r.row_id for r in rows_100], population_size=100)
+        assert result.actual_size == 100
+        assert set(result.selected_row_ids) == {r.row_id for r in rows_100}
+
+    def test_n_greater_than_population_via_sample_ids_raises(
+        self, rows_100: tuple[DatasetRow, ...]
+    ) -> None:
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=101, seed=42)
+        with pytest.raises(SamplingError, match="größer als die verfügbare Population"):
+            SimpleSampler(cfg).sample_ids([r.row_id for r in rows_100], population_size=100)
+
+
+class TestClusterSamplerEdgeCases:
+    """Sprint 14 / T-005: ClusterSampler bei degenerierten Cluster-Strukturen."""
+
+    def test_single_cluster_value_returns_all_rows(self) -> None:
+        """Alle Zeilen haben denselben Cluster-Wert → 1 Cluster → size=1
+        zieht alle Rows. Verhalten dokumentiert, nicht erwartet zu crashen."""
+        rows = tuple(DatasetRow(row_id=i, values={"Country": "AUT"}) for i in range(1, 11))
+        cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=1, seed=42, cluster_field="Country")
+        result = ClusterSampler(cfg).sample(rows)
+        assert result.actual_size == 10
+        assert set(result.selected_row_ids) == {r.row_id for r in rows}
+
+    def test_n_greater_than_distinct_clusters_raises(
+        self, rows_100: tuple[DatasetRow, ...]
+    ) -> None:
+        """size > Anzahl distinct Cluster → klare deutsche Fehlermeldung."""
+        cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=10, seed=1, cluster_field="Country")
+        with pytest.raises(SamplingError, match="nur 3 sind im Datensatz"):
+            ClusterSampler(cfg).sample(rows_100)
+
+    def test_cluster_with_single_member(self) -> None:
+        """Ein Cluster mit nur einer Row darf gezogen werden ohne zu crashen."""
+        rows = (
+            DatasetRow(row_id=1, values={"Country": "AUT"}),
+            DatasetRow(row_id=2, values={"Country": "GER"}),
+            DatasetRow(row_id=3, values={"Country": "GER"}),
+        )
+        cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=1, seed=1, cluster_field="Country")
+        result = ClusterSampler(cfg).sample(rows)
+        assert result.actual_size in (1, 2)  # je nach Seed AUT oder GER
+
+    def test_empty_pool_raises(self) -> None:
+        cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=1, seed=1, cluster_field="Country")
+        with pytest.raises(SamplingError, match="keine Datensätze"):
+            ClusterSampler(cfg).sample([])
+
+    def test_reproducible_n_equals_one(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=1, seed=7, cluster_field="Country")
+        first = ClusterSampler(cfg).sample(rows_100).selected_row_ids
+        second = ClusterSampler(cfg).sample(rows_100).selected_row_ids
+        assert first == second
+
+
+class TestStratifiedSamplerEdgeCases:
+    """Sprint 14 / T-005: StratifiedSampler bei degenerierten Strukturen."""
+
+    def test_single_stratum_falls_back_to_simple_distribution(self) -> None:
+        """Alle Rows im selben Stratum → Largest-Remainder verteilt 10 auf [1] → [10]."""
+        rows = tuple(DatasetRow(row_id=i, values={"Country": "AUT"}) for i in range(1, 51))
+        cfg = SampleConfig(
+            method=SamplingMethod.STRATIFIED,
+            size=10,
+            seed=42,
+            stratum_field="Country",
+        )
+        result = StratifiedSampler(cfg).sample(rows)
+        assert result.actual_size == 10
+
+    def test_largest_remainder_with_uneven_distribution(
+        self, rows_100: tuple[DatasetRow, ...]
+    ) -> None:
+        """31/3 mit Schichtgrößen (34,33,33) → Largest-Remainder garantiert sum=31."""
+        cfg = SampleConfig(
+            method=SamplingMethod.STRATIFIED,
+            size=31,
+            seed=42,
+            stratum_field="Country",
+            stratify_mode=StratifyMode.PROPORTIONAL,
+        )
+        result = StratifiedSampler(cfg).sample(rows_100)
+        assert result.actual_size == 31
+
+    def test_n_below_distinct_strata_raises(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        """Größe < Anzahl Schichten → unmöglich, klare Fehlermeldung."""
+        cfg = SampleConfig(
+            method=SamplingMethod.STRATIFIED,
+            size=2,
+            seed=1,
+            stratum_field="Country",
+        )
+        with pytest.raises(SamplingError, match="kleiner als die Anzahl der Schichten"):
+            StratifiedSampler(cfg).sample(rows_100)
+
+    def test_stratum_too_small_for_target_raises(self) -> None:
+        """EQUAL-Mode + Stratum mit zu wenig Rows → klare Fehlermeldung."""
+        # 3 Schichten, eine davon nur 2 Rows. size=9 → EQUAL erwartet 3/3/3.
+        rows = (
+            tuple(DatasetRow(row_id=i, values={"X": "a"}) for i in range(1, 6))
+            + tuple(DatasetRow(row_id=i, values={"X": "b"}) for i in range(6, 11))
+            + (
+                DatasetRow(row_id=11, values={"X": "c"}),
+                DatasetRow(row_id=12, values={"X": "c"}),
+            )
+        )
+        cfg = SampleConfig(
+            method=SamplingMethod.STRATIFIED,
+            size=9,
+            seed=1,
+            stratum_field="X",
+            stratify_mode=StratifyMode.EQUAL,
+        )
+        with pytest.raises(SamplingError, match="Schicht 'c' hat nur 2 Elemente"):
+            StratifiedSampler(cfg).sample(rows)
+
+    def test_empty_pool_raises(self) -> None:
+        cfg = SampleConfig(
+            method=SamplingMethod.STRATIFIED,
+            size=1,
+            seed=1,
+            stratum_field="Country",
+        )
+        with pytest.raises(SamplingError, match="keine Datensätze"):
+            StratifiedSampler(cfg).sample([])
+
+    def test_different_seed_yields_different_result(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        """Pass-4 T-005 hatte explizit fehlenden diff-seed-Test für Stratified
+        markiert (Reproducibility-Matrix). Hier nachgereicht."""
+        cfg_a = SampleConfig(
+            method=SamplingMethod.STRATIFIED, size=30, seed=1, stratum_field="Country"
+        )
+        cfg_b = SampleConfig(
+            method=SamplingMethod.STRATIFIED, size=30, seed=2, stratum_field="Country"
+        )
+        a = StratifiedSampler(cfg_a).sample(rows_100).selected_row_ids
+        b = StratifiedSampler(cfg_b).sample(rows_100).selected_row_ids
+        assert a != b

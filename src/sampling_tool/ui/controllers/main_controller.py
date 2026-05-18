@@ -72,6 +72,7 @@ from sampling_tool.ui.dialogs.export_excel_report_dialog import ExportExcelRepor
 from sampling_tool.ui.dialogs.export_html_report_dialog import ExportHtmlReportDialog
 from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialog
 from sampling_tool.ui.dialogs.new_engagement_dialog import NewEngagementDialog
+from sampling_tool.ui.dialogs.progress_dialog import TaskProgressDialog
 from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialog
 from sampling_tool.ui.dialogs.settings_dialog import SettingsDialog
 from sampling_tool.ui.recent import RecentEngagementsStore
@@ -358,23 +359,31 @@ class MainController:
             return
         path = Path(path_str)
 
+        # Progress-Dialog wickelt den Streaming-Import (Read + DB-Insert) ein.
+        # `setMinimumDuration(300)` zeigt ihn erst bei spürbar langen Imports.
+        progress_dialog = TaskProgressDialog(f"Importiere {path.name}…", self.window)
         try:
-            result = ExcelImporter().import_file(path)
-        except DataImportError as exc:
-            self._error(f"Import fehlgeschlagen: {exc}")
-            return
-
-        dataset = replace(result.dataset, engagement_id=self._engagement.id)
-        try:
-            with self._db.session() as conn:
-                stored = DatasetRepo(conn).create(dataset, result.rows)
-                AuditLogger(AuditRepo(conn), self._user_name(), self._engagement.id).log_import(
-                    stored
+            try:
+                result = ExcelImporter(progress=progress_dialog.progress_callback()).import_file(
+                    path
                 )
-        except Exception as exc:  # pragma: no cover – defensiv
-            logger.exception("Dataset persistieren fehlgeschlagen")
-            self._error(f"Dataset konnte nicht gespeichert werden: {exc}")
-            return
+            except DataImportError as exc:
+                self._error(f"Import fehlgeschlagen: {exc}")
+                return
+
+            dataset = replace(result.dataset, engagement_id=self._engagement.id)
+            try:
+                with self._db.session() as conn:
+                    stored = DatasetRepo(conn).create(dataset, result.rows)
+                    AuditLogger(AuditRepo(conn), self._user_name(), self._engagement.id).log_import(
+                        stored
+                    )
+            except Exception as exc:  # pragma: no cover – defensiv
+                logger.exception("Dataset persistieren fehlgeschlagen")
+                self._error(f"Dataset konnte nicht gespeichert werden: {exc}")
+                return
+        finally:
+            progress_dialog.close()
 
         self._reload_datasets()
         if stored.id is not None:
