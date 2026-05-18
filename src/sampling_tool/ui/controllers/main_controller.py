@@ -58,6 +58,7 @@ from sampling_tool.persistence.repositories import (
     EngagementRepo,
     EngagementStateRepo,
     SampleRepo,
+    UndoRepo,
 )
 from sampling_tool.persistence.version_manager import EngagementVersionManager
 from sampling_tool.ui.dialogs.about_dialog import AboutDialog
@@ -949,7 +950,7 @@ class MainController:
         self._filter_active_sample_id = None
         self.window.data_table().clear_dataset()
         if engagement.id is not None:
-            self._undo_manager = UndoManager(db, engagement.id)
+            self._undo_manager = UndoManager(UndoRepo(db.connect(), engagement.id))
             self._state_repo = EngagementStateRepo(db.connect())
         else:
             self._undo_manager = None

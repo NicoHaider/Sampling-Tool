@@ -1,4 +1,4 @@
-"""Undo-/Redo-Manager mit SQLite-Persistenz.
+"""Undo-/Redo-Manager (pure Logik, persistente Operationen via Protocol).
 
 Standard-Editor-Verhalten:
 - `push` legt einen neuen Snapshot oben auf den Undo-Stack und LÖSCHT den Redo-Stack.
@@ -6,28 +6,86 @@ Standard-Editor-Verhalten:
 - `redo` verschiebt das oberste Redo-Element zurück auf den Undo-Stack.
 
 Die Stack-Tiefe ist auf `MAX_DEPTH = 20` begrenzt; ältere Einträge werden FIFO
-verworfen. Snapshots überleben Connection-Wechsel, weil alles in
-`undo_snapshots` persistiert wird (kein In-Memory-State).
+verworfen. Snapshots überleben Connection-Wechsel, sofern der konkrete Repo
+(z. B. `sampling_tool.persistence.repositories.UndoRepo`) sie persistiert.
+
+Sprint 12.2 / F-002: Persistenz-Operationen wurden aus dieser Datei in
+`UndoRepo` (persistence-Layer) ausgelagert. `core/undo.py` ist seitdem
+SQL-frei und nutzt keine `sqlite3`-/`Database`-Imports mehr – das entspricht
+dem Layer-Modell aus CLAUDE.md, in dem `core/` ausschließlich stdlib +
+numpy nutzen darf. Repo-Aufrufe gehen über `UndoRepoProtocol` (PEP 544),
+damit Unit-Tests einen In-Memory-Fake bauen können statt SQLite hochzuziehen.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
-from typing import Final
+from typing import Final, Protocol
 
 from sampling_tool.core.models import Snapshot, UndoStack
-from sampling_tool.persistence.database import Database, savepoint
+
+
+class UndoRepoProtocol(Protocol):
+    """Minimal-Schnittstelle für den persistenten Stack-Speicher.
+
+    Atomare Multi-Statement-Operationen (`move_top`, `push_snapshot` +
+    nachgelagerter Trim) müssen vom Repo selbst transaktionssicher
+    umgesetzt werden – der Manager macht nur die Stack-Logik.
+    """
+
+    def push_snapshot(
+        self,
+        stack: UndoStack,
+        sample_id: int | None,
+        visible_rows: Sequence[int],
+        highlighted_rows: Sequence[int],
+    ) -> Snapshot:
+        """Neuen Snapshot oben auf `stack` legen, persistierte Row inkl. id."""
+        ...
+
+    def peek(self, stack: UndoStack) -> Snapshot | None:
+        """Top-Snapshot von `stack` ohne Modifikation."""
+        ...
+
+    def move_top(
+        self,
+        from_stack: UndoStack,
+        to_stack: UndoStack,
+    ) -> Snapshot | None:
+        """Top von `from_stack` atomar auf `to_stack` verschieben."""
+        ...
+
+    def clear_stack(self, stack: UndoStack) -> None:
+        """Alle Snapshots in `stack` löschen."""
+        ...
+
+    def clear_all(self) -> None:
+        """Beide Stacks komplett leeren."""
+        ...
+
+    def count(self, stack: UndoStack) -> int:
+        """Anzahl Snapshots in `stack`."""
+        ...
+
+    def trim_to_depth(self, stack: UndoStack, max_depth: int) -> None:
+        """FIFO-Trim: ältere Snapshots oberhalb `max_depth` löschen."""
+        ...
 
 
 class UndoManager:
-    """Persistierter Undo-/Redo-Stack pro Engagement."""
+    """Persistierter Undo-/Redo-Stack pro Engagement (pure Logik).
+
+    Persistenz wird via `UndoRepoProtocol` injiziert – der Manager kennt
+    keine DB-Details. Production-Caller übergibt eine
+    `sampling_tool.persistence.repositories.UndoRepo`-Instanz, Tests
+    können einen In-Memory-Fake bauen.
+    """
 
     MAX_DEPTH: Final[int] = 20
 
-    def __init__(self, db: Database, engagement_id: int) -> None:
-        self.db = db
-        self.engagement_id = engagement_id
+    def __init__(self, repo: UndoRepoProtocol, max_depth: int = MAX_DEPTH) -> None:
+        self._repo = repo
+        self._max_depth = max_depth
 
     # ---- Public API -----------------------------------------------------
 
@@ -38,176 +96,40 @@ class UndoManager:
         highlighted_rows: Sequence[int],
     ) -> Snapshot:
         """Neuer Snapshot auf den Undo-Stack; Redo-Stack wird gelöscht."""
-        conn = self.db.connect()
-        with savepoint(conn, "undo_push"):
-            conn.execute(
-                "DELETE FROM undo_snapshots WHERE engagement_id = ? AND stack_type = ?",
-                (self.engagement_id, UndoStack.REDO.value),
-            )
-            position = self._next_position(UndoStack.UNDO)
-            cur = conn.execute(
-                "INSERT INTO undo_snapshots "
-                "(engagement_id, stack_type, position, sample_id, "
-                " visible_rows, highlighted_rows) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    self.engagement_id,
-                    UndoStack.UNDO.value,
-                    position,
-                    sample_id,
-                    json.dumps(list(visible_rows)),
-                    json.dumps(list(highlighted_rows)),
-                ),
-            )
-            new_id = cur.lastrowid
-            self._enforce_max_depth(UndoStack.UNDO)
-
-        return Snapshot(
-            stack_type=UndoStack.UNDO,
-            position=position,
-            visible_rows=tuple(visible_rows),
-            highlighted_rows=tuple(highlighted_rows),
-            sample_id=sample_id,
-            engagement_id=self.engagement_id,
-            id=new_id,
+        self._repo.clear_stack(UndoStack.REDO)
+        snapshot = self._repo.push_snapshot(
+            UndoStack.UNDO,
+            sample_id,
+            visible_rows,
+            highlighted_rows,
         )
+        self._repo.trim_to_depth(UndoStack.UNDO, self._max_depth)
+        return snapshot
 
     def undo(self) -> Snapshot | None:
         """Top-Element vom Undo-Stack auf den Redo-Stack verschieben."""
-        return self._move_top(from_stack=UndoStack.UNDO, to_stack=UndoStack.REDO)
+        return self._repo.move_top(from_stack=UndoStack.UNDO, to_stack=UndoStack.REDO)
 
     def redo(self) -> Snapshot | None:
         """Top-Element vom Redo-Stack auf den Undo-Stack verschieben."""
-        return self._move_top(from_stack=UndoStack.REDO, to_stack=UndoStack.UNDO)
+        return self._repo.move_top(from_stack=UndoStack.REDO, to_stack=UndoStack.UNDO)
 
     def can_undo(self) -> bool:
-        return self._stack_size(UndoStack.UNDO) > 0
+        return self._repo.count(UndoStack.UNDO) > 0
 
     def can_redo(self) -> bool:
-        return self._stack_size(UndoStack.REDO) > 0
+        return self._repo.count(UndoStack.REDO) > 0
 
     def peek_undo(self) -> Snapshot | None:
         """Top des Undo-Stacks (ohne ihn zu verändern). Wird vom UI-Controller
         nach `undo()` benötigt, um den darunterliegenden Zustand zu rekonstruieren.
         """
-        return self._peek(UndoStack.UNDO)
+        return self._repo.peek(UndoStack.UNDO)
 
     def peek_redo(self) -> Snapshot | None:
         """Top des Redo-Stacks (ohne ihn zu verändern)."""
-        return self._peek(UndoStack.REDO)
+        return self._repo.peek(UndoStack.REDO)
 
     def clear(self) -> None:
         """Beide Stacks komplett leeren."""
-        conn = self.db.connect()
-        with savepoint(conn, "undo_clear"):
-            conn.execute(
-                "DELETE FROM undo_snapshots WHERE engagement_id = ?",
-                (self.engagement_id,),
-            )
-
-    # ---- intern ---------------------------------------------------------
-
-    def _peek(self, stack: UndoStack) -> Snapshot | None:
-        row = (
-            self.db.connect()
-            .execute(
-                "SELECT * FROM undo_snapshots "
-                "WHERE engagement_id = ? AND stack_type = ? "
-                "ORDER BY position DESC LIMIT 1",
-                (self.engagement_id, stack.value),
-            )
-            .fetchone()
-        )
-        if row is None:
-            return None
-        return Snapshot(
-            stack_type=stack,
-            position=row["position"],
-            visible_rows=tuple(json.loads(row["visible_rows"])),
-            highlighted_rows=tuple(json.loads(row["highlighted_rows"])),
-            sample_id=row["sample_id"],
-            engagement_id=self.engagement_id,
-            created_at=row["created_at"],
-            id=row["id"],
-        )
-
-    def _move_top(self, from_stack: UndoStack, to_stack: UndoStack) -> Snapshot | None:
-        conn = self.db.connect()
-        row = conn.execute(
-            "SELECT * FROM undo_snapshots "
-            "WHERE engagement_id = ? AND stack_type = ? "
-            "ORDER BY position DESC LIMIT 1",
-            (self.engagement_id, from_stack.value),
-        ).fetchone()
-        if row is None:
-            return None
-
-        with savepoint(conn, "undo_move"):
-            conn.execute("DELETE FROM undo_snapshots WHERE id = ?", (row["id"],))
-            new_position = self._next_position(to_stack)
-            cur = conn.execute(
-                "INSERT INTO undo_snapshots "
-                "(engagement_id, stack_type, position, sample_id, "
-                " visible_rows, highlighted_rows, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    self.engagement_id,
-                    to_stack.value,
-                    new_position,
-                    row["sample_id"],
-                    row["visible_rows"],
-                    row["highlighted_rows"],
-                    row["created_at"],
-                ),
-            )
-            new_id = cur.lastrowid
-
-        return Snapshot(
-            stack_type=to_stack,
-            position=new_position,
-            visible_rows=tuple(json.loads(row["visible_rows"])),
-            highlighted_rows=tuple(json.loads(row["highlighted_rows"])),
-            sample_id=row["sample_id"],
-            engagement_id=self.engagement_id,
-            created_at=row["created_at"],
-            id=new_id,
-        )
-
-    def _next_position(self, stack: UndoStack) -> int:
-        row = (
-            self.db.connect()
-            .execute(
-                "SELECT MAX(position) AS p FROM undo_snapshots "
-                "WHERE engagement_id = ? AND stack_type = ?",
-                (self.engagement_id, stack.value),
-            )
-            .fetchone()
-        )
-        return (int(row["p"]) + 1) if row["p"] is not None else 1
-
-    def _stack_size(self, stack: UndoStack) -> int:
-        row = (
-            self.db.connect()
-            .execute(
-                "SELECT COUNT(*) AS c FROM undo_snapshots "
-                "WHERE engagement_id = ? AND stack_type = ?",
-                (self.engagement_id, stack.value),
-            )
-            .fetchone()
-        )
-        return int(row["c"])
-
-    def _enforce_max_depth(self, stack: UndoStack) -> None:
-        """FIFO-Trimm: ältere Snapshots oberhalb des Limits löschen."""
-        size = self._stack_size(stack)
-        excess = size - self.MAX_DEPTH
-        if excess <= 0:
-            return
-        self.db.connect().execute(
-            "DELETE FROM undo_snapshots WHERE id IN ("
-            "  SELECT id FROM undo_snapshots "
-            "  WHERE engagement_id = ? AND stack_type = ? "
-            "  ORDER BY position ASC LIMIT ?"
-            ")",
-            (self.engagement_id, stack.value, excess),
-        )
+        self._repo.clear_all()
