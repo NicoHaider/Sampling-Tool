@@ -46,6 +46,10 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 11.3   | Streaming Teil 3: Excel-Import streamt direkt in DB | done        |
 | 11.4   | Streaming Teil 4: Sampler/Exporter auf iter_rows    | done        |
 | 11.5   | Streaming Cleanup + Konsolidierung                  | done        |
+| 12.1   | Perf-Quick-Wins (P-001/P-002/P-007)                 | done        |
+| 12.2   | F-002 Undo-Refactor (core/undo.py SQL-frei) + T-003/T-004/T-006 | done |
+| 13     | F-001 MainController-Split (God-Object zerlegen)    | done        |
+| 14     | Test-Catchup (T-001/T-002/T-005/T-007)              | done        |
 | 15     | F-003/F-004/F-005 IO-Layer-Reinigung (charts.py)    | done        |
 
 **Sprint 11.x abgeschlossen** – Streaming-Architektur komplett (siehe
@@ -243,27 +247,75 @@ ui ──▶ controllers ──▶ core ◀── io
     `self._file_menu` ist als Attribut exponiert, damit Tests die
     Menü-Zugehörigkeit prüfen können.
     Sendet typisierte Signals; *kein* DB-Zugriff hier.
-  - `controllers/main_controller.py` – Glue-Schicht UI ↔ Persistence/IO.
-    Hält `Database`-Instanz, das aktuelle Engagement und einen
-    `UndoManager`. Übersetzt UI-Signals in Repo-Calls und orchestriert
-    Sampling/Reset/Undo/Redo/Export. Undo-Konvention: nach jeder
-    mutierenden Aktion wird der NEUE State auf den Undo-Stack
-    gelegt; bei `handle_undo` wird der Top entfernt und der
-    `peek_undo`-State angewandt (leerer State, wenn der Stack
-    nach dem Pop leer ist). `handle_new_engagement` prüft vor der
-    DB-Anlage, ob der Ziel-Pfad bereits existiert – bei Kollision
-    wird der `DuplicateEngagementDialog` gezeigt und je nach
-    User-Choice an `handle_open_engagement` weitergeleitet, der
-    `NewEngagementDialog` mit Prefill erneut geöffnet oder ganz
-    abgebrochen.
-    **Sprint 11.4 – Sampling-Streaming**: `_build_sampling_iterator(repo,
-    dataset, from_sample_only)` liefert `(Iterable[DatasetRow], int)`:
-    bei `from_sample_only` → `get_rows_by_ids` mit den IDs des aktiven
+  - `controllers/main_controller.py` – **Sprint 13 / F-001**: dünner
+    Coordinator (~343 LoC) statt vorherigem 1304-LoC-God-Object. Hält
+    die `WorkspaceSession` (gemeinsamer State) und fünf Sub-Controller,
+    verdrahtet `MainWindow`-Signals an den jeweils zuständigen
+    Sub-Controller. Externe API (Konstruktor + alle public `handle_*`-
+    Methoden) **unverändert** – Backward-Compat-Fassade leitet `handle_*`-
+    Aufrufe an die Sub-Controller weiter, Backward-Compat-Properties
+    (`_db`, `_engagement`, `_dataset`, `_sample`, `_active_sample_id`,
+    `_filter_active_sample_id`, `_state_repo`, `_undo_manager`,
+    `_settings`, `_datasets`, `_restoring_state`) delegieren transparent
+    an die `session`. Damit laufen bestehende Tests
+    (`controller.handle_new_sampling()`, `controller._sample`, etc.)
+    unverändert.
+  - `controllers/workspace_session.py` – **Sprint 13 / F-001**: zentraler
+    Session-State + Glue-Helper. Hält DB-Connection, Engagement,
+    Dataset, Sample, Filter-State, UndoManager, EngagementStateRepo,
+    Settings, Window-Ref. Helpers: `has_engagement()` / `has_active_
+    dataset()` / `has_active_sample()` (Convenience-Guards), `persist_
+    state()` / `restore_state()`-Lebenszyklus, `refresh_audit_trail()` /
+    `refresh_dashboard()` / `refresh_views()`, `select_dataset(id)`
+    (geteilt von Selection- und WorkspaceController), `resolve_brief
+    papier()`, `default_export_dir()`, `error(message)`, `reset_to_
+    welcome()`, `apply_new_settings()`. `AUDIT_EVENT_DISPLAY_LIMIT =
+    10_000` als zentrale Konstante (vorher 4× hardgecodet, Pass-2 Q-008).
+  - `controllers/engagement_controller.py` – Engagement-Lifecycle:
+    `handle_new_engagement` (inkl. DuplicateEngagementDialog-Loop),
+    `handle_open_engagement` (inkl. Compliance-Snapshot via
+    `EngagementVersionManager`), `handle_close_engagement_requested`
+    (Bestätigungs-Dialog), `handle_close_engagement`, `refresh_recent`,
+    `_adopt_database` (UndoManager + EngagementStateRepo aufsetzen,
+    Recent-Store updaten, `_restore_state` triggern). Undo-Konvention:
+    nach jeder mutierenden Aktion wird der NEUE State auf den
+    Undo-Stack gelegt; bei `handle_undo` wird der Top entfernt und der
+    `peek_undo`-State angewandt (leerer State, wenn der Stack nach dem
+    Pop leer ist).
+  - `controllers/workspace_controller.py` – mutierende Workspace-
+    Operationen: `handle_import_excel` (ruft `s.select_dataset(stored.
+    id)` für Auto-Select nach Import), `handle_new_sampling`,
+    `handle_reset`, `handle_undo`, `handle_redo`. **Sprint 11.4 –
+    Sampling-Streaming**: `_build_sampling_iterator(repo, dataset,
+    from_sample_only)` liefert `(Iterable[DatasetRow], int)`: bei
+    `from_sample_only` → `get_rows_by_ids` mit den IDs des aktiven
     Samples + Sample-Größe; sonst → `iter_rows`-Generator + `dataset.
-    row_count`. `handle_new_sampling` reicht das in
-    `sampler.sample(rows, population_size=...)` durch. `handle_export_
-    sample` übergibt dem `ExcelExporter` nur noch das `DatasetRepo` –
-    der Exporter holt sich die Sample-Rows selbst.
+    row_count`. **Sprint 12.1 / P-002**: für `SimpleSampler` ohne
+    Filter + ohne Sub-Sampling Spezialpfad via `sampler.sample_ids(
+    repo.iter_row_ids(...))` – kein DatasetRow-Materialize, RAM-Peak
+    1 GB → <50 MB bei 1M-Datasets.
+  - `controllers/selection_controller.py` – Dataset-/Sample-/Filter-
+    Auswahl: `handle_dataset_selected` (delegiert an `session.select_
+    dataset`), `handle_sample_selected`, `handle_sample_filter_toggled`
+    (Doppelklick), `handle_filter_only_sample_toggled` (Checkbox),
+    `handle_audit_event_double_clicked` (sucht Sample-Event und
+    markiert via `handle_sample_selected`).
+  - `controllers/export_controller.py` – 4 Export-Handler:
+    `handle_export_sample` (Excel via `ExcelExporter` mit `DatasetRepo`
+    – der Exporter holt die Sample-Rows selbst), `handle_export_audit_
+    pdf` (AuditTrail-PDF mit Briefpapier-Resolution + Zeitraum-/Type-
+    Filter), `handle_export_excel_report` (Multi-Sheet via
+    `MultiSheetReportExporter`), `handle_export_html_report` (Jinja2-
+    HTML via `HtmlReportGenerator`). Plus interner `_next_sample_id_
+    for_export` für die ID-Spalte im Dateiname-Token.
+  - `controllers/help_controller.py` – Bug-Report, About, Settings,
+    Hotkeys-Info. `handle_settings` ruft nach OK `save_settings(...)`
+    und `session.apply_new_settings(...)` (legt Engagement-Dir an +
+    setzt Panel-Visibility live).
+  - `controllers/_factories.py` – `ControllerFactories`-Dataclass
+    (frozen, slots) bündelt alle Dialog-Factory-Refs + Default-
+    Implementierungen. Jeder Sub-Controller nimmt sich nur die
+    Factories, die er braucht.
   - `widgets/data_table.py` – `DatasetTableModel(QAbstractTableModel)` +
     `DataTableView`. Virtuelles Model (kein QStandardItemModel) –
     100k+ Zeilen scrollen flüssig. Sample-Highlighting per
