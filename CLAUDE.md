@@ -49,6 +49,8 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 12.1   | Perf-Quick-Wins (P-001/P-002/P-007)                 | done        |
 | 12.2   | F-002 Undo-Refactor (core/undo.py SQL-frei) + T-003/T-004/T-006 | done |
 | 13     | F-001 MainController-Split (God-Object zerlegen)    | done        |
+| 14     | Test-Catchup (T-001/T-002/T-005/T-007)              | done        |
+| 15     | F-003/F-004/F-005 IO-Layer-Reinigung (charts.py)    | done        |
 
 **Sprint 11.x abgeschlossen** – Streaming-Architektur komplett (siehe
 nächster Abschnitt). Dataset lebt in SQLite, Code-Pfade arbeiten mit
@@ -176,11 +178,24 @@ ui ──▶ controllers ──▶ core ◀── io
     massiv – 5 000 Events ~13 s → 0.4 s, 20 000 Events 1.6 s.
   - `multi_report_exporter.py` – `MultiSheetReportExporter` schreibt einen
     Komplett-Bericht als Multi-Sheet-xlsx (Übersicht, AuditTrail, Samples,
-    Statistiken inkl. eingebettetem Chart-Bild). Atomare Writes wie der
-    `ExcelExporter`.
+    Statistiken inkl. eingebettetem Chart-Bild via `io.charts`).
+    Atomare Writes wie der `ExcelExporter`.
   - `html_report.py` – `HtmlReportGenerator` rendert einen selbstständigen
-    HTML-Report via Jinja2. CSS inline, Charts als Base64-PNG eingebettet,
-    Template-Default unter `resources/templates/audit_report.html`.
+    HTML-Report via Jinja2. CSS inline, Charts als Base64-PNG eingebettet
+    (geliefert von `io.charts`), Template-Default unter
+    `resources/templates/audit_report.html`.
+  - `charts.py` – Bytes-Renderer für die Mini-Charts (Bar/Line/Pie) als
+    PNG-Bytes. Matplotlib mit `Agg`-Backend, BDO-Farbschema aus
+    `config.py`, transparenter Hintergrund, `plt.close(fig)` nach jeder
+    Render-Operation gegen Memory-Leaks. Wird von
+    `multi_report_exporter.py` (Excel-Image) und `html_report.py`
+    (Base64-Embed) konsumiert. **Bewusst Qt-frei** – der Pixmap-Wrapper
+    für die UI sitzt in `ui/widgets/chart_renderer.py` und ruft seinerseits
+    `render_*_chart_bytes` hier auf. Sprint 15 / F-003+F-004+F-005:
+    vorher lebte die ganze Logik in `ui/widgets/chart_renderer.py`,
+    was IO transitiv an PyQt6 gebunden hat (Layer-Verletzung). Der
+    grep-Schutz dafür sitzt in `tests/unit/test_io_charts.py::
+    TestQtFreeImport`.
   - `briefpapier.py` – `BriefpapierConfig` (frozen) + `get_default_briefpapier()`.
     Resolution-Order: zuerst User-Override unter `BRIEFPAPIER_DIR`
     (`~/Documents/BDO Audit Sampling/briefpapier/bdo_letterhead.{png,jpg,jpeg,pdf}`),
@@ -327,11 +342,12 @@ ui ──▶ controllers ──▶ core ◀── io
     Stichproben, Sampling-Historie). Charts werden via `chart_renderer`
     als `QPixmap` in `QLabel`s gerendert. Klicks auf einzelne Samples
     emittieren `sample_clicked(int)`.
-  - `widgets/chart_renderer.py` – Matplotlib-Wrapper (Agg-Backend).
-    `render_bar/line/pie_chart` liefern `QPixmap` (UI), die
-    `..._bytes`-Varianten liefern rohe PNG-Bytes (HTML-Embed / Excel).
-    BDO-Farbschema aus `config.py`, transparenter Hintergrund,
-    `plt.close(fig)` nach jeder Render-Operation gegen Memory-Leaks.
+  - `widgets/chart_renderer.py` – Dünner Pixmap-Wrapper (~35 LoC).
+    `render_bar/line/pie_chart` rufen die `_bytes`-Funktionen aus
+    `sampling_tool.io.charts` auf und wandeln das PNG via
+    `QImage.fromData` → `QPixmap`. Heavy-Lifting (matplotlib, BDO-
+    Farbschema, Styling) liegt seit Sprint 15 in `io/charts.py` –
+    damit bleibt der `io`-Layer Qt-frei (siehe dortigen Block).
   - `widgets/sidebar.py` – `NavigationSidebar` mit drei Sektionen
     (Engagement-Block, Datasets-Liste, Samples-Liste).
   - `widgets/welcome.py` – `WelcomeScreen` (Recent-Engagement-Karten +

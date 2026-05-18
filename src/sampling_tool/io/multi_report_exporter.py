@@ -7,7 +7,7 @@
 2. **AuditTrail** – alle Events chronologisch (älteste oben).
 3. **Samples** – jede Stichprobe mit Methode, Größe, Seed, Filter, Datum.
 4. **Statistiken** – Methoden-Verteilung als Tabelle + eingebettetes
-   Bar-Chart-Bild via `chart_renderer`.
+   Bar-Chart-Bild via `io.charts`.
 
 Schreibt atomar (.tmp → `os.replace`), damit ein Absturz beim Speichern
 keine halbe Datei hinterlässt – das gleiche Muster wie in `exporter.py`.
@@ -34,7 +34,7 @@ from sampling_tool.core.models import (
     Engagement,
     SampleResult,
 )
-from sampling_tool.ui.widgets.chart_renderer import render_bar_chart_bytes
+from sampling_tool.io.charts import render_bar_chart_bytes
 
 _HEADER_FILL: Final = PatternFill(start_color="FFE81A3B", end_color="FFE81A3B", fill_type="solid")
 _HEADER_FONT: Final = Font(bold=True, color="FFFFFFFF")
