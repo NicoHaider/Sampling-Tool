@@ -186,7 +186,8 @@ class TestMainController:
         tmp_path: Path,
     ) -> None:
         ghost = tmp_path / "ghost.db"
-        with patch("sampling_tool.ui.controllers.main_controller.QMessageBox.warning") as warning:
+        # Sprint 13 / F-001: `error()` ist auf WorkspaceSession – Patch dort.
+        with patch("sampling_tool.ui.controllers.workspace_session.QMessageBox.warning") as warning:
             controller.handle_open_engagement(ghost)
         assert warning.called
         assert window.is_workspace_visible() is False
@@ -412,10 +413,10 @@ class TestMainController:
             controller.handle_open_engagement(populated_db)
             with (
                 patch(
-                    "sampling_tool.ui.controllers.main_controller.QFileDialog.getOpenFileName",
+                    "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
                     return_value=(str(import_xlsx), ""),
                 ),
-                patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"),
+                patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
             ):
                 controller.handle_import_excel()
 
@@ -509,7 +510,7 @@ class TestSamplingFlow:
             _open_dataset(controller, window, populated_db)
             controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
             with patch(
-                "sampling_tool.ui.controllers.main_controller.QMessageBox.question",
+                "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
                 return_value=__import__(
                     "PyQt6.QtWidgets", fromlist=["QMessageBox"]
                 ).QMessageBox.StandardButton.Yes,
@@ -532,7 +533,7 @@ class TestSamplingFlow:
             from PyQt6.QtWidgets import QMessageBox
 
             with patch(
-                "sampling_tool.ui.controllers.main_controller.QMessageBox.question",
+                "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.No,
             ):
                 controller.handle_reset()
@@ -630,7 +631,7 @@ class TestSamplingFlow:
         try:
             _open_dataset(controller, window, populated_db)
             controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
-            with patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"):
+            with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.handle_export_sample()
             files = list(tmp_path.glob("testname_ID42_BDO_sampling_*.xlsx"))
             assert len(files) == 1
@@ -665,7 +666,7 @@ class TestSamplingFlow:
         )
         try:
             controller.handle_open_engagement(populated_db)
-            with patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"):
+            with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.handle_export_audit_pdf()
             assert target.exists()
             assert target.stat().st_size > 0
@@ -856,7 +857,7 @@ class TestFilterAndSwitchEngagement:
             assert window.sidebar().is_filter_only_sample() is True
 
             with patch(
-                "sampling_tool.ui.controllers.main_controller.QMessageBox.question",
+                "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.Yes,
             ):
                 controller.handle_reset()
@@ -912,7 +913,7 @@ class TestFilterAndSwitchEngagement:
         try:
             controller.handle_open_engagement(populated_db)
             with patch(
-                "sampling_tool.ui.controllers.main_controller.QMessageBox.question",
+                "sampling_tool.ui.controllers.engagement_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.Yes,
             ):
                 controller.handle_close_engagement_requested()
@@ -932,7 +933,7 @@ class TestFilterAndSwitchEngagement:
         try:
             controller.handle_open_engagement(populated_db)
             with patch(
-                "sampling_tool.ui.controllers.main_controller.QMessageBox.question",
+                "sampling_tool.ui.controllers.engagement_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.No,
             ):
                 controller.handle_close_engagement_requested()
@@ -946,7 +947,9 @@ class TestFilterAndSwitchEngagement:
         window: MainWindow,
     ) -> None:
         # Ohne offenes Engagement darf kein Dialog erscheinen.
-        with patch("sampling_tool.ui.controllers.main_controller.QMessageBox.question") as question:
+        with patch(
+            "sampling_tool.ui.controllers.engagement_controller.QMessageBox.question"
+        ) as question:
             controller.handle_close_engagement_requested()
         assert question.called is False
         assert window.is_workspace_visible() is False
@@ -1078,7 +1081,7 @@ class TestSprint6Reports:
         )
         try:
             controller.handle_open_engagement(populated_db)
-            with patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"):
+            with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.handle_export_excel_report()
             assert target.exists()
         finally:
@@ -1110,7 +1113,7 @@ class TestSprint6Reports:
         )
         try:
             controller.handle_open_engagement(populated_db)
-            with patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"):
+            with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.handle_export_html_report()
             assert target.exists()
             content = target.read_text(encoding="utf-8")
@@ -1176,7 +1179,7 @@ class TestUnifiedExportDialogs:
         try:
             controller.handle_open_engagement(populated_db)
             with patch(
-                "sampling_tool.ui.controllers.main_controller.QMessageBox.information"
+                "sampling_tool.ui.controllers.export_controller.QMessageBox.information"
             ) as info:
                 controller.handle_export_audit_pdf()
             # Info-Text enthält Anzahl der gefilterten Events.
@@ -1232,7 +1235,7 @@ class TestUnifiedExportDialogs:
         )
         try:
             controller.handle_open_engagement(populated_db)
-            with patch("sampling_tool.ui.controllers.main_controller.QMessageBox.information"):
+            with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.handle_export_excel_report()
             assert target.exists()
             wb = load_workbook(target)
