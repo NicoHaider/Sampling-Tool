@@ -29,11 +29,11 @@ from jinja2 import (
 )
 
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
-from sampling_tool.resources import shared_resource
-from sampling_tool.ui.widgets.chart_renderer import (
+from sampling_tool.io.charts import (
     render_bar_chart_bytes,
     render_line_chart_bytes,
 )
+from sampling_tool.resources import shared_resource
 
 _DEFAULT_TEMPLATE_DIR: Final[Path] = shared_resource("templates")
 _DEFAULT_TEMPLATE_NAME: Final[str] = "audit_report.html"
