@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -16,6 +17,8 @@ from sampling_tool.core.models import (
     SampleResult,
     SamplingMethod,
 )
+from sampling_tool.persistence.database import Database
+from sampling_tool.persistence.repositories import DatasetRepo, EngagementRepo
 from sampling_tool.ui.main_window import MainWindow
 from sampling_tool.ui.recent import RecentEntry
 
@@ -32,16 +35,30 @@ def _engagement() -> Engagement:
     )
 
 
-def _dataset() -> Dataset:
-    return Dataset(
-        name="Buchungen",
-        columns=("Konto", "Betrag"),
-        rows=tuple(
-            DatasetRow(row_id=i, values={"Konto": f"K{i}", "Betrag": i * 10}) for i in range(1, 4)
-        ),
-        engagement_id=1,
-        id=1,
+@pytest.fixture
+def dataset_with_repo(tmp_path: Path) -> Iterator[tuple[Dataset, DatasetRepo]]:
+    """Persistiert ein 3-Zeilen-Dataset und liefert (Dataset, Repo).
+
+    Sprint-11.2: `MainWindow.show_dataset` braucht ein Repo statt rows.
+    """
+    db = Database(tmp_path / "mw.db")
+    db.migrate()
+    eng = EngagementRepo(db.connect()).get_or_create(
+        Engagement(auditor_name="A", client_name="C", auditor_position="S", audit_type="ISAE 3402")
     )
+    assert eng.id is not None
+    repo = DatasetRepo(db.connect())
+    rows = tuple(
+        DatasetRow(row_id=i, values={"Konto": f"K{i}", "Betrag": i * 10}) for i in range(1, 4)
+    )
+    dataset = repo.create(
+        Dataset(name="Buchungen", columns=("Konto", "Betrag"), engagement_id=eng.id),
+        rows,
+    )
+    try:
+        yield dataset, repo
+    finally:
+        db.close()
 
 
 def _sample() -> SampleResult:
@@ -75,19 +92,23 @@ class TestMainWindowState:
         assert win._action_close.isEnabled() is False
         assert win._action_import.isEnabled() is False
 
-    def test_show_dataset_enables_sampling(self, qtbot: QtBot) -> None:
+    def test_show_dataset_enables_sampling(
+        self, qtbot: QtBot, dataset_with_repo: tuple[Dataset, DatasetRepo]
+    ) -> None:
         win = MainWindow()
         qtbot.addWidget(win)
         win.show_workspace()
-        win.show_dataset(_dataset())
+        win.show_dataset(*dataset_with_repo)
         assert win._action_new_sample.isEnabled() is True
         assert win.data_table().table_model().rowCount() == 3
 
-    def test_highlight_sample_enables_export(self, qtbot: QtBot) -> None:
+    def test_highlight_sample_enables_export(
+        self, qtbot: QtBot, dataset_with_repo: tuple[Dataset, DatasetRepo]
+    ) -> None:
         win = MainWindow()
         qtbot.addWidget(win)
         win.show_workspace()
-        win.show_dataset(_dataset())
+        win.show_dataset(*dataset_with_repo)
         win.highlight_sample(_sample())
         assert win._action_export_sample.isEnabled() is True
         assert 1 in win.data_table().table_model().highlighted_row_ids()
@@ -116,11 +137,13 @@ class TestMainWindowState:
         win.set_engagement(_engagement())
         assert win._status_engagement.text() == "ACME"
 
-    def test_active_sample_status_label_filled(self, qtbot: QtBot) -> None:
+    def test_active_sample_status_label_filled(
+        self, qtbot: QtBot, dataset_with_repo: tuple[Dataset, DatasetRepo]
+    ) -> None:
         win = MainWindow()
         qtbot.addWidget(win)
         win.show_workspace()
-        win.show_dataset(_dataset())
+        win.show_dataset(*dataset_with_repo)
         win.set_samples([_sample()])
         win.highlight_sample(_sample())
         text = win._status_sample.text()
@@ -129,30 +152,36 @@ class TestMainWindowState:
         assert "Einfach" in text
         assert "2/3" in text
 
-    def test_active_sample_status_label_empty_when_cleared(self, qtbot: QtBot) -> None:
+    def test_active_sample_status_label_empty_when_cleared(
+        self, qtbot: QtBot, dataset_with_repo: tuple[Dataset, DatasetRepo]
+    ) -> None:
         win = MainWindow()
         qtbot.addWidget(win)
         win.show_workspace()
-        win.show_dataset(_dataset())
+        win.show_dataset(*dataset_with_repo)
         win.set_samples([_sample()])
         win.highlight_sample(_sample())
         win.clear_active_sample()
         assert win._status_sample.text() == "Aktive Stichprobe: keine"
 
-    def test_active_sample_status_label_filtered_suffix(self, qtbot: QtBot) -> None:
+    def test_active_sample_status_label_filtered_suffix(
+        self, qtbot: QtBot, dataset_with_repo: tuple[Dataset, DatasetRepo]
+    ) -> None:
         win = MainWindow()
         qtbot.addWidget(win)
         win.show_workspace()
-        win.show_dataset(_dataset())
+        win.show_dataset(*dataset_with_repo)
         win.set_samples([_sample()])
         win.highlight_sample(_sample(), filtered=True)
         assert "– gefiltert" in win._status_sample.text()
 
-    def test_active_sample_status_label_no_suffix_when_not_filtered(self, qtbot: QtBot) -> None:
+    def test_active_sample_status_label_no_suffix_when_not_filtered(
+        self, qtbot: QtBot, dataset_with_repo: tuple[Dataset, DatasetRepo]
+    ) -> None:
         win = MainWindow()
         qtbot.addWidget(win)
         win.show_workspace()
-        win.show_dataset(_dataset())
+        win.show_dataset(*dataset_with_repo)
         win.set_samples([_sample()])
         win.highlight_sample(_sample(), filtered=False)
         assert "gefiltert" not in win._status_sample.text()

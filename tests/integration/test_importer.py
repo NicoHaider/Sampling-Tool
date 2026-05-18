@@ -21,37 +21,41 @@ class TestImportXlsx:
         self, importer: ExcelImporter, simple_xlsx: Path
     ) -> None:
         result = importer.import_file(simple_xlsx)
+        rows = list(result.rows)
         assert isinstance(result, ImportResult)
         ds = result.dataset
         assert ds.columns == ("Name", "Betrag", "Quote", "Buchungsdatum")
-        assert len(ds.rows) == 10
-        assert ds.rows[0].row_id == 1
-        assert ds.rows[0].values["Name"] == "Posten 1"
-        assert ds.rows[0].values["Betrag"] == 101
-        assert isinstance(ds.rows[0].values["Buchungsdatum"], datetime)
+        assert len(rows) == 10
+        assert rows[0].row_id == 1
+        assert rows[0].values["Name"] == "Posten 1"
+        assert rows[0].values["Betrag"] == 101
+        assert isinstance(rows[0].values["Buchungsdatum"], datetime)
         assert ds.source_file == str(simple_xlsx)
-        assert result.skipped_rows == 0
+        assert result.stats.skipped_rows == 0
 
     def test_importiert_xlsm_und_ignoriert_makros(
         self, importer: ExcelImporter, xlsm_macro: Path
     ) -> None:
         result = importer.import_file(xlsm_macro)
+        rows = list(result.rows)
         assert result.dataset.columns == ("A", "B")
-        assert len(result.dataset.rows) == 2
-        assert result.dataset.rows[0].values == {"A": 1, "B": 2}
+        assert len(rows) == 2
+        assert rows[0].values == {"A": 1, "B": 2}
 
     def test_sheet_auswahl_bei_multi_sheet(
         self, importer: ExcelImporter, multi_sheet_xlsx: Path
     ) -> None:
         result = importer.import_file(multi_sheet_xlsx, sheet_name="Stammdaten")
+        rows = list(result.rows)
         assert result.dataset.columns == ("KundenID", "Land")
-        assert len(result.dataset.rows) == 3
-        assert result.dataset.rows[0].values["Land"] == "AUT"
+        assert len(rows) == 3
+        assert rows[0].values["Land"] == "AUT"
 
     def test_default_sheet_ohne_argument(
         self, importer: ExcelImporter, multi_sheet_xlsx: Path
     ) -> None:
         result = importer.import_file(multi_sheet_xlsx)
+        list(result.rows)
         # Erstes/aktives Sheet ist "Buchungen"
         assert result.dataset.columns == ("BuchungsID", "Betrag")
 
@@ -65,18 +69,20 @@ class TestImportXlsx:
         self, importer: ExcelImporter, leading_blank_xlsx: Path
     ) -> None:
         result = importer.import_file(leading_blank_xlsx)
+        rows = list(result.rows)
         assert result.dataset.columns == ("Konto", "Bezeichnung", "Saldo")
-        assert len(result.dataset.rows) == 2
+        assert len(rows) == 2
         # 3 leere Vorzeilen wurden geskipped
-        assert result.skipped_rows == 3
-        assert result.dataset.rows[0].values["Saldo"] == 500.50
+        assert result.stats.skipped_rows == 3
+        assert rows[0].values["Saldo"] == 500.50
 
     def test_duplikat_spaltennamen_bekommen_suffix(
         self, importer: ExcelImporter, duplicate_columns_xlsx: Path
     ) -> None:
         result = importer.import_file(duplicate_columns_xlsx)
+        list(result.rows)
         assert result.dataset.columns == ("Betrag", "Betrag_2", "Betrag_3")
-        assert any("Doppelter Spaltenname" in w for w in result.warnings)
+        assert any("Doppelter Spaltenname" in w for w in result.stats.warnings)
 
     def test_leere_xlsx_wirft_fachlichen_fehler(
         self, importer: ExcelImporter, empty_xlsx: Path
@@ -98,7 +104,8 @@ class TestImportXlsx:
         self, importer: ExcelImporter, simple_xlsx: Path
     ) -> None:
         result = importer.import_file(simple_xlsx)
-        first = result.dataset.rows[0].values
+        rows = list(result.rows)
+        first = rows[0].values
         assert isinstance(first["Name"], str)
         assert isinstance(first["Betrag"], int)
         assert isinstance(first["Quote"], float)
@@ -108,31 +115,35 @@ class TestImportXlsx:
 class TestImportCsv:
     def test_csv_utf8(self, importer: ExcelImporter, utf8_csv: Path) -> None:
         result = importer.import_file(utf8_csv)
+        rows = list(result.rows)
         assert result.dataset.columns == ("Name", "Stadt")
-        assert result.dataset.rows[0].values == {"Name": "Müller", "Stadt": "Wien"}
+        assert rows[0].values == {"Name": "Müller", "Stadt": "Wien"}
         # utf-8 ohne BOM erzeugt keine Encoding-Warnung
-        assert not any("Encoding" in w for w in result.warnings)
+        assert not any("Encoding" in w for w in result.stats.warnings)
 
     def test_csv_utf8_bom(self, importer: ExcelImporter, utf8_bom_csv: Path) -> None:
         result = importer.import_file(utf8_bom_csv)
+        list(result.rows)
         assert result.dataset.columns == ("Name", "Stadt")
         # utf-8-sig wurde gewählt → Warnung
-        assert any("utf-8-sig" in w for w in result.warnings)
+        assert any("utf-8-sig" in w for w in result.stats.warnings)
 
     def test_csv_cp1252(self, importer: ExcelImporter, cp1252_csv: Path) -> None:
         # latin-1 nimmt jedes Byte und liest in dem Zeichensatz – das ist für
         # die hier verwendeten Umlaute kompatibel mit cp1252.
         result = importer.import_file(cp1252_csv)
+        rows = list(result.rows)
         assert result.dataset.columns == ("Name", "Stadt")
-        assert result.dataset.rows[0].values["Name"] == "Müller"
-        assert any("Encoding" in w for w in result.warnings)
+        assert rows[0].values["Name"] == "Müller"
+        assert any("Encoding" in w for w in result.stats.warnings)
 
     def test_csv_mit_semikolon_separator(self, importer: ExcelImporter, tmp_path: Path) -> None:
         path = tmp_path / "semi.csv"
         path.write_text("a;b;c\n1;2;3\n4;5;6\n", encoding="utf-8")
         result = importer.import_file(path)
+        rows = list(result.rows)
         assert result.dataset.columns == ("a", "b", "c")
-        assert result.dataset.rows[0].values == {"a": 1, "b": 2, "c": 3}
+        assert rows[0].values == {"a": 1, "b": 2, "c": 3}
 
     def test_leere_csv(self, importer: ExcelImporter, tmp_path: Path) -> None:
         path = tmp_path / "empty.csv"
@@ -190,7 +201,8 @@ class TestCalamineIntegration:
     def test_native_python_types_aus_excel(self, simple_xlsx: Path) -> None:
         """Zahlen, Datums-Werte und Strings kommen als Python-Native-Typen."""
         result = ExcelImporter().import_file(simple_xlsx)
-        first = result.dataset.rows[0].values
+        rows = list(result.rows)
+        first = rows[0].values
         # Ganzzahliger Excel-Wert → int (auch wenn Calamine intern float liefert)
         assert isinstance(first["Betrag"], int)
         assert first["Betrag"] == 101
@@ -211,8 +223,9 @@ class TestCalamineIntegration:
         wb.save(path)
 
         result = ExcelImporter().import_file(path)
-        first = result.dataset.rows[0].values
-        second = result.dataset.rows[1].values
+        rows = list(result.rows)
+        first = rows[0].values
+        second = rows[1].values
         assert first["A"] == "x"
         assert first["B"] is None
         assert first["C"] is None
@@ -221,16 +234,21 @@ class TestCalamineIntegration:
 
 
 class TestProgressCallback:
-    def test_callback_wird_aufgerufen(self, simple_xlsx: Path) -> None:
+    """Sprint 11.3 – Streaming: Progress feuert erst beim Generator-Verbrauch."""
+
+    def test_callback_finaler_tick_nach_voller_iteration(self, simple_xlsx: Path) -> None:
         events: list[tuple[int, int]] = []
         importer = ExcelImporter(progress=lambda c, t: events.append((c, t)))
-        importer.import_file(simple_xlsx)
-        assert len(events) == 10
+        result = importer.import_file(simple_xlsx)
+        # Vor dem Konsumieren ist der Generator nicht gelaufen → keine Events.
+        assert events == []
+        list(result.rows)
+        # Nach voller Iteration mindestens der finale Tick.
         assert events[-1] == (10, 10)
-        assert events[0] == (1, 10)
 
     def test_callback_bei_leeren_daten(self, tmp_path: Path) -> None:
-        # Datei mit Header aber ohne Datenzeilen
+        # Datei mit Header aber ohne Datenzeilen → 0 Events vor Konsum,
+        # ein finaler (0, 0)-Tick nach Konsum.
         path = tmp_path / "header_only.xlsx"
         wb = Workbook()
         ws = wb.active
@@ -239,5 +257,97 @@ class TestProgressCallback:
         wb.save(path)
 
         events: list[tuple[int, int]] = []
-        ExcelImporter(progress=lambda c, t: events.append((c, t))).import_file(path)
+        result = ExcelImporter(progress=lambda c, t: events.append((c, t))).import_file(path)
+        list(result.rows)
         assert events == [(0, 0)]
+
+
+class TestStreamingImport:
+    """Sprint 11.3: ImportResult.rows ist ein einmalig konsumierbarer Iterator."""
+
+    def test_rows_ist_kein_tuple_oder_list(self, simple_xlsx: Path) -> None:
+        result = ExcelImporter().import_file(simple_xlsx)
+        # Kein materialisierter Container.
+        assert not isinstance(result.rows, list | tuple)
+        # Aber iterierbar – Generator hat __next__.
+        assert hasattr(result.rows, "__next__")
+
+    def test_rows_nur_einmal_konsumierbar(self, simple_xlsx: Path) -> None:
+        result = ExcelImporter().import_file(simple_xlsx)
+        first_pass = list(result.rows)
+        assert len(first_pass) == 10
+        second_pass = list(result.rows)
+        assert second_pass == []
+
+    def test_stats_vor_iteration_leer(self, simple_xlsx: Path) -> None:
+        result = ExcelImporter().import_file(simple_xlsx)
+        assert result.stats.processed_count == 0
+        assert result.stats.skipped_rows == 0
+
+    def test_stats_nach_iteration_gefuellt(self, leading_blank_xlsx: Path) -> None:
+        result = ExcelImporter().import_file(leading_blank_xlsx)
+        list(result.rows)
+        # 3 Leerzeilen vorm Header werden beim Header-Pass schon erkannt.
+        assert result.stats.skipped_rows == 3
+        assert result.stats.processed_count == 2
+
+
+class TestRepoStreamingRowCount:
+    """Sprint 11.3: DatasetRepo.create korrigiert row_count basierend auf
+    der echten Anzahl persistierter Rows (wichtig bei Skipped-Rows im
+    Streaming-Import)."""
+
+    def test_repo_create_uebernimmt_actual_count(self, simple_xlsx: Path, tmp_path: Path) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.core.models import Engagement
+        from sampling_tool.persistence.database import Database
+        from sampling_tool.persistence.repositories import DatasetRepo, EngagementRepo
+
+        db = Database(tmp_path / "streaming.db")
+        db.migrate()
+        eng = EngagementRepo(db.connect()).get_or_create(
+            Engagement(
+                auditor_name="A", client_name="C", auditor_position="S", audit_type="ISAE 3402"
+            )
+        )
+        assert eng.id is not None
+
+        result = ExcelImporter().import_file(simple_xlsx)
+        dataset = dc_replace(result.dataset, engagement_id=eng.id)
+        stored = DatasetRepo(db.connect()).create(dataset, result.rows)
+
+        assert stored.row_count == 10
+        assert stored.id is not None
+        # Echte Persistenz prüfen.
+        all_rows = DatasetRepo(db.connect()).get_all_rows(stored.id)
+        assert len(all_rows) == 10
+        db.close()
+
+    def test_repo_create_korrigiert_bei_skipped(
+        self, leading_blank_xlsx: Path, tmp_path: Path
+    ) -> None:
+        # leading_blank_xlsx hat 3 Leerzeilen vor dem Header, 2 Daten-Rows.
+        # `sheet.total_height` enthält die Leerzeilen, der Importer
+        # schätzt also evtl. zu hoch – Repo korrigiert auf 2.
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.core.models import Engagement
+        from sampling_tool.persistence.database import Database
+        from sampling_tool.persistence.repositories import DatasetRepo, EngagementRepo
+
+        db = Database(tmp_path / "skipped.db")
+        db.migrate()
+        eng = EngagementRepo(db.connect()).get_or_create(
+            Engagement(
+                auditor_name="A", client_name="C", auditor_position="S", audit_type="ISAE 3402"
+            )
+        )
+        assert eng.id is not None
+
+        result = ExcelImporter().import_file(leading_blank_xlsx)
+        dataset = dc_replace(result.dataset, engagement_id=eng.id)
+        stored = DatasetRepo(db.connect()).create(dataset, result.rows)
+
+        assert stored.row_count == 2
+        db.close()

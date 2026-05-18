@@ -41,10 +41,68 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 10.2   | Excel-Import via python-calamine (Performance-Fix)  | done        |
 | 10.3   | DB-Performance: orjson + executemany-Generator      | done        |
 | 10.4   | AuditTrail-PDF Performance (reportlab-Chunking)     | done        |
+| 11.1   | Dataset-API-Cut (rows raus, Repo-Methoden rein)     | done        |
+| 11.2   | Streaming Teil 2: UI-LRU-Cache für TableModel       | done        |
+| 11.3   | Streaming Teil 3: Excel-Import streamt direkt in DB | done        |
+| 11.4   | Streaming Teil 4: Sampler/Exporter auf iter_rows    | done        |
+| 11.5   | Streaming Cleanup + Konsolidierung                  | done        |
 
-**Sprint 10.4 abgeschlossen.**
+**Sprint 11.x abgeschlossen** – Streaming-Architektur komplett (siehe
+nächster Abschnitt). Dataset lebt in SQLite, Code-Pfade arbeiten mit
+Generatoren / Range-Queries / Bulk-ID-Lookups. RAM-Footprint ist nicht
+mehr proportional zur Dataset-Größe.
 
 Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
+
+## Streaming-Architektur (Sprint 11.x)
+
+Zentraler Designgrundsatz nach Sprint 11.x: **das Tool hält Dataset-Rows
+nicht im RAM**, sondern in SQLite. Alle Code-Pfade arbeiten mit
+Generatoren / Range-Queries / Bulk-ID-Lookups, nicht mit
+voll-materialisierten Listen.
+
+**Was lebt wo:**
+- `Dataset` (frozen Dataclass): Metadaten + `row_count`, KEINE rows.
+- Rows: in `dataset_rows`-Tabelle, abgerufen via `DatasetRepo`.
+- `DatasetTableModel` (UI): FIFO-Cache mit 1000 Rows, Bulk-Load 250
+  pro Cache-Miss (Window davor + dahinter). RAM konstant ~3 MB.
+- `ExcelImporter`: liefert `ImportResult.rows` als einmal-konsumierbaren
+  `Iterator[DatasetRow]`; `DatasetRepo.create` zieht ihn einmal durch
+  und korrigiert `row_count` auf die tatsächliche Anzahl.
+- `BaseSampler.sample(rows, population_size)`: Single-Pass-Filter über
+  Iterator, `population_size` dokumentiert die Universumsgröße (auch
+  bei Sub-Sampling).
+- `ExcelExporter.export_sample(sample, dataset, dataset_repo, ...)`:
+  holt nur die Sample-Rows on-demand via `get_rows_by_ids`.
+
+**Repo-API für Row-Zugriffe:**
+- `create(dataset, rows: Iterable[DatasetRow])` – Generator akzeptiert,
+  `row_count` wird nach echter Persistierung korrigiert.
+- `get_by_id(dataset_id)` – nur Metadaten, keine Rows.
+- `get_row(dataset_id, row_id)` – einzelne Row.
+- `get_rows_in_range(dataset_id, start, end)` – half-open Range, für
+  UI-Pagination / TableModel-Cache.
+- `iter_rows(dataset_id)` – Streaming-Generator (sortiert).
+- `iter_row_ids(dataset_id)` – Light-Streaming nur über `row_index`,
+  ohne JSON-Parsing.
+- `get_rows_by_ids(dataset_id, row_ids)` – Bulk-Lookup, behält
+  Eingabe-Reihenfolge, ignoriert stale IDs, chunkt bei >900 Parametern
+  (SQLite-Bind-Limit 999).
+- `get_all_rows(dataset_id)` – Tests-Convenience. **In Production
+  nur** im SamplingDialog-Advanced-Mode für distinct-Werte-Sammlung
+  (siehe Docstring im Repo). Streaming-Alternative via SQLite
+  `json_extract` wurde geprüft, am tagged-Encoder für datetime-Spalten
+  gescheitert; tolerabler RAM-Footprint bei realistischen Audit-Datasets.
+
+**Was nicht streamt (legitime Ausnahmen):**
+- Advanced-SamplingDialog: distinct-Werte für Cluster/Stratum-ComboBoxen.
+  Controller lädt `get_all_rows` nur wenn `advanced_mode=True`.
+- ImportResult.dataset (Metadaten) – klein, keine Rows.
+
+**Reproduzierbarkeit bleibt gewahrt**: `row_id` ist die stabile
+Sortier-Ordnung, `iter_rows` sortiert per `ORDER BY row_index`,
+Sampler nutzen row_id-basierte Indices. Generator-Konsum ist
+deterministisch.
 
 ## Architektur
 
@@ -60,27 +118,48 @@ ui ──▶ controllers ──▶ core ◀── io
 
 - **`core/`** – reine Domain-Logik. Keine I/O, kein Qt, keine SQL. Alles deterministisch
   und unit-test-bar ohne Mocks.
-  - `models.py` – frozen Dataclasses (Engagement, Dataset, SampleConfig, …)
+  - `models.py` – frozen Dataclasses (Engagement, Dataset, SampleConfig, …).
+    `Dataset` ist seit Sprint 11.1 nur Metadaten (`columns`, `row_count`,
+    `source_file`, Engagement-FK) – Rows leben im Repo (siehe Block
+    "Streaming-Architektur" oben).
   - `rng.py` – `make_rng(seed)` + `fisher_yates_shuffle` über `numpy.random.default_rng`
-  - `sampling.py` – `BaseSampler` + Simple/Cluster/Stratified + `create_sampler`-Factory
+  - `sampling.py` – `BaseSampler` + Simple/Cluster/Stratified + `create_sampler`-Factory.
+    `sample(rows, population_size=None)` akzeptiert einen einmalig-
+    konsumierbaren Iterator, `_collect_pool` ist Single-Pass-Filter
+    (zählt parallel den Pre-Filter-Total für den `population_size`-
+    Default). Production-Caller setzen `population_size=dataset.row_count`
+    explizit, damit auch bei Sub-Sampling die Original-Population
+    dokumentiert bleibt. Details siehe Streaming-Architektur-Block.
 - **`io/`** – Excel-/CSV-Import, Excel-Export, PDF-Report.
   - `importer.py` – `ExcelImporter` nutzt seit Sprint 10.2 die Rust-
     basierte `python-calamine`-Library für Excel-Reads (10–30× schneller
     als openpyxl, deutlich niedrigerer RAM-Footprint, Streaming via
     `CalamineSheet.iter_rows`). CSV-Pfad bleibt stdlib-`csv` mit
     Encoding-Fallback. Header-Detection (≥50 % String-Anteil) +
-    Progress-Callback unverändert. Liefert weiterhin
-    `ImportResult(dataset, skipped_rows, warnings)`. Native Python-
-    Typen (kein numpy/pandas-Output). openpyxl wird im Import-Pfad
-    NICHT mehr verwendet – bleibt nur für die Exporter.
+    Progress-Callback unverändert. Native Python-Typen (kein
+    numpy/pandas-Output). openpyxl wird im Import-Pfad NICHT mehr
+    verwendet – bleibt nur für die Exporter.
     Calamine-Eigenheiten, die der Importer normalisiert:
     leere Zellen kommen als `""` (→ `None`), Excel-Zahlen kommen
     immer als `float` (ganzzahlige → `int`), Datums-Zellen ohne
     Uhrzeit kommen als `date` (→ `datetime`).
+    **Streaming-Import**: `ImportResult.rows` ist ein einmalig
+    konsumierbarer `Iterator[DatasetRow]`, `ImportResult.stats`
+    (`ImportStats`-Container) füllt sich während der Iteration
+    (`skipped_rows`, `warnings`, `processed_count` – erst nach voller
+    Konsumierung aussagekräftig). Typischer Pfad: `dataset_repo.create(
+    dataset, result.rows)` zieht den Generator einmal durch und
+    korrigiert `row_count` auf die tatsächlich persistierte Anzahl
+    (Initial-Estimate aus `sheet.total_height` ist oft zu hoch).
+    Sprint 11.5 – die Compat-Properties `result.skipped_rows` /
+    `result.warnings` sind weg, Caller lesen `result.stats.*` direkt.
   - `exporter.py` – `ExcelExporter`. Atomare Writes (`.tmp` → `os.replace`),
     Sheet "Sample" (BDO-rote Header) + Sheet "Metadaten" (Engagement, Seed,
     Methode). Dateiname-Schema:
     `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
+    `export_sample(sample, dataset, dataset_repo, ...)` nimmt das
+    `DatasetRepo` und holt nur `sample.selected_row_ids` via
+    `get_rows_by_ids` – siehe Streaming-Architektur-Block.
   - `pdf_report.py` – `AuditTrailPDF` via `reportlab.platypus`.
     A4 Portrait, Engagement-Block oben, Event-Tabelle mit
     Korrektur-Highlight, Footer mit Seitenzahl + Zeitstempel. Optionales
@@ -163,12 +242,30 @@ ui ──▶ controllers ──▶ core ◀── io
     User-Choice an `handle_open_engagement` weitergeleitet, der
     `NewEngagementDialog` mit Prefill erneut geöffnet oder ganz
     abgebrochen.
+    **Sprint 11.4 – Sampling-Streaming**: `_build_sampling_iterator(repo,
+    dataset, from_sample_only)` liefert `(Iterable[DatasetRow], int)`:
+    bei `from_sample_only` → `get_rows_by_ids` mit den IDs des aktiven
+    Samples + Sample-Größe; sonst → `iter_rows`-Generator + `dataset.
+    row_count`. `handle_new_sampling` reicht das in
+    `sampler.sample(rows, population_size=...)` durch. `handle_export_
+    sample` übergibt dem `ExcelExporter` nur noch das `DatasetRepo` –
+    der Exporter holt sich die Sample-Rows selbst.
   - `widgets/data_table.py` – `DatasetTableModel(QAbstractTableModel)` +
     `DataTableView`. Virtuelles Model (kein QStandardItemModel) –
     100k+ Zeilen scrollen flüssig. Sample-Highlighting per
     `BackgroundRole`, Filter ohne Proxy via `_visible_indices`.
     Bei leerem Model zeichnet `paintEvent` einen zentrierten
     "Keine Datensätze – Datei importieren"-Hinweis.
+    **Sprint 11.2 – Streaming-UI**: Das Model hält keine In-Memory-
+    Liste mehr, sondern liest Rows on-demand via
+    `DatasetRepo.get_rows_in_range`. FIFO-Cache mit
+    `DEFAULT_CACHE_SIZE = 1000` Rows; bei Cache-Miss lädt
+    `_ensure_cached` einen ganzen Block (Window
+    `BULK_LOAD_HALF_WINDOW = 125` davor + dahinter). RAM-Footprint
+    konstant ~3 MB, unabhängig von Dataset-Größe. `set_dataset(dataset,
+    repo)` (statt `dataset, rows`) – Caller (MainController) übergibt
+    ein frisches `DatasetRepo`. FIFO statt echtes LRU: bei sequentiellem
+    Qt-Scroll reicht das aus.
   - `widgets/audit_trail_view.py` – `AuditTrailModel` +
     `AuditTrailFilterProxy` + `AuditTrailView`. Filter-Zeile mit
     Volltextsuche und ComboBoxen (Aktion / User / Zeitraum), sortierbar.
@@ -234,6 +331,13 @@ ui ──▶ controllers ──▶ core ◀── io
     Verbleibender Unterschied Simple/Advanced: nur noch Methodenwahl +
     method-spezifische Felder (Cluster-/Schicht-Feld, Stratify-Mode,
     Spalten-Filter).
+    **Sprint 11.4**: Konstruktor-Parameter `rows: Sequence[DatasetRow] |
+    None`. Im Simple-Mode wird `None` übergeben – kein voller
+    Row-Materialize nur für die Größen-Validierung; stattdessen zieht
+    `_max_population` `dataset.row_count`. Nur im Advanced-Mode (wenn
+    das Filter-Dropdown distinct-Werte braucht) lädt der Controller
+    weiterhin `get_all_rows` und reicht sie an den Dialog durch.
+    `MainController.handle_new_sampling` orchestriert das.
   - `dialogs/export_sample_dialog.py` – Spaltenauswahl (Checkboxen) +
     Filename/ID + Zielordner. Vorschau-Label live mit
     `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
@@ -433,9 +537,14 @@ Drei Kerndogmen, die sich durch die ganze DB-Schicht ziehen:
 
 **Repositories als Eintrittspunkt für Sprint 3 (I/O):**
 
-- Excel-Importer (Sprint 3) konstruiert ein `Dataset` (engagement_id setzen!) und
-  ruft `DatasetRepo.create(dataset)`. Atomar – schlägt das fehl, bleibt nichts
-  zurück. Danach `AuditLogger.log_import(dataset)`.
+- Excel-Importer (Sprint 3, in 11.1 refaktoriert) konstruiert ein `Dataset`
+  (Metadaten) + ein `tuple[DatasetRow, ...]` separat. Aufrufer ruft
+  `DatasetRepo.create(dataset, rows)`. Atomar – schlägt das fehl, bleibt
+  nichts zurück. `dataset.row_count` wird vom Repo auf `len(rows)` gesetzt.
+  Danach `AuditLogger.log_import(dataset)`.
+- Row-Zugriffe siehe Streaming-Architektur-Block oben (`get_row`,
+  `get_rows_in_range`, `iter_rows`, `iter_row_ids`, `get_rows_by_ids`,
+  `get_all_rows` als Ausnahme).
 - UI-Controller (Sprint 4+) bekommt `Database`-Instanz, baut bei Bedarf eigene
   Repo-Instanzen pro Operation. Connection-Lebensdauer = App-Sitzung.
 - `UndoManager(db, engagement_id)` ist persistiert (überlebt Connection-Wechsel).

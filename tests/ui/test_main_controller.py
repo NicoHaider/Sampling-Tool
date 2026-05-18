@@ -75,16 +75,12 @@ def populated_db(tmp_path: Path) -> Path:
     )
     assert eng.id is not None
     ds_repo = DatasetRepo(db.connect())
+    rows = tuple(
+        DatasetRow(row_id=i, values={"Konto": f"K{i}", "Betrag": i * 10}) for i in range(1, 6)
+    )
     dataset = ds_repo.create(
-        Dataset(
-            name="Buchungen",
-            columns=("Konto", "Betrag"),
-            rows=tuple(
-                DatasetRow(row_id=i, values={"Konto": f"K{i}", "Betrag": i * 10})
-                for i in range(1, 6)
-            ),
-            engagement_id=eng.id,
-        )
+        Dataset(name="Buchungen", columns=("Konto", "Betrag"), engagement_id=eng.id),
+        rows,
     )
     assert dataset.id is not None
     SampleRepo(db.connect()).create_from_result(
@@ -485,7 +481,7 @@ class TestSamplingFlow:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _s, _am: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -558,7 +554,7 @@ class TestSamplingFlow:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _s, _am: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -592,7 +588,7 @@ class TestSamplingFlow:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=3),
             from_sample_only=True,
         )
-        factory = lambda _p, _d, _s, _am: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -707,21 +703,14 @@ def _two_dataset_db(tmp_path: Path) -> tuple[Path, int, int, int]:
     )
     assert eng.id is not None
     ds_repo = DatasetRepo(db.connect())
+    rows_ab = tuple(DatasetRow(row_id=i, values={"a": i}) for i in range(1, 4))
     ds1 = ds_repo.create(
-        Dataset(
-            name="First",
-            columns=("a",),
-            rows=tuple(DatasetRow(row_id=i, values={"a": i}) for i in range(1, 4)),
-            engagement_id=eng.id,
-        )
+        Dataset(name="First", columns=("a",), engagement_id=eng.id),
+        rows_ab,
     )
     ds2 = ds_repo.create(
-        Dataset(
-            name="Second",
-            columns=("a",),
-            rows=tuple(DatasetRow(row_id=i, values={"a": i}) for i in range(1, 4)),
-            engagement_id=eng.id,
-        )
+        Dataset(name="Second", columns=("a",), engagement_id=eng.id),
+        rows_ab,
     )
     assert ds1.id is not None
     assert ds2.id is not None
@@ -832,7 +821,7 @@ class TestFilterAndSwitchEngagement:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _s, _am: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -1619,6 +1608,7 @@ class TestAdvancedModePropagation:
         def fake_factory(
             _parent: MainWindow,
             _dataset: object,
+            _rows: object,
             _current: object,
             advanced_mode: bool,
         ) -> _StubSamplingDialog:
@@ -1653,6 +1643,7 @@ class TestAdvancedModePropagation:
         def fake_factory(
             _parent: MainWindow,
             _dataset: object,
+            _rows: object,
             _current: object,
             advanced_mode: bool,
         ) -> _StubSamplingDialog:

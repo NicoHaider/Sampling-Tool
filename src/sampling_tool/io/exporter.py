@@ -18,7 +18,7 @@ import os
 from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -26,7 +26,10 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from sampling_tool.config import BDO_RED
-from sampling_tool.core.models import Dataset, Engagement, SampleResult
+from sampling_tool.core.models import Dataset, DatasetRow, Engagement, SampleResult
+
+if TYPE_CHECKING:
+    from sampling_tool.persistence.repositories import DatasetRepo
 
 ProgressCallback = Callable[[int, int], None]
 
@@ -50,6 +53,7 @@ class ExcelExporter:
         self,
         sample: SampleResult,
         dataset: Dataset,
+        dataset_repo: DatasetRepo,
         columns: list[str],
         output_dir: Path,
         custom_name: str,
@@ -61,10 +65,24 @@ class ExcelExporter:
         Liefert den vollen Pfad zur erzeugten Datei zurück. Der Dateiname
         folgt dem VBA-Schema `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
 
-        `engagement` ist optional – wird im Metadaten-Sheet ausgewertet, wenn
-        gesetzt. Damit kann der Exporter auch standalone genutzt werden.
+        Sprint-11.4-Streaming: statt einer voll materialisierten Row-Liste
+        nimmt der Exporter das `DatasetRepo` entgegen und lädt sich
+        ausschließlich die `sample.selected_row_ids` über
+        `get_rows_by_ids`. Bei 1M-Dataset und 1k-Sample werden so nur
+        1k Rows aus der DB geholt statt 1M (was bisher der Common Case
+        war, weil `handle_export_sample` `get_all_rows` aufgerufen hat).
+
+        `engagement` ist optional – wird im Metadaten-Sheet ausgewertet,
+        wenn gesetzt. Damit kann der Exporter auch standalone genutzt
+        werden.
         """
         self._validate(columns, dataset)
+
+        sample_rows = (
+            dataset_repo.get_rows_by_ids(dataset.id, list(sample.selected_row_ids))
+            if dataset.id is not None
+            else []
+        )
 
         output_dir.mkdir(parents=True, exist_ok=True)
         filename = self._build_filename(custom_name, custom_id)
@@ -73,7 +91,7 @@ class ExcelExporter:
 
         wb = Workbook()
         try:
-            self._write_sample_sheet(wb, sample, dataset, columns)
+            self._write_sample_sheet(wb, sample_rows, columns)
             self._write_metadata_sheet(wb, sample, dataset, engagement)
             wb.save(tmp)
         except Exception:
@@ -113,8 +131,7 @@ class ExcelExporter:
     def _write_sample_sheet(
         self,
         wb: Workbook,
-        sample: SampleResult,
-        dataset: Dataset,
+        rows: list[DatasetRow],
         columns: list[str],
     ) -> None:
         ws = wb.active
@@ -135,11 +152,9 @@ class ExcelExporter:
             cell.font = header_font
             cell.alignment = header_align
 
-        selected_ids = set(sample.selected_row_ids)
-        rows_to_write = [r for r in dataset.rows if r.row_id in selected_ids]
-        # Stabile Reihenfolge: nach row_id (matcht selected_row_ids-Sortierung)
-        rows_to_write.sort(key=lambda r: r.row_id)
-
+        # Stabile Reihenfolge: nach row_id (matcht selected_row_ids-Sortierung).
+        # Caller via get_rows_by_ids garantiert das schon, hier nur defensiv.
+        rows_to_write = sorted(rows, key=lambda r: r.row_id)
         total = len(rows_to_write)
         max_widths: list[int] = [len(c) for c in columns]
         for idx, row in enumerate(rows_to_write, start=1):

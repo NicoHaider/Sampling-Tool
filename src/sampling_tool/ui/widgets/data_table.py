@@ -1,28 +1,40 @@
-"""Datentabelle mit virtuellem Modell und Sample-Highlighting.
+"""Datentabelle mit lazy-loadendem Modell + LRU-Cache.
 
 `DatasetTableModel` implementiert `QAbstractTableModel` direkt – damit auch
-Datasets mit 100k+ Zeilen flüssig durchgescrollt werden können (Qt fragt
-nur sichtbare Zellen ab). `QStandardItemModel` würde alles in den Speicher
-ziehen und Drag-Scroll spürbar bremsen.
+Datasets mit 1M+ Zeilen flüssig durchgescrollt werden können (Qt fragt
+nur sichtbare Zellen ab).
+
+**Sprint 11.2 – Streaming-UI**: Das Model hält keine In-Memory-Liste mehr,
+sondern liest Rows on-demand via `DatasetRepo.get_rows_in_range`. Ein
+FIFO-Cache (`DEFAULT_CACHE_SIZE = 1000` Rows) hält den Viewport + ein
+Look-Ahead-Window. Bei Cache-Miss wird ein ganzer Block geladen
+(`BULK_LOAD_HALF_WINDOW = 125` davor + 125 dahinter). RAM-Footprint
+konstant ~3 MB, unabhängig von Dataset-Größe.
+
+FIFO statt echtes LRU: Qt-Views scrollen sequentiell, die Hit-Rate ist
+mit Look-Ahead-Bulk-Load auch ohne Hit-Tracking >99 %. Wenn Filter-
+oder Sprung-Zugriffe das mal ändern, kann auf `OrderedDict` mit
+`move_to_end` aufgerüstet werden.
 
 Sample-Highlighting läuft über eine `frozenset` von `row_id`s, die im
 `data()`-Callback als `BackgroundRole` zurückgegeben wird. Filtering nutzt
-ein Mapping `view_index → dataset_index`, das beim Setzen befüllt wird –
-so brauchen wir keinen Proxy-Filter.
+ein Mapping `view_index → dataset_index` (`_visible_indices`).
 """
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Sequence
 from datetime import date, datetime, time
-from typing import Any
+from typing import Any, ClassVar
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PyQt6.QtGui import QBrush, QColor, QPainter, QPaintEvent
 from PyQt6.QtWidgets import QHeaderView, QTableView, QWidget
 
 from sampling_tool.config import SAMPLE_HIGHLIGHT_ALPHA, SAMPLE_HIGHLIGHT_COLOR
-from sampling_tool.core.models import Dataset
+from sampling_tool.core.models import Dataset, DatasetRow
+from sampling_tool.persistence.repositories import DatasetRepo
 
 HIGHLIGHT_COLOR: str = SAMPLE_HIGHLIGHT_COLOR
 HIGHLIGHT_ALPHA: int = SAMPLE_HIGHLIGHT_ALPHA
@@ -33,41 +45,67 @@ _EMPTY_MESSAGE: str = "Keine Datensätze – Datei importieren"
 
 
 class DatasetTableModel(QAbstractTableModel):
-    """Read-only Qt-Model um ein `Dataset` – stateless gegenüber Persistence."""
+    """Read-only Qt-Model mit lazy-Loading via DatasetRepo + FIFO-Cache."""
+
+    DEFAULT_CACHE_SIZE: ClassVar[int] = 1000
+    BULK_LOAD_HALF_WINDOW: ClassVar[int] = 125
 
     def __init__(
         self,
         dataset: Dataset | None = None,
+        repo: DatasetRepo | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._dataset: Dataset | None = None
+        self._dataset_id: int | None = None
+        self._row_count: int = 0
         self._columns: tuple[str, ...] = ()
-        self._visible_indices: list[int] = []
+        self._repo: DatasetRepo | None = None
+        # Cache: row_index → DatasetRow; cache_order = FIFO-Eviction-Reihenfolge.
+        self._row_cache: dict[int, DatasetRow] = {}
+        self._cache_order: deque[int] = deque()
+        self._cache_size: int = self.DEFAULT_CACHE_SIZE
+        # Filter: None = alle Rows sichtbar, sonst Liste der row_ids
+        self._visible_indices: list[int] | None = None
         self._highlight: frozenset[int] = frozenset()
         color = QColor(HIGHLIGHT_COLOR)
         color.setAlpha(HIGHLIGHT_ALPHA)
         self._highlight_brush = QBrush(color)
-        if dataset is not None:
-            self.set_dataset(dataset)
+        if dataset is not None and repo is not None:
+            self.set_dataset(dataset, repo)
 
     # ---- Public API -----------------------------------------------------
 
-    def set_dataset(self, dataset: Dataset) -> None:
-        """Ersetzt den dargestellten Datenbestand (komplettes Reset)."""
+    def set_dataset(self, dataset: Dataset, repo: DatasetRepo) -> None:
+        """Bindet das Model an ein Dataset + Repo. Cache wird invalidiert."""
+        if dataset.id is None:
+            raise ValueError(
+                "DatasetTableModel.set_dataset benötigt persistiertes Dataset (id!=None)."
+            )
         self.beginResetModel()
         self._dataset = dataset
+        self._dataset_id = dataset.id
+        self._row_count = dataset.row_count
         self._columns = dataset.columns
-        self._visible_indices = list(range(len(dataset.rows)))
+        self._repo = repo
+        self._row_cache.clear()
+        self._cache_order.clear()
+        self._visible_indices = None
         self._highlight = frozenset()
         self.endResetModel()
 
     def clear(self) -> None:
-        """Leert das Modell vollständig."""
+        """Leert das Modell vollständig (Welcome-Screen-Zustand)."""
         self.beginResetModel()
         self._dataset = None
+        self._dataset_id = None
+        self._row_count = 0
         self._columns = ()
-        self._visible_indices = []
+        self._repo = None
+        self._row_cache.clear()
+        self._cache_order.clear()
+        self._visible_indices = None
         self._highlight = frozenset()
         self.endResetModel()
 
@@ -84,29 +122,40 @@ class DatasetTableModel(QAbstractTableModel):
         self.set_highlight(())
 
     def filter_to_row_ids(self, row_ids: Sequence[int]) -> None:
-        """Reduziert die Sicht auf Zeilen mit passender `row_id`."""
-        if self._dataset is None:
+        """Reduziert die Sicht auf Zeilen mit passender `row_id`.
+
+        Da Rows on-demand geladen werden, brauchen wir keinen vollen
+        Cache-Walk – wir merken uns einfach die row_id-Liste in
+        Reihenfolge und mappen `view_row → row_id` beim Data-Lookup.
+        """
+        if self._dataset_id is None:
             return
-        wanted = set(row_ids)
         self.beginResetModel()
-        self._visible_indices = [i for i, r in enumerate(self._dataset.rows) if r.row_id in wanted]
+        # In stabiler Reihenfolge – Sampling liefert sortiert, andere Callers
+        # bekommen die row_id-Reihenfolge die sie übergeben haben.
+        self._visible_indices = list(row_ids)
         self.endResetModel()
 
     def clear_filter(self) -> None:
         """Hebt einen Filter auf – alle Zeilen werden wieder sichtbar."""
-        if self._dataset is None:
+        if self._dataset_id is None:
             return
         self.beginResetModel()
-        self._visible_indices = list(range(len(self._dataset.rows)))
+        self._visible_indices = None
         self.endResetModel()
 
     def view_row_for_row_id(self, row_id: int) -> int | None:
         """Liefert den View-Index für eine gegebene `row_id` (oder None)."""
-        if self._dataset is None:
+        if self._dataset_id is None:
             return None
-        for view_idx, ds_idx in enumerate(self._visible_indices):
-            if self._dataset.rows[ds_idx].row_id == row_id:
-                return view_idx
+        if self._visible_indices is not None:
+            try:
+                return self._visible_indices.index(row_id)
+            except ValueError:
+                return None
+        # Ungefilterte Sicht: row_id == view_row (siehe `_actual_row_id`).
+        if 0 <= row_id - 1 < self._row_count:
+            return row_id - 1
         return None
 
     def highlighted_row_ids(self) -> frozenset[int]:
@@ -122,7 +171,9 @@ class DatasetTableModel(QAbstractTableModel):
     def rowCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
         if parent is not None and parent.isValid():
             return 0
-        return len(self._visible_indices)
+        if self._visible_indices is not None:
+            return len(self._visible_indices)
+        return self._row_count
 
     def columnCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
         if parent is not None and parent.isValid():
@@ -134,22 +185,37 @@ class DatasetTableModel(QAbstractTableModel):
         index: QModelIndex,
         role: int = Qt.ItemDataRole.DisplayRole,
     ) -> Any:
-        if not index.isValid() or self._dataset is None:
+        if not index.isValid() or self._dataset_id is None:
             return None
-        ds_idx = self._visible_indices[index.row()]
-        row = self._dataset.rows[ds_idx]
+        row_id = self._actual_row_id(index.row())
+        if row_id is None:
+            return None
+
+        if role == Qt.ItemDataRole.BackgroundRole:
+            if row_id in self._highlight:
+                return self._highlight_brush
+            return None
+
+        if role not in (
+            Qt.ItemDataRole.DisplayRole,
+            Qt.ItemDataRole.EditRole,
+            Qt.ItemDataRole.TextAlignmentRole,
+        ):
+            return None
+
+        self._ensure_cached(row_id)
+        row = self._row_cache.get(row_id)
+        if row is None:
+            return None
         column = self._columns[index.column()]
 
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             return _format_value(row.values.get(column))
-        if role == Qt.ItemDataRole.BackgroundRole and row.row_id in self._highlight:
-            return self._highlight_brush
-        if role == Qt.ItemDataRole.TextAlignmentRole:
-            value = row.values.get(column)
-            if isinstance(value, int | float) and not isinstance(value, bool):
-                return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        return None
+        # TextAlignmentRole
+        value = row.values.get(column)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
     def headerData(  # noqa: N802
         self,
@@ -163,14 +229,55 @@ class DatasetTableModel(QAbstractTableModel):
             if 0 <= section < len(self._columns):
                 return self._columns[section]
             return None
-        if (
-            orientation == Qt.Orientation.Vertical
-            and self._dataset is not None
-            and 0 <= section < len(self._visible_indices)
-        ):
-            ds_idx = self._visible_indices[section]
-            return str(self._dataset.rows[ds_idx].row_id)
+        if orientation == Qt.Orientation.Vertical and self._dataset_id is not None:
+            row_id = self._actual_row_id(section)
+            if row_id is not None:
+                return str(row_id)
         return None
+
+    # ---- Cache-interna --------------------------------------------------
+
+    def _actual_row_id(self, view_row: int) -> int | None:
+        """Übersetzt einen sichtbaren Zeilen-Index in die echte `row_id`.
+
+        Ohne Filter: `view_row` (0-basiert) → `row_id = view_row + 1`
+        (DatasetRow.row_id ist 1-basiert, siehe Importer/Models).
+        Mit Filter: `_visible_indices[view_row]`.
+        """
+        if self._visible_indices is not None:
+            if 0 <= view_row < len(self._visible_indices):
+                return self._visible_indices[view_row]
+            return None
+        if 0 <= view_row < self._row_count:
+            return view_row + 1
+        return None
+
+    def _ensure_cached(self, row_id: int) -> None:
+        """Stellt sicher, dass `row_id` im Cache liegt – lädt sonst einen Block."""
+        if row_id in self._row_cache:
+            return
+        if self._repo is None or self._dataset_id is None:
+            return
+
+        # Window um den Miss herum, half-open Range [start, end) – passt zu
+        # `DatasetRepo.get_rows_in_range`. row_ids sind 1-basiert; das Repo
+        # liest row_index, der mit row_id identisch ist.
+        start = max(1, row_id - self.BULK_LOAD_HALF_WINDOW)
+        end = min(self._row_count + 1, row_id + self.BULK_LOAD_HALF_WINDOW + 1)
+
+        rows = self._repo.get_rows_in_range(self._dataset_id, start, end)
+        for row in rows:
+            if row.row_id not in self._row_cache:
+                self._row_cache[row.row_id] = row
+                self._cache_order.append(row.row_id)
+
+        self._evict_if_full()
+
+    def _evict_if_full(self) -> None:
+        """FIFO-Eviction wenn die Cache-Größe überschritten wird."""
+        while len(self._row_cache) > self._cache_size:
+            oldest = self._cache_order.popleft()
+            self._row_cache.pop(oldest, None)
 
 
 class DataTableView(QTableView):
@@ -200,9 +307,13 @@ class DataTableView(QTableView):
 
     # ---- Public API -----------------------------------------------------
 
-    def set_dataset(self, dataset: Dataset) -> None:
-        """Lädt das Dataset und passt die Spaltenbreiten automatisch an."""
-        self._model.set_dataset(dataset)
+    def set_dataset(self, dataset: Dataset, repo: DatasetRepo) -> None:
+        """Lädt das Dataset und passt die Spaltenbreiten automatisch an.
+
+        Sprint-11.2: rows werden on-demand vom `repo` geholt (statt einer
+        In-Memory-Liste übergeben).
+        """
+        self._model.set_dataset(dataset, repo)
         self._autosize_columns()
 
     def clear_dataset(self) -> None:
@@ -261,19 +372,27 @@ class DataTableView(QTableView):
     # ---- intern ---------------------------------------------------------
 
     def _autosize_columns(self) -> None:
-        """Heuristik: schmale Spalten an Inhalt, breite an Max-Wert."""
+        """Heuristik: schmale Spalten an Inhalt, breite an Max-Wert.
+
+        Sprint 11.2: `resizeColumnsToContents` triggert `data()` für alle
+        sichtbaren Zellen – das reicht aus, um den ersten Bulk-Load
+        anzustoßen. Spalten ohne Inhalt im Viewport bekommen die
+        `_MIN_COLUMN_WIDTH`.
+        """
         self.resizeColumnsToContents()
         header = self.horizontalHeader()
         if header is None:
             return
         for col in range(self._model.columnCount()):
             width = header.sectionSize(col)
-            clamped = max(_MIN_COLUMN_WIDTH, min(_MAX_COLUMN_WIDTH, width + 12))
-            header.resizeSection(col, clamped)
+            if width < _MIN_COLUMN_WIDTH:
+                header.resizeSection(col, _MIN_COLUMN_WIDTH)
+            elif width > _MAX_COLUMN_WIDTH:
+                header.resizeSection(col, _MAX_COLUMN_WIDTH)
 
 
 # ---------------------------------------------------------------------------
-# Hilfen
+# Helpers
 # ---------------------------------------------------------------------------
 
 

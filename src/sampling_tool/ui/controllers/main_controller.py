@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import getpass
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -83,7 +83,10 @@ logger = logging.getLogger(__name__)
 
 DialogFactory = Callable[["MainWindow", AppSettings, Engagement | None], NewEngagementDialog]
 DuplicateDialogFactory = Callable[["MainWindow", Path], DuplicateEngagementDialog]
-SamplingDialogFactory = Callable[["MainWindow", Dataset, SampleResult | None, bool], SamplingDialog]
+SamplingDialogFactory = Callable[
+    ["MainWindow", Dataset, Sequence[DatasetRow] | None, SampleResult | None, bool],
+    SamplingDialog,
+]
 ExportDialogFactory = Callable[["MainWindow", Dataset, str, str, Path | None], ExportSampleDialog]
 AuditPdfDialogFactory = Callable[
     ["MainWindow", Engagement, list[str], bool, Path | None, bool, bool],
@@ -323,6 +326,7 @@ class MainController:
         self._datasets = []
         self._filter_active_sample_id = None
         self._undo_manager = None
+        self.window.data_table().clear_dataset()
         self._state_repo = None
         self._restoring_state = False
         self.window.set_filter_only_sample(False)
@@ -362,7 +366,7 @@ class MainController:
         dataset = replace(result.dataset, engagement_id=self._engagement.id)
         try:
             with self._db.session() as conn:
-                stored = DatasetRepo(conn).create(dataset)
+                stored = DatasetRepo(conn).create(dataset, result.rows)
                 AuditLogger(AuditRepo(conn), self._user_name(), self._engagement.id).log_import(
                     stored
                 )
@@ -376,11 +380,12 @@ class MainController:
             self.handle_dataset_selected(stored.id)
         self._refresh_views()
 
+        stats = result.stats
         warning_text = ""
-        if result.skipped_rows:
-            warning_text += f"{result.skipped_rows} Leerzeile(n) übersprungen.\n"
-        if result.warnings:
-            warning_text += "\n".join(result.warnings)
+        if stats.skipped_rows:
+            warning_text += f"{stats.skipped_rows} Leerzeile(n) übersprungen.\n"
+        if stats.warnings:
+            warning_text += "\n".join(stats.warnings)
         if warning_text:
             QMessageBox.information(self.window, "Import abgeschlossen", warning_text.strip())
 
@@ -408,7 +413,11 @@ class MainController:
         # Dataset-Wechsel setzt Filter-Status zurück – sonst wäre die Checkbox
         # an, aber die Tabelle zeigt das ganze neue Dataset.
         self.window.set_filter_only_sample(False)
-        self.window.show_dataset(dataset)
+        # Sprint 11.2: das TableModel liest on-demand via Repo. Der Controller
+        # öffnet eine eigene Connection und übergibt das Repo durch –
+        # `DatasetTableModel.set_dataset` hält den Cache klein (~3 MB,
+        # konstant).
+        self.window.show_dataset(dataset, DatasetRepo(self._db.connect()))
 
         samples = SampleRepo(self._db.connect()).list_for_dataset(dataset_id)
         self.window.set_samples(samples)
@@ -518,8 +527,16 @@ class MainController:
         ):
             return
 
+        # Sprint 11.4: Dialog-Rows nur noch im Advanced-Mode laden – dort
+        # braucht das UI distinct-Werte fürs Filter-Dropdown. Im Simple-
+        # Mode reicht `dataset.row_count` für die Größenvalidierung, also
+        # kein voller Materialisierung des Datasets nur für den Dialog.
+        repo = DatasetRepo(self._db.connect())
+        dialog_rows: tuple[DatasetRow, ...] | None = (
+            repo.get_all_rows(self._dataset.id) if self._settings.advanced_mode else None
+        )
         dialog = self._sampling_factory(
-            self.window, self._dataset, self._sample, self._settings.advanced_mode
+            self.window, self._dataset, dialog_rows, self._sample, self._settings.advanced_mode
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
@@ -529,8 +546,10 @@ class MainController:
 
         try:
             sampler = create_sampler(result.config)
-            effective_dataset = self._build_sampling_dataset(result.from_sample_only)
-            sample_result = sampler.sample(effective_dataset)
+            effective_rows, population_size = self._build_sampling_iterator(
+                repo, self._dataset, result.from_sample_only
+            )
+            sample_result = sampler.sample(effective_rows, population_size=population_size)
         except SamplingError as exc:
             self._error(f"Stichprobe konnte nicht gezogen werden: {exc}")
             return
@@ -679,10 +698,15 @@ class MainController:
         if result is None:
             return
 
+        # Sprint 11.4: Exporter zieht sich die Sample-Rows on-demand via
+        # `get_rows_by_ids` – kein voll materialisiertes Dataset mehr.
+        # Bei 1M-Dataset und 1k-Sample werden nur 1k Rows aus der DB
+        # geholt statt 1M.
         try:
             output_path = ExcelExporter().export_sample(
                 self._sample,
                 self._dataset,
+                DatasetRepo(self._db.connect()),
                 columns=result.columns,
                 output_dir=result.output_dir,
                 custom_name=result.custom_name,
@@ -909,6 +933,7 @@ class MainController:
         self._sample = None
         self._active_sample_id = None
         self._filter_active_sample_id = None
+        self.window.data_table().clear_dataset()
         if engagement.id is not None:
             self._undo_manager = UndoManager(db, engagement.id)
             self._state_repo = EngagementStateRepo(db.connect())
@@ -1040,20 +1065,30 @@ class MainController:
         self._refresh_dashboard()
         self.window.set_reports_enabled(self._engagement is not None and self._db is not None)
 
-    def _build_sampling_dataset(self, from_sample_only: bool) -> Dataset:
-        """Liefert das Dataset, auf dem der Sampler arbeitet.
+    def _build_sampling_iterator(
+        self,
+        repo: DatasetRepo,
+        dataset: Dataset,
+        from_sample_only: bool,
+    ) -> tuple[Iterable[DatasetRow], int]:
+        """Liefert (Iterator, Population-Size) für den Sampler.
 
-        Bei Resampling werden die Rows auf die Auswahl des aktuellen Samples
-        eingeschränkt – ohne dass das Persistenz-Dataset selbst modifiziert wird.
+        Sprint-11.4-Streaming: kein voll materialisiertes Row-Tuple mehr,
+        sondern entweder
+        - bei Sub-Sampling: `get_rows_by_ids` mit den Sample-IDs (klein,
+          typischerweise 50–5000 Rows), oder
+        - bei normalem Sampling: `iter_rows` als Generator über die ganze
+          Tabelle (kein voller RAM-Footprint).
+
+        Population-Size kommt für den Full-Dataset-Fall aus den Metadaten
+        (`dataset.row_count`), damit Sub-Sample-Population korrekt
+        dokumentiert wird.
         """
-        assert self._dataset is not None
-        if not from_sample_only or self._sample is None:
-            return self._dataset
-        wanted = set(self._sample.selected_row_ids)
-        filtered: tuple[DatasetRow, ...] = tuple(
-            r for r in self._dataset.rows if r.row_id in wanted
-        )
-        return replace(self._dataset, rows=filtered)
+        assert dataset.id is not None
+        if from_sample_only and self._sample is not None:
+            sample_ids = list(self._sample.selected_row_ids)
+            return repo.get_rows_by_ids(dataset.id, sample_ids), len(sample_ids)
+        return repo.iter_rows(dataset.id), dataset.row_count
 
     def _push_undo_snapshot(self) -> None:
         if self._undo_manager is None:
@@ -1185,11 +1220,13 @@ def _default_duplicate_dialog_factory(
 def _default_sampling_factory(
     parent: MainWindow,
     dataset: Dataset,
+    rows: Sequence[DatasetRow] | None,
     current_sample: SampleResult | None,
     advanced_mode: bool,
 ) -> SamplingDialog:
     return SamplingDialog(
         dataset,
+        rows,
         current_sample=current_sample,
         parent=parent,
         advanced_mode=advanced_mode,

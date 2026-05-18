@@ -21,7 +21,6 @@ from collections.abc import Iterable
 from typing import Any
 
 from sampling_tool.core.models import (
-    Dataset,
     DatasetRow,
     SampleConfig,
     SampleResult,
@@ -49,6 +48,11 @@ class BaseSampler(ABC):
     - Optionalen Vorfilter (`filter_field`/`filter_value`)
     - Deterministische Sortierung nach `row_id` vor der Ziehung
     - Verpacken in ein `SampleResult`
+
+    Sprint-11.4-Streaming: `sample()` akzeptiert einen Iterator – die
+    Rows werden in einem Single-Pass gefiltert (kein Doppel-Materialize
+    mehr). Bei großen Datasets spart das den vollen zweiten Listen-
+    Buffer; der Speicher-Peak liegt bei *einer* Pool-Liste.
     """
 
     def __init__(self, config: SampleConfig) -> None:
@@ -57,33 +61,62 @@ class BaseSampler(ABC):
 
     # ---- öffentliche API ------------------------------------------------
 
-    def sample(self, dataset: Dataset) -> SampleResult:
-        """Führt die Ziehung auf `dataset` aus und gibt ein `SampleResult` zurück."""
-        pool = self._apply_filter(dataset.rows)
+    def sample(
+        self,
+        rows: Iterable[DatasetRow],
+        population_size: int | None = None,
+    ) -> SampleResult:
+        """Führt die Ziehung auf `rows` aus und gibt ein `SampleResult` zurück.
+
+        `rows` darf ein einmal-konsumierbarer Iterator sein.
+        `population_size` überschreibt den Bezugswert für
+        `SampleResult.population_size`; wenn `None`, wird die Anzahl der
+        in `rows` durchgereichten Elemente verwendet (= prä-Filter-Größe).
+        Production-Caller setzt es typischerweise auf `dataset.row_count`,
+        damit auch bei Sub-Sampling die Original-Population dokumentiert
+        bleibt.
+        """
+        pool, total = self._collect_pool(rows)
         if not pool:
             raise SamplingError("Nach Anwendung des Filters sind keine Datensätze mehr verfügbar.")
 
+        total_population = population_size if population_size is not None else total
+
         # Stabile Sortierung – garantiert: gleicher Datensatz → gleicher Pool-Order
         # → gleicher Shuffle-Output bei gleichem Seed.
-        pool_sorted = sorted(pool, key=lambda r: r.row_id)
+        pool.sort(key=lambda r: r.row_id)
 
-        selected_ids = self._select(pool_sorted)
+        selected_ids = self._select(pool)
 
         return SampleResult(
             config=self.config,
             selected_row_ids=tuple(sorted(selected_ids)),
-            population_size=len(dataset),
+            population_size=total_population,
         )
 
     # ---- vor-/nachgelagerte Hilfen --------------------------------------
 
-    def _apply_filter(self, rows: Iterable[DatasetRow]) -> list[DatasetRow]:
-        """Wendet `filter_field == filter_value` an, falls konfiguriert."""
+    def _collect_pool(self, rows: Iterable[DatasetRow]) -> tuple[list[DatasetRow], int]:
+        """Single-Pass: zählt durchgereichte Rows und sammelt den Filter-Pool.
+
+        Spart gegenüber Sprint-11.1 das doppelte Materialisieren (vorher
+        `list(rows)` + `[r for r in ... if ...]`). Der Total-Count
+        überlebt das Streaming, damit Production-Caller `population_size`
+        explizit setzen können, Tests aber weiter ohne diesen Parameter
+        die Pre-Filter-Population vorfinden.
+        """
         if self.config.filter_field is None:
-            return list(rows)
+            unfiltered = list(rows)
+            return unfiltered, len(unfiltered)
         field = self.config.filter_field
         value = self.config.filter_value
-        return [r for r in rows if r.get(field) == value]
+        pool: list[DatasetRow] = []
+        total = 0
+        for r in rows:
+            total += 1
+            if r.get(field) == value:
+                pool.append(r)
+        return pool, total
 
     # ---- Hooks für Subklassen ------------------------------------------
 

@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 
 from sampling_tool.config import APP_NAME, APP_ORG, ENGAGEMENTS_DIR
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
+from sampling_tool.persistence.repositories import DatasetRepo
 from sampling_tool.ui.recent import RecentEntry
 from sampling_tool.ui.widgets.audit_trail_view import AuditTrailView
 from sampling_tool.ui.widgets.dashboard_view import DashboardView
@@ -158,11 +159,17 @@ class MainWindow(QMainWindow):
         self._sidebar.set_samples(samples)
         self._action_export_sample.setEnabled(False)
 
-    def show_dataset(self, dataset: Dataset) -> None:
-        """Lädt das Dataset in die Tabelle und setzt Statusbar."""
-        self._data_table.set_dataset(dataset)
+    def show_dataset(self, dataset: Dataset, repo: DatasetRepo) -> None:
+        """Lädt das Dataset in die Tabelle und setzt Statusbar.
+
+        Sprint-11.2: rows werden on-demand vom `repo` geladen
+        (FIFO-Cache im TableModel, siehe `DatasetTableModel`). Der
+        Controller übergibt das Repo statt einer materialisierten
+        Row-Liste; das hält den UI-RAM konstant.
+        """
+        self._data_table.set_dataset(dataset, repo)
         self._status_dataset.setText(dataset.name)
-        self._status_rows.setText(f"{len(dataset.rows)} Zeilen")
+        self._status_rows.setText(f"{dataset.row_count} Zeilen")
         self.set_active_sample_label(None)
         self._sidebar.set_active_sample(None)
         self._action_new_sample.setEnabled(True)

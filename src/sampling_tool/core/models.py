@@ -97,18 +97,30 @@ class DatasetRow:
 
 @dataclass(frozen=True, slots=True)
 class Dataset:
-    """Eine importierte Datenmenge innerhalb eines Engagements."""
+    """Eine importierte Datenmenge innerhalb eines Engagements.
+
+    **Streaming-Architektur (Sprint 11.x):** Das Dataset hält KEINE rows
+    mehr – nur Metadaten (Spalten, row_count, source_file, Engagement-FK).
+    Rows leben in `dataset_rows` und werden bei Bedarf via `DatasetRepo`
+    geladen (`get_row`, `iter_rows`, `get_rows_in_range`,
+    `get_rows_by_ids`, `iter_row_ids`). `get_all_rows` ist nur für
+    Tests / SamplingDialog-Advanced-Mode legitim, sonst Streaming.
+
+    Hintergrund: bei realistischen Audit-Dateien (1M+ Buchungssätze)
+    sprengt das Laden aller Rows als Python-Dicts den RAM (siehe
+    PERFORMANCE.md).
+    """
 
     name: str
     columns: tuple[str, ...]
-    rows: tuple[DatasetRow, ...]
+    row_count: int = 0
     source_file: str = ""
     imported_at: datetime = field(default_factory=_utcnow)
     engagement_id: int | None = None
     id: int | None = None
 
     def __len__(self) -> int:
-        return len(self.rows)
+        return self.row_count
 
 
 @dataclass(frozen=True, slots=True)

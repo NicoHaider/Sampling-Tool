@@ -10,7 +10,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialogButtonBox
 from pytestqt.qtbot import QtBot
 
-from sampling_tool.core.models import Dataset, DatasetRow
+from sampling_tool.core.models import Dataset
 from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialog
 
 pytestmark = pytest.mark.ui
@@ -20,7 +20,7 @@ def _dataset() -> Dataset:
     return Dataset(
         name="Buchungen",
         columns=("Konto", "Betrag", "Datum"),
-        rows=(DatasetRow(row_id=1, values={"Konto": "K1", "Betrag": 10, "Datum": None}),),
+        row_count=1,
     )
 
 

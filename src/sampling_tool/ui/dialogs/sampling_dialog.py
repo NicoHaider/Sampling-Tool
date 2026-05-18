@@ -12,6 +12,7 @@ UI-Anweisung an den Controller, das Dataset vor der Ziehung zu filtern.
 from __future__ import annotations
 
 import secrets
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -43,6 +44,7 @@ from sampling_tool.config import (
 )
 from sampling_tool.core.models import (
     Dataset,
+    DatasetRow,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -71,6 +73,7 @@ class SamplingDialog(QDialog):
     def __init__(
         self,
         dataset: Dataset,
+        rows: Sequence[DatasetRow] | None = None,
         current_sample: SampleResult | None = None,
         parent: QWidget | None = None,
         *,
@@ -82,10 +85,15 @@ class SamplingDialog(QDialog):
         self.setMinimumWidth(520)
 
         self._dataset = dataset
+        # Sprint-11.4: rows sind optional – im Simple-Mode brauchen wir sie
+        # nicht (keine Filter-Spalte). `_max_population` zieht in dem Fall
+        # `dataset.row_count` heran, damit der Controller nicht 1M Rows
+        # nur für die Größenvalidierung in den RAM ziehen muss.
+        self._rows: tuple[DatasetRow, ...] = tuple(rows) if rows is not None else ()
         self._current_sample = current_sample
         self._result: SamplingDialogResult | None = None
         self._columns = list(dataset.columns)
-        self._max_population = max(len(dataset.rows), 1)
+        self._max_population = max(len(self._rows) or dataset.row_count, 1)
         self._advanced_mode = advanced_mode
 
         self._build_ui()
@@ -309,7 +317,7 @@ class SamplingDialog(QDialog):
             self._filter_value.setEnabled(False)
         else:
             self._filter_value.setEnabled(True)
-            for value in _distinct_values(self._dataset, field):
+            for value in _distinct_values(self._rows, field):
                 self._filter_value.addItem(_display(value), userData=value)
         self._filter_value.blockSignals(False)
         self._validate()
@@ -448,10 +456,10 @@ class SamplingDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 
-def _distinct_values(dataset: Dataset, field: str) -> list[Any]:
+def _distinct_values(rows: Sequence[DatasetRow], field: str) -> list[Any]:
     seen: set[str] = set()
     result: list[Any] = []
-    for row in dataset.rows:
+    for row in rows:
         value = row.values.get(field)
         if value is None:
             continue

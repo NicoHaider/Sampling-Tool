@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -18,11 +19,16 @@ from sampling_tool.core.models import (
     SamplingMethod,
 )
 from sampling_tool.io.exporter import ExcelExporter, ExportError
+from sampling_tool.persistence.database import Database
+from sampling_tool.persistence.repositories import (
+    DatasetRepo,
+    EngagementRepo,
+)
 
 
 @pytest.fixture
-def dataset() -> Dataset:
-    rows = tuple(
+def rows() -> tuple[DatasetRow, ...]:
+    return tuple(
         DatasetRow(
             row_id=i,
             values={
@@ -34,14 +40,51 @@ def dataset() -> Dataset:
         )
         for i in range(1, 11)
     )
-    return Dataset(
-        name="TestData",
-        columns=("Name", "Betrag", "Land", "Datum"),
-        rows=rows,
-        source_file="/tmp/source.xlsx",
-        engagement_id=1,
-        id=42,
+
+
+@pytest.fixture
+def db() -> Iterator[Database]:
+    database = Database(Path(":memory:"))
+    database.migrate()
+    yield database
+    database.close()
+
+
+@pytest.fixture
+def dataset_with_repo(db: Database, rows: tuple[DatasetRow, ...]) -> tuple[Dataset, DatasetRepo]:
+    """Persistiert das Test-Dataset in einer In-Memory-DB und liefert
+    (Dataset, DatasetRepo) – die neue Sprint-11.4-API."""
+    eng = EngagementRepo(db.connect()).get_or_create(
+        Engagement(
+            auditor_name="Anna Auditorin",
+            client_name="ACME GmbH",
+            auditor_position="Senior Auditor",
+            audit_type="ISAE 3402 Typ II",
+        )
     )
+    assert eng.id is not None
+    repo = DatasetRepo(db.connect())
+    stored = repo.create(
+        Dataset(
+            name="TestData",
+            columns=("Name", "Betrag", "Land", "Datum"),
+            row_count=len(rows),
+            source_file="/tmp/source.xlsx",
+            engagement_id=eng.id,
+        ),
+        rows,
+    )
+    return stored, repo
+
+
+@pytest.fixture
+def dataset(dataset_with_repo: tuple[Dataset, DatasetRepo]) -> Dataset:
+    return dataset_with_repo[0]
+
+
+@pytest.fixture
+def dataset_repo(dataset_with_repo: tuple[Dataset, DatasetRepo]) -> DatasetRepo:
+    return dataset_with_repo[1]
 
 
 @pytest.fixture
@@ -81,11 +124,13 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        dataset_repo: DatasetRepo,
         tmp_path: Path,
     ) -> None:
         out = exporter.export_sample(
             sample=sample,
             dataset=dataset,
+            dataset_repo=dataset_repo,
             columns=["Name", "Betrag"],
             output_dir=tmp_path,
             custom_name="NewHires_Q2_2026",
@@ -104,11 +149,13 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        dataset_repo: DatasetRepo,
         tmp_path: Path,
     ) -> None:
         out = exporter.export_sample(
             sample=sample,
             dataset=dataset,
+            dataset_repo=dataset_repo,
             columns=["Land", "Name"],  # bewusst andere Reihenfolge
             output_dir=tmp_path,
             custom_name="X",
@@ -129,12 +176,14 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        dataset_repo: DatasetRepo,
         engagement: Engagement,
         tmp_path: Path,
     ) -> None:
         out = exporter.export_sample(
             sample=sample,
             dataset=dataset,
+            dataset_repo=dataset_repo,
             columns=["Name"],
             output_dir=tmp_path,
             custom_name="X",
@@ -157,6 +206,7 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        dataset_repo: DatasetRepo,
         tmp_path: Path,
     ) -> None:
         # openpyxl-Save soll fehlschlagen → die Tmp-Datei muss verschwinden,
@@ -168,6 +218,7 @@ class TestExportSample:
             exporter.export_sample(
                 sample=sample,
                 dataset=dataset,
+                dataset_repo=dataset_repo,
                 columns=["Name"],
                 output_dir=tmp_path,
                 custom_name="X",
@@ -181,11 +232,13 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        dataset_repo: DatasetRepo,
         tmp_path: Path,
     ) -> None:
         out = exporter.export_sample(
             sample=sample,
             dataset=dataset,
+            dataset_repo=dataset_repo,
             columns=["Name", "Betrag"],
             output_dir=tmp_path,
             custom_name="X",
@@ -203,11 +256,13 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        dataset_repo: DatasetRepo,
         tmp_path: Path,
     ) -> None:
         out = exporter.export_sample(
             sample=sample,
             dataset=dataset,
+            dataset_repo=dataset_repo,
             columns=["Name"],
             output_dir=tmp_path,
             custom_name="X",
@@ -227,12 +282,14 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        dataset_repo: DatasetRepo,
         tmp_path: Path,
     ) -> None:
         umlaut_dir = tmp_path / "Prüfung_Müller_2026"
         out = exporter.export_sample(
             sample=sample,
             dataset=dataset,
+            dataset_repo=dataset_repo,
             columns=["Name"],
             output_dir=umlaut_dir,
             custom_name="Stichprobe_März",
@@ -246,6 +303,7 @@ class TestExportSample:
         self,
         sample: SampleResult,
         dataset: Dataset,
+        dataset_repo: DatasetRepo,
         tmp_path: Path,
     ) -> None:
         events: list[tuple[int, int]] = []
@@ -253,6 +311,7 @@ class TestExportSample:
         exp.export_sample(
             sample=sample,
             dataset=dataset,
+            dataset_repo=dataset_repo,
             columns=["Name"],
             output_dir=tmp_path,
             custom_name="X",
@@ -267,12 +326,14 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        dataset_repo: DatasetRepo,
         tmp_path: Path,
     ) -> None:
         with pytest.raises(ExportError, match="existieren nicht"):
             exporter.export_sample(
                 sample=sample,
                 dataset=dataset,
+                dataset_repo=dataset_repo,
                 columns=["GibtsNicht"],
                 output_dir=tmp_path,
                 custom_name="X",
@@ -284,14 +345,63 @@ class TestExportSample:
         exporter: ExcelExporter,
         sample: SampleResult,
         dataset: Dataset,
+        dataset_repo: DatasetRepo,
         tmp_path: Path,
     ) -> None:
         with pytest.raises(ExportError, match="Mindestens eine"):
             exporter.export_sample(
                 sample=sample,
                 dataset=dataset,
+                dataset_repo=dataset_repo,
                 columns=[],
                 output_dir=tmp_path,
                 custom_name="X",
                 custom_id="1",
             )
+
+    def test_streaming_loads_only_sample_rows_not_all(
+        self,
+        exporter: ExcelExporter,
+        dataset: Dataset,
+        dataset_repo: DatasetRepo,
+        tmp_path: Path,
+    ) -> None:
+        """Sprint 11.4: Exporter darf NUR get_rows_by_ids aufrufen,
+        nicht get_all_rows (= keinen voll-materialisierten Load)."""
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=1)
+        sample = SampleResult(
+            config=cfg,
+            selected_row_ids=(2, 4),
+            population_size=10,
+        )
+
+        get_all_calls: list[int] = []
+        get_by_ids_calls: list[list[int]] = []
+        original_get_all = dataset_repo.get_all_rows
+        original_get_by_ids = dataset_repo.get_rows_by_ids
+
+        def track_get_all(ds_id: int) -> tuple[DatasetRow, ...]:
+            get_all_calls.append(ds_id)
+            return original_get_all(ds_id)
+
+        def track_get_by_ids(ds_id: int, ids: list[int]) -> list[DatasetRow]:
+            get_by_ids_calls.append(list(ids))
+            return original_get_by_ids(ds_id, ids)
+
+        dataset_repo.get_all_rows = track_get_all  # type: ignore[assignment]
+        dataset_repo.get_rows_by_ids = track_get_by_ids  # type: ignore[assignment]
+
+        exporter.export_sample(
+            sample=sample,
+            dataset=dataset,
+            dataset_repo=dataset_repo,
+            columns=["Name"],
+            output_dir=tmp_path,
+            custom_name="X",
+            custom_id="1",
+        )
+
+        assert get_all_calls == [], "Exporter sollte NICHT get_all_rows aufrufen"
+        assert get_by_ids_calls == [[2, 4]], (
+            "Exporter sollte get_rows_by_ids genau mit den Sample-IDs aufrufen"
+        )

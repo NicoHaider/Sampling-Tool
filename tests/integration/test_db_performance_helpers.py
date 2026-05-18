@@ -141,13 +141,12 @@ class TestDatasetRepoPerformanceSmoke:
         dataset = Dataset(
             name="perf",
             columns=("a", "b", "c", "d"),
-            rows=rows,
             engagement_id=engagement.id,
         )
 
         repo = DatasetRepo(db.connect())
         t0 = time.perf_counter()
-        repo.create(dataset)
+        repo.create(dataset, rows)
         elapsed = time.perf_counter() - t0
 
         assert elapsed < 2.0, f"DatasetRepo.create(10k) brauchte {elapsed:.2f}s"

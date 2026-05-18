@@ -310,11 +310,16 @@ def run_probe_for_size(
     result.measurements.append(m)
 
     # ---- Phase 1: Import ----------------------------------------------
+    # Sprint 11.3: `import_result.rows` ist ein einmalig konsumierbarer
+    # Generator – `len()` knallt. Die Stats (skipped_rows, processed_count)
+    # füllen sich erst beim Verbrauch in Phase 2 (DatasetRepo.create), also
+    # wird die Note dort gesetzt.
     with measured("Import") as m:
         importer = ExcelImporter()
         import_result = importer.import_file(xlsx_path)
     dataset = import_result.dataset
-    m.note = f"{len(dataset.rows):,} rows, {import_result.skipped_rows} skipped"
+    rows = import_result.rows
+    m.note = "Streaming – Zeilen-Anzahl steht nach Phase 2 fest"
     result.measurements.append(m)
 
     # ---- Phase 2: DB-Speicherung --------------------------------------
@@ -332,7 +337,10 @@ def run_probe_for_size(
         )
         assert engagement.id is not None
         dataset = replace(dataset, engagement_id=engagement.id)
-        dataset = DatasetRepo(db.connect()).create(dataset)
+        # Konsumiert den Import-Generator; `dataset.row_count` wird auf die
+        # tatsächlich persistierte Anzahl korrigiert (Sprint 11.3).
+        dataset = DatasetRepo(db.connect()).create(dataset, rows)
+    m.note = f"{dataset.row_count:,} rows, {import_result.stats.skipped_rows} skipped"
     result.measurements.append(m)
 
     audit_logger = AuditLogger(
@@ -345,7 +353,10 @@ def run_probe_for_size(
     # ---- Phase 3: Tabelle-Anzeige (UI) --------------------------------
     with measured("Tabelle-Anzeige") as m:
         table = DataTableView()
-        table.set_dataset(dataset)
+        # Sprint 11.2: View liest on-demand via Repo (FIFO-Cache im
+        # Model). `rows` werden nicht mehr ans Model übergeben – wir
+        # nutzen das frisch befüllte DatasetRepo der Test-DB.
+        table.set_dataset(dataset, DatasetRepo(db.connect()))
         _process_qt_events()
     result.measurements.append(m)
 
@@ -391,10 +402,18 @@ def run_probe_for_size(
     sample_repo = SampleRepo(db.connect())
     sample_ids: list[int] = []
     simple_result = None
+    assert dataset.id is not None
     for label, cfg in sample_specs:
+        # Sprint 11.4: Sampler arbeitet auf Generator aus dem Repo
+        # (kein materialisiertes Row-Tupel mehr). Pro Sampler-Lauf ein
+        # frischer Stream – derselbe Pfad, den auch der MainController
+        # nutzt. population_size dokumentiert die Universumsgröße.
+        sampling_repo = DatasetRepo(db.connect())
         with measured(label) as m:
-            sampled = create_sampler(cfg).sample(dataset)
-        assert dataset.id is not None
+            sampled = create_sampler(cfg).sample(
+                sampling_repo.iter_rows(dataset.id),
+                population_size=dataset.row_count,
+            )
         sid = sample_repo.create_from_result(sampled, dataset.id, "perf")
         sample_ids.append(sid)
         if cfg.method == SamplingMethod.SIMPLE:
@@ -429,11 +448,16 @@ def run_probe_for_size(
     result.measurements.append(m)
 
     # ---- Phase 7: Export ----------------------------------------------
+    # Sprint 11.4: ExcelExporter holt sich die Sample-Rows on-demand
+    # via dataset_repo.get_rows_by_ids – kein voll-materialisiertes
+    # Row-Tupel mehr im Argument. Bei großen Datasets ist das der
+    # entscheidende RAM-Win (nur Sample-Größe statt N).
     export_dir.mkdir(parents=True, exist_ok=True)
     with measured("Excel-Export (Sample)") as m:
         ExcelExporter().export_sample(
             sample=simple_result,
             dataset=dataset,
+            dataset_repo=DatasetRepo(db.connect()),
             columns=list(dataset.columns[:8]),
             output_dir=export_dir,
             custom_name="PerfSample",
