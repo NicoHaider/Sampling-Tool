@@ -11,13 +11,14 @@ Konventionen:
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time
 from typing import Any, ClassVar, Final
 
 import orjson
 
+from sampling_tool.core.cancellation import CancellationToken
 from sampling_tool.core.models import (
     AuditEvent,
     Dataset,
@@ -157,10 +158,18 @@ class DatasetRepo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
 
+    # Sprint 17: alle N persistierten Rows checken wir auf Cancellation und
+    # feuern den Progress-Callback. Höher als _PROGRESS_INTERVAL im Importer,
+    # weil der DB-Insert pro Row teurer ist und der UI eh nicht 1000-mal pro
+    # Sekunde was zu sehen ist.
+    _PERSIST_PROGRESS_INTERVAL: ClassVar[int] = 500
+
     def create(
         self,
         dataset: Dataset,
         rows: Iterable[DatasetRow],
+        progress: Callable[[int, int], None] | None = None,
+        cancellation: CancellationToken | None = None,
     ) -> Dataset:
         """Schreibt Dataset-Metadaten + alle Rows in einer SAVEPOINT-Transaktion.
 
@@ -172,6 +181,13 @@ class DatasetRepo:
         ein Streaming-Importer Empty-Rows erst beim Lesen entdeckt und
         die Estimate aus `sheet.total_height` typischerweise zu hoch
         ist.
+
+        Sprint-17 / P-008: Optionaler ``progress`` und ``cancellation``-
+        Parameter für Worker-Thread-Persistenz. ``progress`` wird alle
+        ``_PERSIST_PROGRESS_INTERVAL`` Rows aufgerufen (current, total).
+        Bei gesetztem ``cancellation``-Token wird die Persistierung
+        abgebrochen (SAVEPOINT rollt zurück → kein partielles Dataset
+        in der DB).
         """
         if dataset.engagement_id is None:
             raise ValueError("Dataset.engagement_id muss vor dem Persistieren gesetzt sein.")
@@ -200,12 +216,24 @@ class DatasetRepo:
             # `actual_count` zählt mit, weil wir am Ende den row_count
             # in der DB korrigieren müssen.
             actual_count = 0
+            interval = self._PERSIST_PROGRESS_INTERVAL
+            total_estimate = dataset.row_count
 
             def _row_params() -> Iterator[tuple[int, int, str]]:
                 nonlocal actual_count
                 for row in rows:
                     actual_count += 1
+                    if actual_count % interval == 0:
+                        if cancellation is not None:
+                            cancellation.raise_if_cancelled()
+                        if progress is not None:
+                            progress(actual_count, max(total_estimate, actual_count))
                     yield (dataset_id, row.row_id, _values_to_json(row.values))
+
+            # Frühabbruch: Token vor Persist-Start gesetzt → kein Insert,
+            # SAVEPOINT rollt zurück, kein Partial-Dataset in der DB.
+            if cancellation is not None:
+                cancellation.raise_if_cancelled()
 
             self.conn.executemany(
                 "INSERT INTO dataset_rows (dataset_id, row_index, values_json) VALUES (?, ?, ?)",
@@ -218,6 +246,9 @@ class DatasetRepo:
                     (actual_count, dataset_id),
                 )
 
+        # Final-Tick: bestätigt dem UI die echte Endgröße.
+        if progress is not None:
+            progress(actual_count, actual_count)
         return replace(dataset, id=dataset_id, row_count=actual_count)
 
     def get_by_id(self, dataset_id: int) -> Dataset | None:

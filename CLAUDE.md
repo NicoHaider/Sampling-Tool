@@ -52,6 +52,52 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 14     | Test-Catchup (T-001/T-002/T-005/T-007)              | done        |
 | 15     | F-003/F-004/F-005 IO-Layer-Reinigung (charts.py)    | done        |
 | 16     | VBA-Backlog: Multi-Sheet + Header-Detection-Dialog beim Import | done |
+| 17     | Worker-Architektur (P-008): UI responsiv bei Import/Export | done |
+
+## Worker-Architektur (Sprint 17 / P-008)
+
+Long-Running-Operations (Excel-Import, DB-Persist, AuditTrail-PDF,
+Multi-Sheet-Excel-Report, HTML-Report) laufen seit Sprint 17 in einem
+Hintergrund-Thread. Die UI bleibt während der Operation responsiv und
+der "Abbrechen"-Button ist funktional.
+
+**Bausteine:**
+- `core/cancellation.py` (Qt-frei) – `CancellationToken` (thread-safe
+  Flag) + `OperationCancelled` (Kontroll-Fluss-Exception, kein Fehler).
+- `ui/workers/task_worker.py` – `WorkerTask`-Protocol +
+  `ProgressReporter` (thread-safe Adapter Worker→Qt-Signal) +
+  `TaskWorker(QThread)` mit Signals `progress`/`finished_with_result`/
+  `failed`/`cancelled`. `OperationCancelled` im Task → ``cancelled``-
+  Signal, alle anderen Exceptions → ``failed``-Signal.
+- `ui/workers/tasks.py` – 5 konkrete Tasks: `ExcelImportTask` (Read +
+  DB-Persist + AuditLog in einem Worker, eigene DB-Connection),
+  `SampleExportTask`, `AuditPdfExportTask`, `ExcelReportTask`,
+  `HtmlReportTask`.
+- `ui/dialogs/progress_dialog.py` – `TaskProgressDialog` ist seit
+  Sprint 17 der Worker-Coordinator: `run_task(task)` startet den
+  Worker, blockt per `exec()` bis fertig (Event-Loop läuft weiter →
+  Maus/Fenster/Cancel reagieren), liefert das Resultat oder `None` bei
+  Cancel. `autoClose`/`autoReset` sind bewusst aus – Schließen passiert
+  kontrolliert via `accept()`/`reject()` in den Worker-Signal-Slots.
+
+**Connection-Thread-Safety:** Tasks, die in die SQLite-DB schreiben,
+öffnen eine eigene `Database(db_path)`-Instanz im Worker-Thread. Kein
+Shared-Connection-State zwischen Threads. WAL-Mode erlaubt parallele
+Reader im Main-Thread, `BEGIN IMMEDIATE` serialisiert Writer.
+
+**Cancellation-Granularität:**
+- `ExcelImporter` checkt das Token alle `_PROGRESS_INTERVAL=1000` Rows
+  + vor dem ersten Read.
+- `DatasetRepo.create` checkt alle `_PERSIST_PROGRESS_INTERVAL=500`
+  Rows + vor dem Insert. SAVEPOINT rollt zurück → kein partielles
+  Dataset in der DB.
+- PDF/Excel-Report/HTML-Report: Cancel-Check vor + nach dem Render
+  (reportlab/openpyxl/Jinja2 sind monolithisch, kein Mid-Render-Cancel).
+
+**Reproducibility:** Bit-getestet via
+`tests/ui/test_tasks.py::TestReproducibility::
+test_worker_yields_same_rows_as_sync_import`. Sampler bleiben im
+Main-Thread und sind unverändert.
 
 **Sprint 11.x abgeschlossen** – Streaming-Architektur komplett (siehe
 nächster Abschnitt). Dataset lebt in SQLite, Code-Pfade arbeiten mit

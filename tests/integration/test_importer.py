@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
+from sampling_tool.core.cancellation import CancellationToken, OperationCancelled
 from sampling_tool.io.importer import (
     DataImportError,
     ExcelImporter,
@@ -576,3 +577,82 @@ class TestImportFileConfigured:
         # CSVs haben keine Sheets – import_file_configured ist Excel-only.
         with pytest.raises(DataImportError, match="nur für Excel"):
             importer.import_file_configured(utf8_csv, sheet_name="Sheet", header_row=0)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 17: Cancellation-Support
+# ---------------------------------------------------------------------------
+
+
+class TestImporterCancellation:
+    """ExcelImporter mit CancellationToken – Streaming-Pfad muss
+    periodisch prüfen und OperationCancelled werfen."""
+
+    def test_import_respects_cancellation_token_set_before_start(self, simple_xlsx: Path) -> None:
+        token = CancellationToken()
+        token.set()
+        importer = ExcelImporter(cancellation=token)
+        result = importer.import_file(simple_xlsx)
+        with pytest.raises(OperationCancelled):
+            list(result.rows)
+
+    def test_import_without_cancellation_runs_to_completion(self, simple_xlsx: Path) -> None:
+        # Sanity: kein Token → läuft wie bisher.
+        importer = ExcelImporter()
+        result = importer.import_file(simple_xlsx)
+        rows = list(result.rows)
+        assert len(rows) == 10
+
+    def test_import_with_unset_token_runs_to_completion(self, simple_xlsx: Path) -> None:
+        token = CancellationToken()  # nicht gesetzt
+        importer = ExcelImporter(cancellation=token)
+        result = importer.import_file(simple_xlsx)
+        rows = list(result.rows)
+        assert len(rows) == 10
+
+    def test_import_checks_cancellation_during_iteration(self, tmp_path: Path) -> None:
+        """Token wird während der Iteration gesetzt → bricht beim nächsten
+        Progress-Tick (alle ``_PROGRESS_INTERVAL``=1000 Rows) ab."""
+        path = tmp_path / "many_rows.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.append(["a", "b"])
+        for i in range(1, 3001):
+            ws.append([i, f"r{i}"])
+        wb.save(path)
+
+        from sampling_tool.core.models import DatasetRow
+
+        token = CancellationToken()
+        importer = ExcelImporter(cancellation=token)
+        result = importer.import_file(path)
+        consumed: list[DatasetRow] = []
+
+        def _consume_until_cancel() -> None:
+            for i, row in enumerate(result.rows):
+                consumed.append(row)
+                # Nach 500 Rows abbrechen – nächster Tick (bei 1000) bricht ab.
+                if i == 500:
+                    token.set()
+
+        with pytest.raises(OperationCancelled):
+            _consume_until_cancel()
+        # Hat gestoppt bevor die 3000 fertig waren.
+        assert 500 < len(consumed) < 3000
+
+    def test_configured_import_respects_cancellation(self, simple_xlsx: Path) -> None:
+        token = CancellationToken()
+        token.set()
+        importer = ExcelImporter(cancellation=token)
+        result = importer.import_file_configured(simple_xlsx, "Daten", 0)
+        with pytest.raises(OperationCancelled):
+            list(result.rows)
+
+    def test_csv_import_respects_cancellation(self, utf8_csv: Path) -> None:
+        token = CancellationToken()
+        token.set()
+        importer = ExcelImporter(cancellation=token)
+        result = importer.import_file(utf8_csv)
+        with pytest.raises(OperationCancelled):
+            list(result.rows)
