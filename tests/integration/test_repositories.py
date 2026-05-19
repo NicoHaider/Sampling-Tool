@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from sampling_tool.core.cancellation import CancellationToken, OperationCancelled
 from sampling_tool.core.models import (
     AuditEvent,
     Dataset,
@@ -140,6 +141,44 @@ class TestDatasetRepo:
             .fetchone()
         )
         assert rows_left["c"] == 0
+
+    # ---- Sprint 17: progress + cancellation ----------------------------
+
+    def test_create_invokes_progress_callback(self, db: Database, engagement_id: int) -> None:
+        """`progress(current, total)` wird mindestens einmal aufgerufen."""
+        repo = DatasetRepo(db.connect())
+        ticks: list[tuple[int, int]] = []
+        repo.create(
+            _sample_dataset(engagement_id),
+            _sample_rows(),
+            progress=lambda c, t: ticks.append((c, t)),
+        )
+        assert ticks, "progress sollte mind. 1× gefeuert haben"
+        # Letzter Tick = vollständig.
+        assert ticks[-1] == (10, 10)
+
+    def test_create_respects_cancellation_token(self, db: Database, engagement_id: int) -> None:
+        """Token vor Start gesetzt → OperationCancelled, kein Dataset."""
+        repo = DatasetRepo(db.connect())
+        token = CancellationToken()
+        token.set()
+        with pytest.raises(OperationCancelled):
+            repo.create(
+                _sample_dataset(engagement_id),
+                _sample_rows(),
+                cancellation=token,
+            )
+        # Rollback: kein Dataset in der DB.
+        listed = repo.list_for_engagement(engagement_id)
+        assert listed == []
+
+    def test_create_without_progress_runs_to_completion(
+        self, db: Database, engagement_id: int
+    ) -> None:
+        # Sanity – Default-Verhalten unverändert.
+        repo = DatasetRepo(db.connect())
+        ds = repo.create(_sample_dataset(engagement_id), _sample_rows())
+        assert ds.row_count == 10
 
     def test_create_is_atomic_on_failure(self, db: Database, engagement_id: int) -> None:
         repo = DatasetRepo(db.connect())

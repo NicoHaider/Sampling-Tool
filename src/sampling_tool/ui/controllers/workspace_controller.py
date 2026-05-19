@@ -28,7 +28,6 @@ from sampling_tool.core.sampling import SamplingError, SimpleSampler, create_sam
 from sampling_tool.io.importer import (
     DataImportError,
     ExcelImporter,
-    ImportResult,
     ImportStats,
 )
 from sampling_tool.persistence.repositories import (
@@ -39,6 +38,7 @@ from sampling_tool.persistence.repositories import (
 from sampling_tool.ui.controllers._factories import ControllerFactories
 from sampling_tool.ui.controllers.workspace_session import WorkspaceSession
 from sampling_tool.ui.dialogs.progress_dialog import TaskProgressDialog
+from sampling_tool.ui.workers.tasks import ExcelImportTask, ExcelImportTaskResult
 
 logger = logging.getLogger(__name__)
 
@@ -77,18 +77,17 @@ class WorkspaceController:
                 if configured is None:
                     return  # User-Cancel → kein Import.
 
-        stored_and_result = self._do_import_with_progress(path, configured)
-        if stored_and_result is None:
+        task_result = self._do_import_with_progress(path, configured)
+        if task_result is None:
             return
-        stored, result = stored_and_result
 
         s.reload_datasets()
-        if stored.id is not None:
+        if task_result.dataset.id is not None:
             # Auto-Select des neuen Datasets via Session-Helper – identische
             # Logik wie `SelectionController.handle_dataset_selected`.
-            s.select_dataset(stored.id)
+            s.select_dataset(task_result.dataset.id)
         s.refresh_views()
-        self._show_import_summary(result.stats)
+        self._show_import_summary(task_result.stats)
 
     def _ask_import_path(self) -> Path | None:
         """File-Dialog für die Datei-Auswahl. None bei Cancel."""
@@ -105,41 +104,41 @@ class WorkspaceController:
 
     def _do_import_with_progress(
         self, path: Path, configured: tuple[str, int] | None
-    ) -> tuple[Dataset, ImportResult] | None:
-        """Streaming-Import + DB-Persist mit Progress-Dialog. Liefert (stored, result)."""
+    ) -> ExcelImportTaskResult | None:
+        """Worker-basierter Import + DB-Persist. UI bleibt während der
+        Operation responsiv (Sprint 17 / P-008).
+
+        Bei `DataImportError` zeigt der Controller einen Error-Dialog,
+        liefert ``None``. Bei User-Cancel liefert der Worker `None` und
+        wir geben es weiter. Bei anderen Exceptions (DB-Fehler) ebenso
+        Error-Dialog + ``None``.
+        """
         s = self.session
         assert s.db is not None
         assert s.engagement is not None
         assert s.engagement.id is not None
 
-        # Sprint 14 / T-001: Progress-Dialog wickelt den Streaming-Import
-        # (Read + DB-Insert) ein. `setMinimumDuration(300)` zeigt ihn erst bei
-        # spürbar langen Imports.
+        # Sprint 17: Der Worker öffnet seine eigene Database-Instanz im
+        # Worker-Thread. Wir reichen nur den DB-Path durch.
+        sheet_name, header_row = configured if configured is not None else (None, None)
+        task = ExcelImportTask(
+            path=path,
+            db_path=s.db.db_path,
+            engagement_id=s.engagement.id,
+            user_name=s.user_name(),
+            sheet_name=sheet_name,
+            header_row=header_row,
+        )
         progress_dialog = TaskProgressDialog(f"Importiere {path.name}…", s.window)
         try:
-            importer = ExcelImporter(progress=progress_dialog.progress_callback())
-            try:
-                if configured is not None:
-                    sheet_name, header_row = configured
-                    result = importer.import_file_configured(path, sheet_name, header_row)
-                else:
-                    result = importer.import_file(path)
-            except DataImportError as exc:
-                s.error(f"Import fehlgeschlagen: {exc}")
-                return None
-
-            dataset = replace(result.dataset, engagement_id=s.engagement.id)
-            try:
-                with s.db.session() as conn:
-                    stored = DatasetRepo(conn).create(dataset, result.rows)
-                    AuditLogger(AuditRepo(conn), s.user_name(), s.engagement.id).log_import(stored)
-            except Exception as exc:  # pragma: no cover – defensiv
-                logger.exception("Dataset persistieren fehlgeschlagen")
-                s.error(f"Dataset konnte nicht gespeichert werden: {exc}")
-                return None
-        finally:
-            progress_dialog.close()
-        return stored, result
+            return progress_dialog.run_task(task)
+        except DataImportError as exc:
+            s.error(f"Import fehlgeschlagen: {exc}")
+            return None
+        except Exception as exc:  # pragma: no cover – defensiv
+            logger.exception("Import-Worker fehlgeschlagen")
+            s.error(f"Import fehlgeschlagen: {exc}")
+            return None
 
     def _show_import_summary(self, stats: ImportStats) -> None:
         """Skipped-/Warning-Übersicht als Info-Dialog (oder nichts, wenn leer)."""

@@ -42,6 +42,7 @@ from typing import Any, Final, Literal
 from python_calamine import CalamineSheet, CalamineWorkbook
 
 from sampling_tool.config import SUPPORTED_CSV_SUFFIXES, SUPPORTED_EXCEL_SUFFIXES
+from sampling_tool.core.cancellation import CancellationToken
 from sampling_tool.core.models import Dataset, DatasetRow
 
 HeaderConfidence = Literal["high", "low", "ambiguous"]
@@ -156,8 +157,23 @@ class ExcelImporter:
     Die gleiche Instanz darf für mehrere Imports wiederverwendet werden.
     """
 
-    def __init__(self, progress: ProgressCallback | None = None) -> None:
+    def __init__(
+        self,
+        progress: ProgressCallback | None = None,
+        cancellation: CancellationToken | None = None,
+    ) -> None:
         self.progress = progress
+        self.cancellation = cancellation
+
+    def _check_cancel(self) -> None:
+        """Wirft `OperationCancelled`, wenn das Token gesetzt ist.
+
+        Im Streaming-Pfad alle `_PROGRESS_INTERVAL` Rows aufgerufen
+        (Overhead ist vernachlässigbar, aber jede Row prüfen wäre zu
+        viel).
+        """
+        if self.cancellation is not None:
+            self.cancellation.raise_if_cancelled()
 
     # ---- Public API -----------------------------------------------------
 
@@ -336,6 +352,8 @@ class ExcelImporter:
         header_row: int,
     ) -> Iterator[DatasetRow]:
         """Generator: skipt bis zur Header-Zeile, dann yieldet Daten-Rows."""
+        # Sprint 17: Cancel-Check vor dem ersten Read.
+        self._check_cancel()
         rows_iter: Iterator[list[Any]] = iter(sheet.iter_rows())
         # Header-Row + alle vorhergehenden überspringen.
         for _ in range(header_row + 1):
@@ -356,8 +374,10 @@ class ExcelImporter:
             row = DatasetRow(row_id=next_row_id, values=values)
             next_row_id += 1
             stats.processed_count += 1
-            if self.progress is not None and stats.processed_count % _PROGRESS_INTERVAL == 0:
-                self.progress(stats.processed_count, max(total_estimate, stats.processed_count))
+            if stats.processed_count % _PROGRESS_INTERVAL == 0:
+                self._check_cancel()
+                if self.progress is not None:
+                    self.progress(stats.processed_count, max(total_estimate, stats.processed_count))
             yield row
 
         if self.progress is not None:
@@ -408,6 +428,8 @@ class ExcelImporter:
         Zufallszugriff). Stattdessen detektieren wir den Header beim
         zweiten Pass erneut und beginnen direkt danach.
         """
+        # Sprint 17: Cancel-Check vor dem ersten Read.
+        self._check_cancel()
         rows_iter: Iterator[list[Any]] = iter(sheet.iter_rows())
         header_row, _ = _detect_header(rows_iter)
         if header_row is None:
@@ -427,8 +449,10 @@ class ExcelImporter:
             row = DatasetRow(row_id=next_row_id, values=values)
             next_row_id += 1
             stats.processed_count += 1
-            if self.progress is not None and stats.processed_count % _PROGRESS_INTERVAL == 0:
-                self.progress(stats.processed_count, max(total_estimate, stats.processed_count))
+            if stats.processed_count % _PROGRESS_INTERVAL == 0:
+                self._check_cancel()
+                if self.progress is not None:
+                    self.progress(stats.processed_count, max(total_estimate, stats.processed_count))
             yield row
 
         # Abschluss-Tick (UIs erwarten oft ein finales current==total).
@@ -467,14 +491,18 @@ class ExcelImporter:
     ) -> Iterator[DatasetRow]:
         """CSV-Pfad als Generator. `data_rows` ist bereits geparst (csv.reader
         liest Zeile für Zeile, aber wir haben den Text einmal voll im RAM)."""
+        # Sprint 17: Cancel-Check vor dem ersten Read.
+        self._check_cancel()
         for idx, raw in enumerate(data_rows, start=1):
             values = {
                 col: _coerce_value(raw[i] if i < len(raw) else None)
                 for i, col in enumerate(columns)
             }
             stats.processed_count += 1
-            if self.progress is not None and stats.processed_count % _PROGRESS_INTERVAL == 0:
-                self.progress(stats.processed_count, total)
+            if stats.processed_count % _PROGRESS_INTERVAL == 0:
+                self._check_cancel()
+                if self.progress is not None:
+                    self.progress(stats.processed_count, total)
             yield DatasetRow(row_id=idx, values=values)
 
         if self.progress is not None:

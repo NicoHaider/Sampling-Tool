@@ -13,15 +13,19 @@ import logging
 from PyQt6.QtWidgets import QMessageBox
 
 from sampling_tool.audit.logger import AuditLogger
-from sampling_tool.io.exporter import ExcelExporter, ExportError
-from sampling_tool.io.html_report import HtmlReportGenerator
-from sampling_tool.io.multi_report_exporter import MultiSheetReportExporter
-from sampling_tool.io.pdf_report import AuditTrailPDF
-from sampling_tool.persistence.repositories import AuditRepo, DatasetRepo, SampleRepo
+from sampling_tool.io.exporter import ExportError
+from sampling_tool.persistence.repositories import AuditRepo, SampleRepo
 from sampling_tool.ui.controllers._factories import ControllerFactories
 from sampling_tool.ui.controllers.workspace_session import (
     AUDIT_EVENT_DISPLAY_LIMIT,
     WorkspaceSession,
+)
+from sampling_tool.ui.dialogs.progress_dialog import TaskProgressDialog
+from sampling_tool.ui.workers.tasks import (
+    AuditPdfExportTask,
+    ExcelReportTask,
+    HtmlReportTask,
+    SampleExportTask,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,20 +73,25 @@ class ExportController:
         # `get_rows_by_ids` – kein voll materialisiertes Dataset mehr.
         # Bei 1M-Dataset und 1k-Sample werden nur 1k Rows aus der DB
         # geholt statt 1M.
+        # Sprint 17: Worker-basiert – UI bleibt während des Exports responsiv.
+        task = SampleExportTask(
+            sample=s.sample,
+            dataset=s.dataset,
+            db_path=s.db.db_path,
+            columns=result.columns,
+            output_dir=result.output_dir,
+            custom_name=result.custom_name,
+            custom_id=result.custom_id,
+            engagement=s.engagement,
+        )
+        progress_dialog = TaskProgressDialog("Exportiere Sample…", s.window)
         try:
-            output_path = ExcelExporter().export_sample(
-                s.sample,
-                s.dataset,
-                DatasetRepo(s.db.connect()),
-                columns=result.columns,
-                output_dir=result.output_dir,
-                custom_name=result.custom_name,
-                custom_id=result.custom_id,
-                engagement=s.engagement,
-            )
+            output_path = progress_dialog.run_task(task)
         except ExportError as exc:
             s.error(f"Export fehlgeschlagen: {exc}")
             return
+        if output_path is None:
+            return  # User-Cancel
 
         AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_export(
             s.sample.id, output_path, s.sample.actual_size
@@ -140,23 +149,28 @@ class ExportController:
             and (result.date_to is None or e.timestamp.date() <= result.date_to)
         ]
 
+        # Sprint 17: Worker-basiert.
+        task = AuditPdfExportTask(
+            engagement=s.engagement,
+            events=filtered,
+            output_path=result.output_path,
+            briefpapier=briefpapier if result.use_briefpapier else None,
+            include_statistics=result.include_statistics,
+        )
+        progress_dialog = TaskProgressDialog("Erstelle AuditTrail-PDF…", s.window)
         try:
-            renderer = AuditTrailPDF(briefpapier=briefpapier if result.use_briefpapier else None)
-            renderer.render(
-                s.engagement,
-                filtered,
-                result.output_path,
-                include_statistics=result.include_statistics,
-            )
+            output_path = progress_dialog.run_task(task)
         except Exception as exc:  # pragma: no cover – defensiv
             logger.exception("PDF-Export fehlgeschlagen")
             s.error(f"PDF-Export fehlgeschlagen: {exc}")
             return
+        if output_path is None:
+            return  # User-Cancel
 
         QMessageBox.information(
             s.window,
             "AuditTrail-PDF exportiert",
-            f"Datei: {result.output_path.name}\n{len(filtered)} Events",
+            f"Datei: {output_path.name}\n{len(filtered)} Events",
         )
 
     # ---- Multi-Sheet Excel-Report --------------------------------------
@@ -175,24 +189,34 @@ class ExportController:
         if result is None:
             return
 
+        # Sprint 17: Worker-basiert.
         try:
             datasets, samples, events = s.collect_report_data()
-            MultiSheetReportExporter().export(
-                s.engagement,
-                datasets,
-                samples,
-                events,
-                result.output_path,
-                sheets=result.sheets,
-            )
+        except Exception as exc:  # pragma: no cover – defensiv
+            logger.exception("Excel-Report: Daten-Sammlung fehlgeschlagen")
+            s.error(f"Excel-Report fehlgeschlagen: {exc}")
+            return
+        task = ExcelReportTask(
+            engagement=s.engagement,
+            datasets=datasets,
+            samples=samples,
+            audit_events=events,
+            output_path=result.output_path,
+            sheets=result.sheets,
+        )
+        progress_dialog = TaskProgressDialog("Erstelle Excel-Report…", s.window)
+        try:
+            output_path = progress_dialog.run_task(task)
         except Exception as exc:  # pragma: no cover – defensiv
             logger.exception("Excel-Report fehlgeschlagen")
             s.error(f"Excel-Report fehlgeschlagen: {exc}")
             return
+        if output_path is None:
+            return  # User-Cancel
         QMessageBox.information(
             s.window,
             "Excel-Report erstellt",
-            f"Bericht gespeichert unter:\n{result.output_path}",
+            f"Bericht gespeichert unter:\n{output_path}",
         )
 
     # ---- HTML-Report ---------------------------------------------------
@@ -211,26 +235,36 @@ class ExportController:
         if result is None:
             return
 
+        # Sprint 17: Worker-basiert.
         try:
             datasets, samples, events = s.collect_report_data()
-            HtmlReportGenerator().render(
-                s.engagement,
-                datasets,
-                samples,
-                events,
-                result.output_path,
-                include_charts=result.include_charts,
-                include_audit_trail=result.include_audit_trail,
-                include_samples_table=result.include_samples_table,
-            )
+        except Exception as exc:  # pragma: no cover – defensiv
+            logger.exception("HTML-Report: Daten-Sammlung fehlgeschlagen")
+            s.error(f"HTML-Report fehlgeschlagen: {exc}")
+            return
+        task = HtmlReportTask(
+            engagement=s.engagement,
+            datasets=datasets,
+            samples=samples,
+            audit_events=events,
+            output_path=result.output_path,
+            include_charts=result.include_charts,
+            include_audit_trail=result.include_audit_trail,
+            include_samples_table=result.include_samples_table,
+        )
+        progress_dialog = TaskProgressDialog("Erstelle HTML-Report…", s.window)
+        try:
+            output_path = progress_dialog.run_task(task)
         except Exception as exc:  # pragma: no cover – defensiv
             logger.exception("HTML-Report fehlgeschlagen")
             s.error(f"HTML-Report fehlgeschlagen: {exc}")
             return
+        if output_path is None:
+            return  # User-Cancel
         QMessageBox.information(
             s.window,
             "HTML-Report erstellt",
-            f"Bericht gespeichert unter:\n{result.output_path}",
+            f"Bericht gespeichert unter:\n{output_path}",
         )
 
     # ---- intern --------------------------------------------------------
