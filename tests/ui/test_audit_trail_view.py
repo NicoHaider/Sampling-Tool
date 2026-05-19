@@ -323,3 +323,84 @@ class TestAuditTrailFilterProxyExtras:
         proxy = view.proxy()
         action_text = proxy.data(proxy.index(0, 1), Qt.ItemDataRole.DisplayRole)
         assert "→ #7" in action_text
+
+
+# ---------------------------------------------------------------------------
+# Sprint 18 / T-002-Rest: Coverage-Ausbau audit_trail_view 82 → 85+ %
+# ---------------------------------------------------------------------------
+
+
+class TestModelEdgeCases:
+    def test_data_invalid_index_returns_none(self, qtbot: QtBot) -> None:
+        """`data()` mit ungültigem Index → None (kein Crash)."""
+        model = AuditTrailModel()
+        model.set_events([_make_event(event_id=1)])
+        invalid = QModelIndex()
+        assert model.data(invalid, Qt.ItemDataRole.DisplayRole) is None
+
+    def test_data_event_id_role_returns_event_id(self, qtbot: QtBot) -> None:
+        """`_EVENT_ID_ROLE` gibt die Event-ID als Sortier-Datum zurück."""
+        from sampling_tool.ui.widgets.audit_trail_view import _EVENT_ID_ROLE
+
+        model = AuditTrailModel()
+        model.set_events([_make_event(event_id=42)])
+        assert model.data(model.index(0, 0), _EVENT_ID_ROLE) == 42
+
+    def test_data_sample_id_role_returns_sample_id(self, qtbot: QtBot) -> None:
+        from sampling_tool.ui.widgets.audit_trail_view import _SAMPLE_ID_ROLE
+
+        model = AuditTrailModel()
+        model.set_events([_make_event(event_id=1, sample_id=7)])
+        assert model.data(model.index(0, 0), _SAMPLE_ID_ROLE) == 7
+
+    def test_data_event_type_role_returns_event_type(self, qtbot: QtBot) -> None:
+        from sampling_tool.ui.widgets.audit_trail_view import _EVENT_TYPE_ROLE
+
+        model = AuditTrailModel()
+        model.set_events([_make_event(event_id=1, event_type="export")])
+        assert model.data(model.index(0, 0), _EVENT_TYPE_ROLE) == "export"
+
+    def test_data_user_role_returns_user(self, qtbot: QtBot) -> None:
+        from sampling_tool.ui.widgets.audit_trail_view import _USER_ROLE
+
+        model = AuditTrailModel()
+        model.set_events([_make_event(event_id=1, user="carla")])
+        assert model.data(model.index(0, 0), _USER_ROLE) == "carla"
+
+    def test_data_text_alignment_role_for_numeric_columns(self, qtbot: QtBot) -> None:
+        """Numerische Spalten (3-6) bekommen Right-Alignment."""
+        model = AuditTrailModel()
+        model.set_events([_make_event(event_id=1)])
+        # Col 4 = sample_size (numerisch).
+        alignment = model.data(model.index(0, 4), Qt.ItemDataRole.TextAlignmentRole)
+        assert alignment is not None
+        assert int(alignment) & int(Qt.AlignmentFlag.AlignRight)
+
+    def test_data_unknown_role_returns_none(self, qtbot: QtBot) -> None:
+        """Roles, die nicht behandelt werden, geben None zurück."""
+        model = AuditTrailModel()
+        model.set_events([_make_event(event_id=1)])
+        # Col 0 (timestamp, NICHT numerisch) mit TextAlignmentRole → None.
+        assert model.data(model.index(0, 0), Qt.ItemDataRole.TextAlignmentRole) is None
+
+    def test_header_data_vertical_returns_none(self, qtbot: QtBot) -> None:
+        model = AuditTrailModel()
+        # Vertical Header (Zeilennummern) hat kein eigenes Label.
+        result = model.headerData(0, Qt.Orientation.Vertical, Qt.ItemDataRole.DisplayRole)
+        assert result is None
+
+    def test_header_data_wrong_role_returns_none(self, qtbot: QtBot) -> None:
+        model = AuditTrailModel()
+        result = model.headerData(0, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole)
+        assert result is None
+
+    def test_double_click_event_without_id_does_not_emit(
+        self, view: AuditTrailView, qtbot: QtBot
+    ) -> None:
+        """Doppelklick auf Event ohne id darf NICHT das Signal feuern."""
+        view.set_events([_make_event(event_id=None)])
+        emitted: list[int] = []
+        view.event_double_clicked.connect(lambda eid: emitted.append(eid))
+        proxy_idx = view.proxy().index(0, 0)
+        view._on_double_click(proxy_idx)
+        assert emitted == []

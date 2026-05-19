@@ -53,6 +53,7 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 15     | F-003/F-004/F-005 IO-Layer-Reinigung (charts.py)    | done        |
 | 16     | VBA-Backlog: Multi-Sheet + Header-Detection-Dialog beim Import | done |
 | 17     | Worker-Architektur (P-008): UI responsiv bei Import/Export | done |
+| 18     | Quality-Polish (Q-001 pdfrw-Logging, Q-005 Timestamp-Drift, T-002) | done |
 
 ## Worker-Architektur (Sprint 17 / P-008)
 
@@ -175,6 +176,13 @@ ui ──▶ controllers ──▶ core ◀── io
     `source_file`, Engagement-FK) – Rows leben im Repo (siehe Block
     "Streaming-Architektur" oben).
   - `rng.py` – `make_rng(seed)` + `fisher_yates_shuffle` über `numpy.random.default_rng`
+  - `formatting.py` – zentrale Anzeige-Formatierung (Sprint 18 / Q-005).
+    `format_event_timestamp` / `format_optional_timestamp` / `ensure_utc`.
+    Eintrittspunkt für ALLE Audit-Trail-Timestamp-Anzeigen (UI, PDF,
+    Excel-Report, HTML-Report). Normalisiert UTC → lokale TZ, Format
+    `YYYY-MM-DD HH:MM:SS`. Vorher 5× dupliziert, PDF-Pfad ohne
+    TZ-Normalisierung → Drift zwischen UI und PDF.
+  - `cancellation.py` – siehe Worker-Architektur-Block oben.
   - `sampling.py` – `BaseSampler` + Simple/Cluster/Stratified + `create_sampler`-Factory.
     `sample(rows, population_size=None)` akzeptiert einen einmalig-
     konsumierbaren Iterator, `_collect_pool` ist Single-Pass-Filter

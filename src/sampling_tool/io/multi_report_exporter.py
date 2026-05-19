@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Final
@@ -28,6 +28,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+from sampling_tool.core.formatting import format_optional_timestamp
 from sampling_tool.core.models import (
     AuditEvent,
     Dataset,
@@ -146,7 +147,7 @@ class MultiSheetReportExporter:
         ws.append(["Audit-Events", len(audit_events)])
         if audit_events:
             latest = max(audit_events, key=lambda e: e.timestamp)
-            ws.append(["Letzte Aktivität", _format_dt(latest.timestamp)])
+            ws.append(["Letzte Aktivität", format_optional_timestamp(latest.timestamp)])
         else:
             ws.append(["Letzte Aktivität", "—"])
 
@@ -177,7 +178,7 @@ class MultiSheetReportExporter:
         for evt in chronological:
             ws.append(
                 [
-                    _format_dt(evt.timestamp),
+                    format_optional_timestamp(evt.timestamp),
                     evt.event_type,
                     evt.user_name,
                     evt.sample_id if evt.sample_id is not None else "—",
@@ -230,7 +231,7 @@ class MultiSheetReportExporter:
                     str(cfg.filter_value) if cfg.filter_value is not None else "—",
                     cfg.cluster_field or "—",
                     cfg.stratum_field or "—",
-                    _format_dt(sample.drawn_at),
+                    format_optional_timestamp(sample.drawn_at),
                     sample.created_by,
                 ]
             )
@@ -313,13 +314,6 @@ def _ensure_cell_value(value: Any) -> Any:
 
 def _format_now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _format_dt(value: datetime | None) -> str:
-    if value is None:
-        return "—"
-    ts = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-    return ts.astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _display(value: Any) -> str:

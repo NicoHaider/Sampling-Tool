@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sampling_tool.core.formatting import ensure_utc, format_optional_timestamp
 from sampling_tool.core.models import AuditEvent
 
 _COLUMNS: Final[tuple[str, ...]] = (
@@ -145,7 +146,7 @@ class AuditTrailModel(QAbstractTableModel):
         if role == _USER_ROLE:
             return evt.user_name
         if role == _TIMESTAMP_ROLE:
-            return _ensure_utc(evt.timestamp).timestamp() if evt.timestamp else 0.0
+            return ensure_utc(evt.timestamp).timestamp() if evt.timestamp else 0.0
         if role == Qt.ItemDataRole.TextAlignmentRole and col in (3, 4, 5, 6):
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         return None
@@ -200,7 +201,7 @@ class AuditTrailFilterProxy(QSortFilterProxyModel):
         if text:
             haystack = " ".join(
                 [
-                    _format_timestamp(evt.timestamp),
+                    format_optional_timestamp(evt.timestamp),
                     evt.event_type,
                     evt.user_name or "",
                     _format_file(evt),
@@ -388,7 +389,7 @@ class AuditTrailView(QWidget):
 
 def _format_cell(evt: AuditEvent, col: int) -> str:
     if col == 0:
-        return _format_timestamp(evt.timestamp)
+        return format_optional_timestamp(evt.timestamp)
     if col == 1:
         action = _ACTION_LABELS.get(evt.event_type, evt.event_type)
         if evt.corrects_event_id is not None:
@@ -416,22 +417,11 @@ def _format_file(evt: AuditEvent) -> str:
     return Path(path).name
 
 
-def _format_timestamp(ts: datetime | None) -> str:
-    if ts is None:
-        return "—"
-    return _ensure_utc(ts).astimezone().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _ensure_utc(ts: datetime) -> datetime:
-    """Naive Datetimes (alte Daten) werden als UTC interpretiert."""
-    return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
-
-
 def _in_range(ts: datetime | None, range_label: str) -> bool:
     if range_label == _FILTER_ALL or ts is None:
         return True
     now = datetime.now(UTC)
-    when = _ensure_utc(ts)
+    when = ensure_utc(ts)
     if range_label == _RANGE_TODAY:
         return when.date() == now.date()
     if range_label == _RANGE_WEEK:
