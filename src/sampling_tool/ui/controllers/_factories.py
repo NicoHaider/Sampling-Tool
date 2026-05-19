@@ -17,11 +17,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement, SampleResult
+from sampling_tool.io.importer import ExcelImporter
 from sampling_tool.ui.dialogs.duplicate_engagement_dialog import DuplicateEngagementDialog
 from sampling_tool.ui.dialogs.export_audit_pdf_dialog import ExportAuditPdfDialog
 from sampling_tool.ui.dialogs.export_excel_report_dialog import ExportExcelReportDialog
 from sampling_tool.ui.dialogs.export_html_report_dialog import ExportHtmlReportDialog
 from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialog
+from sampling_tool.ui.dialogs.import_options_dialog import ImportOptionsDialog
 from sampling_tool.ui.dialogs.new_engagement_dialog import NewEngagementDialog
 from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialog
 from sampling_tool.ui.dialogs.settings_dialog import SettingsDialog
@@ -52,6 +54,7 @@ ExcelReportDialogFactory = Callable[
 ]
 HtmlReportDialogFactory = Callable[["MainWindow", Engagement, Path | None], ExportHtmlReportDialog]
 SettingsDialogFactory = Callable[["MainWindow", AppSettings], SettingsDialog]
+ImportOptionsDialogFactory = Callable[[Path, ExcelImporter, "MainWindow"], ImportOptionsDialog]
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +77,7 @@ class ControllerFactories:
     excel_report: ExcelReportDialogFactory
     html_report: HtmlReportDialogFactory
     settings: SettingsDialogFactory
+    import_options: ImportOptionsDialogFactory
 
 
 # ---------------------------------------------------------------------------
@@ -170,3 +174,9 @@ def default_html_report_factory(
 
 def default_settings_factory(parent: MainWindow, current: AppSettings) -> SettingsDialog:
     return SettingsDialog(current, parent=parent)
+
+
+def default_import_options_factory(
+    path: Path, importer: ExcelImporter, parent: MainWindow
+) -> ImportOptionsDialog:
+    return ImportOptionsDialog(path=path, importer=importer, parent=parent)

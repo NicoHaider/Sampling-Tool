@@ -37,12 +37,14 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from python_calamine import CalamineSheet, CalamineWorkbook
 
 from sampling_tool.config import SUPPORTED_CSV_SUFFIXES, SUPPORTED_EXCEL_SUFFIXES
 from sampling_tool.core.models import Dataset, DatasetRow
+
+HeaderConfidence = Literal["high", "low", "ambiguous"]
 
 ProgressCallback = Callable[[int, int], None]
 
@@ -73,6 +75,45 @@ class ImportStats:
     skipped_rows: int = 0
     warnings: list[str] = field(default_factory=list)
     processed_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class SheetInfo:
+    """Metadaten eines Excel-Sheets für die UI-Multi-Sheet-Auswahl.
+
+    `row_count` / `column_count` kommen direkt aus Calamine
+    (`total_height` / `total_width`) und enthalten potentielle Leerzeilen
+    / Leerspalten. Reine Anzeige-Daten – kein Daten-Lesepfad.
+    """
+
+    name: str
+    row_count: int
+    column_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class SheetPreview:
+    """Vorschau-Daten für den `ImportOptionsDialog`.
+
+    `rows` enthält die rohen 2D-Zellen der ersten N Zeilen – inklusive
+    Leerzeilen und ohne Header-Interpretation, damit der User im Dialog
+    selbst entscheidet wo die Header-Zeile liegt. Werte sind durch
+    `_coerce_value` gegangen (Calamine-Eigenheiten normalisiert).
+
+    `confidence`-Semantik:
+    - ``high``: Header in Zeile 0 erkannt + sieht wie ein Header aus
+      (≥50 % String-Zellen). Dialog wird NICHT angezeigt, wenn zusätzlich
+      nur ein Sheet vorhanden ist.
+    - ``low``: Header in Zeile > 0 erkannt (z. B. mit Metadaten-Zeilen
+      darüber). Dialog wird angezeigt, Header-Zeile preselected.
+    - ``ambiguous``: keine Zeile sah wie ein Header aus, oder das Sheet
+      ist leer. Dialog wird angezeigt, User muss manuell wählen.
+    """
+
+    sheet_name: str
+    rows: tuple[tuple[Any, ...], ...]
+    detected_header_row: int | None
+    confidence: HeaderConfidence
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +215,153 @@ class ExcelImporter:
             return list(columns), preview_rows
 
         raise DataImportError(f"Vorschau für Dateityp '{suffix}' nicht unterstützt.")
+
+    # ---- Sprint 16: Sheet-/Header-Auswahl-Dialog-API --------------------
+
+    def list_sheets(self, path: Path) -> list[SheetInfo]:
+        """Liefert Metadaten aller Sheets als `SheetInfo`-Liste.
+
+        Lädt die Sheets nicht – nur Namen + Dimensionen aus Calamine.
+        Wird vom `ImportOptionsDialog` für das Sheet-Dropdown genutzt.
+        """
+        suffix = path.suffix.lower()
+        if suffix not in SUPPORTED_EXCEL_SUFFIXES:
+            raise DataImportError(
+                f"Sheet-Liste nur für Excel-Dateien verfügbar (Datei: {path.name})."
+            )
+        wb = CalamineWorkbook.from_path(str(path))
+        infos: list[SheetInfo] = []
+        for name in wb.sheet_names:
+            sheet = wb.get_sheet_by_name(name)
+            # Calamine: `total_height` ist `end_row - start_row` (Range-Größe),
+            # `height` ist die echte Anzahl Zeilen. Für die UI-Anzeige wollen
+            # wir die echte Zeilenanzahl inkl. Header.
+            infos.append(
+                SheetInfo(
+                    name=name,
+                    row_count=int(sheet.height),
+                    column_count=int(sheet.width),
+                )
+            )
+        return infos
+
+    def preview_sheet(self, path: Path, sheet_name: str, max_rows: int = 20) -> SheetPreview:
+        """Liefert die ersten ``max_rows`` Zeilen + Header-Heuristik.
+
+        Im Gegensatz zu `preview()` werden die Rohzellen ZURÜCKGEGEBEN
+        OHNE Header-Interpretation – der Dialog zeigt sie als 2D-Tabelle
+        und der User markiert die Header-Zeile selbst.
+        """
+        suffix = path.suffix.lower()
+        if suffix not in SUPPORTED_EXCEL_SUFFIXES:
+            raise DataImportError(
+                f"Sheet-Vorschau nur für Excel-Dateien verfügbar (Datei: {path.name})."
+            )
+        if max_rows < 0:
+            raise DataImportError("preview_sheet(): max_rows muss >= 0 sein.")
+
+        wb = CalamineWorkbook.from_path(str(path))
+        sheet = _select_sheet(wb, sheet_name)
+
+        raw_rows: list[tuple[Any, ...]] = []
+        if sheet.start is not None:
+            for raw in sheet.iter_rows():
+                raw_rows.append(tuple(_coerce_value(c) for c in raw))
+                if len(raw_rows) >= max_rows:
+                    break
+
+        detected, confidence = _detect_header_with_confidence(raw_rows)
+        return SheetPreview(
+            sheet_name=sheet_name,
+            rows=tuple(raw_rows),
+            detected_header_row=detected,
+            confidence=confidence,
+        )
+
+    def import_file_configured(
+        self,
+        path: Path,
+        sheet_name: str,
+        header_row: int,
+    ) -> ImportResult:
+        """Excel-Import mit explizit gewählten Sheet + Header-Zeile.
+
+        ``header_row`` ist 0-basiert. Alle Zeilen davor zählen als
+        ``skipped_rows``, der Header definiert die Spalten, alle Zeilen
+        danach werden als Daten interpretiert (Leerzeilen weiterhin
+        geskipped). Skippt die Auto-Detection bewusst – ist der User-
+        Override aus dem `ImportOptionsDialog`.
+        """
+        suffix = path.suffix.lower()
+        if suffix not in SUPPORTED_EXCEL_SUFFIXES:
+            raise DataImportError(
+                f"import_file_configured() ist nur für Excel-Dateien verfügbar "
+                f"(Datei: {path.name})."
+            )
+        if header_row < 0:
+            raise DataImportError(f"Header-Zeile muss >= 0 sein (war: {header_row}).")
+
+        wb = CalamineWorkbook.from_path(str(path))
+        sheet = _select_sheet(wb, sheet_name)
+        if sheet.start is None:
+            raise DataImportError(f"Sheet '{sheet_name}' in '{path.name}' ist leer.")
+
+        header_raw, leading_skipped = _read_header_row(sheet, header_row)
+        if header_raw is None:
+            raise DataImportError(
+                f"Header-Zeile {header_row + 1} liegt jenseits der Daten in Sheet "
+                f"'{sheet_name}' (max. {int(sheet.total_height)} Zeilen)."
+            )
+
+        columns, header_warnings = _normalize_columns(header_raw)
+        stats = ImportStats(skipped_rows=leading_skipped, warnings=list(header_warnings))
+        total_estimate = max(0, int(sheet.total_height) - header_row - 1)
+        dataset = Dataset(
+            name=path.stem,
+            columns=tuple(columns),
+            row_count=max(0, total_estimate),
+            source_file=str(path),
+        )
+        rows_iter = self._configured_row_generator(
+            sheet, columns, stats, total_estimate, header_row
+        )
+        return ImportResult(dataset=dataset, rows=rows_iter, stats=stats)
+
+    def _configured_row_generator(
+        self,
+        sheet: CalamineSheet,
+        columns: list[str],
+        stats: ImportStats,
+        total_estimate: int,
+        header_row: int,
+    ) -> Iterator[DatasetRow]:
+        """Generator: skipt bis zur Header-Zeile, dann yieldet Daten-Rows."""
+        rows_iter: Iterator[list[Any]] = iter(sheet.iter_rows())
+        # Header-Row + alle vorhergehenden überspringen.
+        for _ in range(header_row + 1):
+            try:
+                next(rows_iter)
+            except StopIteration:
+                return
+
+        next_row_id = 1
+        for raw in rows_iter:
+            if _is_blank(raw):
+                stats.skipped_rows += 1
+                continue
+            values = {
+                col: _coerce_value(raw[i] if i < len(raw) else None)
+                for i, col in enumerate(columns)
+            }
+            row = DatasetRow(row_id=next_row_id, values=values)
+            next_row_id += 1
+            stats.processed_count += 1
+            if self.progress is not None and stats.processed_count % _PROGRESS_INTERVAL == 0:
+                self.progress(stats.processed_count, max(total_estimate, stats.processed_count))
+            yield row
+
+        if self.progress is not None:
+            self.progress(stats.processed_count, stats.processed_count)
 
     # ---- Excel ----------------------------------------------------------
 
@@ -388,6 +576,42 @@ def _detect_header(
         # nehmen (Fallback). Ohne Header geht hier nichts weiter.
         return list(raw), leading_blanks
     return None, leading_blanks
+
+
+def _detect_header_with_confidence(
+    rows: list[tuple[Any, ...]],
+) -> tuple[int | None, HeaderConfidence]:
+    """Header-Index + Confidence für `preview_sheet`.
+
+    - ``high``: erste Zeile (Index 0) ist headerlike.
+    - ``low``: Header headerlike, aber Leerzeilen oder Metadaten davor.
+    - ``ambiguous``: erste non-blank Zeile sieht NICHT wie ein Header aus,
+      oder das Sheet ist komplett leer. ``detected_header_row`` ist dann
+      die erste non-blank Zeile (Fallback) bzw. ``None``.
+    """
+    for idx, row in enumerate(rows):
+        if _is_blank(row):
+            continue
+        if _looks_like_header(row):
+            return idx, ("high" if idx == 0 else "low")
+        return idx, "ambiguous"
+    return None, "ambiguous"
+
+
+def _read_header_row(sheet: CalamineSheet, header_row: int) -> tuple[list[Any] | None, int]:
+    """Liest die ``header_row``-te Zeile (0-basiert) inkl. Zähler übersprungener Zeilen.
+
+    Liefert ``(header_zeile_oder_None, anzahl_übersprungener_zeilen)``. Wenn
+    der Index jenseits der Datei liegt, ist die Zeile ``None``.
+    """
+    rows_iter: Iterator[list[Any]] = iter(sheet.iter_rows())
+    skipped = 0
+    for idx, raw in enumerate(rows_iter):
+        if idx < header_row:
+            skipped += 1
+            continue
+        return list(raw), skipped
+    return None, skipped
 
 
 def _looks_like_header(row: list[Any] | tuple[Any, ...]) -> bool:

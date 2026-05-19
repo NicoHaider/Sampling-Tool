@@ -8,7 +8,13 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
-from sampling_tool.io.importer import DataImportError, ExcelImporter, ImportResult
+from sampling_tool.io.importer import (
+    DataImportError,
+    ExcelImporter,
+    ImportResult,
+    SheetInfo,
+    SheetPreview,
+)
 
 
 @pytest.fixture
@@ -351,3 +357,222 @@ class TestRepoStreamingRowCount:
 
         assert stored.row_count == 2
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 16: Multi-Sheet + Header-Detection-Dialog-API
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def header_in_row_3_xlsx(tmp_path: Path) -> Path:
+    """xlsx mit 2 Metadaten-Zeilen über dem Header in Zeile 3 (0-basiert: index 2)."""
+    path = tmp_path / "header_row_3.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.append(["Audit-Report Q1 2026", None, None])
+    ws.append(["Erstellt am 2026-04-12", None, None])
+    ws.append(["Konto", "Bezeichnung", "Saldo"])
+    ws.append(["1000", "Kasse", 500.50])
+    ws.append(["2000", "Bank", 1234.00])
+    ws.append(["3000", "Forderungen", 750.25])
+    wb.save(path)
+    return path
+
+
+@pytest.fixture
+def ambiguous_xlsx(tmp_path: Path) -> Path:
+    """xlsx ohne klare Header-Zeile: erste non-blank Zeile sieht aus wie Daten (Zahlen)."""
+    path = tmp_path / "ambiguous.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.append([100, 200, 300])
+    ws.append([400, 500, 600])
+    ws.append([700, 800, 900])
+    wb.save(path)
+    return path
+
+
+@pytest.fixture
+def three_sheet_xlsx(tmp_path: Path) -> Path:
+    """xlsx mit drei Sheets, jeder mit Header in Zeile 1."""
+    path = tmp_path / "three_sheet.xlsx"
+    wb = Workbook()
+    first = wb.active
+    assert first is not None
+    first.title = "Erstes"
+    first.append(["a", "b"])
+    first.append([1, 2])
+
+    second = wb.create_sheet("Zweites")
+    second.append(["x", "y", "z"])
+    second.append(["A", "B", "C"])
+    second.append(["D", "E", "F"])
+
+    third = wb.create_sheet("Drittes")
+    third.append(["nur_eine_spalte"])
+    third.append([42])
+    wb.save(path)
+    return path
+
+
+class TestListSheets:
+    def test_single_sheet_workbook(self, importer: ExcelImporter, simple_xlsx: Path) -> None:
+        sheets = importer.list_sheets(simple_xlsx)
+        assert len(sheets) == 1
+        assert isinstance(sheets[0], SheetInfo)
+        assert sheets[0].name == "Daten"
+
+    def test_multi_sheet_workbook_returns_all(
+        self, importer: ExcelImporter, three_sheet_xlsx: Path
+    ) -> None:
+        sheets = importer.list_sheets(three_sheet_xlsx)
+        assert [s.name for s in sheets] == ["Erstes", "Zweites", "Drittes"]
+
+    def test_sheet_info_enthaelt_row_und_column_count(
+        self, importer: ExcelImporter, three_sheet_xlsx: Path
+    ) -> None:
+        sheets = importer.list_sheets(three_sheet_xlsx)
+        # "Zweites" hat 3 Zeilen × 3 Spalten
+        zweites = next(s for s in sheets if s.name == "Zweites")
+        assert zweites.row_count >= 3
+        assert zweites.column_count == 3
+        drittes = next(s for s in sheets if s.name == "Drittes")
+        assert drittes.column_count == 1
+
+    def test_list_sheets_csv_wirft_fehler(self, importer: ExcelImporter, utf8_csv: Path) -> None:
+        with pytest.raises(DataImportError, match="nur für Excel"):
+            importer.list_sheets(utf8_csv)
+
+
+class TestPreviewSheet:
+    def test_preview_returns_raw_2d_rows(self, importer: ExcelImporter, simple_xlsx: Path) -> None:
+        preview = importer.preview_sheet(simple_xlsx, "Daten", max_rows=3)
+        assert isinstance(preview, SheetPreview)
+        assert preview.sheet_name == "Daten"
+        # 3 Zeilen: Header + 2 Daten
+        assert len(preview.rows) == 3
+        # Rohzellen, kein Dict-Mapping – Header steht IN den rows.
+        assert preview.rows[0] == ("Name", "Betrag", "Quote", "Buchungsdatum")
+
+    def test_preview_confidence_high_when_header_in_row_1(
+        self, importer: ExcelImporter, simple_xlsx: Path
+    ) -> None:
+        preview = importer.preview_sheet(simple_xlsx, "Daten")
+        assert preview.confidence == "high"
+        assert preview.detected_header_row == 0
+
+    def test_preview_confidence_low_when_header_in_row_4(
+        self, importer: ExcelImporter, leading_blank_xlsx: Path
+    ) -> None:
+        # leading_blank_xlsx hat 3 echte Leerzeilen vor dem Header in Zeile 4.
+        preview = importer.preview_sheet(leading_blank_xlsx, "Sheet")
+        assert preview.confidence == "low"
+        # 0-basiert: Header in Zeile 4 → index 3
+        assert preview.detected_header_row == 3
+
+    def test_preview_confidence_ambiguous_when_no_clear_header(
+        self, importer: ExcelImporter, ambiguous_xlsx: Path
+    ) -> None:
+        preview = importer.preview_sheet(ambiguous_xlsx, "Sheet")
+        assert preview.confidence == "ambiguous"
+
+    def test_preview_max_rows_respected(self, importer: ExcelImporter, simple_xlsx: Path) -> None:
+        preview = importer.preview_sheet(simple_xlsx, "Daten", max_rows=5)
+        assert len(preview.rows) == 5
+
+    def test_preview_max_rows_groesser_als_datei(
+        self, importer: ExcelImporter, simple_xlsx: Path
+    ) -> None:
+        # Datei hat 11 Zeilen (1 Header + 10 Daten); max_rows=999 → alles
+        preview = importer.preview_sheet(simple_xlsx, "Daten", max_rows=999)
+        assert len(preview.rows) == 11
+
+    def test_preview_unbekanntes_sheet_wirft(
+        self, importer: ExcelImporter, multi_sheet_xlsx: Path
+    ) -> None:
+        with pytest.raises(DataImportError, match="existiert nicht"):
+            importer.preview_sheet(multi_sheet_xlsx, "GibtEsNicht")
+
+    def test_preview_csv_wirft(self, importer: ExcelImporter, utf8_csv: Path) -> None:
+        with pytest.raises(DataImportError, match="nur für Excel"):
+            importer.preview_sheet(utf8_csv, "Sheet")
+
+
+class TestImportFileConfigured:
+    def test_import_mit_explizitem_header_row(
+        self, importer: ExcelImporter, header_in_row_3_xlsx: Path
+    ) -> None:
+        # Header steht in Zeile 3 (0-basiert: 2). Explizit übergeben.
+        result = importer.import_file_configured(
+            header_in_row_3_xlsx, sheet_name="Sheet", header_row=2
+        )
+        rows = list(result.rows)
+        assert result.dataset.columns == ("Konto", "Bezeichnung", "Saldo")
+        assert len(rows) == 3
+        assert rows[0].values["Konto"] == 1000
+
+    def test_import_mit_explizitem_sheet_name(
+        self, importer: ExcelImporter, multi_sheet_xlsx: Path
+    ) -> None:
+        result = importer.import_file_configured(
+            multi_sheet_xlsx, sheet_name="Stammdaten", header_row=0
+        )
+        rows = list(result.rows)
+        assert result.dataset.columns == ("KundenID", "Land")
+        assert len(rows) == 3
+        assert rows[0].values["Land"] == "AUT"
+
+    def test_configured_gleich_auto_bei_perfektem_header(
+        self, importer: ExcelImporter, simple_xlsx: Path
+    ) -> None:
+        # Wenn der Auto-Header korrekt war, müssen configured und auto
+        # dasselbe Resultat liefern.
+        auto = importer.import_file(simple_xlsx)
+        auto_rows = list(auto.rows)
+        configured = importer.import_file_configured(simple_xlsx, sheet_name="Daten", header_row=0)
+        configured_rows = list(configured.rows)
+        assert auto.dataset.columns == configured.dataset.columns
+        assert [r.values for r in auto_rows] == [r.values for r in configured_rows]
+
+    def test_configured_invalid_sheet_name_wirft(
+        self, importer: ExcelImporter, multi_sheet_xlsx: Path
+    ) -> None:
+        with pytest.raises(DataImportError, match="existiert nicht"):
+            importer.import_file_configured(multi_sheet_xlsx, sheet_name="NopeNope", header_row=0)
+
+    def test_configured_header_row_jenseits_der_daten_wirft(
+        self, importer: ExcelImporter, simple_xlsx: Path
+    ) -> None:
+        # simple_xlsx hat 11 Zeilen. header_row=50 ist out of bounds.
+        with pytest.raises(DataImportError, match="Header"):
+            importer.import_file_configured(simple_xlsx, sheet_name="Daten", header_row=50)
+
+    def test_configured_uebersprungene_metadaten_landen_in_stats(
+        self, importer: ExcelImporter, header_in_row_3_xlsx: Path
+    ) -> None:
+        result = importer.import_file_configured(
+            header_in_row_3_xlsx, sheet_name="Sheet", header_row=2
+        )
+        list(result.rows)
+        # 2 Metadaten-Zeilen über dem Header wurden geskipped.
+        assert result.stats.skipped_rows == 2
+
+    def test_configured_reproducible(
+        self, importer: ExcelImporter, header_in_row_3_xlsx: Path
+    ) -> None:
+        """Gleiche Datei + gleiche Sheet/Header-Wahl → identische DatasetRows."""
+        result1 = importer.import_file_configured(
+            header_in_row_3_xlsx, sheet_name="Sheet", header_row=2
+        )
+        result2 = importer.import_file_configured(
+            header_in_row_3_xlsx, sheet_name="Sheet", header_row=2
+        )
+        assert [r.values for r in result1.rows] == [r.values for r in result2.rows]
+
+    def test_configured_csv_wirft(self, importer: ExcelImporter, utf8_csv: Path) -> None:
+        # CSVs haben keine Sheets – import_file_configured ist Excel-only.
+        with pytest.raises(DataImportError, match="nur für Excel"):
+            importer.import_file_configured(utf8_csv, sheet_name="Sheet", header_row=0)

@@ -51,6 +51,7 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 13     | F-001 MainController-Split (God-Object zerlegen)    | done        |
 | 14     | Test-Catchup (T-001/T-002/T-005/T-007)              | done        |
 | 15     | F-003/F-004/F-005 IO-Layer-Reinigung (charts.py)    | done        |
+| 16     | VBA-Backlog: Multi-Sheet + Header-Detection-Dialog beim Import | done |
 
 **Sprint 11.x abgeschlossen** – Streaming-Architektur komplett (siehe
 nächster Abschnitt). Dataset lebt in SQLite, Code-Pfade arbeiten mit
@@ -158,6 +159,19 @@ ui ──▶ controllers ──▶ core ◀── io
     (Initial-Estimate aus `sheet.total_height` ist oft zu hoch).
     Sprint 11.5 – die Compat-Properties `result.skipped_rows` /
     `result.warnings` sind weg, Caller lesen `result.stats.*` direkt.
+    **Sprint 16 – Sheet-/Header-Dialog-API**: zusätzlich zu `import_file`
+    drei neue Methoden für den `ImportOptionsDialog`-Flow:
+    - `list_sheets(path) → list[SheetInfo]` – Sheet-Namen + Zeile-/Spalten-
+      anzahl ohne die Daten zu laden.
+    - `preview_sheet(path, sheet, max_rows=20) → SheetPreview` – rohe 2D-
+      Zellen + heuristisch erkannte Header-Zeile + `confidence`
+      (`high`/`low`/`ambiguous`). Header-Zeile ist NICHT interpretiert,
+      sie steht in den Zeilen drin.
+    - `import_file_configured(path, sheet, header_row) → ImportResult` –
+      Excel-Import mit explizit gewählten Sheet + Header-Zeile (0-basiert).
+      Skipt die Auto-Detection, ist der Override-Pfad für den Dialog.
+    Bestehender `import_file()`-Pfad UNVERÄNDERT – lautloser Auto-Import
+    funktioniert weiter wie zuvor.
   - `exporter.py` – `ExcelExporter`. Atomare Writes (`.tmp` → `os.replace`),
     Sheet "Sample" (BDO-rote Header) + Sheet "Metadaten" (Engagement, Seed,
     Methode). Dateiname-Schema:
@@ -435,6 +449,17 @@ ui ──▶ controllers ──▶ core ◀── io
   - `dialogs/progress_dialog.py` – `TaskProgressDialog` wrapt
     `QProgressDialog` mit Callback-Adapter im
     `ExcelImporter`-Signatur-Format.
+  - `dialogs/import_options_dialog.py` – `ImportOptionsDialog` (Sprint 16,
+    VBA-Backlog). Kombinierter Sheet-Dropdown + Preview-Tabelle + Header-
+    Zeile-Spinbox. Wird vom `WorkspaceController.handle_import_excel`
+    aufgerufen, wenn die Datei mehr als ein Sheet hat ODER die Header-
+    Confidence nicht `high` ist (Multi-Sheet → immer Dialog; Single-Sheet
+    + high → lautloser Auto-Import). Liefert `ImportOptionsResult`
+    (`sheet_name`, `header_row` 0-basiert), der Controller reicht das
+    an `ExcelImporter.import_file_configured` durch. Confidence-Label
+    unter dem SpinBox: grau bei `high`/`low`, BDO-Rot bei `ambiguous`.
+    Importieren-Button ist disabled, wenn die gewählte Header-Zeile
+    ≥ Sheet-Höhe − 1 ist (sonst gäbe es keine Datenzeilen).
   - `recent.py` – `RecentEngagementsStore` mit JSON-Persistenz unter
     `platformdirs.user_data_dir('AuditSamplingTool', 'BDO')`.
     Defekte Pfade werden beim `list()` gefiltert; `prune_missing()`
