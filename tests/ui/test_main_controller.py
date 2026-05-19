@@ -427,6 +427,225 @@ class TestMainController:
 
 
 # ---------------------------------------------------------------------------
+# Sprint 16: ImportOptionsDialog-Dispatch
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def multi_sheet_import_xlsx(tmp_path: Path) -> Path:
+    """xlsx mit 2 Sheets unterschiedlicher Spalten."""
+    path = tmp_path / "multi_import.xlsx"
+    wb = Workbook()
+    first = wb.active
+    assert first is not None
+    first.title = "Erstes"
+    first.append(["a", "b"])
+    first.append([1, 2])
+    second = wb.create_sheet("Zweites")
+    second.append(["x", "y", "z"])
+    second.append([10, 20, 30])
+    second.append([40, 50, 60])
+    wb.save(path)
+    return path
+
+
+@pytest.fixture
+def leading_blank_import_xlsx(tmp_path: Path) -> Path:
+    """xlsx mit 2 echten Leerzeilen → low confidence."""
+    path = tmp_path / "leading_blank_import.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.append([None, None])
+    ws.append([None, None])
+    ws.append(["Konto", "Betrag"])
+    ws.append(["1000", 500])
+    wb.save(path)
+    return path
+
+
+class _StubImportOptionsDialog:
+    """Stub des `ImportOptionsDialog` für Tests."""
+
+    DialogCode = QDialog.DialogCode
+
+    def __init__(self, sheet_name: str, header_row: int, accept: bool = True) -> None:
+        from sampling_tool.ui.dialogs.import_options_dialog import ImportOptionsResult
+
+        self._result = ImportOptionsResult(sheet_name=sheet_name, header_row=header_row)
+        self._accept = accept
+
+    def exec(self) -> int:
+        return int(QDialog.DialogCode.Accepted if self._accept else QDialog.DialogCode.Rejected)
+
+    def get_result(self) -> object:
+        return self._result if self._accept else None
+
+
+class TestImportDialogDispatch:
+    def test_single_sheet_high_confidence_skips_dialog(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        import_xlsx: Path,
+    ) -> None:
+        # import_xlsx hat 1 Sheet + Header in Zeile 1 → high confidence
+        dialog_calls: list[Path] = []
+
+        def factory(path: Path, _imp: object, _parent: object) -> object:
+            dialog_calls.append(path)
+            return _StubImportOptionsDialog("Sheet", 0)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            import_options_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
+                    return_value=(str(import_xlsx), ""),
+                ),
+                patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
+            ):
+                controller.handle_import_excel()
+            assert dialog_calls == [], "Dialog darf bei high confidence + 1 Sheet NICHT erscheinen"
+            assert window.sidebar().datasets_widget().count() == 2
+        finally:
+            controller.handle_close_engagement()
+
+    def test_single_sheet_low_confidence_shows_dialog(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        leading_blank_import_xlsx: Path,
+    ) -> None:
+        dialog_calls: list[Path] = []
+
+        def factory(path: Path, _imp: object, _parent: object) -> object:
+            dialog_calls.append(path)
+            # Header in Zeile 3 (0-basiert: 2). Sheet "Sheet" (openpyxl-Default).
+            return _StubImportOptionsDialog("Sheet", 2)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            import_options_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
+                    return_value=(str(leading_blank_import_xlsx), ""),
+                ),
+                patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
+            ):
+                controller.handle_import_excel()
+            assert len(dialog_calls) == 1
+            assert dialog_calls[0] == leading_blank_import_xlsx
+            assert window.sidebar().datasets_widget().count() == 2
+        finally:
+            controller.handle_close_engagement()
+
+    def test_multi_sheet_always_shows_dialog(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        multi_sheet_import_xlsx: Path,
+    ) -> None:
+        dialog_calls: list[Path] = []
+
+        def factory(path: Path, _imp: object, _parent: object) -> object:
+            dialog_calls.append(path)
+            # User wählt "Zweites" mit Header in Zeile 1
+            return _StubImportOptionsDialog("Zweites", 0)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            import_options_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
+                    return_value=(str(multi_sheet_import_xlsx), ""),
+                ),
+                patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
+            ):
+                controller.handle_import_excel()
+            assert len(dialog_calls) == 1, "Bei Multi-Sheet muss der Dialog immer erscheinen"
+        finally:
+            controller.handle_close_engagement()
+
+    def test_dialog_cancel_aborts_import(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        multi_sheet_import_xlsx: Path,
+    ) -> None:
+        def factory(_path: Path, _imp: object, _parent: object) -> object:
+            return _StubImportOptionsDialog("Erstes", 0, accept=False)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            import_options_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            before = window.sidebar().datasets_widget().count()
+            with patch(
+                "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
+                return_value=(str(multi_sheet_import_xlsx), ""),
+            ):
+                controller.handle_import_excel()
+            assert window.sidebar().datasets_widget().count() == before
+        finally:
+            controller.handle_close_engagement()
+
+    def test_dialog_accept_uses_configured_import_path(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        multi_sheet_import_xlsx: Path,
+    ) -> None:
+        # User wählt "Zweites" (3 Spalten, 2 Datenzeilen).
+        def factory(_path: Path, _imp: object, _parent: object) -> object:
+            return _StubImportOptionsDialog("Zweites", 0)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            import_options_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
+                    return_value=(str(multi_sheet_import_xlsx), ""),
+                ),
+                patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
+            ):
+                controller.handle_import_excel()
+            # Zweites Sheet hat 2 Datenzeilen, 3 Spalten.
+            assert window.data_table().table_model().rowCount() == 2
+            assert window.data_table().table_model().columnCount() == 3
+        finally:
+            controller.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
 # Sprint-5: Sampling-Flow, Reset, Undo/Redo, Export
 # ---------------------------------------------------------------------------
 

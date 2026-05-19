@@ -19,13 +19,18 @@ from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
 
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from PyQt6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.config import SUPPORTED_CSV_SUFFIXES, SUPPORTED_EXCEL_SUFFIXES
 from sampling_tool.core.models import Dataset, DatasetRow, Snapshot
 from sampling_tool.core.sampling import SamplingError, SimpleSampler, create_sampler
-from sampling_tool.io.importer import DataImportError, ExcelImporter
+from sampling_tool.io.importer import (
+    DataImportError,
+    ExcelImporter,
+    ImportResult,
+    ImportStats,
+)
 from sampling_tool.persistence.repositories import (
     AuditRepo,
     DatasetRepo,
@@ -52,33 +57,76 @@ class WorkspaceController:
         s = self.session
         if not s.has_engagement():
             return
-        assert s.db is not None
-        assert s.engagement is not None
-        assert s.engagement.id is not None
 
+        path = self._ask_import_path()
+        if path is None:
+            return
+
+        # Sprint 16: Bei Excel-Dateien prüfen, ob ein Sheet-/Header-Auswahl-
+        # Dialog erscheinen muss. Multi-Sheet ODER Header-Auto-Detection
+        # unsicher → Dialog. Sonst lautloser One-shot-Import.
+        configured: tuple[str, int] | None = None
+        if path.suffix.lower() in SUPPORTED_EXCEL_SUFFIXES:
+            try:
+                needs_dialog = self._import_needs_dialog(path)
+            except DataImportError as exc:
+                s.error(f"Import fehlgeschlagen: {exc}")
+                return
+            if needs_dialog:
+                configured = self._run_import_options_dialog(path)
+                if configured is None:
+                    return  # User-Cancel → kein Import.
+
+        stored_and_result = self._do_import_with_progress(path, configured)
+        if stored_and_result is None:
+            return
+        stored, result = stored_and_result
+
+        s.reload_datasets()
+        if stored.id is not None:
+            # Auto-Select des neuen Datasets via Session-Helper – identische
+            # Logik wie `SelectionController.handle_dataset_selected`.
+            s.select_dataset(stored.id)
+        s.refresh_views()
+        self._show_import_summary(result.stats)
+
+    def _ask_import_path(self) -> Path | None:
+        """File-Dialog für die Datei-Auswahl. None bei Cancel."""
         accepted = "*" + " *".join(SUPPORTED_EXCEL_SUFFIXES + SUPPORTED_CSV_SUFFIXES)
         path_str, _filter = QFileDialog.getOpenFileName(
-            s.window,
+            self.session.window,
             "Datei importieren",
             "",
             f"Tabellen ({accepted});;Alle Dateien (*)",
         )
         if not path_str:
-            return
-        path = Path(path_str)
+            return None
+        return Path(path_str)
+
+    def _do_import_with_progress(
+        self, path: Path, configured: tuple[str, int] | None
+    ) -> tuple[Dataset, ImportResult] | None:
+        """Streaming-Import + DB-Persist mit Progress-Dialog. Liefert (stored, result)."""
+        s = self.session
+        assert s.db is not None
+        assert s.engagement is not None
+        assert s.engagement.id is not None
 
         # Sprint 14 / T-001: Progress-Dialog wickelt den Streaming-Import
         # (Read + DB-Insert) ein. `setMinimumDuration(300)` zeigt ihn erst bei
         # spürbar langen Imports.
         progress_dialog = TaskProgressDialog(f"Importiere {path.name}…", s.window)
         try:
+            importer = ExcelImporter(progress=progress_dialog.progress_callback())
             try:
-                result = ExcelImporter(progress=progress_dialog.progress_callback()).import_file(
-                    path
-                )
+                if configured is not None:
+                    sheet_name, header_row = configured
+                    result = importer.import_file_configured(path, sheet_name, header_row)
+                else:
+                    result = importer.import_file(path)
             except DataImportError as exc:
                 s.error(f"Import fehlgeschlagen: {exc}")
-                return
+                return None
 
             dataset = replace(result.dataset, engagement_id=s.engagement.id)
             try:
@@ -88,25 +136,50 @@ class WorkspaceController:
             except Exception as exc:  # pragma: no cover – defensiv
                 logger.exception("Dataset persistieren fehlgeschlagen")
                 s.error(f"Dataset konnte nicht gespeichert werden: {exc}")
-                return
+                return None
         finally:
             progress_dialog.close()
+        return stored, result
 
-        s.reload_datasets()
-        if stored.id is not None:
-            # Auto-Select des neuen Datasets via Session-Helper – identische
-            # Logik wie `SelectionController.handle_dataset_selected`.
-            s.select_dataset(stored.id)
-        s.refresh_views()
-
-        stats = result.stats
+    def _show_import_summary(self, stats: ImportStats) -> None:
+        """Skipped-/Warning-Übersicht als Info-Dialog (oder nichts, wenn leer)."""
         warning_text = ""
         if stats.skipped_rows:
             warning_text += f"{stats.skipped_rows} Leerzeile(n) übersprungen.\n"
         if stats.warnings:
             warning_text += "\n".join(stats.warnings)
         if warning_text:
-            QMessageBox.information(s.window, "Import abgeschlossen", warning_text.strip())
+            QMessageBox.information(
+                self.session.window, "Import abgeschlossen", warning_text.strip()
+            )
+
+    def _import_needs_dialog(self, path: Path) -> bool:
+        """Excel-Datei kurz probieren: Sheet-Liste + Header-Confidence.
+
+        Liefert ``True``, wenn der `ImportOptionsDialog` erscheinen soll
+        (Multi-Sheet ODER ``confidence != "high"``). Wirft `DataImportError`,
+        wenn die Datei nicht lesbar ist – Caller behandelt das einheitlich.
+        """
+        importer_probe = ExcelImporter()
+        sheets = importer_probe.list_sheets(path)
+        if not sheets:
+            return False
+        if len(sheets) > 1:
+            return True
+        preview = importer_probe.preview_sheet(path, sheets[0].name)
+        return preview.confidence != "high"
+
+    def _run_import_options_dialog(self, path: Path) -> tuple[str, int] | None:
+        """Öffnet den `ImportOptionsDialog` und liefert (sheet, header_row) oder None."""
+        s = self.session
+        importer_probe = ExcelImporter()
+        dialog = self._factories.import_options(path, importer_probe, s.window)
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return None
+        result = dialog.get_result()
+        if result is None:
+            return None
+        return result.sheet_name, result.header_row
 
     # ---- Sampling ------------------------------------------------------
 

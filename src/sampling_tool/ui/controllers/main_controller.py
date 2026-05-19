@@ -41,6 +41,7 @@ from sampling_tool.ui.controllers._factories import (
     ExcelReportDialogFactory,
     ExportDialogFactory,
     HtmlReportDialogFactory,
+    ImportOptionsDialogFactory,
     SamplingDialogFactory,
     SettingsDialogFactory,
     default_audit_pdf_factory,
@@ -48,6 +49,7 @@ from sampling_tool.ui.controllers._factories import (
     default_excel_report_factory,
     default_export_factory,
     default_html_report_factory,
+    default_import_options_factory,
     default_new_engagement_factory,
     default_sampling_factory,
     default_settings_factory,
@@ -92,6 +94,7 @@ class MainController:
         excel_report_dialog_factory: ExcelReportDialogFactory | None = None,
         html_report_dialog_factory: HtmlReportDialogFactory | None = None,
         settings_dialog_factory: SettingsDialogFactory | None = None,
+        import_options_dialog_factory: ImportOptionsDialogFactory | None = None,
         settings: AppSettings | None = None,
     ) -> None:
         # ---- Session aufbauen --------------------------------------
@@ -127,6 +130,9 @@ class MainController:
             settings=settings_dialog_factory
             if settings_dialog_factory is not None
             else default_settings_factory,
+            import_options=import_options_dialog_factory
+            if import_options_dialog_factory is not None
+            else default_import_options_factory,
         )
 
         # ---- Sub-Controller aufbauen -------------------------------
