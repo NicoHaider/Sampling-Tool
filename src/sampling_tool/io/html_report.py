@@ -28,6 +28,7 @@ from jinja2 import (
     select_autoescape,
 )
 
+from sampling_tool.core.formatting import format_optional_timestamp
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.io.charts import (
     render_bar_chart_bytes,
@@ -153,7 +154,7 @@ def _to_sample_view(sample: SampleResult) -> _SampleView:
         actual_size=sample.actual_size,
         population_size=sample.population_size,
         percent_str=f"{percent:.2f} %",
-        drawn_at_str=_format_dt(sample.drawn_at),
+        drawn_at_str=format_optional_timestamp(sample.drawn_at),
     )
 
 
@@ -161,7 +162,7 @@ def _to_event_view(event: AuditEvent) -> _EventView:
     percent_str = f"{event.sample_percent:.2f} %" if event.sample_percent is not None else "—"
     filename = Path(event.export_file or event.import_file or "").name or "—"
     return _EventView(
-        timestamp_str=_format_dt(event.timestamp),
+        timestamp_str=format_optional_timestamp(event.timestamp),
         event_type=event.event_type,
         user_name=event.user_name,
         sample_id=event.sample_id,
@@ -177,14 +178,7 @@ def _last_activity(events: list[AuditEvent]) -> str:
     if not events:
         return "—"
     latest = max(events, key=lambda e: e.timestamp)
-    return _format_dt(latest.timestamp)
-
-
-def _format_dt(value: datetime | None) -> str:
-    if value is None:
-        return "—"
-    ts = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-    return ts.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    return format_optional_timestamp(latest.timestamp)
 
 
 def _method_chart_base64(samples: list[SampleResult]) -> str | None:

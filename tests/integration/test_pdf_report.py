@@ -267,3 +267,53 @@ class TestPdfPerformanceSmoke:
         AuditTrailPDF().render(engagement, events, out)
         elapsed = time.perf_counter() - t0
         assert elapsed < 3.0, f"PDF-Render für 1000 Events brauchte {elapsed:.2f}s"
+
+
+# ---------------------------------------------------------------------------
+# Sprint 18 / Q-001: pdfrw-ImportError-Logging
+# ---------------------------------------------------------------------------
+
+
+class TestPdfrwFallback:
+    """Q-001: fehlende pdfrw-Dependency muss eine sichtbare Log-Warnung
+    produzieren statt das PDF-Briefpapier silent zu droppen."""
+
+    def test_pdf_renders_without_pdfrw_logs_warning(
+        self,
+        engagement: Engagement,
+        events: list[AuditEvent],
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Wenn pdfrw beim PDF-Briefpapier-Embedding fehlt, soll WARN
+        geloggt werden (mit dem Substring 'pdfrw'), aber der Report wird
+        trotzdem erzeugt – ohne Briefpapier-Layer."""
+        import sys
+
+        from sampling_tool.io.briefpapier import BriefpapierConfig
+
+        # PDF-Briefpapier vorbereiten (nicht PNG – nur PDF triggert pdfrw).
+        bp_pdf = tmp_path / "letterhead.pdf"
+        # Minimales PDF erzeugen, damit Path.exists() True ist.
+        AuditTrailPDF(briefpapier=BriefpapierConfig(background_image=None)).render(
+            engagement, events[:1], bp_pdf
+        )
+
+        # pdfrw aus sys.modules entfernen und Re-Imports blockieren.
+        for mod in ("pdfrw", "pdfrw.buildxobj", "pdfrw.toreportlab"):
+            monkeypatch.setitem(sys.modules, mod, None)
+
+        out = tmp_path / "ohne_pdfrw.pdf"
+        with caplog.at_level("WARNING", logger="sampling_tool.io.pdf_report"):
+            AuditTrailPDF(briefpapier=BriefpapierConfig(background_image=bp_pdf)).render(
+                engagement, events, out
+            )
+
+        # PDF wurde erzeugt.
+        assert out.exists()
+        # WARNING-Log mit Substring "pdfrw".
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert any("pdfrw" in r.message.lower() for r in warnings), (
+            f"Erwartete WARNING mit 'pdfrw' im Text, gefangen: {[r.message for r in warnings]}"
+        )

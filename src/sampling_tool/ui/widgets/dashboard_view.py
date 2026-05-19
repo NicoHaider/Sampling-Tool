@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sampling_tool.core.formatting import ensure_utc
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.ui.widgets.chart_renderer import (
     render_bar_chart,
@@ -258,7 +259,7 @@ class DashboardView(QWidget):
             self._tile_last_activity.set_body_widget(QLabel("—"))
             return
         latest = max(events, key=lambda e: e.timestamp)
-        ts = _ensure_utc(latest.timestamp)
+        ts = ensure_utc(latest.timestamp)
         absolute = ts.astimezone().strftime("%Y-%m-%d %H:%M")
         relative = _humanize_delta(datetime.now(UTC) - ts)
         container = QWidget()
@@ -286,7 +287,7 @@ class DashboardView(QWidget):
         for sample in ordered[:_RECENT_SAMPLE_LIMIT]:
             if sample.id is None:
                 continue
-            drawn = _ensure_utc(sample.drawn_at).astimezone().strftime("%Y-%m-%d")
+            drawn = ensure_utc(sample.drawn_at).astimezone().strftime("%Y-%m-%d")
             text = f"#{sample.id} · {sample.config.method.value} · n={sample.actual_size} · {drawn}"
             row = _ClickableSampleLabel(text, sample.id)
             row.clicked.connect(self.sample_clicked.emit)
@@ -362,10 +363,6 @@ def _muted_label(text: str) -> QLabel:
     return label
 
 
-def _ensure_utc(ts: datetime) -> datetime:
-    return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
-
-
 def _humanize_delta(delta: timedelta) -> str:
     seconds = int(delta.total_seconds())
     if seconds < 60:
@@ -388,7 +385,7 @@ def _samples_per_day(
     today = datetime.now(UTC).date()
     bins: defaultdict[str, int] = defaultdict(int)
     for sample in samples:
-        d = _ensure_utc(sample.drawn_at).date()
+        d = ensure_utc(sample.drawn_at).date()
         if (today - d).days < days:
             bins[d.isoformat()] += 1
 

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -31,8 +32,11 @@ from reportlab.platypus import (
 )
 
 from sampling_tool.config import BDO_RED
+from sampling_tool.core.formatting import format_event_timestamp
 from sampling_tool.core.models import AuditEvent, Engagement
 from sampling_tool.io.briefpapier import BriefpapierConfig, get_default_briefpapier
+
+logger = logging.getLogger(__name__)
 
 _BDO_RED_COLOR: Final = colors.HexColor(BDO_RED)
 _GREY_LIGHT: Final = colors.HexColor("#D9D9D9")
@@ -253,7 +257,7 @@ def _build_chunk_table(
 
         data.append(
             [
-                _format_cell(_format_timestamp(evt.timestamp), cell_style),
+                _format_cell(format_event_timestamp(evt.timestamp), cell_style),
                 _format_cell(action_text, cell_style),
                 _format_cell(evt.user_name, cell_style),
                 size,
@@ -381,9 +385,17 @@ def _draw_background(canvas: Canvas, source: Path, pagesize: tuple[float, float]
             from pdfrw.buildxobj import pagexobj
             from pdfrw.toreportlab import makerl
         except ImportError:
-            # Fallback: PDF-Briefpapier ohne pdfrw nicht unterstützt – wir
-            # rendern unauffällig ohne Layer, damit der Report-Build nicht
-            # crasht.
+            # Sprint 18 / Q-001: vorher hat dieser Pfad das Briefpapier
+            # silent gedroppt – der Auditor merkt erst beim Compliance-
+            # Audit, dass das Briefpapier fehlt. Jetzt sichtbares WARN-
+            # Log, Report-Build crasht aber NICHT (Briefpapier ist
+            # optional).
+            logger.warning(
+                "pdfrw nicht installiert – PDF-Briefpapier '%s' wird "
+                "ohne Embedding gerendert. Bitte 'pip install pdfrw' "
+                "ergänzen, falls das Briefpapier benötigt wird.",
+                source.name,
+            )
             canvas.restoreState()
             return
         pages = PdfReader(str(source)).pages
@@ -423,7 +435,3 @@ def _draw_footer(canvas: Canvas, doc: Any) -> None:
 def _escape(text: str) -> str:
     """Minimaler HTML-Escape für Paragraph-Text."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _format_timestamp(ts: datetime) -> str:
-    return ts.strftime("%Y-%m-%d %H:%M:%S")
