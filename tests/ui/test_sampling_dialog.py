@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import pytest
 from PyQt6.QtWidgets import QDialogButtonBox
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import (
     Dataset,
-    DatasetRow,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -19,23 +21,15 @@ from sampling_tool.ui.dialogs.sampling_dialog import NO_FILTER_LABEL, SamplingDi
 pytestmark = pytest.mark.ui
 
 
-def _make_dataset() -> tuple[Dataset, tuple[DatasetRow, ...]]:
-    """Sprint-11.1: Dataset (Metadaten) + rows separat."""
-    rows = tuple(
-        DatasetRow(
-            row_id=i,
-            values={
-                "Land": ["AUT", "DEU", "CHE"][i % 3],
-                "Konto": f"K{i:03d}",
-                "Betrag": i * 10,
-            },
-        )
-        for i in range(1, 13)
-    )
-    return (
-        Dataset(name="t", columns=("Land", "Konto", "Betrag"), row_count=len(rows)),
-        rows,
-    )
+def _make_dataset() -> tuple[Dataset, Callable[[str], list[Any]]]:
+    """Sprint 19 / P-005: Dataset (Metadaten) + distinct-values-Provider."""
+    distinct: dict[str, list[Any]] = {
+        "Land": ["AUT", "CHE", "DEU"],
+        "Konto": [f"K{i:03d}" for i in range(1, 13)],
+        "Betrag": [i * 10 for i in range(1, 13)],
+    }
+    dataset = Dataset(name="t", columns=("Land", "Konto", "Betrag"), row_count=12)
+    return dataset, lambda field: distinct.get(field, [])
 
 
 def _make_sample(row_ids: tuple[int, ...]) -> SampleResult:
@@ -103,7 +97,7 @@ class TestSamplingDialog:
 
     def test_validation_blocks_cluster_without_field(self, qtbot: QtBot) -> None:
         ds = Dataset(name="leer", columns=())
-        dialog = SamplingDialog(ds, (), advanced_mode=True)
+        dialog = SamplingDialog(ds, advanced_mode=True)
         qtbot.addWidget(dialog)
         assert _ok_enabled(dialog) is False
 
@@ -127,9 +121,9 @@ class TestSamplingDialog:
         # Sprint 9.6: kein hartes Capping mehr – Hint-Label kommuniziert
         # die zulässige Obergrenze, Validierung beim Accept fängt
         # Überschreitungen ab.
-        ds, rows = _make_dataset()
+        ds, provider = _make_dataset()
         dialog = SamplingDialog(
-            ds, rows, current_sample=_make_sample((1, 3, 5, 7)), advanced_mode=True
+            ds, provider, current_sample=_make_sample((1, 3, 5, 7)), advanced_mode=True
         )
         qtbot.addWidget(dialog)
         dialog._resample_checkbox.setChecked(True)
@@ -256,10 +250,10 @@ class TestSamplingDialogSizeHint:
         assert "max." in dialog._lbl_size_hint.text().lower()
 
     def test_hint_updatet_bei_filter_toggle(self, qtbot: QtBot) -> None:
-        ds, rows = _make_dataset()
+        ds, provider = _make_dataset()
         dialog = SamplingDialog(
             ds,
-            rows,
+            provider,
             current_sample=_make_sample((1, 2, 3, 4, 5)),
             advanced_mode=False,
         )
@@ -329,3 +323,34 @@ class TestSamplingDialogSizeHint:
         qtbot.addWidget(dialog)
         dialog._size_spin.setValue(9999)
         assert dialog._size_spin.value() == 9999
+
+
+class TestSamplingDialogDistinctProvider:
+    """Sprint 19 / P-005: Filter-Werte kommen über den Provider-Callback."""
+
+    def test_advanced_filter_values_use_provider(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), advanced_mode=True)
+        qtbot.addWidget(dialog)
+        dialog._filter_field.setCurrentText("Land")
+        items = {dialog._filter_value.itemText(i) for i in range(dialog._filter_value.count())}
+        assert items == {"AUT", "CHE", "DEU"}
+
+    def test_provider_called_with_selected_field(self, qtbot: QtBot) -> None:
+        seen: list[str] = []
+        dataset, _ = _make_dataset()
+
+        def provider(field: str) -> list[Any]:
+            seen.append(field)
+            return ["x", "y"]
+
+        dialog = SamplingDialog(dataset, provider, advanced_mode=True)
+        qtbot.addWidget(dialog)
+        dialog._filter_field.setCurrentText("Konto")
+        assert "Konto" in seen
+
+    def test_no_provider_yields_empty_value_combo(self, qtbot: QtBot) -> None:
+        dataset, _ = _make_dataset()
+        dialog = SamplingDialog(dataset, None, advanced_mode=True)
+        qtbot.addWidget(dialog)
+        dialog._filter_field.setCurrentText("Land")
+        assert dialog._filter_value.count() == 0

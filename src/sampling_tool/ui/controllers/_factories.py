@@ -14,9 +14,9 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sampling_tool.core.models import Dataset, DatasetRow, Engagement, SampleResult
+from sampling_tool.core.models import Dataset, Engagement, SampleResult
 from sampling_tool.io.importer import ExcelImporter
 from sampling_tool.ui.dialogs.duplicate_engagement_dialog import DuplicateEngagementDialog
 from sampling_tool.ui.dialogs.export_audit_pdf_dialog import ExportAuditPdfDialog
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 DialogFactory = Callable[["MainWindow", AppSettings, Engagement | None], NewEngagementDialog]
 DuplicateDialogFactory = Callable[["MainWindow", Path], DuplicateEngagementDialog]
 SamplingDialogFactory = Callable[
-    ["MainWindow", Dataset, Sequence[DatasetRow] | None, SampleResult | None, bool],
+    ["MainWindow", Dataset, Callable[[str], Sequence[Any]] | None, SampleResult | None, bool],
     SamplingDialog,
 ]
 ExportDialogFactory = Callable[["MainWindow", Dataset, str, str, Path | None], ExportSampleDialog]
@@ -107,13 +107,13 @@ def default_duplicate_dialog_factory(
 def default_sampling_factory(
     parent: MainWindow,
     dataset: Dataset,
-    rows: Sequence[DatasetRow] | None,
+    distinct_values_provider: Callable[[str], Sequence[Any]] | None,
     current_sample: SampleResult | None,
     advanced_mode: bool,
 ) -> SamplingDialog:
     return SamplingDialog(
         dataset,
-        rows,
+        distinct_values_provider,
         current_sample=current_sample,
         parent=parent,
         advanced_mode=advanced_mode,

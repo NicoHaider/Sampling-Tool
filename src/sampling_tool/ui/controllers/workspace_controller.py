@@ -15,9 +15,10 @@ Reproducibility-relevante Pfade:
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from PyQt6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
@@ -193,16 +194,19 @@ class WorkspaceController:
         assert s.engagement is not None
         assert s.engagement.id is not None
 
-        # Sprint 11.4: Dialog-Rows nur noch im Advanced-Mode laden – dort
-        # braucht das UI distinct-Werte fürs Filter-Dropdown. Im Simple-
-        # Mode reicht `dataset.row_count` für die Größenvalidierung, also
-        # kein voller Materialisierung des Datasets nur für den Dialog.
+        # Sprint 19 / P-005: Advanced-Mode bekommt einen distinct-Werte-
+        # Provider statt einem voll materialisierten Row-Tuple. Der Dialog
+        # ruft den Callback lazy beim Filter-Spalten-Wechsel – RAM ~ Anzahl
+        # distinkter Werte statt Zeilenzahl, kein get_all_rows mehr.
         repo = DatasetRepo(s.db.connect())
-        dialog_rows: tuple[DatasetRow, ...] | None = (
-            repo.get_all_rows(s.dataset.id) if s.settings.advanced_mode else None
+        dataset_id = s.dataset.id
+        distinct_provider: Callable[[str], Sequence[Any]] | None = (
+            (lambda col: repo.distinct_values(dataset_id, col))
+            if s.settings.advanced_mode
+            else None
         )
         dialog = self._factories.sampling(
-            s.window, s.dataset, dialog_rows, s.sample, s.settings.advanced_mode
+            s.window, s.dataset, distinct_provider, s.sample, s.settings.advanced_mode
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
