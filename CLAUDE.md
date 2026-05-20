@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 Projektkontext für zukünftige Claude-Code-Sessions. Diese Datei wird automatisch geladen.
 
 ## Was ist das?
@@ -14,6 +16,48 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 - **Persistenz:** SQLite (lokale Datei pro Engagement)
 - **Reproduzierbarkeit:** Pflicht – jede Stichprobe muss bei gleichem Seed bit-genau
   rekonstruierbar sein (Audit-Trail, ISAE-3402-Anforderung).
+
+## Entwicklungs-Kommandos
+
+Setup (einmalig, Python 3.13+ Pflicht):
+
+```bash
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+git config core.hooksPath .githooks   # aktiviert den Pre-Push-Hook
+```
+
+Alltagskommandos (immer mit aktiviertem `.venv`):
+
+```bash
+python -m sampling_tool            # App starten
+pytest                             # alle Tests (Coverage ist via addopts immer an)
+pytest --no-cov                    # schneller, ohne Coverage-Report
+pytest tests/ui/test_worker.py     # eine Datei
+pytest tests/ui/test_worker.py::TestTaskWorker::test_progress_signal_emitted_during_run  # ein Test
+pytest -m unit                     # nur Unit-Tests (Marker: unit / integration / ui / slow)
+pytest --cov=src/sampling_tool/io/importer --cov-report=term-missing -q tests/integration/test_importer.py  # Coverage einer Datei
+ruff check .                       # Lint
+ruff format .                      # Format anwenden (--check für reinen Check)
+mypy src tests                     # Type-Check (strict)
+python scripts/build_app.py        # PyInstaller-Build (--dmg auf Mac)
+python scripts/demo_full_workflow.py  # End-to-End-Smoke über alle Layer
+```
+
+Vor jedem Commit müssen `pytest`, `ruff check .`, `ruff format --check .`
+und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
+
+**Test-Eigenheiten:**
+- `pytest` läuft mit `filterwarnings = ["error", …]` – ein unerwarteter
+  `Warning` lässt den Test fehlschlagen.
+- `--strict-markers` ist an: neue Marker müssen in `pyproject.toml`
+  registriert sein.
+- PyQt6-UI-Tests laufen headless – `conftest.py` setzt
+  `QT_QPA_PLATFORM=offscreen`, wenn weder `DISPLAY` noch ein expliziter
+  Plattform-Wert gesetzt ist. Worker-/Thread-Tests nutzen
+  `qtbot.waitSignal(timeout=…)`, niemals `time.sleep`.
+- Coverage-HTML landet unter `htmlcov/`.
 
 ## Sprint-Status
 
@@ -54,6 +98,7 @@ sauberen Python-Projekt. Auditoren ziehen damit reproduzierbare Stichproben aus 
 | 16     | VBA-Backlog: Multi-Sheet + Header-Detection-Dialog beim Import | done |
 | 17     | Worker-Architektur (P-008): UI responsiv bei Import/Export | done |
 | 18     | Quality-Polish (Q-001 pdfrw-Logging, Q-005 Timestamp-Drift, T-002) | done |
+| 19     | P-005 SQL-DISTINCT + F-007 repositories-Split + F-006 main_window-Split | done |
 
 ## Worker-Architektur (Sprint 17 / P-008)
 
@@ -142,15 +187,21 @@ voll-materialisierten Listen.
   Eingabe-Reihenfolge, ignoriert stale IDs, chunkt bei >900 Parametern
   (SQLite-Bind-Limit 999).
 - `get_all_rows(dataset_id)` – Tests-Convenience. **In Production
-  nur** im SamplingDialog-Advanced-Mode für distinct-Werte-Sammlung
-  (siehe Docstring im Repo). Streaming-Alternative via SQLite
-  `json_extract` wurde geprüft, am tagged-Encoder für datetime-Spalten
-  gescheitert; tolerabler RAM-Footprint bei realistischen Audit-Datasets.
+  nicht mehr verwendet** – der frühere Advanced-Sampling-Pfad nutzt
+  seit Sprint 19 / P-005 `distinct_values`.
+- `distinct_values(dataset_id, column)` – distinkte Nicht-None-Werte
+  einer Spalte via `SELECT json_extract(...) GROUP BY raw,jtype` +
+  `MIN(row_index)`-Tie-Break, dekodiert nur die kleine Ergebnismenge.
+  RAM ~ Anzahl distinkter Werte statt Zeilen; bit-identisch zum alten
+  `get_all_rows`-Pfad. Speist das Filter-Wert-Dropdown im Advanced-
+  Sampling-Dialog (Sprint 19 / P-005).
 
 **Was nicht streamt (legitime Ausnahmen):**
-- Advanced-SamplingDialog: distinct-Werte für Cluster/Stratum-ComboBoxen.
-  Controller lädt `get_all_rows` nur wenn `advanced_mode=True`.
 - ImportResult.dataset (Metadaten) – klein, keine Rows.
+
+(Der Advanced-SamplingDialog lud bis Sprint 18 `get_all_rows` für die
+distinct-Werte der Cluster/Stratum-ComboBoxen – seit Sprint 19 / P-005
+ersetzt durch `DatasetRepo.distinct_values`, kein Row-Materialize mehr.)
 
 **Reproduzierbarkeit bleibt gewahrt**: `row_id` ist die stabile
 Sortier-Ordnung, `iter_rows` sortiert per `ORDER BY row_index`,
@@ -278,8 +329,17 @@ ui ──▶ controllers ──▶ core ◀── io
 - **`persistence/`** – SQLite über sqlite3 (kein ORM-Overhead).
   - `database.py` – `Database`-Wrapper mit WAL+FK-PRAGMAs, `session()`-Transaktionen,
     `savepoint()`-Helper für nestbare Repo-Transaktionen, automatische Migrations.
-  - `repositories.py` – `EngagementRepo`, `DatasetRepo`, `SampleRepo`, `AuditRepo`.
-    Stateless, nehmen `sqlite3.Connection` im Konstruktor, geben Domain-Modelle zurück.
+  - Repositories – stateless, nehmen `sqlite3.Connection` im Konstruktor,
+    geben Domain-Modelle zurück (`EngagementRepo`, `DatasetRepo`,
+    `SampleRepo`, `AuditRepo`, `EngagementStateRepo`, `UndoRepo`). Seit
+    Sprint 19 / F-007 lebt jeder Repo in einem eigenen Modul
+    (`engagement_repo.py`, `dataset_repo.py`, `sample_repo.py`,
+    `audit_repo.py`, `engagement_state_repo.py`, `undo_repo.py`);
+    `repositories.py` ist nur noch eine Re-Export-Fassade (`__all__`),
+    damit alle bestehenden Import-Sites unverändert laufen. Die
+    JSON-Helfer (orjson-Wrapper + tagged datetime-Encoder) liegen in
+    `_json.py`. Repo-Module importieren `savepoint` aus `database.py`
+    und JSON-Helfer aus `_json.py` – nie über die Fassade zurück.
   - `migrations/NNN_*.sql` – nummerierte SQL-Files; `001_initial.sql` ist das
     komplette Sprint-2-Schema. Migrations-Runner liest `schema_version` und führt
     nur ausstehende Versionen aus.
@@ -295,7 +355,17 @@ ui ──▶ controllers ──▶ core ◀── io
     `corrects_event_id`-FK auf den Original-Event gespeichert (kein UPDATE/DELETE).
 - **`ui/`** – PyQt6. Strikt MVC: Widgets dumm, Controllers in
   `ui/controllers/`. Stylesheet (BDO-CI) unter `ui/styles/*.qss`.
-  - `main_window.py` – `MainWindow` mit `QStackedWidget`-State-Maschine
+  - `main_window.py` – `MainWindow`, seit Sprint 19 / F-006 ein dünner
+    Compositor: Menü-/Toolbar-/Workspace-Aufbau liegen als freie
+    Builder-Funktionen in `ui/_window_menu.py` (`build_menu`,
+    `rebuild_recent_menu`), `ui/_window_toolbar.py` (`build_toolbar`)
+    und `ui/_window_layout.py` (`build_workspace`); QSettings-Restore/
+    Save + Panel-Visibility + Splitter-Cache kapselt der
+    `WindowStateController` in `ui/_window_state.py`. `MainWindow`
+    behält die externe API (Signals, `set_*`/`show_*`, Accessors,
+    Test-genutzte Attribute) plus Backward-Compat-Shims
+    (`_cached_splitter_sizes`-Property, `_save_workspace_state`).
+    `MainWindow` mit `QStackedWidget`-State-Maschine
     Welcome ↔ Workspace. Menü, Toolbar, Splitter-Layout (Sidebar links;
     rechts vertikaler Splitter: Datentabelle oben, `QTabWidget` mit
     AuditTrail-/Dashboard-View unten). Splitter-Größen + aktiver
@@ -718,7 +788,7 @@ gespeicherte State nicht zwischenüberschrieben wird.
 `visible_rows`, `highlighted_rows` sind alle JSON-Roundtrip,
 um Typ-Information (int vs. str vs. nested dict) zu erhalten.
 `dataset_rows.values_json` nutzt zusätzlich einen tagged Encoder
-(`_values_to_json` / `_values_from_json` in `repositories.py`), damit
+(`_values_to_json` / `_values_from_json` in `persistence/_json.py`), damit
 `datetime`/`date`/`time`-Werte aus dem Excel-Import roundtrip-sicher
 persistiert werden – ohne Tagging würden diese Typen nicht
 serialisieren.
@@ -726,7 +796,7 @@ serialisieren.
 **Encoder seit Sprint 10.3: `orjson` (C-basiert)** statt stdlib-json.
 3–10× schneller bei Bulk-Inserts, gleicher Tagged-Encoder-Pattern.
 `orjson.dumps` liefert `bytes` – die zentralen Helper `_json_dumps` /
-`_json_loads` in `repositories.py` konvertieren auf `str`, weil
+`_json_loads` in `persistence/_json.py` konvertieren auf `str`, weil
 SQLite-TEXT-Spalten str erwarten (bytes würde als BLOB landen).
 
 **Bulk-Insert-Pragmas:** `bulk_insert_pragmas(conn)` in

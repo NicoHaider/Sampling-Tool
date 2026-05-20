@@ -7,8 +7,11 @@ Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Sti
 
 ## Status
 
-**Sprint 8 von 8** – PyInstaller-Build für Mac `.app` und Windows `.exe` plus
-GitHub-Actions-Release-Workflow ✅ **erledigt**. Alle 8 Sprints abgeschlossen.
+Aktiv weiterentwickelt – Stand **Sprint 19**: SQL-DISTINCT im Advanced-Sampling
+(P-005) sowie Modul-Splits von `repositories.py` (F-007) und `main_window.py`
+(F-006). Die vollständige, je Sprint gepflegte Status-Historie steht in
+`CLAUDE.md`; die Tabelle unten bildet den initialen 8-Sprint-Plan plus den
+aktuellen Sprint ab.
 
 | Sprint | Inhalt                                              | Status      |
 |-------:|-----------------------------------------------------|-------------|
@@ -23,6 +26,8 @@ GitHub-Actions-Release-Workflow ✅ **erledigt**. Alle 8 Sprints abgeschlossen.
 | 6.1    | Einheitliche Export-Dialoge für alle Reports         | **done**    |
 | 7      | Settings, Platzhalter-Briefpapier, CI, Windows-Compat | **done**  |
 | 8      | PyInstaller-Build (Mac `.app` + Windows `.exe`), Release-Workflow | **done** |
+| …      | Sprints 9–18 – siehe `CLAUDE.md`                    | **done**    |
+| 19     | P-005 SQL-DISTINCT + F-007 repositories-Split + F-006 main_window-Split | **done** |
 
 ### Was Sprint 8 liefert
 
