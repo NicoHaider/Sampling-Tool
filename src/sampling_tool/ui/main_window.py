@@ -79,6 +79,36 @@ class MainWindow(QMainWindow):
     audit_refresh_requested = pyqtSignal()
     dashboard_refresh_requested = pyqtSignal()
 
+    # Von den _window_*-Buildern (Sprint 19 / F-006) befüllte Attribute –
+    # hier deklariert, damit mypy-strict die externe Zuweisung akzeptiert.
+    _file_menu: QMenu
+    _recent_menu: QMenu
+    _help_menu: QMenu
+    _action_new: QAction
+    _action_open: QAction
+    _action_close: QAction
+    _action_settings: QAction
+    _action_import: QAction
+    _action_export_sample: QAction
+    _action_export_pdf: QAction
+    _action_excel_report: QAction
+    _action_html_report: QAction
+    _action_new_sample: QAction
+    _action_reset_sample: QAction
+    _action_undo: QAction
+    _action_redo: QAction
+    _action_hotkeys: QAction
+    _action_bug_report: QAction
+    _action_about: QAction
+    _action_switch_engagement: QAction
+    _toolbar: QToolBar
+    _sidebar: NavigationSidebar
+    _workspace_splitter: QSplitter
+    _data_table: DataTableView
+    _lower_tabs: QTabWidget
+    _audit_trail_view: AuditTrailView
+    _dashboard_view: DashboardView
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(APP_NAME)
