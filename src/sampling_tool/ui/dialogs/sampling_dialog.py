@@ -12,7 +12,7 @@ UI-Anweisung an den Controller, das Dataset vor der Ziehung zu filtern.
 from __future__ import annotations
 
 import secrets
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,7 +44,6 @@ from sampling_tool.config import (
 )
 from sampling_tool.core.models import (
     Dataset,
-    DatasetRow,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -73,7 +72,7 @@ class SamplingDialog(QDialog):
     def __init__(
         self,
         dataset: Dataset,
-        rows: Sequence[DatasetRow] | None = None,
+        distinct_values_provider: Callable[[str], Sequence[Any]] | None = None,
         current_sample: SampleResult | None = None,
         parent: QWidget | None = None,
         *,
@@ -85,15 +84,14 @@ class SamplingDialog(QDialog):
         self.setMinimumWidth(520)
 
         self._dataset = dataset
-        # Sprint-11.4: rows sind optional – im Simple-Mode brauchen wir sie
-        # nicht (keine Filter-Spalte). `_max_population` zieht in dem Fall
-        # `dataset.row_count` heran, damit der Controller nicht 1M Rows
-        # nur für die Größenvalidierung in den RAM ziehen muss.
-        self._rows: tuple[DatasetRow, ...] = tuple(rows) if rows is not None else ()
+        # Sprint 19 / P-005: kein Row-Materialize mehr – der Controller
+        # injiziert einen distinct-Werte-Provider (SQL-basiert). None im
+        # Simple-Mode (dort gibt es kein Filter-Feld).
+        self._distinct_values_provider = distinct_values_provider
         self._current_sample = current_sample
         self._result: SamplingDialogResult | None = None
         self._columns = list(dataset.columns)
-        self._max_population = max(len(self._rows) or dataset.row_count, 1)
+        self._max_population = max(dataset.row_count, 1)
         self._advanced_mode = advanced_mode
 
         self._build_ui()
@@ -313,11 +311,11 @@ class SamplingDialog(QDialog):
         field = self._filter_field.currentText()
         self._filter_value.blockSignals(True)
         self._filter_value.clear()
-        if field == NO_FILTER_LABEL or not field:
+        if field == NO_FILTER_LABEL or not field or self._distinct_values_provider is None:
             self._filter_value.setEnabled(False)
         else:
             self._filter_value.setEnabled(True)
-            for value in _distinct_values(self._rows, field):
+            for value in self._distinct_values_provider(field):
                 self._filter_value.addItem(_display(value), userData=value)
         self._filter_value.blockSignals(False)
         self._validate()
@@ -454,22 +452,6 @@ class SamplingDialog(QDialog):
 # ---------------------------------------------------------------------------
 # Hilfen
 # ---------------------------------------------------------------------------
-
-
-def _distinct_values(rows: Sequence[DatasetRow], field: str) -> list[Any]:
-    seen: set[str] = set()
-    result: list[Any] = []
-    for row in rows:
-        value = row.values.get(field)
-        if value is None:
-            continue
-        key = repr(value)
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(value)
-    result.sort(key=lambda v: str(v))
-    return result
 
 
 def _display(value: Any) -> str:
