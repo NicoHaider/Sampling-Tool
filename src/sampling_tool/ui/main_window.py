@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QByteArray, QSettings, pyqtSignal
+from PyQt6.QtCore import QSettings, pyqtSignal
 from PyQt6.QtGui import QAction, QCloseEvent
 from PyQt6.QtWidgets import (
     QFileDialog,
@@ -29,8 +29,6 @@ from sampling_tool.config import APP_NAME, APP_ORG, ENGAGEMENTS_DIR
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.persistence.repositories import DatasetRepo
 from sampling_tool.ui._window_layout import (
-    _TAB_TITLE_AUDIT,
-    _TAB_TITLE_DASHBOARD,
     build_workspace,
 )
 from sampling_tool.ui._window_menu import (
@@ -38,6 +36,7 @@ from sampling_tool.ui._window_menu import (
     build_menu,
     rebuild_recent_menu,
 )
+from sampling_tool.ui._window_state import WindowStateController
 from sampling_tool.ui._window_toolbar import build_toolbar
 from sampling_tool.ui.recent import RecentEntry
 from sampling_tool.ui.widgets.audit_trail_view import AuditTrailView
@@ -118,11 +117,6 @@ class MainWindow(QMainWindow):
 
         self._settings = QSettings(APP_ORG, APP_NAME)
 
-        # Splitter-Größen merken, wenn beide unteren Panels ausgeblendet sind –
-        # damit Re-Show die ursprüngliche Aufteilung wiederherstellen kann
-        # statt die Datentabelle erstmal auf 100 % zu zeigen.
-        self._cached_splitter_sizes: list[int] | None = None
-
         # ---- zentrale Widgets ----
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
@@ -134,7 +128,14 @@ class MainWindow(QMainWindow):
 
         self._workspace = build_workspace(self)
         self._stack.addWidget(self._workspace)
-        self._restore_workspace_state()
+        self._window_state = WindowStateController(
+            settings=self._settings,
+            workspace_splitter=self._workspace_splitter,
+            lower_tabs=self._lower_tabs,
+            audit_trail_view=self._audit_trail_view,
+            dashboard_view=self._dashboard_view,
+        )
+        self._window_state.restore()
 
         # ---- Statusbar ----
         self._status_engagement = QLabel("Kein Engagement")
@@ -322,83 +323,32 @@ class MainWindow(QMainWindow):
         """`True`, wenn aktuell der Workspace angezeigt wird."""
         return self._stack.currentWidget() is self._workspace
 
-    # ---- Settings-Persistenz -------------------------------------------
-
-    def _restore_workspace_state(self) -> None:
-        """Stellt die Splitter-Größen aus `QSettings` wieder her, falls vorhanden."""
-        state = self._settings.value("workspace/inner_splitter")
-        if isinstance(state, QByteArray):
-            self._workspace_splitter.restoreState(state)
-        tab_index = self._settings.value("workspace/lower_tab", 0)
-        try:
-            self._lower_tabs.setCurrentIndex(int(tab_index))
-        except (TypeError, ValueError):
-            self._lower_tabs.setCurrentIndex(0)
-
-    def _save_workspace_state(self) -> None:
-        """Persistiert Splitter-Größen + aktiven Tab.
-
-        Wenn beide Insights-Panels aus sind, ist der Splitter aktuell auf
-        `[total, 0]` kollabiert – wir wollen aber die ECHTE Aufteilung
-        speichern, damit Re-Show beim nächsten Start funktioniert. Dafür
-        werden die gecachten Sizes vor dem `saveState()` temporär gesetzt.
-        Qt respektiert `setSizes` nur, wenn das jeweilige Kind sichtbar
-        ist – darum muss `_lower_tabs` kurz wieder eingeblendet werden.
-        Das ist unkritisch, weil Save in der Praxis nur im `closeEvent`
-        beim App-Beenden läuft.
-        """
-        if self._cached_splitter_sizes is not None:
-            self._lower_tabs.setVisible(True)
-            self._workspace_splitter.setSizes(self._cached_splitter_sizes)
-        self._settings.setValue("workspace/inner_splitter", self._workspace_splitter.saveState())
-        self._settings.setValue("workspace/lower_tab", self._lower_tabs.currentIndex())
+    # ---- Settings-Persistenz (Backward-Compat-Shims → WindowStateController) ----
 
     def apply_panel_visibility(self, *, show_dashboard: bool, show_audit_trail: bool) -> None:
-        """Schaltet Dashboard- und AuditTrail-Tab im unteren Panel ein/aus.
+        """Schaltet Dashboard-/AuditTrail-Tab (Delegate an WindowStateController)."""
+        self._window_state.apply_panel_visibility(
+            show_dashboard=show_dashboard, show_audit_trail=show_audit_trail
+        )
 
-        Wenn beide aus sind, verschwindet das gesamte `QTabWidget` und die
-        Datentabelle nutzt die volle Höhe. Beim Re-Aktivieren werden die
-        zuvor gemerkten Splitter-Größen wiederhergestellt.
-        """
-        self._rebuild_lower_tabs(show_dashboard=show_dashboard, show_audit_trail=show_audit_trail)
-        both_off = not show_dashboard and not show_audit_trail
-        self._lower_tabs.setVisible(not both_off)
-        self._update_splitter_for_visibility(both_off=both_off)
+    @property
+    def _cached_splitter_sizes(self) -> list[int] | None:
+        """Backward-Compat-Shim → WindowStateController (Sprint 19 / F-006)."""
+        return self._window_state._cached_splitter_sizes
 
-    def _rebuild_lower_tabs(self, *, show_dashboard: bool, show_audit_trail: bool) -> None:
-        """Tabs in fester Reihenfolge neu zusammensetzen, aktive Auswahl retten."""
-        current_widget = self._lower_tabs.currentWidget()
-        while self._lower_tabs.count() > 0:
-            self._lower_tabs.removeTab(0)
-        if show_audit_trail:
-            self._lower_tabs.addTab(self._audit_trail_view, _TAB_TITLE_AUDIT)
-        if show_dashboard:
-            self._lower_tabs.addTab(self._dashboard_view, _TAB_TITLE_DASHBOARD)
-        if current_widget is not None:
-            idx = self._lower_tabs.indexOf(current_widget)
-            if idx >= 0:
-                self._lower_tabs.setCurrentIndex(idx)
+    @_cached_splitter_sizes.setter
+    def _cached_splitter_sizes(self, value: list[int] | None) -> None:
+        """Backward-Compat-Shim → WindowStateController (Sprint 19 / F-006)."""
+        self._window_state._cached_splitter_sizes = value
 
-    def _update_splitter_for_visibility(self, *, both_off: bool) -> None:
-        """Splitter kollabieren oder wiederherstellen – inkl. Sizes-Cache."""
-        if both_off:
-            if self._cached_splitter_sizes is None:
-                current_sizes = self._workspace_splitter.sizes()
-                # Nur cachen, wenn der Splitter überhaupt schon Größen hat –
-                # während des App-Starts kann sizes() noch [0, 0] liefern.
-                if sum(current_sizes) > 0:
-                    self._cached_splitter_sizes = current_sizes
-            if self._cached_splitter_sizes is not None:
-                total = sum(self._cached_splitter_sizes)
-                self._workspace_splitter.setSizes([total, 0])
-        elif self._cached_splitter_sizes is not None:
-            self._workspace_splitter.setSizes(self._cached_splitter_sizes)
-            self._cached_splitter_sizes = None
+    def _save_workspace_state(self) -> None:
+        """Backward-Compat-Shim → WindowStateController.save()."""
+        self._window_state.save()
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:  # noqa: N802
         """Sichert UI-State beim Schließen."""
         try:
-            self._save_workspace_state()
+            self._window_state.save()
         finally:
             super().closeEvent(a0)
 
