@@ -35,14 +35,17 @@ from sampling_tool.ui._window_layout import (
     _TAB_TITLE_DASHBOARD,
     build_workspace,
 )
+from sampling_tool.ui._window_menu import (
+    _MAX_RECENT_IN_MENU,
+    build_menu,
+    rebuild_recent_menu,
+)
 from sampling_tool.ui.recent import RecentEntry
 from sampling_tool.ui.widgets.audit_trail_view import AuditTrailView
 from sampling_tool.ui.widgets.dashboard_view import DashboardView
 from sampling_tool.ui.widgets.data_table import DataTableView
 from sampling_tool.ui.widgets.sidebar import NavigationSidebar
 from sampling_tool.ui.widgets.welcome import WelcomeScreen
-
-_MAX_RECENT_IN_MENU: int = 5
 
 # Deutsche Anzeige-Namen der Sampling-Methoden für die Statusbar.
 _METHOD_LABELS: dict[str, str] = {
@@ -150,7 +153,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(status)
 
         # ---- Menü + Toolbar ----
-        self._build_menu()
+        build_menu(self)
         self._build_toolbar()
 
         self.show_welcome()
@@ -280,7 +283,7 @@ class MainWindow(QMainWindow):
     def set_recent_entries(self, entries: list[RecentEntry]) -> None:
         """Aktualisiert Welcome-Screen und das File→Recent-Submenü."""
         self._welcome.set_recent_entries(entries[:_MAX_RECENT_IN_MENU])
-        self._rebuild_recent_menu(entries[:_MAX_RECENT_IN_MENU])
+        rebuild_recent_menu(self, entries[:_MAX_RECENT_IN_MENU])
 
     # ---- Accessors (für Tests) ----------------------------------------
 
@@ -319,8 +322,6 @@ class MainWindow(QMainWindow):
     def is_workspace_visible(self) -> bool:
         """`True`, wenn aktuell der Workspace angezeigt wird."""
         return self._stack.currentWidget() is self._workspace
-
-    # ---- Setup ---------------------------------------------------------
 
     # ---- Settings-Persistenz -------------------------------------------
 
@@ -401,141 +402,6 @@ class MainWindow(QMainWindow):
             self._save_workspace_state()
         finally:
             super().closeEvent(a0)
-
-    def _build_menu(self) -> None:
-        menu_bar = self.menuBar()
-        if menu_bar is None:
-            return
-
-        # ---- File ----
-        file_menu = menu_bar.addMenu("&Datei")
-        assert file_menu is not None
-        self._file_menu: QMenu = file_menu
-
-        self._action_new = QAction("Neues Engagement…", self)
-        self._action_new.setShortcut(QKeySequence.StandardKey.New)
-        self._action_new.triggered.connect(self.new_engagement_requested.emit)
-        file_menu.addAction(self._action_new)
-
-        self._action_open = QAction("Engagement öffnen…", self)
-        self._action_open.setShortcut(QKeySequence.StandardKey.Open)
-        self._action_open.triggered.connect(self._on_open_clicked)
-        file_menu.addAction(self._action_open)
-
-        recent_menu = file_menu.addMenu("Zuletzt geöffnet")
-        assert recent_menu is not None
-        self._recent_menu: QMenu = recent_menu
-        self._recent_menu.setEnabled(False)
-
-        file_menu.addSeparator()
-        style = self.style()
-        self._action_close = QAction("Engagement schließen", self)
-        self._action_close.setShortcut(QKeySequence.StandardKey.Close)
-        if style is not None:
-            self._action_close.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon))
-        self._action_close.setToolTip("Engagement schließen und zum Startbildschirm zurückkehren")
-        self._action_close.triggered.connect(self.close_engagement_requested.emit)
-        file_menu.addAction(self._action_close)
-
-        file_menu.addSeparator()
-        self._action_settings = QAction("Einstellungen…", self)
-        self._action_settings.setShortcut(QKeySequence.StandardKey.Preferences)
-        # PreferencesRole sorgt auf Mac dafür, dass die Action zusätzlich
-        # ins App-Menü gezogen wird (Cmd+,). Die gleiche Instanz bleibt im
-        # Datei-Menü sichtbar – Pattern wie beim Bug-Report-Button.
-        self._action_settings.setMenuRole(QAction.MenuRole.PreferencesRole)
-        self._action_settings.setToolTip("Einstellungen öffnen")
-        self._action_settings.setStatusTip("Öffnet den Einstellungen-Dialog")
-        self._action_settings.triggered.connect(self.settings_requested.emit)
-        file_menu.addAction(self._action_settings)
-
-        file_menu.addSeparator()
-        action_quit = QAction("Beenden", self)
-        action_quit.setShortcut(QKeySequence.StandardKey.Quit)
-        action_quit.triggered.connect(self.close)
-        file_menu.addAction(action_quit)
-
-        # ---- Edit ----
-        edit_menu = menu_bar.addMenu("&Bearbeiten")
-        assert edit_menu is not None
-
-        self._action_import = QAction("Datei importieren…", self)
-        self._action_import.setShortcut(QKeySequence("Ctrl+I"))
-        self._action_import.triggered.connect(self.import_excel_requested.emit)
-        edit_menu.addAction(self._action_import)
-
-        self._action_export_sample = QAction("Sample exportieren…", self)
-        self._action_export_sample.triggered.connect(self.export_sample_requested.emit)
-        edit_menu.addAction(self._action_export_sample)
-
-        self._action_export_pdf = QAction("AuditTrail-PDF…", self)
-        self._action_export_pdf.triggered.connect(self.export_audit_pdf_requested.emit)
-        edit_menu.addAction(self._action_export_pdf)
-
-        self._action_excel_report = QAction("Excel-Report exportieren…", self)
-        self._action_excel_report.triggered.connect(self.export_excel_report_requested.emit)
-        edit_menu.addAction(self._action_excel_report)
-
-        self._action_html_report = QAction("HTML-Report generieren…", self)
-        self._action_html_report.triggered.connect(self.export_html_report_requested.emit)
-        edit_menu.addAction(self._action_html_report)
-
-        # ---- Sample ----
-        sample_menu = menu_bar.addMenu("&Stichprobe")
-        assert sample_menu is not None
-
-        self._action_new_sample = QAction("Neue Stichprobe…", self)
-        self._action_new_sample.triggered.connect(self.new_sample_requested.emit)
-        sample_menu.addAction(self._action_new_sample)
-
-        self._action_reset_sample = QAction("Auswahl zurücksetzen", self)
-        self._action_reset_sample.triggered.connect(self.reset_sample_requested.emit)
-        sample_menu.addAction(self._action_reset_sample)
-
-        sample_menu.addSeparator()
-        style = self.style()
-        self._action_undo = QAction("Rückgängig", self)
-        self._action_undo.setShortcut(QKeySequence.StandardKey.Undo)
-        self._action_undo.setToolTip("Letzte Aktion rückgängig machen (Cmd+Z)")
-        if style is not None:
-            self._action_undo.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
-        self._action_undo.triggered.connect(self.undo_requested.emit)
-        sample_menu.addAction(self._action_undo)
-
-        self._action_redo = QAction("Wiederherstellen", self)
-        self._action_redo.setShortcut(QKeySequence.StandardKey.Redo)
-        self._action_redo.setToolTip("Letzte rückgängig gemachte Aktion wiederholen (Cmd+Shift+Z)")
-        if style is not None:
-            self._action_redo.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowForward))
-        self._action_redo.triggered.connect(self.redo_requested.emit)
-        sample_menu.addAction(self._action_redo)
-
-        # ---- Help ----
-        help_menu = menu_bar.addMenu("&Hilfe")
-        assert help_menu is not None
-        self._help_menu: QMenu = help_menu
-
-        self._action_hotkeys = QAction("Tastatur-Shortcuts…", self)
-        self._action_hotkeys.triggered.connect(self.hotkeys_requested.emit)
-        help_menu.addAction(self._action_hotkeys)
-
-        self._action_bug_report = QAction("Bug melden…", self)
-        self._action_bug_report.setToolTip("Fehler melden oder Feedback senden")
-        self._action_bug_report.setStatusTip("Öffnet den Bug-Report-Dialog")
-        if style is not None:
-            self._action_bug_report.setIcon(
-                style.standardIcon(QStyle.StandardPixmap.SP_MessageBoxCritical)
-            )
-        self._action_bug_report.triggered.connect(self.bug_report_requested.emit)
-        help_menu.addAction(self._action_bug_report)
-
-        self._action_about = QAction("Über…", self)
-        self._action_about.setMenuRole(QAction.MenuRole.AboutRole)
-        self._action_about.triggered.connect(self.about_requested.emit)
-        help_menu.addAction(self._action_about)
-
-        # Sprint-4-Initial: alle workspace-only Aktionen disabled.
-        self._set_workspace_actions_enabled(False)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Hauptaktionen", self)
@@ -622,21 +488,6 @@ class MainWindow(QMainWindow):
             self._action_redo,
         ):
             action.setEnabled(False)
-
-    def _rebuild_recent_menu(self, entries: list[RecentEntry]) -> None:
-        menu = self._recent_menu
-        menu.clear()
-        if not entries:
-            menu.setEnabled(False)
-            return
-        menu.setEnabled(True)
-        for entry in entries:
-            label = f"{entry.client_name} — {entry.path.name}"
-            action = QAction(label, self)
-            action.triggered.connect(
-                lambda _checked=False, p=entry.path: self.open_engagement_requested.emit(p)
-            )
-            menu.addAction(action)
 
     # ---- Slots ---------------------------------------------------------
 
