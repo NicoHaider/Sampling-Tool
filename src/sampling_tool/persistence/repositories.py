@@ -416,6 +416,48 @@ class DatasetRepo:
         with savepoint(self.conn, "dataset_delete"):
             self.conn.execute("DELETE FROM datasets WHERE id = ?", (dataset_id,))
 
+    def distinct_values(self, dataset_id: int, column: str) -> list[Any]:
+        """Distinkte Nicht-None-Werte einer Dataset-Spalte – via SQL, ohne Row-Materialize.
+
+        Ersetzt den `get_all_rows()`-Pfad des Advanced-Sampling-Dialogs (P-005).
+        Bit-identisch zum bisherigen `_distinct_values(get_all_rows(...), column)`:
+        None überspringen, Dedup über `repr(value)`, Sortierung über `str(value)`.
+        RAM ~ Anzahl distinkter Werte (nicht Zeilenzahl).
+
+        Tie-Break: bei `str()`-Gleichstand zweier verschiedener Werte
+        (z. B. int 5 und str "5") entscheidet das früheste `row_index` –
+        repliziert die Stable-Sort-First-Occurrence-Ordnung des alten
+        RAM-Pfads.
+
+        Limitierung: Spaltennamen mit eingebettetem `"` sind nicht abgedeckt
+        (pathologisch bei Excel-Headern) – ein solcher Filter liefert eine
+        leere Liste statt eines Crashs. Der JSON-Pfad wird als gebundener
+        Parameter übergeben; SQL-Injection ist ausgeschlossen.
+        """
+        json_path = '$."' + column.replace('"', '""') + '"'
+        cur = self.conn.execute(
+            "SELECT json_extract(values_json, ?) AS raw, "
+            "       json_type(values_json, ?) AS jtype, "
+            "       MIN(row_index) AS first_idx "
+            "FROM dataset_rows WHERE dataset_id = ? "
+            "GROUP BY raw, jtype",
+            (json_path, json_path, dataset_id),
+        )
+        decoded: list[tuple[Any, int]] = []
+        seen: set[str] = set()
+        for row in cur:
+            jtype = row["jtype"]
+            if jtype is None or jtype == "null":
+                continue
+            value = _distinct_decode(row["raw"], jtype)
+            key = repr(value)
+            if key in seen:
+                continue
+            seen.add(key)
+            decoded.append((value, int(row["first_idx"])))
+        decoded.sort(key=lambda item: (str(item[0]), item[1]))
+        return [value for value, _ in decoded]
+
 
 # ===========================================================================
 # Sample
@@ -953,3 +995,25 @@ def _values_to_json(values: dict[str, Any]) -> str:
 def _values_from_json(text: str) -> dict[str, Any]:
     raw = _json_loads(text)
     return {k: _decode_value(v) for k, v in raw.items()}
+
+
+def _distinct_decode(raw: Any, jtype: str) -> Any:
+    """Rekonstruiert einen Python-Wert aus json_extract-Rohwert + json_type.
+
+    Bool wird aus `jtype` rekonstruiert, NICHT aus `raw` – json_extract
+    liefert für JSON-Booleans `1`/`0`, sonst ginge bool vs. int verloren.
+    `object` ist ein tagged datetime/date/time (siehe `_encode_value`).
+    """
+    if jtype == "object":
+        return _decode_value(_json_loads(raw))
+    if jtype == "true":
+        return True
+    if jtype == "false":
+        return False
+    if jtype == "integer":
+        return int(raw)
+    if jtype == "real":
+        return float(raw)
+    if jtype == "text":
+        return str(raw)
+    return raw
