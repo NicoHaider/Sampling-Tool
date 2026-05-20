@@ -394,3 +394,71 @@ class TestPanelVisibility:
         win._save_workspace_state()
         # Save hat den Cache temporär gesetzt → Splitter hat echte Größen.
         assert win._workspace_splitter.sizes() == before
+
+
+class TestWindowStateController:
+    """Sprint 19 / F-006: QSettings-/Panel-State im WindowStateController."""
+
+    def test_apply_panel_visibility_hides_both_panels(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.show()
+        qtbot.waitExposed(win)
+        win._window_state.apply_panel_visibility(show_dashboard=False, show_audit_trail=False)
+        assert win._lower_tabs.isVisible() is False
+        assert win._lower_tabs.count() == 0
+
+    def test_splitter_sizes_cached_and_restored_on_collapse(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.show()
+        qtbot.waitExposed(win)
+        before = win._workspace_splitter.sizes()
+        win._window_state.apply_panel_visibility(show_dashboard=False, show_audit_trail=False)
+        assert win._window_state._cached_splitter_sizes == before
+        win._window_state.apply_panel_visibility(show_dashboard=True, show_audit_trail=True)
+        assert win._window_state._cached_splitter_sizes is None
+        assert win._workspace_splitter.sizes() == before
+
+    def test_restore_falls_back_to_default_tab_on_garbage(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win._settings.setValue("workspace/lower_tab", "kein-int")
+        win._window_state.restore()
+        assert win._lower_tabs.currentIndex() == 0
+
+
+class TestMainWindowComposition:
+    """Sprint 19 / F-006: MainWindow bleibt dünner Compositor, API unverändert."""
+
+    def test_public_api_attributes_present(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        for name in (
+            "_file_menu",
+            "_help_menu",
+            "_recent_menu",
+            "_toolbar",
+            "_action_new",
+            "_action_settings",
+            "_action_bug_report",
+            "_action_switch_engagement",
+        ):
+            assert hasattr(win, name), name
+        assert win.data_table() is not None
+        assert win.workspace_splitter() is not None
+        assert win.lower_tabs() is not None
+
+    def test_helper_modules_qt_importable(self) -> None:
+        from sampling_tool.ui import (
+            _window_layout,
+            _window_menu,
+            _window_state,
+            _window_toolbar,
+        )
+
+        assert callable(_window_layout.build_workspace)
+        assert callable(_window_menu.build_menu)
+        assert callable(_window_menu.rebuild_recent_menu)
+        assert callable(_window_toolbar.build_toolbar)
+        assert _window_state.WindowStateController is not None
