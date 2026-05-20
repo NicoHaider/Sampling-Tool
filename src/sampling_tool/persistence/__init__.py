@@ -1,3 +1,3 @@
-"""Persistenz-Layer: SQLite + Migrations. Implementierung folgt in Sprint 2."""
+"""Persistenz-Layer: SQLite-Wrapper, Migrations und stateless Repositories."""
 
 from __future__ import annotations
