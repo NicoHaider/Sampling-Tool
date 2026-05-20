@@ -1830,7 +1830,7 @@ class TestAdvancedModePropagation:
         def fake_factory(
             _parent: MainWindow,
             _dataset: object,
-            _rows: object,
+            _provider: object,
             _current: object,
             advanced_mode: bool,
         ) -> _StubSamplingDialog:
@@ -1865,7 +1865,7 @@ class TestAdvancedModePropagation:
         def fake_factory(
             _parent: MainWindow,
             _dataset: object,
-            _rows: object,
+            _provider: object,
             _current: object,
             advanced_mode: bool,
         ) -> _StubSamplingDialog:
@@ -1882,6 +1882,115 @@ class TestAdvancedModePropagation:
             _open_dataset(controller, window, populated_db)
             controller.handle_new_sampling()
             assert received["advanced_mode"] is True
+        finally:
+            controller.handle_close_engagement()
+
+
+class TestNewSamplingDistinctProvider:
+    """Sprint 19 / P-005: Advanced-Mode reicht einen Provider-Callback durch,
+    get_all_rows wird beim Dialog-Open NICHT mehr aufgerufen."""
+
+    def test_advanced_mode_passes_provider_not_rows(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        captured: dict[str, object] = {}
+
+        def fake_factory(
+            _parent: MainWindow,
+            _dataset: object,
+            provider: object,
+            _current: object,
+            _advanced: bool,
+        ) -> _StubSamplingDialog:
+            captured["provider"] = provider
+            return _StubSamplingDialog(None, accept=False)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=fake_factory,  # type: ignore[arg-type]
+            settings=dc_replace(AppSettings.defaults(), advanced_mode=True),
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            provider = captured["provider"]
+            assert callable(provider)
+            assert provider("Konto") == ["K1", "K2", "K3", "K4", "K5"]
+        finally:
+            controller.handle_close_engagement()
+
+    def test_simple_mode_passes_none_provider(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        captured: dict[str, object] = {}
+
+        def fake_factory(
+            _parent: MainWindow,
+            _dataset: object,
+            provider: object,
+            _current: object,
+            _advanced: bool,
+        ) -> _StubSamplingDialog:
+            captured["provider"] = provider
+            return _StubSamplingDialog(None, accept=False)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=fake_factory,  # type: ignore[arg-type]
+            settings=dc_replace(AppSettings.defaults(), advanced_mode=False),
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            assert captured["provider"] is None
+        finally:
+            controller.handle_close_engagement()
+
+    def test_get_all_rows_not_called_on_dialog_open(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.persistence.repositories import DatasetRepo
+        from sampling_tool.ui.settings_store import AppSettings
+
+        def boom(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError(
+                "get_all_rows darf im Advanced-Sampling-Pfad nicht aufgerufen werden"
+            )
+
+        monkeypatch.setattr(DatasetRepo, "get_all_rows", boom)
+
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(None, accept=False)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+            settings=dc_replace(AppSettings.defaults(), advanced_mode=True),
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()  # darf NICHT in boom() laufen
         finally:
             controller.handle_close_engagement()
 

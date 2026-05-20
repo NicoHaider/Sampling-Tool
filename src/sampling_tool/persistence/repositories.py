@@ -379,16 +379,11 @@ class DatasetRepo:
 
         Legitime Use-Cases (Sprint 11.5 verifiziert):
         - Tests / Convenience-Asserts.
-        - SamplingDialog im Advanced-Mode: distinct-Werte-Sammlung für die
-          Cluster-/Stratum-ComboBoxen. Eine streamende Alternative über
-          SQLite `json_extract` wurde geprüft, scheitert aber am
-          tagged-Encoder für datetime-Spalten (sie wären sonst nur als
-          JSON-String pro Row aufrufbar). Bei realistischen Audit-Datasets
-          (<200k Zeilen, wenige Cluster-Werte) ist der Footprint hier
-          tolerabel; bei sehr großen Datasets bleibt der Advanced-Modus
-          der einzige RAM-relevante Pfad – wird ggf. in einem Folge-Sprint
-          via dedizierter `distinct_values_in_column`-Implementierung
-          gelöst.
+
+        Distinkte Spaltenwerte (vorher der einzige Production-Use-Case,
+        SamplingDialog-Advanced-Mode) laufen seit Sprint 19 / P-005 über
+        `DatasetRepo.distinct_values` – SQL-`json_extract` statt
+        Row-Materialize.
         """
         return tuple(self.iter_rows(dataset_id))
 
