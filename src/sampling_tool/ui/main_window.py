@@ -30,6 +30,11 @@ from PyQt6.QtWidgets import (
 from sampling_tool.config import APP_NAME, APP_ORG, ENGAGEMENTS_DIR
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.persistence.repositories import DatasetRepo
+from sampling_tool.ui._window_layout import (
+    _TAB_TITLE_AUDIT,
+    _TAB_TITLE_DASHBOARD,
+    build_workspace,
+)
 from sampling_tool.ui.recent import RecentEntry
 from sampling_tool.ui.widgets.audit_trail_view import AuditTrailView
 from sampling_tool.ui.widgets.dashboard_view import DashboardView
@@ -38,11 +43,6 @@ from sampling_tool.ui.widgets.sidebar import NavigationSidebar
 from sampling_tool.ui.widgets.welcome import WelcomeScreen
 
 _MAX_RECENT_IN_MENU: int = 5
-
-# Tab-Titel im unteren QTabWidget. Werden beim Toggle benutzt, damit Re-Insert
-# denselben Label wie initial bekommt.
-_TAB_TITLE_AUDIT: str = "AuditTrail"
-_TAB_TITLE_DASHBOARD: str = "Dashboard"
 
 # Deutsche Anzeige-Namen der Sampling-Methoden für die Statusbar.
 _METHOD_LABELS: dict[str, str] = {
@@ -130,7 +130,7 @@ class MainWindow(QMainWindow):
         self._welcome.open_engagement_requested.connect(self.open_engagement_requested.emit)
         self._stack.addWidget(self._welcome)
 
-        self._workspace = self._build_workspace()
+        self._workspace = build_workspace(self)
         self._stack.addWidget(self._workspace)
         self._restore_workspace_state()
 
@@ -321,52 +321,6 @@ class MainWindow(QMainWindow):
         return self._stack.currentWidget() is self._workspace
 
     # ---- Setup ---------------------------------------------------------
-
-    def _build_workspace(self) -> QSplitter:
-        # Outer horizontal splitter: Sidebar | (Tabelle / AuditTrail+Dashboard)
-        outer = QSplitter(Qt.Orientation.Horizontal)
-        outer.setHandleWidth(1)
-        outer.setObjectName("WorkspaceOuterSplitter")
-
-        self._sidebar = NavigationSidebar()
-        self._sidebar.dataset_selected.connect(self.dataset_selected.emit)
-        self._sidebar.sample_selected.connect(self.sample_selected.emit)
-        self._sidebar.sample_double_clicked.connect(self.sample_filter_toggled.emit)
-        self._sidebar.filter_only_sample_toggled.connect(self.filter_only_sample_toggled.emit)
-        outer.addWidget(self._sidebar)
-
-        # Inner vertical splitter: Tabelle oben, Tab-Widget (AuditTrail/Dashboard) unten.
-        self._workspace_splitter = QSplitter(Qt.Orientation.Vertical)
-        self._workspace_splitter.setObjectName("WorkspaceInnerSplitter")
-        self._workspace_splitter.setHandleWidth(2)
-
-        self._data_table = DataTableView()
-        self._workspace_splitter.addWidget(self._data_table)
-
-        self._lower_tabs = QTabWidget()
-        self._lower_tabs.setObjectName("LowerTabs")
-
-        self._audit_trail_view = AuditTrailView()
-        self._audit_trail_view.event_double_clicked.connect(self.audit_event_double_clicked.emit)
-        self._audit_trail_view.refresh_requested.connect(self.audit_refresh_requested.emit)
-        self._lower_tabs.addTab(self._audit_trail_view, _TAB_TITLE_AUDIT)
-
-        self._dashboard_view = DashboardView()
-        self._dashboard_view.refresh_requested.connect(self.dashboard_refresh_requested.emit)
-        self._dashboard_view.sample_clicked.connect(self.sample_selected.emit)
-        self._dashboard_view.dataset_clicked.connect(self.dataset_selected.emit)
-        self._lower_tabs.addTab(self._dashboard_view, _TAB_TITLE_DASHBOARD)
-
-        self._workspace_splitter.addWidget(self._lower_tabs)
-        self._workspace_splitter.setSizes([600, 400])
-        self._workspace_splitter.setStretchFactor(0, 3)
-        self._workspace_splitter.setStretchFactor(1, 2)
-
-        outer.addWidget(self._workspace_splitter)
-        outer.setStretchFactor(0, 0)
-        outer.setStretchFactor(1, 1)
-        outer.setSizes([250, 1030])
-        return outer
 
     # ---- Settings-Persistenz -------------------------------------------
 
