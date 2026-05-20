@@ -10,18 +10,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QByteArray, QSettings, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QCloseEvent, QKeySequence
+from PyQt6.QtCore import QByteArray, QSettings, pyqtSignal
+from PyQt6.QtGui import QAction, QCloseEvent
 from PyQt6.QtWidgets import (
     QFileDialog,
     QLabel,
     QMainWindow,
     QMenu,
-    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QStatusBar,
-    QStyle,
     QTabWidget,
     QToolBar,
     QWidget,
@@ -40,6 +38,7 @@ from sampling_tool.ui._window_menu import (
     build_menu,
     rebuild_recent_menu,
 )
+from sampling_tool.ui._window_toolbar import build_toolbar
 from sampling_tool.ui.recent import RecentEntry
 from sampling_tool.ui.widgets.audit_trail_view import AuditTrailView
 from sampling_tool.ui.widgets.dashboard_view import DashboardView
@@ -154,7 +153,7 @@ class MainWindow(QMainWindow):
 
         # ---- Menü + Toolbar ----
         build_menu(self)
-        self._build_toolbar()
+        build_toolbar(self)
 
         self.show_welcome()
 
@@ -402,69 +401,6 @@ class MainWindow(QMainWindow):
             self._save_workspace_state()
         finally:
             super().closeEvent(a0)
-
-    def _build_toolbar(self) -> None:
-        toolbar = QToolBar("Hauptaktionen", self)
-        toolbar.setMovable(False)
-        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        # "Engagement wechseln" ganz links – schneller Rückweg zum Welcome-Screen.
-        style = self.style()
-        self._action_switch_engagement = QAction("Engagement wechseln", self)
-        if style is not None:
-            self._action_switch_engagement.setIcon(
-                style.standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon)
-            )
-        self._action_switch_engagement.setToolTip(
-            "Engagement schließen und zum Startbildschirm zurückkehren"
-        )
-        self._action_switch_engagement.triggered.connect(self.close_engagement_requested.emit)
-        toolbar.addAction(self._action_switch_engagement)
-        toolbar.addSeparator()
-        toolbar.addAction(self._action_new)
-        toolbar.addAction(self._action_open)
-        toolbar.addSeparator()
-        toolbar.addAction(self._action_import)
-        toolbar.addAction(self._action_new_sample)
-        toolbar.addSeparator()
-        toolbar.addAction(self._action_undo)
-        toolbar.addAction(self._action_redo)
-        toolbar.addSeparator()
-        toolbar.addAction(self._action_export_sample)
-        toolbar.addAction(self._action_export_pdf)
-        toolbar.addSeparator()
-        if style is not None:
-            self._action_excel_report.setIcon(
-                style.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
-            )
-            self._action_html_report.setIcon(
-                style.standardIcon(QStyle.StandardPixmap.SP_FileLinkIcon)
-            )
-        toolbar.addAction(self._action_excel_report)
-        toolbar.addAction(self._action_html_report)
-
-        # Sekundäre Aktionen – rechts abgesetzt via Expanding-Spacer, damit die
-        # Settings-/Bug-Report-Buttons optisch nicht mit den Haupt-Aktionen
-        # konkurrieren. Reihenfolge rechts: Einstellungen (häufiger genutzt),
-        # dann Bug-Report.
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        toolbar.addWidget(spacer)
-        if style is not None and self._action_settings.icon().isNull():
-            # Qt-Standard-Pixmaps haben kein Zahnrad – SP_FileDialogContentsView
-            # liefert ein neutrales Listen-Icon. SP_FileDialogDetailedView ist
-            # bereits für den Excel-Report belegt, daher die andere Variante.
-            self._action_settings.setIcon(
-                style.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView)
-            )
-        shortcut_text = self._action_settings.shortcut().toString(
-            QKeySequence.SequenceFormat.NativeText
-        )
-        self._action_settings.setToolTip(f"Einstellungen öffnen ({shortcut_text})")
-        toolbar.addAction(self._action_settings)
-        toolbar.addAction(self._action_bug_report)
-
-        self._toolbar: QToolBar = toolbar
-        self.addToolBar(toolbar)
 
     # ---- State-Helfer --------------------------------------------------
 
