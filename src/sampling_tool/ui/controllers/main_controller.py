@@ -250,6 +250,9 @@ class MainController:
     def handle_reset(self) -> None:
         self.workspace.handle_reset()
 
+    def handle_reset_sampling(self) -> None:
+        self.workspace.handle_reset_sampling()
+
     def handle_undo(self) -> None:
         self.workspace.handle_undo()
 
@@ -326,6 +329,7 @@ class MainController:
         w.import_excel_requested.connect(self.workspace.handle_import_excel)
         w.new_sample_requested.connect(self.workspace.handle_new_sampling)
         w.reset_sample_requested.connect(self.workspace.handle_reset)
+        w.reset_sampling_requested.connect(self.workspace.handle_reset_sampling)
         w.undo_requested.connect(self.workspace.handle_undo)
         w.redo_requested.connect(self.workspace.handle_redo)
         # Selektion

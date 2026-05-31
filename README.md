@@ -28,6 +28,7 @@ aktuellen Sprint ab.
 | 8      | PyInstaller-Build (Mac `.app` + Windows `.exe`), Release-Workflow | **done** |
 | …      | Sprints 9–18 – siehe `CLAUDE.md`                    | **done**    |
 | 19     | P-005 SQL-DISTINCT + F-007 repositories-Split + F-006 main_window-Split | **done** |
+| 20     | Toolbar „Sampling zurücksetzen" (audit-safe In-Memory-Reset) + engeres Toolbar-Spacing | **done** |
 
 ### Was Sprint 8 liefert
 

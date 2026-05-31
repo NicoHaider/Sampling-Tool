@@ -62,6 +62,7 @@ class MainWindow(QMainWindow):
     import_excel_requested = pyqtSignal()
     new_sample_requested = pyqtSignal()
     reset_sample_requested = pyqtSignal()
+    reset_sampling_requested = pyqtSignal()
     undo_requested = pyqtSignal()
     redo_requested = pyqtSignal()
     export_sample_requested = pyqtSignal()
@@ -96,6 +97,7 @@ class MainWindow(QMainWindow):
     _action_html_report: QAction
     _action_new_sample: QAction
     _action_reset_sample: QAction
+    _action_reset_sampling: QAction
     _action_undo: QAction
     _action_redo: QAction
     _action_hotkeys: QAction
@@ -369,6 +371,7 @@ class MainWindow(QMainWindow):
         for action in (
             self._action_new_sample,
             self._action_reset_sample,
+            self._action_reset_sampling,
             self._action_export_sample,
             self._action_undo,
             self._action_redo,
@@ -396,8 +399,9 @@ class MainWindow(QMainWindow):
         self._action_redo.setEnabled(can_redo)
 
     def set_reset_enabled(self, enabled: bool) -> None:
-        """Schaltet den Reset-Menüpunkt. Nur wenn ein Sample aktiv ist."""
+        """Schaltet die Reset-Aktionen (Menü + Toolbar). Nur wenn ein Sample aktiv ist."""
         self._action_reset_sample.setEnabled(enabled)
+        self._action_reset_sampling.setEnabled(enabled)
 
 
 # ---------------------------------------------------------------------------

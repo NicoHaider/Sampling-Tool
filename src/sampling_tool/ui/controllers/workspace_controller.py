@@ -316,6 +316,54 @@ class WorkspaceController:
         s.refresh_views()
         s.persist_state()
 
+    def handle_reset_sampling(self) -> None:
+        """Sampling zurücksetzen (Toolbar, Sprint 20): gezogene Stichprobe leeren.
+
+        Audit-safe In-Memory-Reset: aktive Stichprobe, Highlight und
+        Sample-Filter werden geleert; importierte Population und Sampling-
+        Parameter bleiben erhalten, persistierte Sample-/Audit-Zeilen
+        ebenso (Append-only-Trail). Mit Bestätigungsdialog; Statusmeldung
+        nach Erfolg.
+        """
+        s = self.session
+        if not s.has_engagement():
+            return
+        if s.sample is None and s.filter_active_sample_id is None:
+            return
+
+        answer = QMessageBox.question(
+            s.window,
+            "Sampling zurücksetzen",
+            "Die gezogene Stichprobe und die berechneten Ergebnisse werden entfernt.\n"
+            "Importierte Daten und Sampling-Parameter bleiben erhalten. Fortfahren?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        assert s.db is not None
+        assert s.engagement is not None
+        assert s.engagement.id is not None
+        if s.dataset is not None and s.dataset.id is not None:
+            AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_reset(
+                s.dataset.id
+            )
+
+        if not s.reset_sampling():
+            return
+        self._push_undo_snapshot()
+        s.update_undo_redo_state()
+        s.refresh_views()
+        s.persist_state()
+
+        status = s.window.statusBar()
+        if status is not None:
+            status.showMessage(
+                "Sampling zurückgesetzt – importierte Daten und Parameter bleiben erhalten.",
+                5000,
+            )
+
     # ---- Undo / Redo ---------------------------------------------------
 
     def handle_undo(self) -> None:

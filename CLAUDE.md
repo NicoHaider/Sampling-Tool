@@ -99,6 +99,34 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
 | 17     | Worker-Architektur (P-008): UI responsiv bei Import/Export | done |
 | 18     | Quality-Polish (Q-001 pdfrw-Logging, Q-005 Timestamp-Drift, T-002) | done |
 | 19     | P-005 SQL-DISTINCT + F-007 repositories-Split + F-006 main_window-Split | done |
+| 20     | Toolbar „Sampling zurücksetzen" (audit-safe In-Memory-Reset) + engeres Toolbar-Spacing | done |
+
+## Sampling-Reset (Sprint 20)
+
+Zwei Reset-Pfade mit bewusst unterschiedlicher Semantik (beide
+audit-safe – kein DB-Delete, Append-only-Trail bleibt intakt):
+
+- **Menü „Stichprobe → Auswahl zurücksetzen"** (`reset_sample_requested`
+  → `WorkspaceController.handle_reset`): respektiert `settings.
+  reset_keeps_filter`, leert Highlight (+ ggf. Filter).
+- **Toolbar „Sampling zurücksetzen"** (`reset_sampling_requested` →
+  `WorkspaceController.handle_reset_sampling`, Sprint 20): vollständiger
+  In-Memory-Reset der gezogenen Stichprobe via zentraler
+  `WorkspaceSession.reset_sampling()` – leert ausschließlich aktive
+  Stichprobe, Highlight und Sample-Filter; Population (Dataset) und
+  Parameter (Settings) bleiben. Mit Bestätigungsdialog + Statusmeldung;
+  Button neben „Neue Stichprobe", enabled-State an `set_reset_enabled`
+  gekoppelt (teilt den State mit dem Menü-Twin).
+
+**Warum kein hartes DB-Delete der Stichprobe?** `audit_events.sample_id`
+ist `REFERENCES samples(id) ON DELETE SET NULL`; mit `foreign_keys=ON`
+feuert diese SET-NULL-Aktion den `audit_events_no_update`-Trigger
+(append-only) und bricht den Delete mit `IntegrityError` ab. Jede
+gezogene Stichprobe hat ein `log_sampling`-Event → ein selektives
+Löschen wäre ohne Schema-/Migrationsänderung unmöglich und würde den
+ISAE-3402-Audit-Trail verletzen. Daher In-Memory-Reset; eine identische
+Re-Ziehung mit gleichem Seed rekonstruiert die Stichprobe bit-genau
+(getestet via `TestResetReproducibility`).
 
 ## Worker-Architektur (Sprint 17 / P-008)
 

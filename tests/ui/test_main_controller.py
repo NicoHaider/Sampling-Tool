@@ -2266,3 +2266,230 @@ class TestSamplingPathDispatch:
             assert calls == ["sample"]
         finally:
             controller.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 20: Sampling-Reset (Toolbar) – In-Memory-Reset, audit-trail-erhaltend
+# ---------------------------------------------------------------------------
+
+
+class TestResetSampling:
+    """`WorkspaceSession.reset_sampling()` + `handle_reset_sampling()`.
+
+    Reset leert ausschließlich den gezogenen-Stichprobe-/Ergebnis-State
+    (aktive Stichprobe, Highlight, Sample-Filter). Population (Dataset) und
+    Parameter (Settings, die den Sampling-Dialog speisen) bleiben erhalten.
+    Persistierte Sample-/Audit-Zeilen werden NICHT gelöscht – der
+    Append-only-Audit-Trail (ISAE 3402) bleibt intakt.
+    """
+
+    def test_reset_clears_sample_and_results(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            assert controller.session.sample is not None
+            assert len(window.data_table().table_model().highlighted_row_ids()) == 2
+
+            did_reset = controller.session.reset_sampling()
+
+            assert did_reset is True
+            assert controller.session.sample is None
+            assert controller.session.active_sample_id is None
+            assert controller.session.filter_active_sample_id is None
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+        finally:
+            controller.handle_close_engagement()
+
+    def test_reset_preserves_population(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            ds_id = _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            assert controller.session.db is not None
+            repo = DatasetRepo(controller.session.db.connect())
+            rows_before = repo.get_all_rows(ds_id)
+
+            controller.session.reset_sampling()
+
+            rows_after = repo.get_all_rows(ds_id)
+            assert rows_after == rows_before
+            assert controller.session.dataset is not None
+            assert controller.session.dataset.row_count == len(rows_before)
+        finally:
+            controller.handle_close_engagement()
+
+    def test_reset_preserves_parameters(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        # In diesem Tool sind die Sampling-Parameter keine persistente
+        # Eingabemaske, sondern werden je Ziehung im Dialog gesetzt. Die
+        # *Parameter-Oberfläche* = Settings (Advanced-Mode etc.), die den
+        # Dialog speisen, + die Population, aus der gezogen wird. Beides muss
+        # der Reset unangetastet lassen.
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            settings_before = controller.session.settings
+            dataset_before = controller.session.dataset
+
+            controller.session.reset_sampling()
+
+            assert controller.session.settings == settings_before
+            assert controller.session.dataset == dataset_before
+        finally:
+            controller.handle_close_engagement()
+
+    def test_reset_when_nothing_drawn_is_noop(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            assert controller.session.sample is None  # nichts gezogen/ausgewählt
+
+            did_reset = controller.session.reset_sampling()
+
+            assert did_reset is False
+            assert controller.session.sample is None
+            assert controller.session.active_sample_id is None
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+        finally:
+            controller.handle_close_engagement()
+
+    def test_reset_keeps_persisted_sample_and_audit(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        """Audit-Safe-Design: das Sample-Record + Audit-Trail bleiben in der DB.
+
+        (Ersetzt das im Sprint-Prompt nur bedingt geforderte
+        `test_reset_clears_persisted_rows` – ein hartes Löschen ist hier
+        wegen des Append-only-Audit-FK unmöglich ohne Schema-Änderung.)
+        """
+        from sampling_tool.persistence.repositories import SampleRepo
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            ds_id = _open_dataset(controller, window, populated_db)
+            sample_id = _first_item_data(window.sidebar().samples_widget())
+            controller.handle_sample_selected(sample_id)
+            assert controller.session.db is not None
+
+            controller.session.reset_sampling()
+
+            # Sample-Record überlebt den Reset (nur In-Memory-Auswahl geleert).
+            remaining = SampleRepo(controller.session.db.connect()).list_for_dataset(ds_id)
+            assert any(s.id == sample_id for s in remaining)
+        finally:
+            controller.handle_close_engagement()
+
+    def test_handle_reset_sampling_confirmation_clears(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            with patch(
+                "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ):
+                controller.handle_reset_sampling()
+            assert controller.session.sample is None
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+        finally:
+            controller.handle_close_engagement()
+
+    def test_handle_reset_sampling_cancelled_keeps_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            with patch(
+                "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.No,
+            ):
+                controller.handle_reset_sampling()
+            assert controller.session.sample is not None
+            assert len(window.data_table().table_model().highlighted_row_ids()) == 2
+        finally:
+            controller.handle_close_engagement()
+
+
+class TestResetReproducibility:
+    """Reset darf keinen versteckten RNG-/State-Drift hinterlassen."""
+
+    def test_redraw_after_reset_is_deterministic(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+
+        from sampling_tool.core.models import SampleConfig, SamplingMethod
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=123),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+
+            controller.handle_new_sampling()
+            assert controller.session.sample is not None
+            r1 = tuple(controller.session.sample.selected_row_ids)
+
+            with patch(
+                "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ):
+                controller.handle_reset_sampling()
+            assert controller.session.sample is None
+
+            controller.handle_new_sampling()
+            assert controller.session.sample is not None
+            r2 = tuple(controller.session.sample.selected_row_ids)
+
+            assert r1 == r2
+        finally:
+            controller.handle_close_engagement()

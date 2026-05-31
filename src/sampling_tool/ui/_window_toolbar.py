@@ -37,6 +37,11 @@ def build_toolbar(window: MainWindow) -> None:
     toolbar.addSeparator()
     toolbar.addAction(window._action_import)
     toolbar.addAction(window._action_new_sample)
+    if style is not None:
+        window._action_reset_sampling.setIcon(
+            style.standardIcon(QStyle.StandardPixmap.SP_DialogResetButton)
+        )
+    toolbar.addAction(window._action_reset_sampling)
     toolbar.addSeparator()
     toolbar.addAction(window._action_undo)
     toolbar.addAction(window._action_redo)
