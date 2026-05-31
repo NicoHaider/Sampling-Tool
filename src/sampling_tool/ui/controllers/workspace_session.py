@@ -288,6 +288,42 @@ class WorkspaceSession:
         self.persist_state()
         return True
 
+    # ---- Sampling-Reset (Sprint 20) ------------------------------------
+
+    def reset_sampling(self) -> bool:
+        """Setzt ausschließlich den gezogenen-Stichprobe-/Ergebnis-State zurück.
+
+        Leert die aktive Stichprobe, das Tabellen-Highlight und den
+        Sample-Filter – der UI-Zustand ist danach „noch nie gezogen".
+        Population (Dataset) und Parameter (Settings, die den Sampling-
+        Dialog speisen) bleiben unangetastet.
+
+        Audit-safe: persistierte `samples`-/`audit_events`-Zeilen werden
+        NICHT gelöscht – ein hartes Löschen ist wegen des Append-only-
+        Audit-FK (`audit_events.sample_id ON DELETE SET NULL` feuert den
+        `audit_events_no_update`-Trigger) ohne Schema-Änderung unmöglich,
+        und der Append-only-Trail ist ISAE-3402-Pflicht. Eine identische
+        Re-Ziehung mit gleichem Seed rekonstruiert die Stichprobe
+        bit-genau.
+
+        Liefert True, wenn etwas zurückgesetzt wurde, sonst False (No-Op,
+        wenn nichts gezogen/ausgewählt war).
+        """
+        if (
+            self.sample is None
+            and self.active_sample_id is None
+            and self.filter_active_sample_id is None
+        ):
+            return False
+        self.sample = None
+        self.active_sample_id = None
+        self.filter_active_sample_id = None
+        self.window.clear_sample_filter()
+        self.window.set_filter_only_sample(False)
+        self.window.data_table().clear_highlight()
+        self.window.clear_active_sample()
+        return True
+
     # ---- Engagement-Reset ----------------------------------------------
 
     def reset_to_welcome(self) -> None:

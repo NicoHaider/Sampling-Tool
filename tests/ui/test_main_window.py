@@ -462,3 +462,45 @@ class TestMainWindowComposition:
         assert callable(_window_menu.rebuild_recent_menu)
         assert callable(_window_toolbar.build_toolbar)
         assert _window_state.WindowStateController is not None
+
+
+class TestResetSamplingToolbar:
+    """Sprint 20: Toolbar-Button „Sampling zurücksetzen"."""
+
+    def test_toolbar_contains_reset_sampling_action(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        assert hasattr(win, "_action_reset_sampling")
+        assert win._action_reset_sampling in win._toolbar.actions()
+
+    def test_reset_sampling_action_adjacent_to_new_sample(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        actions = win._toolbar.actions()
+        i_new = actions.index(win._action_new_sample)
+        i_reset = actions.index(win._action_reset_sampling)
+        assert i_reset == i_new + 1
+
+    def test_reset_sampling_action_emits_signal(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.set_reset_enabled(True)
+        with qtbot.waitSignal(win.reset_sampling_requested, timeout=1000):
+            win._action_reset_sampling.trigger()
+
+    def test_set_reset_enabled_toggles_toolbar_and_menu_actions(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.set_reset_enabled(True)
+        assert win._action_reset_sampling.isEnabled() is True
+        assert win._action_reset_sample.isEnabled() is True
+        win.set_reset_enabled(False)
+        assert win._action_reset_sampling.isEnabled() is False
+        assert win._action_reset_sample.isEnabled() is False
+
+    def test_reset_sampling_disabled_on_welcome(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.set_reset_enabled(True)
+        win.show_welcome()
+        assert win._action_reset_sampling.isEnabled() is False

@@ -108,6 +108,18 @@ def build_menu(window: MainWindow) -> None:
     window._action_reset_sample.triggered.connect(window.reset_sample_requested.emit)
     sample_menu.addAction(window._action_reset_sample)
 
+    # Sprint 20: Toolbar-Twin „Sampling zurücksetzen". Löst einen
+    # audit-safe In-Memory-Reset der gezogenen Stichprobe aus. Hier
+    # erzeugt (nicht ins Menü gehängt), damit die Action vor
+    # `_set_workspace_actions_enabled` unten existiert; build_toolbar
+    # platziert sie neben „Neue Stichprobe".
+    window._action_reset_sampling = QAction("Sampling zurücksetzen", window)
+    window._action_reset_sampling.setToolTip(
+        "Gezogene Stichprobe und Ergebnisse zurücksetzen "
+        "(importierte Daten und Parameter bleiben erhalten)"
+    )
+    window._action_reset_sampling.triggered.connect(window.reset_sampling_requested.emit)
+
     sample_menu.addSeparator()
     style = window.style()
     window._action_undo = QAction("Rückgängig", window)
