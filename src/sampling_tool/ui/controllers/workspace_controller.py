@@ -208,6 +208,13 @@ class WorkspaceController:
         dialog = self._factories.sampling(
             s.window, s.dataset, distinct_provider, s.sample, s.settings.advanced_mode
         )
+        # Sprint 21: zuletzt genutzten Seed vorbefüllen, damit eine erneute
+        # Ziehung (auch nach „Sampling zurücksetzen") denselben Seed verwendet
+        # und die Stichprobe bit-genau reproduziert. Ohne das würfelt der
+        # Dialog bei jedem Öffnen einen neuen Zufalls-Seed → andere Stichprobe
+        # trotz unveränderter Parameter (ISAE-3402-Verletzung).
+        if s.last_seed is not None:
+            dialog.set_initial_seed(s.last_seed)
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         result = dialog.get_result()
@@ -260,6 +267,9 @@ class WorkspaceController:
         s.window.set_samples(samples)
         s.sample = stored
         s.active_sample_id = stored.id
+        # Sprint 21: Seed merken, damit der nächste Dialog-Open ihn vorbefüllt
+        # (überlebt „Sampling zurücksetzen", siehe `set_initial_seed` oben).
+        s.last_seed = stored.config.seed
         # Auto-Filter: nach dem Sampling sieht der Auditor sofort nur die
         # gezogenen Zeilen, ohne erst die Checkbox suchen zu müssen.
         s.window.filter_to_sample(stored)

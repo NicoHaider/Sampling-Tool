@@ -100,6 +100,36 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
 | 18     | Quality-Polish (Q-001 pdfrw-Logging, Q-005 Timestamp-Drift, T-002) | done |
 | 19     | P-005 SQL-DISTINCT + F-007 repositories-Split + F-006 main_window-Split | done |
 | 20     | Toolbar „Sampling zurücksetzen" (audit-safe In-Memory-Reset) + engeres Toolbar-Spacing | done |
+| 21     | Hotfix: Reproduzierbarkeit nach Reset (Sampling-Dialog merkt den zuletzt genutzten Seed) | done |
+
+## Seed-Memory / Reproduzierbarkeit nach Reset (Sprint 21, Hotfix)
+
+**Symptom:** Stichprobe ziehen → „Sampling zurücksetzen" → erneut ziehen
+→ andere Stichprobe, obwohl der Anwender Seed + Größe nicht verändert
+hatte (ISAE-3402-Verletzung).
+
+**Root Cause (nicht der RNG):** Der Sampling-Core ist deterministisch –
+`make_rng(seed)` wird pro Ziehung frisch erzeugt, Pools werden nach
+`row_id` sortiert, die DB liefert Rows `ORDER BY row_index`. Der Fehler
+saß im UI: `SamplingDialog._build_ui` würfelt bei **jedem** Öffnen via
+`_generate_random_seed()` einen neuen Zufalls-Seed und nichts merkte
+sich den zuletzt genutzten. Nach jedem Reset (oder schon beim zweiten
+Öffnen) zeigte das Seed-Feld einen anderen Wert; der Anwender zog „mit
+denselben Einstellungen" und bekam trotzdem eine andere Stichprobe.
+
+**Warum der Sprint-20-Test (`TestResetReproducibility`) grün war,
+obwohl die GUI fehlschlug:** Er injizierte ein `_StubSamplingDialog`
+mit hartkodiertem `seed=123` und gab denselben Stub bei beiden
+Ziehungen zurück – die reale Seed-Quelle wurde nie ausgeführt.
+
+**Fix (minimal, additiv):** `WorkspaceSession.last_seed` merkt den
+zuletzt gezogenen Seed; `WorkspaceController.handle_new_sampling` reicht
+ihn via `SamplingDialog.set_initial_seed(...)` als Default in den nächsten
+Dialog (Würfel + manuelles Editieren bleiben möglich). `last_seed`
+überlebt `reset_sampling()` bewusst (Seed = Parameter, bleibt) und wird
+nur beim Engagement-Wechsel (`reset_to_welcome`) geleert. Getestet über
+den **echten** Controller-/Dialog-Pfad in
+`tests/ui/test_main_controller.py::TestReproducibilityViaController`.
 
 ## Sampling-Reset (Sprint 20)
 
