@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
@@ -661,6 +662,9 @@ class _StubSamplingDialog:
 
     def exec(self) -> int:
         return int(QDialog.DialogCode.Accepted if self._accept else QDialog.DialogCode.Rejected)
+
+    def set_initial_seed(self, seed: int) -> None:
+        """No-Op – der Stub liefert ein fixes Result unabhängig vom Seed."""
 
     def get_result(self) -> object:
         return self._result
@@ -2448,48 +2452,126 @@ class TestResetSampling:
             controller.handle_close_engagement()
 
 
-class TestResetReproducibility:
-    """Reset darf keinen versteckten RNG-/State-Drift hinterlassen."""
+@contextlib.contextmanager
+def _real_sampling_dialog_driver(seeds: list[int], size: int = 3) -> Iterator[None]:
+    """Treibt den ECHTEN `SamplingDialog` durch den Controller-Pfad.
 
-    def test_redraw_after_reset_is_deterministic(
+    - Jeder Dialog-Open zieht den nächsten Wert aus ``seeds`` als
+      auto-generierten Seed – simuliert ``_generate_random_seed()``, genau
+      die reale Seed-Quelle, die der alte Stub-Test umgangen hat.
+    - ``exec()`` setzt die Größe und akzeptiert sofort (kein Event-Loop nötig).
+    - Die Reset-Bestätigung wird auf „Ja" gemockt.
+    """
+    from PyQt6.QtWidgets import QMessageBox
+
+    from sampling_tool.ui.dialogs import sampling_dialog as sd
+
+    def _auto_accept(self: sd.SamplingDialog) -> QDialog.DialogCode:
+        self._size_spin.setValue(size)
+        self.accept()
+        return QDialog.DialogCode.Accepted
+
+    with (
+        patch.object(sd, "_generate_random_seed", side_effect=list(seeds)),
+        patch.object(sd.SamplingDialog, "exec", _auto_accept),
+        patch(
+            "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ),
+    ):
+        yield
+
+
+class TestReproducibilityViaController:
+    """Reproduzierbarkeit über den ECHTEN Controller-/Dialog-Pfad (Sprint 21).
+
+    Der Sprint-20-Test ``TestResetReproducibility`` war grün, obwohl die GUI
+    fehlschlug: er injizierte ein ``_StubSamplingDialog`` mit hartkodiertem
+    ``seed=123`` und gab denselben Stub bei beiden Ziehungen zurück – die
+    reale Seed-Quelle (``SamplingDialog._build_ui`` → ``_generate_random_seed()``)
+    wurde nie ausgeführt. Diese Tests benutzen den echten ``SamplingDialog``,
+    damit das Seed-Verhalten beim erneuten Öffnen tatsächlich abgedeckt ist.
+    """
+
+    def test_draw_reset_redraw_same_seed_identical(
         self,
         window: MainWindow,
         recent_store: RecentEngagementsStore,
         populated_db: Path,
     ) -> None:
-        from PyQt6.QtWidgets import QMessageBox
-
-        from sampling_tool.core.models import SampleConfig, SamplingMethod
-        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
-
-        result = SamplingDialogResult(
-            config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=123),
-            from_sample_only=False,
-        )
-        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
-        controller = MainController(
-            window,
-            recent_store=recent_store,
-            sampling_dialog_factory=factory,  # type: ignore[arg-type]
-        )
+        controller = MainController(window, recent_store=recent_store)
         try:
             _open_dataset(controller, window, populated_db)
+            with _real_sampling_dialog_driver(seeds=[111, 222, 333]):
+                controller.handle_new_sampling()
+                assert controller.session.sample is not None
+                first = controller.session.sample
+                r1 = tuple(first.selected_row_ids)
+                seed1 = first.config.seed
 
-            controller.handle_new_sampling()
-            assert controller.session.sample is not None
-            r1 = tuple(controller.session.sample.selected_row_ids)
-
-            with patch(
-                "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
-            ):
                 controller.handle_reset_sampling()
-            assert controller.session.sample is None
+                assert controller.session.sample is None
 
-            controller.handle_new_sampling()
-            assert controller.session.sample is not None
-            r2 = tuple(controller.session.sample.selected_row_ids)
+                controller.handle_new_sampling()
+                assert controller.session.sample is not None
+                second = controller.session.sample
+                r2 = tuple(second.selected_row_ids)
+                seed2 = second.config.seed
 
+            # Kern der ISAE-3402-Invariante: der erneut geöffnete Dialog muss
+            # den zuletzt genutzten Seed übernehmen, nicht neu würfeln.
+            assert seed2 == seed1
+            assert r1 == r2
+        finally:
+            controller.handle_close_engagement()
+
+    def test_multiple_resets_stay_identical(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            samples: list[tuple[int, ...]] = []
+            seeds_used: list[int] = []
+            with _real_sampling_dialog_driver(seeds=[111, 222, 333, 444]):
+                for _ in range(3):
+                    controller.handle_new_sampling()
+                    assert controller.session.sample is not None
+                    samples.append(tuple(controller.session.sample.selected_row_ids))
+                    seeds_used.append(controller.session.sample.config.seed)
+                    controller.handle_reset_sampling()
+                    assert controller.session.sample is None
+            assert seeds_used[0] == seeds_used[1] == seeds_used[2]
+            assert samples[0] == samples[1] == samples[2]
+        finally:
+            controller.handle_close_engagement()
+
+    def test_two_consecutive_draws_without_reset_identical(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        # Deckt H1 unabhängig vom Reset ab: gleicher (gemerkter) Seed +
+        # gleiche Größe zweimal hintereinander ⇒ identische Stichprobe.
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            with _real_sampling_dialog_driver(seeds=[111, 222, 333]):
+                controller.handle_new_sampling()
+                assert controller.session.sample is not None
+                r1 = tuple(controller.session.sample.selected_row_ids)
+                seed1 = controller.session.sample.config.seed
+
+                controller.handle_new_sampling()
+                assert controller.session.sample is not None
+                r2 = tuple(controller.session.sample.selected_row_ids)
+                seed2 = controller.session.sample.config.seed
+
+            assert seed2 == seed1
             assert r1 == r2
         finally:
             controller.handle_close_engagement()

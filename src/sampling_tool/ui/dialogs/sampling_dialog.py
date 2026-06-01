@@ -107,6 +107,18 @@ class SamplingDialog(QDialog):
         """Liefert das Ergebnis – `None`, wenn der Dialog abgebrochen wurde."""
         return self._result
 
+    def set_initial_seed(self, seed: int) -> None:
+        """Übernimmt einen vorgemerkten Seed in das Seed-Feld.
+
+        Beim Öffnen würfelt der Dialog standardmäßig einen frischen
+        Zufalls-Seed. Hat die Session bereits einen Seed gezogen, reicht
+        der Controller ihn hier durch, damit eine erneute Ziehung (auch
+        nach „Sampling zurücksetzen") denselben Seed verwendet und die
+        Stichprobe bit-genau reproduziert (ISAE-3402). Der User kann den
+        Wert weiterhin ändern oder per Würfel neu generieren.
+        """
+        self._seed_spin.setValue(seed)
+
     # ---- UI-Aufbau -----------------------------------------------------
 
     def _build_ui(self) -> None:

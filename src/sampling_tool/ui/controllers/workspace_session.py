@@ -79,6 +79,12 @@ class WorkspaceSession:
         self.datasets: list[Dataset] = []
         self.active_sample_id: int | None = None
         self.filter_active_sample_id: int | None = None
+        # Sprint 21: zuletzt gezogener Seed. Wird beim erneuten Öffnen des
+        # Sampling-Dialogs als Default übernommen, damit eine Re-Ziehung
+        # (auch nach „Sampling zurücksetzen") bit-genau reproduzierbar ist.
+        # Überlebt `reset_sampling()` bewusst (Seed = Parameter, bleibt),
+        # wird nur beim Engagement-Wechsel (`reset_to_welcome`) geleert.
+        self.last_seed: int | None = None
         self.undo_manager: UndoManager | None = None
         self.state_repo: EngagementStateRepo | None = None
         # `restoring_state` blockiert `persist_state` während des Restore-
@@ -337,6 +343,7 @@ class WorkspaceSession:
         self.active_sample_id = None
         self.datasets = []
         self.filter_active_sample_id = None
+        self.last_seed = None
         self.undo_manager = None
         self.state_repo = None
         self.restoring_state = False
