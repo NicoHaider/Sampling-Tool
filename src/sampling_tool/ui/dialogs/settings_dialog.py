@@ -329,6 +329,12 @@ class SettingsDialog(QDialog):
             undo_depth=self._undo_depth.value(),
             snapshot_retention_days=self._snapshot_retention.value(),
             log_level=self._log_level.currentText(),
+            # Sprint 22: Die Einzel-Toggles für Advanced-Funktionen leben im
+            # „Ansicht"-Menü, nicht in diesem Dialog. Werte unverändert
+            # durchreichen, damit OK sie nicht versehentlich zurücksetzt.
+            show_filter_feature=self._initial.show_filter_feature,
+            show_cluster_feature=self._initial.show_cluster_feature,
+            show_stratified_feature=self._initial.show_stratified_feature,
             # First-Run-Flag wird im Dialog NICHT verändert – einmal True,
             # bleibt True. Wir reichen den Initial-Wert einfach durch.
             first_run_completed=self._initial.first_run_completed,

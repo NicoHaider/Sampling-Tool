@@ -101,6 +101,65 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
 | 19     | P-005 SQL-DISTINCT + F-007 repositories-Split + F-006 main_window-Split | done |
 | 20     | Toolbar „Sampling zurücksetzen" (audit-safe In-Memory-Reset) + engeres Toolbar-Spacing | done |
 | 21     | Hotfix: Reproduzierbarkeit nach Reset (Sampling-Dialog merkt den zuletzt genutzten Seed) | done |
+| 22     | Einzel-Toggles für Advanced-Funktionen im „Ansicht"-Menü (ODER-Logik neben Advanced-Mode, app-weit persistiert) | done |
+
+## Einzel-Feature-Toggles + „Ansicht"-Menü (Sprint 22)
+
+Advanced Mode bleibt der Master-Schalter (zeigt im Sampling-Dialog **alle**
+erweiterten Funktionen). Zusätzlich lässt sich seit Sprint 22 jede Funktion
+**einzeln** über das neue Menü **„Ansicht"** schalten – ohne Advanced Mode
+zu aktivieren.
+
+**Welche Funktionen?** Genau die, die bisher hinter Advanced Mode lagen –
+alle im *modalen* `SamplingDialog` (es gibt kein dauerhaftes Panel im
+Hauptfenster): **Filter** (Spaltenfilter), **Cluster-Sampling**
+(Methode + Cluster-Feld), **Geschichtete Stichprobe** (Methode + Schicht-
+Feld + -Verteilung). Die „Methode"-Gruppe erscheint, sobald Cluster ODER
+Geschichtet sichtbar ist, und zeigt nur die freigeschalteten Radios.
+
+**Single Source of Truth (ODER-Logik).** Pro Funktion gilt
+`feature_visible(f) = advanced_mode OR einzel_toggle(f)`. Diese Verodung
+lebt an **genau einer** Stelle: `AppSettings.resolve_feature_visible(feature)`
+(`ui/settings_store.py`). Advanced-Mode und Einzel-Toggle wirken unabhängig
+– keiner überschreibt den anderen, Advanced-Umschalten ändert die
+Einzel-Toggle-Werte nicht. Die app-weiten Toggles sind drei neue
+`AppSettings`-Felder (`show_filter_feature` / `show_cluster_feature` /
+`show_stratified_feature`, Default `False`, via `QSettings` persistiert –
+**nicht** pro Engagement, **nicht** in der SQLite-DB).
+
+**Dialog kennt kein advanced_mode mehr.** Der Controller
+(`WorkspaceController.handle_new_sampling`) löst via
+`settings.resolve_sampling_features()` ein frozen `SamplingFeatures`-Objekt
+(drei aufgelöste Bools) auf und reicht es an die Sampling-Factory →
+`SamplingDialog(features=…)` durch. Der Dialog rendert ausschließlich
+anhand dieser Flags (`_show_filter`/`_show_cluster`/`_show_stratified` +
+abgeleitetes `_show_methods`). Damit gibt es keine zwei konkurrierenden
+Codepfade für dieselbe Komponente. Der frühere `advanced_mode: bool`-
+Parameter des Dialogs/der Factory ist durch `SamplingFeatures` ersetzt.
+Der Provider fürs Filter-Dropdown wird nur erzeugt, wenn der Filter
+sichtbar ist.
+
+**„Ansicht"-Menü** (`ui/_window_menu.py`): drei checkbare Feature-Actions
+(emittieren `feature_toggled(key, checked)`) + zwei checkbare Panel-Actions
+für Dashboard/Audit-Trail (emittieren `panel_toggled(key, checked)`, mappen
+auf die bestehenden `show_dashboard`/`show_audit_trail`-Flags). Handler in
+`HelpController.handle_feature_toggled` / `handle_panel_toggled`
+persistieren app-weit; Panels werden zusätzlich live via
+`apply_panel_visibility` umgeschaltet. Die Häkchen spiegeln die **rohen**
+Einzel-Toggles (nicht die verodertete Sichtbarkeit), damit ein
+Advanced-Umschalten sie nicht verändert. `WorkspaceSession.sync_view_menu()`
+→ `MainWindow.apply_view_menu_state(...)` (mit `blockSignals`, kein
+Schreib-Loop) spiegelt die Settings beim Start und nach jedem
+Settings-Dialog-OK ins Menü (Konsistenz mit den Dashboard/Audit-Checkboxen
+im Settings-Dialog).
+
+**Reproduzierbarkeit.** Das bloße Sichtbar-Schalten ändert die Stichprobe
+nicht – nur ein *tatsächlich gesetzter* Filter schränkt die Population ein.
+Der vereinheitlichte `_build_config` erzeugt für die pure Simple-Ziehung
+bit-identische `SampleConfig`s wie der alte Simple-Pfad (nicht
+freigeschaltete Funktionen tragen ihre Config-Defaults bei). Getestet via
+`tests/ui/test_feature_toggles.py::TestToggleSamplingNeutrality` über den
+echten Controller-/Dialog-Pfad.
 
 ## Seed-Memory / Reproduzierbarkeit nach Reset (Sprint 21, Hotfix)
 
@@ -669,11 +728,17 @@ für Anwender-Präferenzen:
   Default-Checkboxen im AuditTrail-PDF-Dialog.
 - `custom_briefpapier_path` – User-Override für das Briefpapier
   (höchste Priorität in `_resolve_briefpapier`).
-- `advanced_mode` – Schaltet im Sampling-Dialog zusätzliche Methoden
-  (Cluster, Stratifiziert) und Detail-Optionen (Cluster-/Schicht-Feld,
-  Spalten-Filter, manueller Seed mit Würfel-Button) frei. Default
-  `False` – auch für Bestandsuser ohne `advanced_mode`-Key. Wird vom
-  `MainController` direkt an die `SamplingDialog`-Factory durchgereicht.
+- `advanced_mode` – Master-Schalter: zeigt im Sampling-Dialog **alle**
+  erweiterten Funktionen (Cluster, Geschichtet, Spalten-Filter). Default
+  `False` – auch für Bestandsuser ohne `advanced_mode`-Key. Seit Sprint 22
+  nicht mehr direkt an die Factory gereicht, sondern über
+  `resolve_feature_visible` (ODER mit den Einzel-Toggles) in ein
+  `SamplingFeatures`-Objekt aufgelöst.
+- `show_filter_feature` / `show_cluster_feature` / `show_stratified_feature`
+  (Sprint 22) – app-weite Einzel-Toggles für die drei Advanced-Funktionen,
+  Default `False`. Schaltbar im „Ansicht"-Menü, wirken unabhängig neben
+  `advanced_mode` (ODER-Logik). Siehe Block „Einzel-Feature-Toggles +
+  „Ansicht"-Menü (Sprint 22)" oben.
 - `show_dashboard` / `show_audit_trail` – Default `True`. Steuern die
   Tab-Sichtbarkeit im unteren `QTabWidget`. Sind beide `False`, wird
   das gesamte untere Panel ausgeblendet und die Datentabelle nutzt die

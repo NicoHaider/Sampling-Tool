@@ -153,6 +153,8 @@ class MainController:
             show_dashboard=self.session.settings.show_dashboard,
             show_audit_trail=self.session.settings.show_audit_trail,
         )
+        # Sprint 22: „Ansicht"-Menü-Checks aus den app-weiten Toggles spiegeln.
+        self.session.sync_view_menu()
 
     # ---- Externe Convenience-Properties (für Tests) --------------------
     #
@@ -348,6 +350,9 @@ class MainController:
         w.about_requested.connect(self.help.handle_about)
         w.settings_requested.connect(self.help.handle_settings)
         w.hotkeys_requested.connect(self.help.handle_hotkeys)
+        # Ansicht-Menü (Sprint 22): Einzel-Toggles + Panel-Toggles
+        w.feature_toggled.connect(self.help.handle_feature_toggled)
+        w.panel_toggled.connect(self.help.handle_panel_toggled)
         # Refresh-Triggers
         w.audit_refresh_requested.connect(self.session.refresh_audit_trail)
         w.dashboard_refresh_requested.connect(self.session.refresh_dashboard)

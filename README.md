@@ -30,6 +30,7 @@ aktuellen Sprint ab.
 | 19     | P-005 SQL-DISTINCT + F-007 repositories-Split + F-006 main_window-Split | **done** |
 | 20     | Toolbar „Sampling zurücksetzen" (audit-safe In-Memory-Reset) + engeres Toolbar-Spacing | **done** |
 | 21     | Hotfix: Reproduzierbarkeit nach Reset (Sampling-Dialog merkt den zuletzt genutzten Seed) | **done** |
+| 22     | Einzel-Toggles für Advanced-Funktionen im „Ansicht"-Menü (ODER-Logik neben Advanced-Mode, app-weit persistiert) | **done** |
 
 ### Was Sprint 8 liefert
 

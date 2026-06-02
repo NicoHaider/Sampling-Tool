@@ -27,7 +27,7 @@ from sampling_tool.ui.dialogs.import_options_dialog import ImportOptionsDialog
 from sampling_tool.ui.dialogs.new_engagement_dialog import NewEngagementDialog
 from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialog
 from sampling_tool.ui.dialogs.settings_dialog import SettingsDialog
-from sampling_tool.ui.settings_store import AppSettings
+from sampling_tool.ui.settings_store import AppSettings, SamplingFeatures
 
 if TYPE_CHECKING:
     from sampling_tool.ui.main_window import MainWindow
@@ -41,7 +41,13 @@ if TYPE_CHECKING:
 DialogFactory = Callable[["MainWindow", AppSettings, Engagement | None], NewEngagementDialog]
 DuplicateDialogFactory = Callable[["MainWindow", Path], DuplicateEngagementDialog]
 SamplingDialogFactory = Callable[
-    ["MainWindow", Dataset, Callable[[str], Sequence[Any]] | None, SampleResult | None, bool],
+    [
+        "MainWindow",
+        Dataset,
+        Callable[[str], Sequence[Any]] | None,
+        SampleResult | None,
+        SamplingFeatures,
+    ],
     SamplingDialog,
 ]
 ExportDialogFactory = Callable[["MainWindow", Dataset, str, str, Path | None], ExportSampleDialog]
@@ -109,14 +115,14 @@ def default_sampling_factory(
     dataset: Dataset,
     distinct_values_provider: Callable[[str], Sequence[Any]] | None,
     current_sample: SampleResult | None,
-    advanced_mode: bool,
+    features: SamplingFeatures,
 ) -> SamplingDialog:
     return SamplingDialog(
         dataset,
         distinct_values_provider,
         current_sample=current_sample,
         parent=parent,
-        advanced_mode=advanced_mode,
+        features=features,
     )
 
 

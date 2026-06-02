@@ -26,6 +26,49 @@ DEFAULT_UNDO_DEPTH: Final[int] = 20
 DEFAULT_SNAPSHOT_RETENTION_DAYS: Final[int] = 0  # 0 = unbegrenzt
 DEFAULT_LOG_LEVEL: Final[str] = "INFO"
 
+# Sprint 22 – Kennungen der einzeln schaltbaren Advanced-Sampling-Funktionen.
+# Werden im „Ansicht"-Menü als checkbare Einträge geführt und über
+# `AppSettings.resolve_feature_visible` aufgelöst.
+FEATURE_FILTER: Final[str] = "filter"
+FEATURE_CLUSTER: Final[str] = "cluster"
+FEATURE_STRATIFIED: Final[str] = "stratified"
+SAMPLING_FEATURE_KEYS: Final[tuple[str, ...]] = (
+    FEATURE_FILTER,
+    FEATURE_CLUSTER,
+    FEATURE_STRATIFIED,
+)
+
+# Kennungen der persistenten Panel-Toggles (Dashboard / Audit-Trail) – ebenfalls
+# im „Ansicht"-Menü geführt, mappen aber auf die bestehenden show_*-Flags.
+PANEL_DASHBOARD: Final[str] = "dashboard"
+PANEL_AUDIT_TRAIL: Final[str] = "audit_trail"
+
+
+@dataclass(frozen=True, slots=True)
+class SamplingFeatures:
+    """Aufgelöste Sichtbarkeit der Advanced-Sampling-Funktionen (Sprint 22).
+
+    Pro Funktion ein Bool, bereits durch `AppSettings.resolve_feature_visible`
+    (ODER aus Advanced-Mode + app-weitem Einzel-Toggle) aufgelöst. Der
+    `SamplingDialog` rendert ausschließlich anhand dieser Flags – er kennt
+    weder `advanced_mode` noch die Einzel-Toggles. Damit lebt die ODER-Logik
+    an genau einer Stelle (`resolve_feature_visible`).
+    """
+
+    show_filter: bool = False
+    show_cluster: bool = False
+    show_stratified: bool = False
+
+    @property
+    def show_methods(self) -> bool:
+        """Methodenwahl-Block sichtbar, sobald Cluster ODER Geschichtet aktiv ist."""
+        return self.show_cluster or self.show_stratified
+
+    @property
+    def any_advanced(self) -> bool:
+        """True, wenn irgendeine Advanced-Funktion sichtbar ist."""
+        return self.show_filter or self.show_cluster or self.show_stratified
+
 
 @dataclass(frozen=True, slots=True)
 class AppSettings:
@@ -51,6 +94,13 @@ class AppSettings:
     snapshot_retention_days: int
     log_level: str
 
+    # Einzel-Toggles für Advanced-Sampling-Funktionen (Sprint 22) – app-weit,
+    # Default aus. Wirken unabhängig neben `advanced_mode` (ODER-Logik in
+    # `resolve_feature_visible`). Steuern die „Ansicht"-Menü-Checkboxen.
+    show_filter_feature: bool
+    show_cluster_feature: bool
+    show_stratified_feature: bool
+
     # Onboarding
     first_run_completed: bool
 
@@ -70,7 +120,49 @@ class AppSettings:
             undo_depth=DEFAULT_UNDO_DEPTH,
             snapshot_retention_days=DEFAULT_SNAPSHOT_RETENTION_DAYS,
             log_level=DEFAULT_LOG_LEVEL,
+            show_filter_feature=False,
+            show_cluster_feature=False,
+            show_stratified_feature=False,
             first_run_completed=False,
+        )
+
+    # ---- Feature-Sichtbarkeit (Sprint 22) ------------------------------
+
+    def feature_toggle(self, feature: str) -> bool:
+        """Reiner Einzel-Toggle-Wert einer Funktion (ohne Advanced-Mode)."""
+        if feature == FEATURE_FILTER:
+            return self.show_filter_feature
+        if feature == FEATURE_CLUSTER:
+            return self.show_cluster_feature
+        if feature == FEATURE_STRATIFIED:
+            return self.show_stratified_feature
+        raise ValueError(f"Unbekannte Feature-Kennung: {feature!r}")
+
+    def resolve_feature_visible(self, feature: str) -> bool:
+        """Effektive Sichtbarkeit einer Advanced-Funktion.
+
+        ODER-Logik: Advanced Mode (Master) ODER der app-weite Einzel-Toggle.
+        Beide Quellen wirken unabhängig – keiner überschreibt den anderen.
+        Dies ist die EINZIGE Stelle, an der verodert wird.
+        """
+        return self.advanced_mode or self.feature_toggle(feature)
+
+    def with_feature_toggle(self, feature: str, enabled: bool) -> AppSettings:
+        """Immutable-Update: neues `AppSettings` mit gesetztem Einzel-Toggle."""
+        if feature == FEATURE_FILTER:
+            return replace(self, show_filter_feature=enabled)
+        if feature == FEATURE_CLUSTER:
+            return replace(self, show_cluster_feature=enabled)
+        if feature == FEATURE_STRATIFIED:
+            return replace(self, show_stratified_feature=enabled)
+        raise ValueError(f"Unbekannte Feature-Kennung: {feature!r}")
+
+    def resolve_sampling_features(self) -> SamplingFeatures:
+        """Bündelt die aufgelöste Sichtbarkeit aller drei Funktionen."""
+        return SamplingFeatures(
+            show_filter=self.resolve_feature_visible(FEATURE_FILTER),
+            show_cluster=self.resolve_feature_visible(FEATURE_CLUSTER),
+            show_stratified=self.resolve_feature_visible(FEATURE_STRATIFIED),
         )
 
 
@@ -126,6 +218,15 @@ def load_settings() -> AppSettings:
         show_dashboard=_bool(s.value("settings/show_dashboard", base.show_dashboard)),
         show_audit_trail=_bool(s.value("settings/show_audit_trail", base.show_audit_trail)),
         advanced_mode=_bool(s.value("settings/advanced_mode", base.advanced_mode)),
+        show_filter_feature=_bool(
+            s.value("settings/show_filter_feature", base.show_filter_feature)
+        ),
+        show_cluster_feature=_bool(
+            s.value("settings/show_cluster_feature", base.show_cluster_feature)
+        ),
+        show_stratified_feature=_bool(
+            s.value("settings/show_stratified_feature", base.show_stratified_feature)
+        ),
         undo_depth=_int(s.value("settings/undo_depth", base.undo_depth), base.undo_depth),
         snapshot_retention_days=_int(
             s.value("settings/snapshot_retention_days", base.snapshot_retention_days),
@@ -159,6 +260,9 @@ def save_settings(settings: AppSettings) -> None:
     s.setValue("settings/show_dashboard", settings.show_dashboard)
     s.setValue("settings/show_audit_trail", settings.show_audit_trail)
     s.setValue("settings/advanced_mode", settings.advanced_mode)
+    s.setValue("settings/show_filter_feature", settings.show_filter_feature)
+    s.setValue("settings/show_cluster_feature", settings.show_cluster_feature)
+    s.setValue("settings/show_stratified_feature", settings.show_stratified_feature)
     s.setValue("settings/first_run_completed", settings.first_run_completed)
     s.setValue("settings/undo_depth", settings.undo_depth)
     s.setValue("settings/snapshot_retention_days", settings.snapshot_retention_days)

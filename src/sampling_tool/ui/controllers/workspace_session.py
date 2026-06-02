@@ -234,6 +234,20 @@ class WorkspaceSession:
             show_audit_trail=settings.show_audit_trail,
         )
 
+    def sync_view_menu(self) -> None:
+        """Spiegelt die app-weiten View-Toggles ins „Ansicht"-Menü (Sprint 22).
+
+        Beim Start und nach jeder Settings-Änderung aufgerufen, damit Menü,
+        Settings-Dialog und persistierter State konsistent bleiben. Die
+        Feature-Häkchen zeigen die rohen Einzel-Toggles."""
+        self.window.apply_view_menu_state(
+            show_filter=self.settings.show_filter_feature,
+            show_cluster=self.settings.show_cluster_feature,
+            show_stratified=self.settings.show_stratified_feature,
+            show_dashboard=self.settings.show_dashboard,
+            show_audit_trail=self.settings.show_audit_trail,
+        )
+
     # ---- Dataset-Auswahl (geteilt zwischen Selection- und WorkspaceController) ---
 
     def select_dataset(self, dataset_id: int) -> bool:

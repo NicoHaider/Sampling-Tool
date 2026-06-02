@@ -194,19 +194,22 @@ class WorkspaceController:
         assert s.engagement is not None
         assert s.engagement.id is not None
 
-        # Sprint 19 / P-005: Advanced-Mode bekommt einen distinct-Werte-
+        # Sprint 19 / P-005: das Filter-Feld bekommt einen distinct-Werte-
         # Provider statt einem voll materialisierten Row-Tuple. Der Dialog
         # ruft den Callback lazy beim Filter-Spalten-Wechsel – RAM ~ Anzahl
         # distinkter Werte statt Zeilenzahl, kein get_all_rows mehr.
+        # Sprint 22: die Sichtbarkeit jeder Funktion wird zentral via
+        # `resolve_sampling_features()` aufgelöst (ODER aus Advanced-Mode +
+        # Einzel-Toggle). Der Provider ist nur nötig, wenn der Filter sichtbar
+        # ist.
         repo = DatasetRepo(s.db.connect())
         dataset_id = s.dataset.id
+        features = s.settings.resolve_sampling_features()
         distinct_provider: Callable[[str], Sequence[Any]] | None = (
-            (lambda col: repo.distinct_values(dataset_id, col))
-            if s.settings.advanced_mode
-            else None
+            (lambda col: repo.distinct_values(dataset_id, col)) if features.show_filter else None
         )
         dialog = self._factories.sampling(
-            s.window, s.dataset, distinct_provider, s.sample, s.settings.advanced_mode
+            s.window, s.dataset, distinct_provider, s.sample, features
         )
         # Sprint 21: zuletzt genutzten Seed vorbefüllen, damit eine erneute
         # Ziehung (auch nach „Sampling zurücksetzen") denselben Seed verwendet
