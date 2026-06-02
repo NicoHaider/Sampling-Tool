@@ -6,13 +6,15 @@ Nimmt die nicht-mutierenden Hilfs- und Settings-Aktionen.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PyQt6.QtWidgets import QMessageBox
 
 from sampling_tool.ui.controllers._factories import ControllerFactories
 from sampling_tool.ui.controllers.workspace_session import WorkspaceSession
 from sampling_tool.ui.dialogs.about_dialog import AboutDialog
 from sampling_tool.ui.dialogs.bug_report_dialog import BugReportDialog
-from sampling_tool.ui.settings_store import save_settings
+from sampling_tool.ui.settings_store import PANEL_AUDIT_TRAIL, PANEL_DASHBOARD, save_settings
 
 
 class HelpController:
@@ -40,6 +42,36 @@ class HelpController:
             return
         save_settings(new_settings)
         # `apply_new_settings` legt Engagement-Dir an + setzt Panel-Visibility.
+        self.session.apply_new_settings(new_settings)
+        # Sprint 22: Settings-Dialog kann show_dashboard/show_audit_trail
+        # geändert haben → „Ansicht"-Menü-Checks nachziehen.
+        self.session.sync_view_menu()
+
+    def handle_feature_toggled(self, feature: str, enabled: bool) -> None:
+        """Einzel-Toggle einer Advanced-Funktion aus dem „Ansicht"-Menü (Sprint 22).
+
+        Persistiert den app-weiten Toggle. Kein Live-UI-Refresh nötig: die
+        Funktionen leben im modalen Stichproben-Dialog, der bei jedem Öffnen
+        frisch aus den (aufgelösten) Settings aufgebaut wird. Das Häkchen hält
+        die `QAction` selbst.
+        """
+        new_settings = self.session.settings.with_feature_toggle(feature, enabled)
+        save_settings(new_settings)
+        self.session.settings = new_settings
+
+    def handle_panel_toggled(self, panel: str, enabled: bool) -> None:
+        """Panel-Toggle (Dashboard/Audit-Trail) aus dem „Ansicht"-Menü (Sprint 22).
+
+        Mappt auf die bestehenden `show_dashboard`/`show_audit_trail`-Flags,
+        persistiert und wendet die Panel-Sichtbarkeit sofort live an.
+        """
+        if panel == PANEL_DASHBOARD:
+            new_settings = replace(self.session.settings, show_dashboard=enabled)
+        elif panel == PANEL_AUDIT_TRAIL:
+            new_settings = replace(self.session.settings, show_audit_trail=enabled)
+        else:
+            return
+        save_settings(new_settings)
         self.session.apply_new_settings(new_settings)
 
     def handle_hotkeys(self) -> None:

@@ -49,6 +49,7 @@ from sampling_tool.core.models import (
     SamplingMethod,
     StratifyMode,
 )
+from sampling_tool.ui.settings_store import SamplingFeatures
 
 NO_FILTER_LABEL: str = "(kein Filter)"
 
@@ -76,7 +77,7 @@ class SamplingDialog(QDialog):
         current_sample: SampleResult | None = None,
         parent: QWidget | None = None,
         *,
-        advanced_mode: bool = False,
+        features: SamplingFeatures | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Neue Stichprobe")
@@ -85,19 +86,27 @@ class SamplingDialog(QDialog):
 
         self._dataset = dataset
         # Sprint 19 / P-005: kein Row-Materialize mehr – der Controller
-        # injiziert einen distinct-Werte-Provider (SQL-basiert). None im
-        # Simple-Mode (dort gibt es kein Filter-Feld).
+        # injiziert einen distinct-Werte-Provider (SQL-basiert). None, wenn das
+        # Filter-Feld nicht freigeschaltet ist.
         self._distinct_values_provider = distinct_values_provider
         self._current_sample = current_sample
         self._result: SamplingDialogResult | None = None
         self._columns = list(dataset.columns)
         self._max_population = max(dataset.row_count, 1)
-        self._advanced_mode = advanced_mode
+        # Sprint 22: pro Funktion aufgelöste Sichtbarkeit (ODER aus Advanced-
+        # Mode + Einzel-Toggle, vom Controller berechnet). Der Dialog kennt
+        # weder advanced_mode noch die Einzel-Toggles.
+        self._features = features if features is not None else SamplingFeatures()
+        self._show_filter = self._features.show_filter
+        self._show_cluster = self._features.show_cluster
+        self._show_stratified = self._features.show_stratified
+        self._show_methods = self._features.show_methods
 
         self._build_ui()
         self._wire_signals()
-        if self._advanced_mode:
+        if self._show_filter:
             self._refresh_filter_values()
+        if self._show_methods:
             self._on_method_changed()
         self._validate()
 
@@ -134,18 +143,26 @@ class SamplingDialog(QDialog):
         intro.setStyleSheet("color: #7F7F7F;")
         outer.addWidget(intro)
 
-        # ---- Methode (nur Advanced) ----
-        if self._advanced_mode:
+        # ---- Methode (nur wenn Cluster ODER Geschichtet freigeschaltet) ----
+        # Sprint 22: Die Gruppe zeigt „Einfach" plus genau die freigeschalteten
+        # erweiterten Methoden. Ist keine erweiterte Methode aktiv, fehlt der
+        # Block ganz und die Methode ist fix SIMPLE.
+        if self._show_methods:
             method_box = QGroupBox("Methode")
             method_layout = QHBoxLayout(method_box)
-            self._radio_simple = QRadioButton("Einfach")
-            self._radio_cluster = QRadioButton("Cluster")
-            self._radio_stratified = QRadioButton("Geschichtet")
-            self._radio_simple.setChecked(True)
             self._method_group = QButtonGroup(self)
-            for rb in (self._radio_simple, self._radio_cluster, self._radio_stratified):
-                self._method_group.addButton(rb)
-                method_layout.addWidget(rb)
+            self._radio_simple = QRadioButton("Einfach")
+            self._radio_simple.setChecked(True)
+            self._method_group.addButton(self._radio_simple)
+            method_layout.addWidget(self._radio_simple)
+            if self._show_cluster:
+                self._radio_cluster = QRadioButton("Cluster")
+                self._method_group.addButton(self._radio_cluster)
+                method_layout.addWidget(self._radio_cluster)
+            if self._show_stratified:
+                self._radio_stratified = QRadioButton("Geschichtet")
+                self._method_group.addButton(self._radio_stratified)
+                method_layout.addWidget(self._radio_stratified)
             method_layout.addStretch(1)
             outer.addWidget(method_box)
 
@@ -168,7 +185,9 @@ class SamplingDialog(QDialog):
         size_layout.addWidget(self._lbl_size_hint)
         form.addRow("Stichprobengröße *", size_box)
 
-        if self._advanced_mode:
+        # Sprint 22: Filter, Cluster und Geschichtet werden je eigenem Toggle
+        # einzeln gerendert – nicht mehr gebündelt unter einem Advanced-Flag.
+        if self._show_filter:
             self._filter_field = QComboBox()
             self._filter_field.addItem(NO_FILTER_LABEL)
             self._filter_field.addItems(self._columns)
@@ -182,11 +201,13 @@ class SamplingDialog(QDialog):
             filter_widget.setLayout(filter_row)
             form.addRow("Filter (optional)", filter_widget)
 
+        if self._show_cluster:
             self._cluster_field = QComboBox()
             self._cluster_field.addItems(self._columns)
             self._cluster_field.setEnabled(False)
             form.addRow("Cluster-Feld", self._cluster_field)
 
+        if self._show_stratified:
             self._stratum_field = QComboBox()
             self._stratum_field.addItems(self._columns)
             self._stratum_field.setEnabled(False)
@@ -257,7 +278,7 @@ class SamplingDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         footer = QHBoxLayout()
-        if not self._advanced_mode:
+        if not self._features.any_advanced:
             self._mode_hint = self._build_mode_hint()
             footer.addWidget(self._mode_hint)
         footer.addStretch(1)
@@ -281,9 +302,9 @@ class SamplingDialog(QDialog):
 
         tooltip = (
             "Im Einfach-Modus sind erweiterte Sampling-Methoden (Cluster, "
-            "Stratifiziert) und Detail-Optionen (Resample, manueller Seed) "
-            "ausgeblendet.\n\nZum Aktivieren: Einstellungen → Erweitert → "
-            '„Erweiterten Modus aktivieren".'
+            "Geschichtet) und der Spaltenfilter ausgeblendet.\n\nZum "
+            'Aktivieren: Menü „Ansicht" (einzelne Funktionen) oder '
+            'Einstellungen → Erweitert → „Erweiterten Modus aktivieren".'
         )
         icon_lbl.setToolTip(tooltip)
         text_lbl.setToolTip(tooltip)
@@ -296,27 +317,41 @@ class SamplingDialog(QDialog):
         self._size_spin.valueChanged.connect(self._validate)
         self._resample_checkbox.toggled.connect(self._on_resample_toggled)
         self._seed_dice.clicked.connect(self._reroll_seed)
-        if self._advanced_mode:
-            for rb in (self._radio_simple, self._radio_cluster, self._radio_stratified):
+        if self._show_methods:
+            for rb in self._method_radios():
                 rb.toggled.connect(self._on_method_changed)
+        if self._show_filter:
             self._filter_field.currentTextChanged.connect(self._refresh_filter_values)
             self._filter_value.currentTextChanged.connect(self._validate)
+        if self._show_cluster:
             self._cluster_field.currentTextChanged.connect(self._validate)
+        if self._show_stratified:
             self._stratum_field.currentTextChanged.connect(self._validate)
         self._buttons.accepted.connect(self.accept)
         self._buttons.rejected.connect(self.reject)
 
+    def _method_radios(self) -> list[QRadioButton]:
+        """Die tatsächlich gebauten Methoden-Radios (abhängig von den Toggles)."""
+        radios = [self._radio_simple]
+        if self._show_cluster:
+            radios.append(self._radio_cluster)
+        if self._show_stratified:
+            radios.append(self._radio_stratified)
+        return radios
+
     # ---- Slots ---------------------------------------------------------
 
     def _on_method_changed(self) -> None:
-        if not self._advanced_mode:
+        if not self._show_methods:
             return
-        is_cluster = self._radio_cluster.isChecked()
-        is_stratified = self._radio_stratified.isChecked()
-        self._cluster_field.setEnabled(is_cluster)
-        self._stratum_field.setEnabled(is_stratified)
-        self._radio_proportional.setEnabled(is_stratified)
-        self._radio_equal.setEnabled(is_stratified)
+        is_cluster = self._show_cluster and self._radio_cluster.isChecked()
+        is_stratified = self._show_stratified and self._radio_stratified.isChecked()
+        if self._show_cluster:
+            self._cluster_field.setEnabled(is_cluster)
+        if self._show_stratified:
+            self._stratum_field.setEnabled(is_stratified)
+            self._radio_proportional.setEnabled(is_stratified)
+            self._radio_equal.setEnabled(is_stratified)
         self._validate()
 
     def _refresh_filter_values(self) -> None:
@@ -389,41 +424,31 @@ class SamplingDialog(QDialog):
     # ---- Validierung ---------------------------------------------------
 
     def _selected_method(self) -> SamplingMethod:
-        if not self._advanced_mode:
-            return SamplingMethod.SIMPLE
-        if self._radio_cluster.isChecked():
+        # Nur freigeschaltete Methoden können überhaupt ausgewählt sein – die
+        # zugehörigen Radios existieren sonst nicht.
+        if self._show_cluster and self._radio_cluster.isChecked():
             return SamplingMethod.CLUSTER
-        if self._radio_stratified.isChecked():
+        if self._show_stratified and self._radio_stratified.isChecked():
             return SamplingMethod.STRATIFIED
         return SamplingMethod.SIMPLE
 
     def _build_config(self) -> SampleConfig:
+        # Einheitlicher Pfad für alle Sichtbarkeits-Kombinationen. Nicht
+        # freigeschaltete Funktionen tragen ihre SampleConfig-Defaults bei
+        # (filter_field/value=None, cluster/stratum_field=None,
+        # stratify_mode=PROPORTIONAL) – damit ist die pure Simple-Stichprobe
+        # bit-identisch zum bisherigen Simple-Mode-Pfad (ISAE-3402).
         method = self._selected_method()
-        if not self._advanced_mode:
-            # Simple-Mode: Methode fix SIMPLE; Seed kommt aus dem
-            # (vorbefüllten oder vom User editierten) SpinBox – ISAE-3402
-            # bleibt reproduzierbar, weil der Seed im SampleConfig persistiert.
-            return SampleConfig(
-                method=SamplingMethod.SIMPLE,
-                size=self._size_spin.value(),
-                seed=self._seed_spin.value(),
-            )
-
-        filter_field = (
-            None
-            if self._filter_field.currentText() == NO_FILTER_LABEL
-            else self._filter_field.currentText()
-        )
+        filter_field: str | None = None
         filter_value: Any = None
-        if filter_field is not None:
+        if self._show_filter and self._filter_field.currentText() != NO_FILTER_LABEL:
+            filter_field = self._filter_field.currentText()
             filter_value = self._filter_value.currentData(int(Qt.ItemDataRole.UserRole))
             if filter_value is None:
                 filter_value = self._filter_value.currentText()
-        stratify_mode = (
-            StratifyMode.PROPORTIONAL
-            if self._radio_proportional.isChecked()
-            else StratifyMode.EQUAL
-        )
+        stratify_mode = StratifyMode.PROPORTIONAL
+        if self._show_stratified and self._radio_equal.isChecked():
+            stratify_mode = StratifyMode.EQUAL
         return SampleConfig(
             method=method,
             size=self._size_spin.value(),
@@ -442,14 +467,16 @@ class SamplingDialog(QDialog):
     def _validation_error(self) -> str | None:
         if not self._columns:
             return "Das Dataset hat keine Spalten – Sampling nicht möglich."
-        if not self._advanced_mode:
-            return None
         method = self._selected_method()
         if method == SamplingMethod.CLUSTER and not self._cluster_field.currentText():
             return "Cluster-Sampling benötigt ein Cluster-Feld."
         if method == SamplingMethod.STRATIFIED and not self._stratum_field.currentText():
             return "Geschichtete Stichprobe benötigt ein Schicht-Feld."
-        if self._filter_field.currentText() != NO_FILTER_LABEL and self._filter_value.count() == 0:
+        if (
+            self._show_filter
+            and self._filter_field.currentText() != NO_FILTER_LABEL
+            and self._filter_value.count() == 0
+        ):
             return "Das Filterfeld enthält keine Werte – Filter entfernen."
         return None
 

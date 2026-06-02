@@ -1814,12 +1814,13 @@ class TestEngagementStateRestore:
 
 
 # ---------------------------------------------------------------------------
-# Sprint 9.3: Advanced-Mode wird an SamplingDialog-Factory durchgereicht
+# Sprint 9.3 / Sprint 22: aufgelöste Feature-Sichtbarkeit wird an die
+# SamplingDialog-Factory durchgereicht (vorher ein einzelnes advanced_mode-Bool).
 # ---------------------------------------------------------------------------
 
 
-class TestAdvancedModePropagation:
-    def test_controller_uebergibt_advanced_mode_false_an_factory(
+class TestFeatureVisibilityPropagation:
+    def test_controller_uebergibt_alle_features_aus_bei_simple(
         self,
         window: MainWindow,
         recent_store: RecentEngagementsStore,
@@ -1827,18 +1828,18 @@ class TestAdvancedModePropagation:
     ) -> None:
         from dataclasses import replace as dc_replace
 
-        from sampling_tool.ui.settings_store import AppSettings
+        from sampling_tool.ui.settings_store import AppSettings, SamplingFeatures
 
-        received: dict[str, bool] = {}
+        received: dict[str, SamplingFeatures] = {}
 
         def fake_factory(
             _parent: MainWindow,
             _dataset: object,
             _provider: object,
             _current: object,
-            advanced_mode: bool,
+            features: SamplingFeatures,
         ) -> _StubSamplingDialog:
-            received["advanced_mode"] = advanced_mode
+            received["features"] = features
             return _StubSamplingDialog(None, accept=False)
 
         controller = MainController(
@@ -1850,11 +1851,14 @@ class TestAdvancedModePropagation:
         try:
             _open_dataset(controller, window, populated_db)
             controller.handle_new_sampling()
-            assert received["advanced_mode"] is False
+            features = received["features"]
+            assert features.show_filter is False
+            assert features.show_cluster is False
+            assert features.show_stratified is False
         finally:
             controller.handle_close_engagement()
 
-    def test_controller_uebergibt_advanced_mode_true_an_factory(
+    def test_advanced_mode_macht_alle_features_sichtbar(
         self,
         window: MainWindow,
         recent_store: RecentEngagementsStore,
@@ -1862,18 +1866,18 @@ class TestAdvancedModePropagation:
     ) -> None:
         from dataclasses import replace as dc_replace
 
-        from sampling_tool.ui.settings_store import AppSettings
+        from sampling_tool.ui.settings_store import AppSettings, SamplingFeatures
 
-        received: dict[str, bool] = {}
+        received: dict[str, SamplingFeatures] = {}
 
         def fake_factory(
             _parent: MainWindow,
             _dataset: object,
             _provider: object,
             _current: object,
-            advanced_mode: bool,
+            features: SamplingFeatures,
         ) -> _StubSamplingDialog:
-            received["advanced_mode"] = advanced_mode
+            received["features"] = features
             return _StubSamplingDialog(None, accept=False)
 
         controller = MainController(
@@ -1885,7 +1889,51 @@ class TestAdvancedModePropagation:
         try:
             _open_dataset(controller, window, populated_db)
             controller.handle_new_sampling()
-            assert received["advanced_mode"] is True
+            features = received["features"]
+            assert features.show_filter is True
+            assert features.show_cluster is True
+            assert features.show_stratified is True
+        finally:
+            controller.handle_close_engagement()
+
+    def test_einzel_toggle_macht_nur_eine_funktion_sichtbar(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        # Advanced aus, nur Filter-Einzel-Toggle an ⇒ nur Filter sichtbar.
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.settings_store import AppSettings, SamplingFeatures
+
+        received: dict[str, SamplingFeatures] = {}
+
+        def fake_factory(
+            _parent: MainWindow,
+            _dataset: object,
+            _provider: object,
+            _current: object,
+            features: SamplingFeatures,
+        ) -> _StubSamplingDialog:
+            received["features"] = features
+            return _StubSamplingDialog(None, accept=False)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=fake_factory,  # type: ignore[arg-type]
+            settings=dc_replace(
+                AppSettings.defaults(), advanced_mode=False, show_filter_feature=True
+            ),
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            features = received["features"]
+            assert features.show_filter is True
+            assert features.show_cluster is False
+            assert features.show_stratified is False
         finally:
             controller.handle_close_engagement()
 

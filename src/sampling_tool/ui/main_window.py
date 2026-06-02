@@ -80,12 +80,17 @@ class MainWindow(QMainWindow):
     audit_event_double_clicked = pyqtSignal(int)
     audit_refresh_requested = pyqtSignal()
     dashboard_refresh_requested = pyqtSignal()
+    # Sprint 22 – „Ansicht"-Menü: Einzel-Toggles für Advanced-Funktionen
+    # (feature_key, checked) und Panel-Toggles (panel_key, checked).
+    feature_toggled = pyqtSignal(str, bool)
+    panel_toggled = pyqtSignal(str, bool)
 
     # Von den _window_*-Buildern (Sprint 19 / F-006) befüllte Attribute –
     # hier deklariert, damit mypy-strict die externe Zuweisung akzeptiert.
     _file_menu: QMenu
     _recent_menu: QMenu
     _help_menu: QMenu
+    _view_menu: QMenu
     _action_new: QAction
     _action_open: QAction
     _action_close: QAction
@@ -104,6 +109,11 @@ class MainWindow(QMainWindow):
     _action_bug_report: QAction
     _action_about: QAction
     _action_switch_engagement: QAction
+    _action_feature_filter: QAction
+    _action_feature_cluster: QAction
+    _action_feature_stratified: QAction
+    _action_view_dashboard: QAction
+    _action_view_audit_trail: QAction
     _toolbar: QToolBar
     _sidebar: NavigationSidebar
     _workspace_splitter: QSplitter
@@ -332,6 +342,32 @@ class MainWindow(QMainWindow):
         self._window_state.apply_panel_visibility(
             show_dashboard=show_dashboard, show_audit_trail=show_audit_trail
         )
+
+    def apply_view_menu_state(
+        self,
+        *,
+        show_filter: bool,
+        show_cluster: bool,
+        show_stratified: bool,
+        show_dashboard: bool,
+        show_audit_trail: bool,
+    ) -> None:
+        """Spiegelt die app-weiten View-Toggles in die „Ansicht"-Menü-Checks (Sprint 22).
+
+        Die Feature-Einträge zeigen die rohen Einzel-Toggles (NICHT die mit
+        Advanced-Mode verodertete Sichtbarkeit) – so ändert ein Advanced-Mode-
+        Umschalten die Häkchen nicht. `blockSignals` verhindert einen
+        Schreib-Loop (Sync → toggled → Controller → Sync …)."""
+        for action, checked in (
+            (self._action_feature_filter, show_filter),
+            (self._action_feature_cluster, show_cluster),
+            (self._action_feature_stratified, show_stratified),
+            (self._action_view_dashboard, show_dashboard),
+            (self._action_view_audit_trail, show_audit_trail),
+        ):
+            action.blockSignals(True)
+            action.setChecked(checked)
+            action.blockSignals(False)
 
     @property
     def _cached_splitter_sizes(self) -> list[int] | None:

@@ -8,6 +8,13 @@ from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QStyle
 
 from sampling_tool.ui.recent import RecentEntry
+from sampling_tool.ui.settings_store import (
+    FEATURE_CLUSTER,
+    FEATURE_FILTER,
+    FEATURE_STRATIFIED,
+    PANEL_AUDIT_TRAIL,
+    PANEL_DASHBOARD,
+)
 
 if TYPE_CHECKING:
     from sampling_tool.ui.main_window import MainWindow
@@ -96,6 +103,50 @@ def build_menu(window: MainWindow) -> None:
     window._action_html_report.triggered.connect(window.export_html_report_requested.emit)
     edit_menu.addAction(window._action_html_report)
 
+    # ---- Ansicht (Sprint 22) ----
+    # Checkbare Einzel-Toggles für die Advanced-Sampling-Funktionen plus die
+    # bestehenden Panel-Schalter (Dashboard / Audit-Trail). Die Feature-Toggles
+    # wirken unabhängig neben dem Advanced-Mode (ODER-Logik im Controller).
+    view_menu = menu_bar.addMenu("&Ansicht")
+    assert view_menu is not None
+    window._view_menu = view_menu
+
+    window._action_feature_filter = _build_feature_action(
+        window,
+        "Filter",
+        FEATURE_FILTER,
+        "Spaltenfilter im Stichproben-Dialog ein-/ausblenden",
+    )
+    view_menu.addAction(window._action_feature_filter)
+
+    window._action_feature_cluster = _build_feature_action(
+        window,
+        "Cluster-Sampling",
+        FEATURE_CLUSTER,
+        "Cluster-Methode und Cluster-Feld im Stichproben-Dialog ein-/ausblenden",
+    )
+    view_menu.addAction(window._action_feature_cluster)
+
+    window._action_feature_stratified = _build_feature_action(
+        window,
+        "Geschichtete Stichprobe",
+        FEATURE_STRATIFIED,
+        "Geschichtete Methode, Schicht-Feld und -Verteilung ein-/ausblenden",
+    )
+    view_menu.addAction(window._action_feature_stratified)
+
+    view_menu.addSeparator()
+
+    window._action_view_dashboard = _build_panel_action(
+        window, "Dashboard anzeigen", PANEL_DASHBOARD
+    )
+    view_menu.addAction(window._action_view_dashboard)
+
+    window._action_view_audit_trail = _build_panel_action(
+        window, "Audit-Trail anzeigen", PANEL_AUDIT_TRAIL
+    )
+    view_menu.addAction(window._action_view_audit_trail)
+
     # ---- Sample ----
     sample_menu = menu_bar.addMenu("&Stichprobe")
     assert sample_menu is not None
@@ -164,6 +215,36 @@ def build_menu(window: MainWindow) -> None:
 
     # Sprint-4-Initial: alle workspace-only Aktionen disabled.
     window._set_workspace_actions_enabled(False)
+
+
+def _build_feature_action(
+    window: MainWindow, label: str, feature_key: str, tooltip: str
+) -> QAction:
+    """Checkbare QAction für einen Advanced-Funktions-Einzel-Toggle (Sprint 22).
+
+    Emittiert `feature_toggled(feature_key, checked)`; der Controller
+    persistiert den Toggle app-weit und löst die zentrale Sichtbarkeits-
+    Auflösung neu aus.
+    """
+    action = QAction(label, window)
+    action.setCheckable(True)
+    action.setToolTip(tooltip)
+    action.toggled.connect(
+        lambda checked, key=feature_key: window.feature_toggled.emit(key, checked)
+    )
+    return action
+
+
+def _build_panel_action(window: MainWindow, label: str, panel_key: str) -> QAction:
+    """Checkbare QAction für einen Panel-Toggle (Dashboard / Audit-Trail).
+
+    Emittiert `panel_toggled(panel_key, checked)`; der Controller mappt das auf
+    `show_dashboard`/`show_audit_trail` und wendet die Sichtbarkeit live an.
+    """
+    action = QAction(label, window)
+    action.setCheckable(True)
+    action.toggled.connect(lambda checked, key=panel_key: window.panel_toggled.emit(key, checked))
+    return action
 
 
 def rebuild_recent_menu(window: MainWindow, entries: list[RecentEntry]) -> None:
