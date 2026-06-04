@@ -17,6 +17,7 @@ from sampling_tool.core.models import (
     SamplingMethod,
     StratifyMode,
 )
+from sampling_tool.core.presets import SamplingPreset
 from sampling_tool.core.rng import fisher_yates_shuffle, make_rng
 from sampling_tool.core.sampling import (
     BaseSampler,
@@ -38,6 +39,7 @@ __all__ = [
     "SampleResult",
     "SamplingError",
     "SamplingMethod",
+    "SamplingPreset",
     "SimpleSampler",
     "StratifiedSampler",
     "StratifyMode",

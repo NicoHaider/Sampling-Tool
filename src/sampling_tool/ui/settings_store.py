@@ -172,6 +172,16 @@ def _qsettings() -> QSettings:
     return QSettings(APP_ORG, APP_NAME)
 
 
+def open_qsettings() -> QSettings:
+    """Öffentlicher QSettings-Handle für andere app-weite Stores (Sprint 23).
+
+    Delegiert bewusst an `_qsettings`, damit Tests weiterhin an genau einer
+    Stelle (`_qsettings`) isolieren können und `PresetStore` denselben
+    Persistenz-Pfad wie `AppSettings` teilt.
+    """
+    return _qsettings()
+
+
 def load_settings() -> AppSettings:
     """Lädt die `AppSettings` aus `QSettings`. Fehlende Keys → Defaults.
 

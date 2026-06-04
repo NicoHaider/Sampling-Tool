@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -49,9 +50,14 @@ from sampling_tool.core.models import (
     SamplingMethod,
     StratifyMode,
 )
+from sampling_tool.core.presets import SamplingPreset
+from sampling_tool.ui.preset_store import PresetStore
 from sampling_tool.ui.settings_store import SamplingFeatures
 
 NO_FILTER_LABEL: str = "(kein Filter)"
+
+# Erster Combobox-Eintrag (= keine Vorlage gewählt). Index 0 ist nie ein Preset.
+NO_PRESET_LABEL: str = "(keine Vorlage)"
 
 # QSpinBox-Maximum: int32-signed-Limit. Die Größe wird dadurch faktisch
 # nicht mehr durch das Widget gecappt – stattdessen schlägt Validierung
@@ -67,6 +73,18 @@ class SamplingDialogResult:
     from_sample_only: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class AppliedPresetResult:
+    """Ergebnis von `SamplingDialog.apply_preset` (Sprint 23).
+
+    `skipped_filters` listet die Filter-Spalten, die übersprungen wurden, weil
+    sie in der aktuell geladenen Population nicht existieren – der Rest des
+    Presets wird trotzdem angewendet (kein stiller Fehlschlag, kein Crash).
+    """
+
+    skipped_filters: tuple[str, ...] = ()
+
+
 class SamplingDialog(QDialog):
     """Dialog für die Konfiguration einer Stichprobenziehung."""
 
@@ -78,6 +96,7 @@ class SamplingDialog(QDialog):
         parent: QWidget | None = None,
         *,
         features: SamplingFeatures | None = None,
+        preset_store: PresetStore | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Neue Stichprobe")
@@ -101,9 +120,13 @@ class SamplingDialog(QDialog):
         self._show_cluster = self._features.show_cluster
         self._show_stratified = self._features.show_stratified
         self._show_methods = self._features.show_methods
+        # Sprint 23: app-weiter Preset-Store (benannte Profile). Default: echter
+        # QSettings-Store; Tests können einen isolierten Store injizieren.
+        self._preset_store = preset_store if preset_store is not None else PresetStore()
 
         self._build_ui()
         self._wire_signals()
+        self._reload_presets()
         if self._show_filter:
             self._refresh_filter_values()
         if self._show_methods:
@@ -128,6 +151,43 @@ class SamplingDialog(QDialog):
         """
         self._seed_spin.setValue(seed)
 
+    # ---- Presets (Sprint 23) -------------------------------------------
+
+    def current_settings_as_preset(self, name: str) -> SamplingPreset:
+        """Friert die aktuellen Dialog-Einstellungen als benanntes Preset ein.
+
+        Der Seed wandert NICHT ins Preset (`SamplingPreset.from_config` lässt
+        ihn fallen) – ein Profil beschreibt nur, *wie* gesampelt wird.
+        """
+        return SamplingPreset.from_config(name, self._build_config())
+
+    def apply_preset(self, preset: SamplingPreset) -> AppliedPresetResult:
+        """Übernimmt ein Preset in die Dialog-Widgets.
+
+        Setzt ausschließlich Parameter – es wird NICHT gezogen und der Seed
+        bleibt unangetastet (ISAE-3402). Nur Funktionen, die aktuell sichtbar
+        sind, werden gesetzt. Filter, deren Spalte in der geladenen Population
+        fehlt, werden übersprungen und im Ergebnis gemeldet (kein Crash).
+        """
+        skipped_filters: list[str] = []
+        self._size_spin.setValue(preset.size)
+        self._apply_preset_method(preset.method)
+        if self._show_cluster and preset.cluster_field and preset.cluster_field in self._columns:
+            self._cluster_field.setCurrentText(preset.cluster_field)
+        if self._show_stratified:
+            if preset.stratum_field and preset.stratum_field in self._columns:
+                self._stratum_field.setCurrentText(preset.stratum_field)
+            if preset.stratify_mode == StratifyMode.EQUAL:
+                self._radio_equal.setChecked(True)
+            else:
+                self._radio_proportional.setChecked(True)
+        if self._show_filter:
+            self._apply_preset_filter(preset, skipped_filters)
+        if self._show_methods:
+            self._on_method_changed()
+        self._validate()
+        return AppliedPresetResult(skipped_filters=tuple(skipped_filters))
+
     # ---- UI-Aufbau -----------------------------------------------------
 
     def _build_ui(self) -> None:
@@ -142,6 +202,37 @@ class SamplingDialog(QDialog):
         intro.setWordWrap(True)
         intro.setStyleSheet("color: #7F7F7F;")
         outer.addWidget(intro)
+
+        # ---- Vorlagen (Sprint 23) ----
+        # Benannte Profile: aktuelle Einstellungen (Methode/Größe/Filter/
+        # Schichtung) app-weit speichern und mit einem Klick wieder anwenden –
+        # über Engagements hinweg. Immer sichtbar (auch im Einfach-Modus, weil
+        # schon die Größe ein wiederkehrender Wert ist). Der Seed bleibt
+        # bewusst außen vor – Anwenden zieht nicht.
+        preset_box = QGroupBox("Vorlagen")
+        preset_layout = QHBoxLayout(preset_box)
+        preset_layout.setSpacing(8)
+        self._preset_combo = QComboBox()
+        self._preset_combo.setToolTip("Gespeicherte Vorlage auswählen")
+        self._btn_apply_preset = QPushButton("Anwenden")
+        self._btn_apply_preset.setToolTip("Die gewählte Vorlage übernehmen (zieht nicht)")
+        self._btn_save_preset = QPushButton("Als Vorlage speichern…")
+        self._btn_save_preset.setToolTip("Aktuelle Einstellungen als neue Vorlage sichern")
+        self._btn_rename_preset = QPushButton("Umbenennen")
+        self._btn_delete_preset = QPushButton("Löschen")
+        for _btn in (
+            self._btn_apply_preset,
+            self._btn_save_preset,
+            self._btn_rename_preset,
+            self._btn_delete_preset,
+        ):
+            _btn.setProperty("secondary", True)
+        preset_layout.addWidget(self._preset_combo, stretch=1)
+        preset_layout.addWidget(self._btn_apply_preset)
+        preset_layout.addWidget(self._btn_save_preset)
+        preset_layout.addWidget(self._btn_rename_preset)
+        preset_layout.addWidget(self._btn_delete_preset)
+        outer.addWidget(preset_box)
 
         # ---- Methode (nur wenn Cluster ODER Geschichtet freigeschaltet) ----
         # Sprint 22: Die Gruppe zeigt „Einfach" plus genau die freigeschalteten
@@ -317,6 +408,11 @@ class SamplingDialog(QDialog):
         self._size_spin.valueChanged.connect(self._validate)
         self._resample_checkbox.toggled.connect(self._on_resample_toggled)
         self._seed_dice.clicked.connect(self._reroll_seed)
+        self._preset_combo.currentIndexChanged.connect(self._update_preset_buttons)
+        self._btn_apply_preset.clicked.connect(self._on_apply_preset)
+        self._btn_save_preset.clicked.connect(self._on_save_preset)
+        self._btn_rename_preset.clicked.connect(self._on_rename_preset)
+        self._btn_delete_preset.clicked.connect(self._on_delete_preset)
         if self._show_methods:
             for rb in self._method_radios():
                 rb.toggled.connect(self._on_method_changed)
@@ -486,6 +582,169 @@ class SamplingDialog(QDialog):
         ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
         if ok_btn is not None:
             ok_btn.setEnabled(message is None)
+
+    # ---- Preset-Anwendung (intern) -------------------------------------
+
+    def _apply_preset_method(self, method: SamplingMethod) -> None:
+        """Setzt das Methoden-Radio, sofern Methodenwahl + Radio sichtbar sind.
+
+        Ist die zum Preset gehörende Methode nicht freigeschaltet, fällt der
+        Dialog auf „Einfach" zurück (der Auditor sieht das vor dem Ziehen).
+        """
+        if not self._show_methods:
+            return
+        if method == SamplingMethod.CLUSTER and self._show_cluster:
+            self._radio_cluster.setChecked(True)
+        elif method == SamplingMethod.STRATIFIED and self._show_stratified:
+            self._radio_stratified.setChecked(True)
+        else:
+            self._radio_simple.setChecked(True)
+
+    def _apply_preset_filter(self, preset: SamplingPreset, skipped: list[str]) -> None:
+        """Spielt die Filter-Definition ein – validiert gegen die Population.
+
+        Übersprungen (und in `skipped` gemeldet) wird der Filter, wenn seine
+        **Spalte** in der aktuellen Population fehlt ODER wenn der gespeicherte
+        **Wert** dort nicht (mehr) vorkommt. So fällt der Dialog nie still auf
+        einen anderen Wert zurück – „kein stiller Fehlschlag" (ISAE-3402).
+        """
+        if preset.filter_field is None:
+            self._filter_field.setCurrentText(NO_FILTER_LABEL)
+            return
+        if preset.filter_field not in self._columns:
+            # Spalte existiert in dieser Population nicht → Filter überspringen.
+            self._filter_field.setCurrentText(NO_FILTER_LABEL)
+            skipped.append(preset.filter_field)
+            return
+        # blockSignals: der currentTextChanged-Slot würde sonst zusätzlich
+        # `_refresh_filter_values` feuern – wir rufen es kontrolliert einmal.
+        self._filter_field.blockSignals(True)
+        self._filter_field.setCurrentText(preset.filter_field)
+        self._filter_field.blockSignals(False)
+        self._refresh_filter_values()
+        if not self._select_filter_value(preset.filter_value):
+            # Spalte ja, aber der Wert kommt in dieser Population nicht vor.
+            self._filter_field.setCurrentText(NO_FILTER_LABEL)
+            skipped.append(preset.filter_field)
+
+    def _select_filter_value(self, value: Any) -> bool:
+        """Wählt den Filter-Wert per typ-erhaltendem userData-Match (Fallback Text).
+
+        Liefert True bei Treffer, sonst False (Wert nicht in der Population).
+        """
+        role = int(Qt.ItemDataRole.UserRole)
+        for i in range(self._filter_value.count()):
+            if self._filter_value.itemData(i, role) == value:
+                self._filter_value.setCurrentIndex(i)
+                return True
+        text_idx = self._filter_value.findText(_display(value))
+        if text_idx >= 0:
+            self._filter_value.setCurrentIndex(text_idx)
+            return True
+        return False
+
+    # ---- Preset-Verwaltung (Combobox + Buttons) ------------------------
+
+    def _reload_presets(self) -> None:
+        """Befüllt die Vorlagen-Combobox neu aus dem Store (Index 0 = keine)."""
+        self._preset_combo.blockSignals(True)
+        self._preset_combo.clear()
+        self._preset_combo.addItem(NO_PRESET_LABEL)
+        for preset in self._preset_store.list():
+            self._preset_combo.addItem(preset.name)
+        self._preset_combo.blockSignals(False)
+        self._update_preset_buttons()
+
+    def _current_preset_name(self) -> str | None:
+        """Name der gewählten Vorlage oder None (Index 0 = „keine Vorlage")."""
+        if self._preset_combo.currentIndex() <= 0:
+            return None
+        return self._preset_combo.currentText()
+
+    def _select_preset_in_combo(self, name: str) -> None:
+        idx = self._preset_combo.findText(name)
+        if idx >= 0:
+            self._preset_combo.setCurrentIndex(idx)
+
+    def _update_preset_buttons(self) -> None:
+        """Anwenden/Umbenennen/Löschen nur bei tatsächlich gewählter Vorlage."""
+        has_selection = self._current_preset_name() is not None
+        self._btn_apply_preset.setEnabled(has_selection)
+        self._btn_rename_preset.setEnabled(has_selection)
+        self._btn_delete_preset.setEnabled(has_selection)
+
+    def _on_save_preset(self) -> None:
+        name, ok = QInputDialog.getText(self, "Vorlage speichern", "Name der Vorlage:")
+        if not ok:
+            return
+        name = name.strip()
+        if not name:
+            return
+        if self._preset_store.exists(name) and not self._confirm_overwrite(name):
+            return
+        self._preset_store.save(self.current_settings_as_preset(name))
+        self._reload_presets()
+        self._select_preset_in_combo(name)
+
+    def _on_apply_preset(self) -> None:
+        name = self._current_preset_name()
+        if name is None:
+            return
+        preset = self._preset_store.get(name)
+        if preset is None:
+            return
+        result = self.apply_preset(preset)
+        if result.skipped_filters:
+            cols = ", ".join(f"„{c}“" for c in result.skipped_filters)
+            QMessageBox.information(
+                self,
+                "Vorlage angewendet",
+                f"Die Vorlage „{name}“ wurde angewendet.\n\n"
+                f"Übersprungen, weil Spalte oder Wert in den aktuellen Daten "
+                f"nicht vorhanden ist: {cols}.",
+            )
+
+    def _on_rename_preset(self) -> None:
+        old = self._current_preset_name()
+        if old is None:
+            return
+        new, ok = QInputDialog.getText(self, "Vorlage umbenennen", "Neuer Name:", text=old)
+        if not ok:
+            return
+        new = new.strip()
+        if not new or new == old:
+            return
+        if self._preset_store.exists(new) and not self._confirm_overwrite(new):
+            return
+        self._preset_store.rename(old, new)
+        self._reload_presets()
+        self._select_preset_in_combo(new)
+
+    def _on_delete_preset(self) -> None:
+        name = self._current_preset_name()
+        if name is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Vorlage löschen",
+            f"Soll die Vorlage „{name}“ wirklich gelöscht werden?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._preset_store.delete(name)
+        self._reload_presets()
+
+    def _confirm_overwrite(self, name: str) -> bool:
+        answer = QMessageBox.question(
+            self,
+            "Vorlage überschreiben",
+            f"Eine Vorlage „{name}“ existiert bereits. Überschreiben?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
 
 # ---------------------------------------------------------------------------
