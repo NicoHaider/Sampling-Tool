@@ -102,6 +102,7 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
 | 20     | Toolbar „Sampling zurücksetzen" (audit-safe In-Memory-Reset) + engeres Toolbar-Spacing | done |
 | 21     | Hotfix: Reproduzierbarkeit nach Reset (Sampling-Dialog merkt den zuletzt genutzten Seed) | done |
 | 22     | Einzel-Toggles für Advanced-Funktionen im „Ansicht"-Menü (ODER-Logik neben Advanced-Mode, app-weit persistiert) | done |
+| 23     | Sampling-Presets (benannte Profile, app-weit via QSettings/JSON, ohne Seed/Daten) | done |
 
 ## Einzel-Feature-Toggles + „Ansicht"-Menü (Sprint 22)
 
@@ -160,6 +161,72 @@ bit-identische `SampleConfig`s wie der alte Simple-Pfad (nicht
 freigeschaltete Funktionen tragen ihre Config-Defaults bei). Getestet via
 `tests/ui/test_feature_toggles.py::TestToggleSamplingNeutrality` über den
 echten Controller-/Dialog-Pfad.
+
+## Sampling-Presets (Sprint 23)
+
+Wiederkehrende Sampling-Konfigurationen lassen sich als **benannte Profile**
+speichern und app-weit (über Engagements hinweg) mit einem Klick wieder
+anwenden. Spart das wiederholte Einstellen von Methode/Größe/Filter bei
+Standard-Prüfungen. Baut auf den Einzel-Toggles (Sprint 22) auf.
+
+**Was ein Preset enthält – und was nicht.** Ein `SamplingPreset`
+(`core/presets.py`, frozen Dataclass) bündelt genau die „wie-wird-gesampelt"-
+Felder: **Methode, Größe, Filter (Feld + Wert), Cluster-Feld, Schicht-Feld +
+-Verteilung**. Es enthält **NICHT** den **Seed** (ziehungs-spezifisch –
+Reproduzierbarkeit hängt an Seed + Population, nicht am Template), **keine
+Population/Daten** und **keine Ergebnisse**. `SamplingPreset.from_config(name,
+config)` lässt den Seed fallen; `to_config(seed)` reicht ihn von außen wieder
+ein. Ein Preset ist damit ein `SampleConfig` minus Seed (plus Name).
+
+**Layer-Trennung (bewusste Abweichung vom Sprint-Prompt).** Der Prompt schlug
+`PresetStore` in `core/presets.py` vor; CLAUDE.md verbietet aber Qt in `core/`.
+Aufgelöst:
+- `core/presets.py` – reines Domain-Modell `SamplingPreset` + **stdlib-JSON**-
+  Serialisierung (`serialize_presets`/`deserialize_presets`). Qt-frei, SQL-frei,
+  keine Datei-I/O. Filter-Werte werden tagged ISO-codiert (datetime/date/time),
+  analog `persistence/_json.py`, damit Datums-Filter roundtrip-sicher sind.
+- `ui/preset_store.py` – `PresetStore` (die *eine* Verwaltungs-Stelle):
+  `list()`/`names()`/`get()`/`exists()`/`save()`/`rename()`/`delete()`.
+  Persistiert app-weit via `QSettings` unter dem Key `presets/json` – **nicht**
+  in die Engagement-SQLite-DB, **kein** Schema-Change, **keine** Migration,
+  **keine** neue Dependency. Nutzt `settings_store.open_qsettings()` (öffentlicher
+  Wrapper um `_qsettings`), damit Tests an genau einer Stelle isolieren.
+  (Die Methode heißt spec-konform `list()`; Annotationen, die den eingebauten
+  `list`-Typ meinen, nutzen `builtins.list[...]`, weil der Methodenname ihn im
+  Klassen-Scope sonst überschattet.)
+
+**„Settings-Owner" ist der Dialog.** Es gibt kein stehendes Sampling-Settings-
+Objekt – die einzige Stelle, die eine *lebende* Konfiguration hält, ist der
+modale `SamplingDialog`. Deshalb sitzen dort:
+- `current_settings_as_preset(name)` – friert den aktuellen Widget-Stand als
+  Preset ein (`_build_config()` minus Seed).
+- `apply_preset(preset) -> AppliedPresetResult` – spielt das Preset in die
+  Widgets zurück. Setzt **nur Parameter**, **zieht nicht** und **fasst den Seed
+  nicht an** (ISAE-3402). Es werden nur aktuell *sichtbare* Funktionen gesetzt
+  (eine nicht freigeschaltete Methode fällt auf „Einfach" zurück). Ein Filter
+  wird übersprungen und in `AppliedPresetResult.skipped_filters` gemeldet, wenn
+  seine **Spalte** in der aktuell geladenen Population fehlt ODER wenn sein
+  gespeicherter **Wert** dort nicht (mehr) vorkommt – nie ein stilles
+  Zurückfallen auf einen anderen Wert (kein stiller Fehlschlag, kein Crash).
+  Auch die JSON-Deserialisierung ist robust: korrupte QSettings (invalides
+  JSON, kaputte Einzel-Einträge) liefern eine leere bzw. bereinigte Liste statt
+  eines Crashes (analog `ui/recent.py`).
+
+**UI.** Im Dialog (immer sichtbar, auch im Einfach-Modus) eine Gruppe
+„Vorlagen": Combobox (Index 0 = `NO_PRESET_LABEL` „(keine Vorlage)") + Buttons
+**Anwenden / Als Vorlage speichern… / Umbenennen / Löschen**. Speichern/
+Umbenennen nutzen `QInputDialog`, Überschreiben/Löschen fragen per
+`QMessageBox.question` (Bestätigung); die Überschreib-Bestätigung lebt im
+Dialog, der Store überschreibt rein. Der Dialog bekommt optional einen
+`preset_store: PresetStore | None` injiziert (Default: echter Store) – Tests
+reichen einen isolierten Store durch.
+
+**Reproduzierbarkeit.** Ein angewendetes Preset zieht bit-identisch zur
+manuellen Einstellung (Preset trägt keinen Seed → Seed kommt unverändert aus
+dem Dialog). Getestet über den Sampler-Pfad
+(`tests/unit/test_presets.py::TestPresetSamplingNeutrality`) und den
+Dialog-Pfad (`tests/ui/test_sampling_presets.py::TestPresetSamplingNeutrality`,
+inkl. `test_apply_preset_does_not_draw`).
 
 ## Seed-Memory / Reproduzierbarkeit nach Reset (Sprint 21, Hotfix)
 
@@ -344,6 +411,10 @@ ui ──▶ controllers ──▶ core ◀── io
     `source_file`, Engagement-FK) – Rows leben im Repo (siehe Block
     "Streaming-Architektur" oben).
   - `rng.py` – `make_rng(seed)` + `fisher_yates_shuffle` über `numpy.random.default_rng`
+  - `presets.py` – `SamplingPreset` (Sprint 23): benanntes Template einer
+    Stichproben-Konfiguration (= `SampleConfig` minus Seed/Daten/Ergebnis) +
+    stdlib-JSON-Serialisierung. Qt-/SQL-/I/O-frei. Siehe Block „Sampling-Presets
+    (Sprint 23)" oben. Der QSettings-Store dazu lebt in `ui/preset_store.py`.
   - `formatting.py` – zentrale Anzeige-Formatierung (Sprint 18 / Q-005).
     `format_event_timestamp` / `format_optional_timestamp` / `ensure_utc`.
     Eintrittspunkt für ALLE Audit-Trail-Timestamp-Anzeigen (UI, PDF,
@@ -709,7 +780,14 @@ ui ──▶ controllers ──▶ core ◀── io
     `load_settings()` / `save_settings(...)`. Persistenz via
     `QSettings(APP_ORG, APP_NAME)`; fehlende Keys fallen auf
     `AppSettings.defaults()` zurück. Wird vom `MainController` beim
-    Start gelesen und in `handle_settings` zurückgeschrieben.
+    Start gelesen und in `handle_settings` zurückgeschrieben. Seit Sprint 23
+    zusätzlich `open_qsettings()` – öffentlicher Wrapper um `_qsettings`, den
+    der `PresetStore` für seine App-weit-Persistenz teilt (gemeinsamer
+    Isolations-Punkt in Tests).
+  - `preset_store.py` – `PresetStore` (Sprint 23): die eine Verwaltungs-Stelle
+    für `SamplingPreset`s (`list`/`save`/`rename`/`delete`), app-weit via
+    `QSettings` (`presets/json`). Domain-Modell + JSON liegen in
+    `core/presets.py`. Siehe Block „Sampling-Presets (Sprint 23)" oben.
   - `dialogs/settings_dialog.py` – `SettingsDialog` mit 3 Tabs
     (Allgemein / Reports / Erweitert), Reset-Button und Briefpapier-
     Vorschau via `QDesktopServices`. Konstruktor nimmt das aktuelle
