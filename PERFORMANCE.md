@@ -55,6 +55,9 @@ misst die AuditTrail-Filter-Phase nicht (siehe „nie gemessen (P-010)" unten).
 Follow-up-Kandidaten (Sprint 24, bewusst NICHT umgesetzt – Scope):
 - Debounce/Delay für die Volltextsuche (z. B. 150 ms QTimer) würde die
   verbleibende Keystroke-Latenz bei sehr großen Event-Listen kaschieren.
+- `text.lower()` läuft weiterhin einmal pro Row pro Tastenanschlag in
+  `filterAcceptsRow` – den gelowerten Needle einmal pro Filter-Änderung zu
+  cachen wäre die natürliche Ergänzung zum Haystack-Cache.
 - Die Volltextsuche matcht gegen `filterRegularExpression().pattern()` – bei
   Suchbegriffen mit Nicht-Wort-Zeichen (z. B. „ö", „.csv") escapet
   `setFilterFixedString` den String, wodurch solche Suchen nie treffen können.
@@ -66,7 +69,7 @@ Follow-up-Kandidaten (Sprint 24, bewusst NICHT umgesetzt – Scope):
 (`setResizeContentsPrecision(100)` → Tabelle-Anzeige) und P-002
 (`SimpleSampler.sample_ids` via `iter_row_ids` → Sampling-Simple-RAM).
 Die Zeilen „Tabelle-Anzeige 34.58 s" und „Sampling Simple 15.90 s / 1.07 GB"
-beschreiben den behobenen Zustand; Regression-Guards:
+beschreiben den Zustand VOR diesen Fixes (inzwischen behoben); Regression-Guards:
 `tests/ui/test_data_table.py` (Precision + Bulk-Load-Zähler) und
 `tests/unit/test_sampling.py::TestSimpleSamplerIdsPath` (Bit-Repro alt vs. neu).
 

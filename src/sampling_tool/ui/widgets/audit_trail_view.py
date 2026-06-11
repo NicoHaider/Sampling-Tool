@@ -197,6 +197,11 @@ class AuditTrailFilterProxy(QSortFilterProxyModel):
         der Proxy nach einem ``modelReset`` (= ``set_events``) intern neu
         filtert.
         """
+        if sourceModel is self.sourceModel():
+            # Qt early-returnt bei unverändertem Model – ein Disconnect+
+            # Reconnect würde den Rebuild-Slot ans Ende der Connection-Liste
+            # schieben (hinter Qts internen Reset-Handler → staler Cache).
+            return
         old = self.sourceModel()
         if isinstance(old, AuditTrailModel):
             old.modelReset.disconnect(self._rebuild_haystack_cache)

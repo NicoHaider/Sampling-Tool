@@ -528,6 +528,21 @@ class TestAuditTrailFilterHaystackCache:
             )
             assert _visible_event_ids(view) == expected, f"needle={needle!r}"
 
+    def test_repeated_set_source_model_keeps_cache_fresh(self, view: AuditTrailView) -> None:
+        """Erneutes setSourceModel mit demselben Model darf den Rebuild-Slot
+        nicht per Disconnect+Reconnect hinter Qts internen Reset-Handler
+        schieben – sonst filtert ein Same-Length-Reset mit stalem Cache."""
+        proxy = view.proxy()
+        proxy.setFilterFixedString("anna")
+        view.set_events([_make_event(event_id=1, user="Anna"), _make_event(event_id=2, user="bob")])
+        assert _visible_event_ids(view) == [1]
+
+        proxy.setSourceModel(view.model())  # No-op-Aufruf, von Qt erlaubt
+
+        # Gleiche Event-Anzahl, aber "Anna" ist weg → kein Treffer mehr.
+        view.set_events([_make_event(event_id=3, user="bob"), _make_event(event_id=4, user="bob")])
+        assert _visible_event_ids(view) == []
+
     def test_out_of_range_row_falls_back_to_inline_build(self, view: AuditTrailView) -> None:
         """Race bei Modell-Reset: leerer/zu kurzer Cache darf nicht crashen."""
         view.set_events(_synthetic_events(5))
