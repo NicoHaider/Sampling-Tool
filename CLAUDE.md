@@ -103,6 +103,7 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
 | 21     | Hotfix: Reproduzierbarkeit nach Reset (Sampling-Dialog merkt den zuletzt genutzten Seed) | done |
 | 22     | Einzel-Toggles für Advanced-Funktionen im „Ansicht"-Menü (ODER-Logik neben Advanced-Mode, app-weit persistiert) | done |
 | 23     | Sampling-Presets (benannte Profile, app-weit via QSettings/JSON, ohne Seed/Daten) | done |
+| 24     | Performance-Polish: P-010 AuditTrail-Haystack-Cache (P-001/P-002 aus Pass 3 v2 waren seit Sprint 12.1 gefixt) | done |
 
 ## Einzel-Feature-Toggles + „Ansicht"-Menü (Sprint 22)
 
@@ -663,6 +664,13 @@ ui ──▶ controllers ──▶ core ◀── io
     Volltextsuche und ComboBoxen (Aktion / User / Zeitraum), sortierbar.
     Doppelklick emittiert `event_double_clicked(int)` – der Controller
     sucht den passenden Sample-Event und markiert das Sample.
+    **Sprint 24 / P-010**: Der Volltext-Haystack wird pro Event genau
+    einmal beim Event-Load vorberechnet (`_haystack_cache`, Rebuild via
+    `modelReset`-Signal; Connection bewusst VOR `super().setSourceModel()`
+    plus Early-Return bei unverändertem Model, damit der Cache vor Qts
+    internem Re-Filter frisch ist), nicht mehr pro Row und Tastenanschlag
+    – 20k Events: 195 → 130 ms/Anschlag. Treffer bit-identisch zum alten
+    Inline-Aufbau (Oracle-Test in tests/ui/test_audit_trail_view.py).
   - `widgets/dashboard_view.py` – `DashboardView` mit Kachel-Grid
     (Datasets, Samples, Audit-Events, Letzte Aktivität, Letzte
     Stichproben, Sampling-Historie). Charts werden via `chart_renderer`
