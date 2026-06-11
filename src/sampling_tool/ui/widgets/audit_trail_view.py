@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from PyQt6.QtCore import (
+    QAbstractItemModel,
     QAbstractTableModel,
     QModelIndex,
     QSortFilterProxyModel,
@@ -153,13 +154,20 @@ class AuditTrailModel(QAbstractTableModel):
 
 
 class AuditTrailFilterProxy(QSortFilterProxyModel):
-    """Filter nach Aktion, User, Zeitraum + Volltext."""
+    """Filter nach Aktion, User, Zeitraum + Volltext.
+
+    Sprint 24 / P-010: Der Volltext-Haystack wird pro Event genau einmal beim
+    Event-Load vorberechnet (`_haystack_cache`), nicht mehr pro Row und
+    Tastenanschlag in `filterAcceptsRow` – Volltextsuche bleibt damit auch bei
+    >20k Events flüssig.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._action_filter: str | None = None
         self._user_filter: str | None = None
         self._range: str = _FILTER_ALL
+        self._haystack_cache: list[str] = []
         self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
     # ---- Public API -----------------------------------------------------
@@ -177,6 +185,30 @@ class AuditTrailFilterProxy(QSortFilterProxyModel):
         self.invalidateFilter()
 
     # ---- Qt-Override ----------------------------------------------------
+
+    def setSourceModel(  # noqa: N802
+        self,
+        sourceModel: QAbstractItemModel | None,  # noqa: N803
+    ) -> None:
+        """Verkabelt den Haystack-Cache-Rebuild mit jedem Modell-Reset (P-010).
+
+        Die Connection passiert VOR ``super().setSourceModel()``: Qt ruft Slots
+        in Connection-Reihenfolge auf, der Cache ist damit bereits frisch, wenn
+        der Proxy nach einem ``modelReset`` (= ``set_events``) intern neu
+        filtert.
+        """
+        if sourceModel is self.sourceModel():
+            # Qt early-returnt bei unverändertem Model – ein Disconnect+
+            # Reconnect würde den Rebuild-Slot ans Ende der Connection-Liste
+            # schieben (hinter Qts internen Reset-Handler → staler Cache).
+            return
+        old = self.sourceModel()
+        if isinstance(old, AuditTrailModel):
+            old.modelReset.disconnect(self._rebuild_haystack_cache)
+        if isinstance(sourceModel, AuditTrailModel):
+            sourceModel.modelReset.connect(self._rebuild_haystack_cache)
+        super().setSourceModel(sourceModel)
+        self._rebuild_haystack_cache()
 
     def filterAcceptsRow(  # noqa: N802
         self,
@@ -199,18 +231,28 @@ class AuditTrailFilterProxy(QSortFilterProxyModel):
 
         text = self.filterRegularExpression().pattern()
         if text:
-            haystack = " ".join(
-                [
-                    format_optional_timestamp(evt.timestamp),
-                    evt.event_type,
-                    evt.user_name or "",
-                    _format_file(evt),
-                ]
-            ).lower()
+            if 0 <= source_row < len(self._haystack_cache):
+                haystack = self._haystack_cache[source_row]
+            else:
+                # Defensiv (Race bei Modell-Reset): Inline-Aufbau statt Crash.
+                haystack = _build_haystack(evt)
             if text.lower() not in haystack:
                 return False
 
         return True
+
+    # ---- Intern ----------------------------------------------------------
+
+    def _rebuild_haystack_cache(self) -> None:
+        """Berechnet den Volltext-Haystack einmal pro Event vor (P-010)."""
+        model = self.sourceModel()
+        if not isinstance(model, AuditTrailModel):
+            self._haystack_cache = []
+            return
+        self._haystack_cache = [
+            _build_haystack(evt) if (evt := model.event_at(row)) is not None else ""
+            for row in range(model.rowCount())
+        ]
 
     def lessThan(  # noqa: N802
         self,
@@ -415,6 +457,23 @@ def _format_file(evt: AuditEvent) -> str:
     if not path:
         return "—"
     return Path(path).name
+
+
+def _build_haystack(evt: AuditEvent) -> str:
+    """Lowercase-Suchstring für die Volltextsuche – einmal pro Event berechnet.
+
+    Felder + Reihenfolge exakt wie der frühere Inline-Aufbau in
+    `filterAcceptsRow` (Sprint ≤23), damit die Filter-Treffer identisch
+    bleiben (Oracle-Test in tests/ui/test_audit_trail_view.py).
+    """
+    return " ".join(
+        [
+            format_optional_timestamp(evt.timestamp),
+            evt.event_type,
+            evt.user_name or "",
+            _format_file(evt),
+        ]
+    ).lower()
 
 
 def _in_range(ts: datetime | None, range_label: str) -> bool:

@@ -38,6 +38,41 @@ Historische Pre-Streaming-Targets (nur Sprint-10.x-Vergleichbarkeit):
 | Import | < 60 s |
 | DB-Speicherung | < 30 s |
 
+**Sprint 24 / P-010 – AuditTrail-Volltextsuche (Haystack-Cache):**
+`AuditTrailFilterProxy` baute den Such-Haystack (Timestamp-Formatierung inkl.
+TZ-Konversion + Join) pro Row und pro Tastenanschlag neu (Pass 3 v2, P-010).
+Seit Sprint 24 wird er pro Event genau einmal beim Event-Load vorberechnet
+(`_haystack_cache`, Rebuild via `modelReset`-Signal); `filterAcceptsRow` macht
+nur noch einen Substring-Check. Micro-Benchmark (20k Events, offscreen,
+Darwin arm64, 2026-06-11): **194.7 ms → 129.8 ms pro Tastenanschlag** (−33 %).
+Die verbleibenden ~130 ms sind struktureller Qt-Overhead (20k Python-
+`filterAcceptsRow`-Aufrufe pro Anschlag im `QSortFilterProxyModel`), nicht
+String-Bau. Treffer-Semantik bit-identisch zum alten Inline-Aufbau
+(Oracle-Test `tests/ui/test_audit_trail_view.py::
+TestAuditTrailFilterHaystackCache`). Kein neuer 1M-Probe-Lauf – `perf_probe.py`
+misst die AuditTrail-Filter-Phase nicht (siehe „nie gemessen (P-010)" unten).
+
+Follow-up-Kandidaten (Sprint 24, bewusst NICHT umgesetzt – Scope):
+- Debounce/Delay für die Volltextsuche (z. B. 150 ms QTimer) würde die
+  verbleibende Keystroke-Latenz bei sehr großen Event-Listen kaschieren.
+- `text.lower()` läuft weiterhin einmal pro Row pro Tastenanschlag in
+  `filterAcceptsRow` – den gelowerten Needle einmal pro Filter-Änderung zu
+  cachen wäre die natürliche Ergänzung zum Haystack-Cache.
+- Die Volltextsuche matcht gegen `filterRegularExpression().pattern()` – bei
+  Suchbegriffen mit Nicht-Wort-Zeichen (z. B. „ö", „.csv") escapet
+  `setFilterFixedString` den String, wodurch solche Suchen nie treffen können.
+  Bestandsverhalten seit Sprint 6, durch den Cache-Umbau unverändert
+  (im Oracle-Test mit abgedeckt); separater Bugfix-Kandidat.
+
+**Hinweis zur Mess-Tabelle unten:** Der 1M-Lauf stammt vom Sprint-11-Stand
+(Toolversion `19f18a1`) und liegt damit VOR den Sprint-12.1-Fixes für P-001
+(`setResizeContentsPrecision(100)` → Tabelle-Anzeige) und P-002
+(`SimpleSampler.sample_ids` via `iter_row_ids` → Sampling-Simple-RAM).
+Die Zeilen „Tabelle-Anzeige 34.58 s" und „Sampling Simple 15.90 s / 1.07 GB"
+beschreiben den Zustand VOR diesen Fixes (inzwischen behoben); Regression-Guards:
+`tests/ui/test_data_table.py` (Precision + Bulk-Load-Zähler) und
+`tests/unit/test_sampling.py::TestSimpleSamplerIdsPath` (Bit-Repro alt vs. neu).
+
 ## Messung 1,000,000 Zeilen
 
 | Phase | Zeit | Peak (tracemalloc) | RSS-Delta | Anmerkung |
