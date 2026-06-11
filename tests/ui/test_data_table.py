@@ -230,6 +230,43 @@ class TestDataTableView:
         assert header is not None
         assert header.resizeContentsPrecision() == 100
 
+    def test_set_dataset_does_not_full_scan_for_autosize(
+        self,
+        qtbot: QtBot,
+        db_with_engagement: tuple[Database, int],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression-Schutz Sprint 12.1 / P-001 (Pass 3 v2) – funktional.
+
+        `set_dataset` triggert `_autosize_columns` → `resizeColumnsToContents`.
+        Dank `setResizeContentsPrecision(100)` sampelt Qt nur die ersten 100
+        Rows pro Spalte → ein einziger Bulk-Load deckt alle Spalten-Walks ab.
+        Ohne den Fix scannt Qt6 ALLE Rows pro Spalte: bei 5000 Rows ~60
+        Bulk-Loads (FIFO-Cache wird pro Spalten-Walk evictet), bei 1M-Datasets
+        ~56k SQLite-Queries → 34 s Freeze (REVIEW_PERFORMANCE.md, Diagnose B).
+        """
+        db, eng_id = db_with_engagement
+        rows = tuple(
+            DatasetRow(row_id=i, values={"a": f"Wert {i}", "b": i, "c": i * 1.5})
+            for i in range(1, 5001)
+        )
+        ds, repo = _persist_dataset(db, eng_id, rows, columns=("a", "b", "c"))
+
+        calls: list[tuple[int, int]] = []
+        original = repo.get_rows_in_range
+
+        def counting(dataset_id: int, start: int, end: int) -> list[DatasetRow]:
+            calls.append((start, end))
+            return original(dataset_id, start, end)
+
+        monkeypatch.setattr(repo, "get_rows_in_range", counting)
+
+        view = DataTableView()
+        qtbot.addWidget(view)
+        view.set_dataset(ds, repo)
+
+        assert len(calls) <= 10, f"Autosize hat {len(calls)} Bulk-Loads ausgelöst"
+
     def test_highlight_rows_marks_first(
         self, qtbot: QtBot, db_with_engagement: tuple[Database, int]
     ) -> None:

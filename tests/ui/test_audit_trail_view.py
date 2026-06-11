@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QModelIndex, Qt
 from pytestqt.qtbot import QtBot
 
+from sampling_tool.core.formatting import format_optional_timestamp
 from sampling_tool.core.models import AuditEvent
+from sampling_tool.ui.widgets import audit_trail_view
 from sampling_tool.ui.widgets.audit_trail_view import (
     AuditTrailModel,
     AuditTrailView,
@@ -404,3 +407,133 @@ class TestModelEdgeCases:
         proxy_idx = view.proxy().index(0, 0)
         view._on_double_click(proxy_idx)
         assert emitted == []
+
+
+# ---------------------------------------------------------------------------
+# Sprint 24 / P-010: Haystack-Cache im Filter-Proxy
+# ---------------------------------------------------------------------------
+
+
+def _reference_haystack(evt: AuditEvent) -> str:
+    """Unabhängige Kopie des Inline-Haystack-Aufbaus vor Sprint 24 (Oracle).
+
+    Bewusst NICHT aus dem Widget-Modul importiert – der Test vergleicht die
+    Cache-Implementierung gegen die alte Semantik, nicht gegen sich selbst.
+    Felder + Reihenfolge wie `filterAcceptsRow` vor dem Cache-Umbau.
+    """
+    file_path = evt.export_file or evt.import_file
+    file_label = Path(file_path).name if file_path else "—"
+    return " ".join(
+        [
+            format_optional_timestamp(evt.timestamp),
+            evt.event_type,
+            evt.user_name or "",
+            file_label,
+        ]
+    ).lower()
+
+
+def _visible_event_ids(view: AuditTrailView) -> list[int]:
+    """Event-IDs aller nach Filter sichtbaren Zeilen (sortiert)."""
+    proxy = view.proxy()
+    ids: list[int] = []
+    for row in range(proxy.rowCount()):
+        source = proxy.mapToSource(proxy.index(row, 0))
+        evt = view.model().event_at(source.row())
+        assert evt is not None
+        assert evt.id is not None
+        ids.append(evt.id)
+    return sorted(ids)
+
+
+def _synthetic_events(count: int) -> list[AuditEvent]:
+    """Synthetische Events mit Varianz in allen Haystack-Feldern."""
+    types = ["sampling", "reset", "import", "export", "undo", "redo", "correction"]
+    users = ["Anna", "bob", "Jörg", "", "X-Üser"]
+    events: list[AuditEvent] = []
+    for i in range(1, count + 1):
+        events.append(
+            _make_event(
+                event_id=i,
+                event_type=types[i % len(types)],
+                user=users[i % len(users)],
+                import_file=f"buchungen_{i}.csv" if i % 3 == 0 else None,
+                export_file=f"Sample_{i}_BDO.xlsx" if i % 3 == 1 else None,
+                timestamp=datetime(2026, 5, (i % 28) + 1, i % 24, 30, tzinfo=UTC),
+            )
+        )
+    return events
+
+
+class TestAuditTrailFilterHaystackCache:
+    """Sprint 24 / P-010: Haystack einmal pro set_events, nicht pro Tastenanschlag."""
+
+    def test_haystack_built_once_on_set_events(self, view: AuditTrailView) -> None:
+        view.set_events(_synthetic_events(100))
+        assert len(view.proxy()._haystack_cache) == 100
+
+    def test_set_events_replaces_stale_cache(self, view: AuditTrailView) -> None:
+        view.set_events(_synthetic_events(100))
+        view.set_events(_synthetic_events(7))
+        assert len(view.proxy()._haystack_cache) == 7
+
+    def test_filter_uses_cache_not_per_keystroke_rebuild(
+        self, view: AuditTrailView, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[AuditEvent] = []
+        original = audit_trail_view._build_haystack
+
+        def counting(evt: AuditEvent) -> str:
+            calls.append(evt)
+            return original(evt)
+
+        monkeypatch.setattr(audit_trail_view, "_build_haystack", counting)
+
+        view.set_events(_synthetic_events(100))
+        assert len(calls) == 100  # genau einmal pro Event beim set_events
+
+        proxy = view.proxy()
+        for keystroke in ("a", "an", "ann", "anna"):
+            proxy.setFilterFixedString(keystroke)  # Re-Filter über alle 100 Rows
+        for row in range(10):
+            proxy.filterAcceptsRow(row, QModelIndex())
+        assert len(calls) == 100  # 0 zusätzliche Builds beim Filtern
+
+    def test_filter_results_identical_to_pre_cache_implementation(
+        self, view: AuditTrailView
+    ) -> None:
+        events = _synthetic_events(50)
+        view.set_events(events)
+        proxy = view.proxy()
+        needles = [
+            "anna",
+            "EXPORT",
+            "xlsx",
+            "2026",
+            "keintrefferxyz",
+            "Jörg",
+            "csv",
+            "sampling",
+        ]
+        for needle in needles:
+            proxy.setFilterFixedString(needle)
+            # Der alte Inline-Pfad matchte gegen filterRegularExpression().pattern()
+            # (= von setFilterFixedString escapter String) – die Referenz repliziert
+            # exakt das, damit die Treffer-Semantik 1:1 verglichen wird.
+            pattern = proxy.filterRegularExpression().pattern().lower()
+            expected = sorted(
+                evt.id
+                for evt in events
+                if evt.id is not None and pattern in _reference_haystack(evt)
+            )
+            assert _visible_event_ids(view) == expected, f"needle={needle!r}"
+
+    def test_out_of_range_row_falls_back_to_inline_build(self, view: AuditTrailView) -> None:
+        """Race bei Modell-Reset: leerer/zu kurzer Cache darf nicht crashen."""
+        view.set_events(_synthetic_events(5))
+        proxy = view.proxy()
+        proxy.setFilterFixedString("anna")
+        proxy._haystack_cache = []  # Race simulieren: Cache leer trotz gefülltem Model
+        accepted = [proxy.filterAcceptsRow(row, QModelIndex()) for row in range(5)]
+        # users-Zyklus in _synthetic_events: Event 5 hat user "Anna", alle anderen nicht.
+        assert accepted == [False, False, False, False, True]
