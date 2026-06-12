@@ -160,6 +160,13 @@ class AuditTrailFilterProxy(QSortFilterProxyModel):
     Event-Load vorberechnet (`_haystack_cache`), nicht mehr pro Row und
     Tastenanschlag in `filterAcceptsRow` – Volltextsuche bleibt damit auch bei
     >20k Events flüssig.
+
+    Sprint 25: Die Volltextsuche ist literales, case-insensitives
+    Substring-Matching über `set_search_text` (rohe Nadel, einmal pro
+    Filter-Änderung gelowercased). Bewusst NICHT `setFilterFixedString`:
+    Qt escapet dort jedes Nicht-Wort-Zeichen (".csv" → "\\.csv",
+    "ö" → "\\ö", auch Leerzeichen) – diese escapte Form kommt im Haystack
+    nie vor, Suchen mit Umlauten/Punkten/Phrasen trafen deshalb nie.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -168,9 +175,14 @@ class AuditTrailFilterProxy(QSortFilterProxyModel):
         self._user_filter: str | None = None
         self._range: str = _FILTER_ALL
         self._haystack_cache: list[str] = []
-        self.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._search_needle: str = ""
 
     # ---- Public API -----------------------------------------------------
+
+    def set_search_text(self, text: str) -> None:
+        """Setzt den rohen Volltext-Suchbegriff (literal, case-insensitiv)."""
+        self._search_needle = text.lower()
+        self.invalidateFilter()
 
     def set_action_filter(self, action: str | None) -> None:
         self._action_filter = action
@@ -229,14 +241,13 @@ class AuditTrailFilterProxy(QSortFilterProxyModel):
         if not _in_range(evt.timestamp, self._range):
             return False
 
-        text = self.filterRegularExpression().pattern()
-        if text:
+        if self._search_needle:
             if 0 <= source_row < len(self._haystack_cache):
                 haystack = self._haystack_cache[source_row]
             else:
                 # Defensiv (Race bei Modell-Reset): Inline-Aufbau statt Crash.
                 haystack = _build_haystack(evt)
-            if text.lower() not in haystack:
+            if self._search_needle not in haystack:
                 return False
 
         return True
@@ -383,7 +394,7 @@ class AuditTrailView(QWidget):
     # ---- Slots ----------------------------------------------------------
 
     def _on_search_changed(self, text: str) -> None:
-        self._proxy.setFilterFixedString(text)
+        self._proxy.set_search_text(text)
 
     def _on_action_changed(self, _index: int) -> None:
         key = self._action_combo.currentData()

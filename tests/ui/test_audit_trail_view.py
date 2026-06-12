@@ -494,7 +494,7 @@ class TestAuditTrailFilterHaystackCache:
 
         proxy = view.proxy()
         for keystroke in ("a", "an", "ann", "anna"):
-            proxy.setFilterFixedString(keystroke)  # Re-Filter über alle 100 Rows
+            proxy.set_search_text(keystroke)  # Re-Filter über alle 100 Rows
         for row in range(10):
             proxy.filterAcceptsRow(row, QModelIndex())
         assert len(calls) == 100  # 0 zusätzliche Builds beim Filtern
@@ -516,15 +516,15 @@ class TestAuditTrailFilterHaystackCache:
             "sampling",
         ]
         for needle in needles:
-            proxy.setFilterFixedString(needle)
-            # Der alte Inline-Pfad matchte gegen filterRegularExpression().pattern()
-            # (= von setFilterFixedString escapter String) – die Referenz repliziert
-            # exakt das, damit die Treffer-Semantik 1:1 verglichen wird.
-            pattern = proxy.filterRegularExpression().pattern().lower()
+            proxy.set_search_text(needle)
+            # Referenz: literales, case-insensitives Substring-Matching gegen
+            # die unabhängige Haystack-Kopie. Für Wort-Zeichen-Needles ist das
+            # bit-identisch zum Pre-Sprint-25-Verhalten; Needles mit
+            # Nicht-Wort-Zeichen ("Jörg") treffen seit Sprint 25 literal.
             expected = sorted(
                 evt.id
                 for evt in events
-                if evt.id is not None and pattern in _reference_haystack(evt)
+                if evt.id is not None and needle.lower() in _reference_haystack(evt)
             )
             assert _visible_event_ids(view) == expected, f"needle={needle!r}"
 
@@ -533,7 +533,7 @@ class TestAuditTrailFilterHaystackCache:
         nicht per Disconnect+Reconnect hinter Qts internen Reset-Handler
         schieben – sonst filtert ein Same-Length-Reset mit stalem Cache."""
         proxy = view.proxy()
-        proxy.setFilterFixedString("anna")
+        proxy.set_search_text("anna")
         view.set_events([_make_event(event_id=1, user="Anna"), _make_event(event_id=2, user="bob")])
         assert _visible_event_ids(view) == [1]
 
@@ -547,8 +547,93 @@ class TestAuditTrailFilterHaystackCache:
         """Race bei Modell-Reset: leerer/zu kurzer Cache darf nicht crashen."""
         view.set_events(_synthetic_events(5))
         proxy = view.proxy()
-        proxy.setFilterFixedString("anna")
+        proxy.set_search_text("anna")
         proxy._haystack_cache = []  # Race simulieren: Cache leer trotz gefülltem Model
         accepted = [proxy.filterAcceptsRow(row, QModelIndex()) for row in range(5)]
         # users-Zyklus in _synthetic_events: Event 5 hat user "Anna", alle anderen nicht.
         assert accepted == [False, False, False, False, True]
+
+
+class TestAuditSearchSpecialChars:
+    """Sprint 25: Volltextsuche ist literales, case-insensitives Substring-Matching.
+
+    Bug seit Sprint 6: der Suchtext lief über `setFilterFixedString`, dessen
+    escaptes Pattern (".csv" → "\\.csv", "ö" → "\\ö", auch Leerzeichen!) als
+    Substring-Nadel gegen den Haystack geprüft wurde – Begriffe mit
+    Nicht-Wort-Zeichen trafen deshalb NIE. Alle Tests laufen über den echten
+    UI-Pfad (`view._search.setText`).
+    """
+
+    def test_search_matches_dot_extension(self, view: AuditTrailView) -> None:
+        view.set_events(
+            [
+                _make_event(event_id=1, import_file="/tmp/report.csv"),
+                _make_event(event_id=2, export_file="/tmp/report.xlsx"),
+                _make_event(event_id=3),
+            ]
+        )
+        view._search.setText(".csv")
+        assert _visible_event_ids(view) == [1]
+
+    def test_search_matches_umlaut(self, view: AuditTrailView) -> None:
+        view.set_events(
+            [
+                _make_event(event_id=1, user="Größe"),
+                _make_event(event_id=2, user="Öffnung"),
+                _make_event(event_id=3, user="anna"),
+            ]
+        )
+        view._search.setText("ö")
+        assert _visible_event_ids(view) == [1, 2]
+        # Case-insensitiv auch für Nicht-ASCII.
+        view._search.setText("Ö")
+        assert _visible_event_ids(view) == [1, 2]
+
+    def test_search_matches_other_regex_metachars(self, view: AuditTrailView) -> None:
+        view.set_events(
+            [
+                _make_event(event_id=1, user="Team (Audit)+QA*"),
+                _make_event(event_id=2, user="Team Audit QA"),
+            ]
+        )
+        view._search.setText("(audit)")
+        assert _visible_event_ids(view) == [1]
+        view._search.setText("+qa*")
+        assert _visible_event_ids(view) == [1]
+        # Literal, NICHT als Regex: "a*" (null-oder-mehr 'a') würde als Regex
+        # beide Events treffen – literal kommt "a*" nur in Event 1 vor.
+        view._search.setText("a*")
+        assert _visible_event_ids(view) == [1]
+
+    def test_search_matches_phrase_with_space(self, view: AuditTrailView) -> None:
+        """Qt escapet auch Leerzeichen ('anna export' → 'anna\\ export') –
+        Mehrwort-Suchen trafen vor Sprint 25 deshalb ebenfalls nie."""
+        view.set_events(
+            [
+                _make_event(event_id=1, user="Team Audit QA"),
+                _make_event(event_id=2, user="Team (Audit)+QA*"),
+            ]
+        )
+        view._search.setText("team audit")
+        assert _visible_event_ids(view) == [1]
+
+    def test_plain_text_search_unchanged(self, view: AuditTrailView) -> None:
+        """Oracle: für Begriffe aus reinen Wort-Zeichen ist das Verhalten
+        bit-identisch zu vor dem Fix (Escape ist dort die Identität)."""
+        events = _synthetic_events(30)
+        view.set_events(events)
+        for needle in ["bob", "sampling", "xlsx", "2026", "keintrefferxyz", "BOB"]:
+            view._search.setText(needle)
+            expected = sorted(
+                evt.id
+                for evt in events
+                if evt.id is not None and needle.lower() in _reference_haystack(evt)
+            )
+            assert _visible_event_ids(view) == expected, f"needle={needle!r}"
+
+    def test_empty_search_shows_all(self, view: AuditTrailView) -> None:
+        view.set_events(_synthetic_events(10))
+        view._search.setText("anna")
+        assert view.visible_row_count() < 10
+        view._search.setText("")
+        assert view.visible_row_count() == 10
