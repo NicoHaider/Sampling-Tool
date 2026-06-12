@@ -52,17 +52,27 @@ String-Bau. Treffer-Semantik bit-identisch zum alten Inline-Aufbau
 TestAuditTrailFilterHaystackCache`). Kein neuer 1M-Probe-Lauf – `perf_probe.py`
 misst die AuditTrail-Filter-Phase nicht (siehe „nie gemessen (P-010)" unten).
 
-Follow-up-Kandidaten (Sprint 24, bewusst NICHT umgesetzt – Scope):
-- Debounce/Delay für die Volltextsuche (z. B. 150 ms QTimer) würde die
-  verbleibende Keystroke-Latenz bei sehr großen Event-Listen kaschieren.
-- `text.lower()` läuft weiterhin einmal pro Row pro Tastenanschlag in
-  `filterAcceptsRow` – den gelowerten Needle einmal pro Filter-Änderung zu
-  cachen wäre die natürliche Ergänzung zum Haystack-Cache.
-- Die Volltextsuche matcht gegen `filterRegularExpression().pattern()` – bei
-  Suchbegriffen mit Nicht-Wort-Zeichen (z. B. „ö", „.csv") escapet
-  `setFilterFixedString` den String, wodurch solche Suchen nie treffen können.
-  Bestandsverhalten seit Sprint 6, durch den Cache-Umbau unverändert
-  (im Oracle-Test mit abgedeckt); separater Bugfix-Kandidat.
+Follow-up-Kandidaten (Sprint 24; Stand nach Sprint 25):
+- **Offen:** Debounce/Delay für die Volltextsuche (z. B. 150 ms QTimer) würde
+  die verbleibende Keystroke-Latenz bei sehr großen Event-Listen kaschieren.
+- ~~Needle-Lowercase-Cache~~ → **Sprint 25: umgesetzt** – `set_search_text`
+  lowercased die Nadel einmal pro Filter-Änderung, nicht mehr pro Row.
+- ~~Escape-Bug der Volltextsuche~~ → **Sprint 25: gefixt** (siehe Block unten).
+
+**Sprint 25 – Audit-Suche matcht Nicht-Wort-Zeichen literal (Bugfix):**
+Die Volltextsuche lief über `setFilterFixedString`; `filterAcceptsRow` nutzte
+das escapte `filterRegularExpression().pattern()` als Substring-Nadel. Qt
+escapet dabei JEDES Nicht-Wort-Zeichen („.csv" → „\.csv", „ö" → „\ö",
+„Größe" → „Gr\ö\ße", auch Leerzeichen: „anna export" → „anna\ export") –
+Suchen mit Umlauten, Punkten, Regex-Metazeichen oder Mehrwort-Phrasen trafen
+deshalb seit Sprint 6 nie (empirisch verifiziert). Fix:
+`AuditTrailFilterProxy.set_search_text(raw)` führt die **rohe** Nadel;
+`setFilterFixedString` ist aus dem Suchpfad entfernt. Invariante: literales,
+case-insensitives Substring-Matching. Plain-Text-Treffer bleiben bit-identisch
+(Oracle-Test `test_plain_text_search_unchanged`), P-010-Haystack-Cache
+unverändert (kein Per-Row-Stringbau, Keystroke-Spy-Test weiter grün).
+Micro-Benchmark (20k Events, offscreen, 2026-06-12):
+**129,8 → 120,7 ms pro Tastenanschlag** – kein Regress, leicht besser.
 
 **Hinweis zur Mess-Tabelle unten:** Der 1M-Lauf stammt vom Sprint-11-Stand
 (Toolversion `19f18a1`) und liegt damit VOR den Sprint-12.1-Fixes für P-001

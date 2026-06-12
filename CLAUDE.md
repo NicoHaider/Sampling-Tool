@@ -104,6 +104,7 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
 | 22     | Einzel-Toggles für Advanced-Funktionen im „Ansicht"-Menü (ODER-Logik neben Advanced-Mode, app-weit persistiert) | done |
 | 23     | Sampling-Presets (benannte Profile, app-weit via QSettings/JSON, ohne Seed/Daten) | done |
 | 24     | Performance-Polish: P-010 AuditTrail-Haystack-Cache (P-001/P-002 aus Pass 3 v2 waren seit Sprint 12.1 gefixt) | done |
+| 25     | Bugfix: Audit-Volltextsuche matcht Nicht-Wort-/Nicht-ASCII-Zeichen literal (rohe Nadel statt escaptem Pattern) | done |
 
 ## Einzel-Feature-Toggles + „Ansicht"-Menü (Sprint 22)
 
@@ -671,6 +672,13 @@ ui ──▶ controllers ──▶ core ◀── io
     internem Re-Filter frisch ist), nicht mehr pro Row und Tastenanschlag
     – 20k Events: 195 → 130 ms/Anschlag. Treffer bit-identisch zum alten
     Inline-Aufbau (Oracle-Test in tests/ui/test_audit_trail_view.py).
+    **Sprint 25**: Volltextsuche ist literales, case-insensitives
+    Substring-Matching via `set_search_text` (rohe Nadel, einmal pro
+    Filter-Änderung gelowercased). Vorher lief sie über
+    `setFilterFixedString`, dessen escaptes Pattern („ö" → „\ö",
+    „.csv" → „\.csv", auch Leerzeichen) als Nadel diente – Suchen mit
+    Nicht-Wort-Zeichen/Phrasen trafen seit Sprint 6 nie. Plain-Text-
+    Treffer unverändert (`test_plain_text_search_unchanged`).
   - `widgets/dashboard_view.py` – `DashboardView` mit Kachel-Grid
     (Datasets, Samples, Audit-Events, Letzte Aktivität, Letzte
     Stichproben, Sampling-Historie). Charts werden via `chart_renderer`
