@@ -6,7 +6,8 @@ Dashboard angezeigt. Doppelklick auf einen Sample-Event sendet das
 Sample in der Tabelle markieren kann.
 
 Filter-Zeile oben:
-- Volltext-Suche (durchsucht User, Aktion, Datei).
+- Volltext-Suche (literal, case-insensitiv; durchsucht Zeitstempel, Aktion,
+  User, Datei).
 - ComboBox "Aktion": Sampling / Reset / Import / Export / Undo / Redo /
   Korrektur / Alle.
 - ComboBox "User": dynamisch aus den geladenen Events befüllt.
