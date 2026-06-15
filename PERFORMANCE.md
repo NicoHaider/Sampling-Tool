@@ -74,6 +74,71 @@ unverändert (kein Per-Row-Stringbau, Keystroke-Spy-Test weiter grün).
 Micro-Benchmark (20k Events, offscreen, 2026-06-12):
 **129,8 → 120,7 ms pro Tastenanschlag** – kein Regress, leicht besser.
 
+**Sprint 26 – Import-Geschwindigkeit (Profiling-first):**
+
+Reproduzierbarer 1-Mio-Zeilen-Benchmark für **beide** Formate, aufgeschlüsselt
+in Parse / Encode / Write (Median aus 3 Läufen, Apple Silicon, Python 3.13.13,
+gemischte Spalten: Text inkl. Nicht-ASCII, int, Dezimal, datetime/date/time,
+Nullwerte). Skript: `scripts/bench_import.py` (bleibt im Repo). Aufruf:
+
+```bash
+python scripts/bench_import.py                       # 1M Zeilen, beide Formate, 3 Läufe
+python scripts/bench_import.py --rows 1000000 --runs 5 --profile   # + cProfile-Gegenprobe
+python scripts/bench_import.py --quick               # 1000 Zeilen, 1 Lauf (Smoke)
+```
+
+**Messlage (Baseline `e31ef72`, 1M Zeilen):**
+
+| Phase | xlsx | csv |
+|-------|-----:|----:|
+| Parse | 5276 ms | 2531 ms |
+| **Encode** | **5512 ms (43 %)** | **6957 ms (64 %)** |
+| – davon Coercion (`_coerce_value`) | 3261 ms | 5756 ms |
+| – davon Tagged-JSON (`_values_to_json`) | 2118 ms | 1226 ms |
+| Write (`executemany` + Commit) | 1924 ms | 1432 ms |
+| End-to-End (Streaming-Pipeline) | 12941 ms | 13640 ms |
+
+**Entscheidungs-Gate:** Dominanter Posten je Format ist **Encode/Transform**.
+Er zerfällt in (a) **Coercion** – der größere Teil, der aber die importierten
+**Werte/Typen definiert** (float→int, deutsche Komma-Dezimalzahl, date→datetime)
+und damit die „byte-für-byte identisch"-Rote-Linie ist (Hard Constraint §9,
+bewusst NICHT angefasst, keine neue Dependency – der Parse-Pfad ist nicht
+dominant) – und (b) **Tagged-JSON-Encoding**, der vom Sprint freigegebene,
+risikoarme Hebel. cProfile bestätigt: zwei Per-Zellen-Pässe über dieselben
+Daten (`_coerce_value` + `_encode_value` je 8 Mio. Aufrufe bei 8 Spalten).
+
+**Fix (nur der dominante, sichere Hebel):** `_values_to_json` nutzt jetzt
+`orjson.dumps(values, default=_encode_value, option=OPT_PASSTHROUGH_DATETIME)`.
+orjson serialisiert das Werte-Dict direkt in C und ruft `_encode_value` NUR
+noch für tatsächliche datetime/date/time-Werte zurück – der frühere
+Per-Zellen-Dict-Comp + isinstance-Pass über die (ganz überwiegend
+nicht-temporalen) Massendaten entfällt. Die erzeugten JSON-Bytes sind
+**byte-identisch** (gleiche Tag-Shape `{"__type__":…,"v":…}`, gleiche
+Key-Reihenfolge), der Read-Pfad (`_decode_value`/`_values_from_json`,
+`distinct_values` via `json_extract`) bleibt unberührt.
+
+**Vorher/Nachher (1M Zeilen):**
+
+| Phase | xlsx vorher | xlsx nachher | csv vorher | csv nachher |
+|-------|-----------:|------------:|-----------:|-----------:|
+| Tagged-JSON (dominanter Hebel) | 2118 ms | **1476 ms** | 1226 ms | **404 ms** |
+| Encode gesamt | 5512 ms | 4783 ms | 6957 ms | 6240 ms |
+| End-to-End | 12941 ms | 12629 ms | 13640 ms | 11740 ms |
+
+Cross-Prozess-Läufe haben Mess-Rauschen (Parse/Coercion/Write ~unverändert
+innerhalb ±2 %). Der saubere, prozess-interne Alt-gegen-Neu-Vergleich des
+Encoders (1M Zeilen, Median aus 5, Byte-Identität auf 5000 Zeilen asserted):
+**xlsx 2070 → 1438 ms (−30,5 %)**, **csv 1163 → 312 ms (−73,1 %)** – der
+dominante Hebel wird auf beiden Formaten ≥30 % schneller, der Gesamt-Import
+messbar schneller (csv-E2E −14 %).
+
+**Keine Korrektheits-Regression:** Byte-Identität + Tag-Round-Trip + Coercion-
+Typen + Cancellation + PRAGMA-Unverändertheit + Single-`executemany`-Bulk-Insert
+sind gepinnt in `tests/integration/test_import_result_unchanged.py::
+TestImportResultUnchanged` (Oracle gegen die eingefrorene Pre-Sprint-26-
+Referenz). Der Benchmark hat einen Smoke-Guard
+(`tests/integration/test_bench_import_runs.py`).
+
 **Hinweis zur Mess-Tabelle unten:** Der 1M-Lauf stammt vom Sprint-11-Stand
 (Toolversion `19f18a1`) und liegt damit VOR den Sprint-12.1-Fixes für P-001
 (`setResizeContentsPrecision(100)` → Tabelle-Anzeige) und P-002

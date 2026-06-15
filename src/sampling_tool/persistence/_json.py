@@ -76,7 +76,22 @@ def _decode_value(value: Any) -> Any:
 
 
 def _values_to_json(values: dict[str, Any]) -> str:
-    return _json_dumps({k: _encode_value(v) for k, v in values.items()})
+    # Sprint 26 – Fast-Path: orjson serialisiert das Werte-Dict direkt in C und
+    # ruft `_encode_value` (als `default`) NUR für tatsächliche datetime/date/
+    # time-Werte zurück (OPT_PASSTHROUGH_DATETIME schickt genau diese Typen an
+    # `default`). Das spart den früheren Per-Zellen-Dict-Comp + isinstance-Pass
+    # über Nicht-Temporal-Werte (Massendaten sind ganz überwiegend nicht-
+    # temporal). Die erzeugten Bytes sind byte-identisch zum vorherigen
+    # `{k: _encode_value(v) ...}`-Aufbau (Tag-Shape + Key-Reihenfolge gleich) –
+    # siehe Oracle-Test `test_tagged_encoding_roundtrip_unchanged`.
+    # Kontrakt: `values` enthält nur flache Skalare (so liefert es der Importer-
+    # `_coerce_value`; Nicht-Skalare werden dort zu str). Bei verschachtelten
+    # Temporal-Werten in Containern würde `OPT_PASSTHROUGH_DATETIME` – anders als
+    # der alte Top-Level-Dict-Comp – rekursiv taggen; dieser Fall ist im
+    # Import-Pfad nicht erreichbar.
+    return orjson.dumps(
+        values, default=_encode_value, option=orjson.OPT_PASSTHROUGH_DATETIME
+    ).decode("utf-8")
 
 
 def _values_from_json(text: str) -> dict[str, Any]:

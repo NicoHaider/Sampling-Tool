@@ -105,6 +105,7 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
 | 23     | Sampling-Presets (benannte Profile, app-weit via QSettings/JSON, ohne Seed/Daten) | done |
 | 24     | Performance-Polish: P-010 AuditTrail-Haystack-Cache (P-001/P-002 aus Pass 3 v2 waren seit Sprint 12.1 gefixt) | done |
 | 25     | Bugfix: Audit-Volltextsuche matcht Nicht-Wort-/Nicht-ASCII-Zeichen literal (rohe Nadel statt escaptem Pattern) | done |
+| 26     | Import-Performance (Profiling-first): Encode dominiert → orjson-Fast-Path im Tagged-Encoder (`OPT_PASSTHROUGH_DATETIME`), byte-identisch; `scripts/bench_import.py` | done |
 
 ## Einzel-Feature-Toggles + „Ansicht"-Menü (Sprint 22)
 
