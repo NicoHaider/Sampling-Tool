@@ -113,3 +113,7 @@ config.local.toml
 *.db-shm
 *.db-wal
 *.db-journal
+
+# Lokale, nicht-committete Test-Daten-Scratch (kein Teil des Repos)
+/testdaten/
+/scripts/gen_testdaten.py
