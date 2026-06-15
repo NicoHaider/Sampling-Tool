@@ -7,6 +7,7 @@ Persistenz dem Controller (`settings_store.save_settings`).
 
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 
 from PyQt6.QtCore import QUrl
@@ -34,11 +35,17 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import DEFAULT_BRIEFPAPIER
+from sampling_tool.config import DEFAULT_BRIEFPAPIER, SEED_MAX
 from sampling_tool.ui.settings_store import (
     LOG_LEVELS,
     AppSettings,
 )
+
+# QSpinBox unterstützt nur 32-Bit-signed → SEED_MAX wird gekappt (wie im
+# Sampling-Dialog). 0 ist reserviert für „zufällig" (specialValueText).
+_SEED_SPIN_MAX: int = min(SEED_MAX, 2_147_483_647)
+# Label für den Seed-Wert 0 = kein fester Seed.
+_SEED_RANDOM_LABEL: str = "Zufällig (bei jeder Ziehung neu)"
 
 
 class SettingsDialog(QDialog):
@@ -106,7 +113,7 @@ class SettingsDialog(QDialog):
         row.addWidget(browse)
         wrapper = QWidget()
         wrapper.setLayout(row)
-        form.addRow("Engagement-Ordner", wrapper)
+        form.addRow("Projekt-Ordner", wrapper)
 
         language = QLabel("Sprache: Deutsch (weitere folgen)")
         language.setStyleSheet("color: #7F7F7F;")
@@ -150,6 +157,19 @@ class SettingsDialog(QDialog):
         self._default_statistics = QCheckBox("Statistik-Seite standardmäßig anhängen")
         self._default_statistics.setChecked(current.default_include_statistics)
         outer.addWidget(self._default_statistics)
+
+        # Sprint 27: Audit-PDF-Export bietet den von/bis-Datumsfilter nur an,
+        # wenn dieser Toggle aktiv ist. Default aus → der Export überspringt
+        # den Datumsschritt und exportiert alle Events.
+        self._audit_export_date_filter = QCheckBox(
+            "Im Audit-PDF-Export einen Datumsfilter (von/bis) anbieten"
+        )
+        self._audit_export_date_filter.setChecked(current.audit_export_offer_date_filter)
+        self._audit_export_date_filter.setToolTip(
+            "Aus: der Export enthält alle Events ohne Datumsabfrage.\n"
+            "An: im Export-Dialog erscheint ein von/bis-Filter."
+        )
+        outer.addWidget(self._audit_export_date_filter)
 
         # ---- Briefpapier-GroupBox ----
         group = QGroupBox("Briefpapier")
@@ -236,8 +256,32 @@ class SettingsDialog(QDialog):
             self._log_level.setCurrentIndex(idx)
         form.addRow("Log-Level", self._log_level)
 
+        # Sprint 27: Der Sampling-Seed wird ausschließlich hier geändert – im
+        # Haupt-Dialog ist das Feld schreibgeschützt. 0 (= specialValueText)
+        # bedeutet „kein fester Seed": es wird wie bisher zufällig gewürfelt
+        # und der zuletzt genutzte Seed gemerkt (ISAE-3402, Sprint 21).
+        self._seed_spin = QSpinBox()
+        self._seed_spin.setRange(0, _SEED_SPIN_MAX)
+        self._seed_spin.setSpecialValueText(_SEED_RANDOM_LABEL)
+        self._seed_spin.setValue(current.seed if current.seed is not None else 0)
+        self._seed_spin.setToolTip(
+            "Fester Seed für die nächste Ziehung. Gleicher Seed + gleiche Daten "
+            "→ bit-genau gleiche Stichprobe.\n0 = zufällig (kein fester Seed)."
+        )
+        self._seed_dice = QPushButton("🎲 Würfeln")
+        self._seed_dice.setProperty("secondary", True)
+        self._seed_dice.setToolTip("Einen neuen zufälligen festen Seed setzen")
+        self._seed_dice.clicked.connect(self._on_reroll_seed)
+        seed_row = QHBoxLayout()
+        seed_row.setSpacing(8)
+        seed_row.addWidget(self._seed_spin, stretch=1)
+        seed_row.addWidget(self._seed_dice)
+        seed_widget = QWidget()
+        seed_widget.setLayout(seed_row)
+        form.addRow("Sampling-Seed", seed_widget)
+
         info = QLabel(
-            "Log-Datei: standardmäßig im Engagement-Ordner unter `app.log`. "
+            "Log-Datei: standardmäßig im Projekt-Ordner unter `app.log`. "
             "Wird beim nächsten Start angewendet."
         )
         info.setWordWrap(True)
@@ -249,9 +293,13 @@ class SettingsDialog(QDialog):
 
     # ---- Slots ----------------------------------------------------------
 
+    def _on_reroll_seed(self) -> None:
+        """Setzt einen neuen zufälligen festen Seed (immer > 0)."""
+        self._seed_spin.setValue(secrets.randbelow(_SEED_SPIN_MAX) + 1)
+
     def _on_browse_engagements_dir(self) -> None:
         start = self._engagements_dir.text() or str(self._initial.engagements_dir)
-        directory = QFileDialog.getExistingDirectory(self, "Engagement-Ordner wählen", start)
+        directory = QFileDialog.getExistingDirectory(self, "Projekt-Ordner wählen", start)
         if directory:
             self._engagements_dir.setText(directory)
 
@@ -294,6 +342,7 @@ class SettingsDialog(QDialog):
         self._reset_keeps_filter.setChecked(defaults.reset_keeps_filter)
         self._default_briefpapier.setChecked(defaults.default_include_briefpapier)
         self._default_statistics.setChecked(defaults.default_include_statistics)
+        self._audit_export_date_filter.setChecked(defaults.audit_export_offer_date_filter)
         self._radio_placeholder.setChecked(True)
         self._custom_briefpapier.clear()
         self._chk_show_dashboard.setChecked(defaults.show_dashboard)
@@ -301,6 +350,7 @@ class SettingsDialog(QDialog):
         self._chk_advanced_mode.setChecked(defaults.advanced_mode)
         self._undo_depth.setValue(defaults.undo_depth)
         self._snapshot_retention.setValue(defaults.snapshot_retention_days)
+        self._seed_spin.setValue(defaults.seed if defaults.seed is not None else 0)
         idx = self._log_level.findText(defaults.log_level)
         if idx >= 0:
             self._log_level.setCurrentIndex(idx)
@@ -314,8 +364,9 @@ class SettingsDialog(QDialog):
 
         engagements_text = self._engagements_dir.text().strip()
         if not engagements_text:
-            QMessageBox.warning(self, "Ungültiger Pfad", "Bitte einen Engagement-Ordner angeben.")
+            QMessageBox.warning(self, "Ungültiger Pfad", "Bitte einen Projekt-Ordner angeben.")
             return
+        seed_value = self._seed_spin.value()
         self._result = AppSettings(
             default_auditor_name=self._auditor_name.text().strip(),
             engagements_dir=Path(engagements_text),
@@ -323,6 +374,9 @@ class SettingsDialog(QDialog):
             default_include_briefpapier=self._default_briefpapier.isChecked(),
             default_include_statistics=self._default_statistics.isChecked(),
             custom_briefpapier_path=custom_path,
+            audit_export_offer_date_filter=self._audit_export_date_filter.isChecked(),
+            # 0 (specialValueText) bedeutet „kein fester Seed" → None.
+            seed=seed_value if seed_value != 0 else None,
             show_dashboard=self._chk_show_dashboard.isChecked(),
             show_audit_trail=self._chk_show_audit_trail.isChecked(),
             advanced_mode=self._chk_advanced_mode.isChecked(),

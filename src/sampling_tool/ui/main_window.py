@@ -150,7 +150,7 @@ class MainWindow(QMainWindow):
         self._window_state.restore()
 
         # ---- Statusbar ----
-        self._status_engagement = QLabel("Kein Engagement")
+        self._status_engagement = QLabel("Kein Projekt")
         self._status_dataset = QLabel("Kein Dataset")
         self._status_rows = QLabel("0 Zeilen")
         self._status_sample = QLabel("—")
@@ -176,7 +176,7 @@ class MainWindow(QMainWindow):
         """Zeigt den Welcome-Screen (keine .db geladen)."""
         self._stack.setCurrentWidget(self._welcome)
         self._set_workspace_actions_enabled(False)
-        self._status_engagement.setText("Kein Engagement")
+        self._status_engagement.setText("Kein Projekt")
         self._status_dataset.setText("Kein Dataset")
         self._status_rows.setText("0 Zeilen")
         self.set_active_sample_label(None)
@@ -192,7 +192,7 @@ class MainWindow(QMainWindow):
         """Engagement-Block in Sidebar + Statusbar aktualisieren."""
         self._sidebar.set_engagement(engagement)
         self._status_engagement.setText(
-            engagement.client_name if engagement is not None else "Kein Engagement"
+            engagement.client_name if engagement is not None else "Kein Projekt"
         )
 
     def set_datasets(self, datasets: list[Dataset]) -> None:
@@ -420,9 +420,9 @@ class MainWindow(QMainWindow):
         start_dir = str(ENGAGEMENTS_DIR) if ENGAGEMENTS_DIR.exists() else ""
         path_str, _filter = QFileDialog.getOpenFileName(
             self,
-            "Engagement öffnen",
+            "Projekt öffnen",
             start_dir,
-            "SQLite-Engagement (*.db);;Alle Dateien (*)",
+            "SQLite-Projekt (*.db);;Alle Dateien (*)",
         )
         if path_str:
             self.open_engagement_requested.emit(Path(path_str))

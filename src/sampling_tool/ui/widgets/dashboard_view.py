@@ -169,7 +169,7 @@ class DashboardView(QWidget):
         self._stack.addWidget(scroll)
 
         self._empty_label = QLabel(
-            "Engagement leer – starte mit einem Datei-Import, um Statistiken zu sehen."
+            "Projekt leer – starte mit einem Datei-Import, um Statistiken zu sehen."
         )
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setStyleSheet("color: #7F7F7F; font-style: italic; padding: 24px;")

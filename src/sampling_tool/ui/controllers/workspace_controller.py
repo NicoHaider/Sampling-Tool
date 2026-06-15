@@ -211,13 +211,17 @@ class WorkspaceController:
         dialog = self._factories.sampling(
             s.window, s.dataset, distinct_provider, s.sample, features
         )
-        # Sprint 21: zuletzt genutzten Seed vorbefüllen, damit eine erneute
-        # Ziehung (auch nach „Sampling zurücksetzen") denselben Seed verwendet
-        # und die Stichprobe bit-genau reproduziert. Ohne das würfelt der
-        # Dialog bei jedem Öffnen einen neuen Zufalls-Seed → andere Stichprobe
-        # trotz unveränderter Parameter (ISAE-3402-Verletzung).
-        if s.last_seed is not None:
-            dialog.set_initial_seed(s.last_seed)
+        # Seed-Quelle auflösen (Sprint 27): ein fester Seed aus den
+        # Einstellungen hat Vorrang („geänderter Seed gilt für die nächste
+        # Ziehung"); sonst greift der Sprint-21-Mechanismus, der den zuletzt
+        # genutzten Seed vorbefüllt, damit eine erneute Ziehung (auch nach
+        # „Sampling zurücksetzen") bit-genau reproduziert (ISAE-3402). Ist
+        # beides None, würfelt der Dialog intern einen Zufalls-Seed. Das
+        # Seed-Feld ist schreibgeschützt – der Eingabeort ist verschoben, der
+        # RNG-/Zieh-Pfad bleibt unverändert.
+        resolved_seed = s.settings.seed if s.settings.seed is not None else s.last_seed
+        if resolved_seed is not None:
+            dialog.set_initial_seed(resolved_seed)
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         result = dialog.get_result()

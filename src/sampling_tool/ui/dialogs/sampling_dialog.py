@@ -140,14 +140,15 @@ class SamplingDialog(QDialog):
         return self._result
 
     def set_initial_seed(self, seed: int) -> None:
-        """Übernimmt einen vorgemerkten Seed in das Seed-Feld.
+        """Übernimmt einen vorgemerkten Seed in das (schreibgeschützte) Seed-Feld.
 
         Beim Öffnen würfelt der Dialog standardmäßig einen frischen
-        Zufalls-Seed. Hat die Session bereits einen Seed gezogen, reicht
-        der Controller ihn hier durch, damit eine erneute Ziehung (auch
-        nach „Sampling zurücksetzen") denselben Seed verwendet und die
-        Stichprobe bit-genau reproduziert (ISAE-3402). Der User kann den
-        Wert weiterhin ändern oder per Würfel neu generieren.
+        Zufalls-Seed. Der Controller reicht hier den aufgelösten Seed durch
+        (Sprint 27: fester Seed aus den Einstellungen, sonst der zuletzt
+        genutzte Seed der Session), damit eine erneute Ziehung (auch nach
+        „Sampling zurücksetzen") denselben Seed verwendet und die Stichprobe
+        bit-genau reproduziert (ISAE-3402). Das Feld bleibt schreibgeschützt;
+        geändert wird der Seed nur in den Einstellungen.
         """
         self._seed_spin.setValue(seed)
 
@@ -335,8 +336,10 @@ class SamplingDialog(QDialog):
         outer.addWidget(self._resample_checkbox)
 
         # ---- Seed-Zeile (in beiden Modi sichtbar) ----
-        # Auch im Simple-Mode soll der User den Seed sehen und ändern können
-        # (Reproduzierbarkeits-Transparenz; ISAE-3402).
+        # Sprint 27: Der Seed ist hier schreibgeschützt – der Wert bleibt
+        # sichtbar (Reproduzierbarkeits-Transparenz; ISAE-3402), geändert wird
+        # er ausschließlich in den Einstellungen (Erweitert → Sampling-Seed).
+        # Der frühere „🎲 Neuer Seed"-Würfel ist dorthin verschoben.
         seed_form = QFormLayout()
         seed_form.setSpacing(8)
         seed_row = QHBoxLayout()
@@ -344,15 +347,20 @@ class SamplingDialog(QDialog):
         self._seed_spin = QSpinBox()
         self._seed_spin.setRange(SEED_MIN, _safe_int_max())
         self._seed_spin.setValue(_generate_random_seed())
-        self._seed_spin.setToolTip("Gleicher Seed + gleiche Daten → bit-genau gleiche Stichprobe.")
-        self._seed_dice = QPushButton("🎲 Neuer Seed")
-        self._seed_dice.setProperty("secondary", True)
-        self._seed_dice.setToolTip("Neuen zufälligen Seed generieren")
+        self._seed_spin.setReadOnly(True)
+        self._seed_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self._seed_spin.setToolTip(
+            "Schreibgeschützt – der Seed wird in den Einstellungen geändert "
+            "(Erweitert → Sampling-Seed).\nGleicher Seed + gleiche Daten → "
+            "bit-genau gleiche Stichprobe."
+        )
+        seed_hint = QLabel("in den Einstellungen änderbar")
+        seed_hint.setStyleSheet("color: #7F7F7F; font-size: 11px;")
         seed_row.addWidget(self._seed_spin, stretch=1)
-        seed_row.addWidget(self._seed_dice)
+        seed_row.addWidget(seed_hint)
         seed_widget = QWidget()
         seed_widget.setLayout(seed_row)
-        seed_form.addRow("Seed *", seed_widget)
+        seed_form.addRow("Seed", seed_widget)
         outer.addLayout(seed_form)
 
         # Initiale Hint-Befüllung (Resample ist hier garantiert noch unchecked).
@@ -407,7 +415,6 @@ class SamplingDialog(QDialog):
     def _wire_signals(self) -> None:
         self._size_spin.valueChanged.connect(self._validate)
         self._resample_checkbox.toggled.connect(self._on_resample_toggled)
-        self._seed_dice.clicked.connect(self._reroll_seed)
         self._preset_combo.currentIndexChanged.connect(self._update_preset_buttons)
         self._btn_apply_preset.clicked.connect(self._on_apply_preset)
         self._btn_save_preset.clicked.connect(self._on_save_preset)
@@ -468,9 +475,6 @@ class SamplingDialog(QDialog):
         # fängt Überschreitung ab.
         self._update_size_hint()
         self._validate()
-
-    def _reroll_seed(self) -> None:
-        self._seed_spin.setValue(_generate_random_seed())
 
     def _effective_max_sample_size(self) -> int:
         """Aktuell zulässige Maximalgröße der Stichprobe.

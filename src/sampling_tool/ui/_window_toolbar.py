@@ -4,12 +4,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import QSizePolicy, QStyle, QToolBar, QWidget
 
 if TYPE_CHECKING:
     from sampling_tool.ui.main_window import MainWindow
+
+# Sprint 27: kompaktere Toolbar-Icons (Plattform-Default ist ~24 px). Kleinere
+# Buttons → es passt mehr ins Fenster; was bei schmalem Fenster dann nicht mehr
+# passt, wandert in das QToolBar-Standard-Überlauf-/„»"-Menü (Extension-Button),
+# das eine QToolBar in einem QMainWindow automatisch einblendet. So bleibt jede
+# Aktion erreichbar. Auf breitem Bildschirm bleibt das Layout unauffällig.
+_TOOLBAR_ICON_SIZE: int = 16
 
 
 def build_toolbar(window: MainWindow) -> None:
@@ -19,15 +26,16 @@ def build_toolbar(window: MainWindow) -> None:
     toolbar = QToolBar("Hauptaktionen", window)
     toolbar.setMovable(False)
     toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-    # "Engagement wechseln" ganz links – schneller Rückweg zum Welcome-Screen.
+    toolbar.setIconSize(QSize(_TOOLBAR_ICON_SIZE, _TOOLBAR_ICON_SIZE))
+    # "Projekt wechseln" ganz links – schneller Rückweg zum Welcome-Screen.
     style = window.style()
-    window._action_switch_engagement = QAction("Engagement wechseln", window)
+    window._action_switch_engagement = QAction("Projekt wechseln", window)
     if style is not None:
         window._action_switch_engagement.setIcon(
             style.standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon)
         )
     window._action_switch_engagement.setToolTip(
-        "Engagement schließen und zum Startbildschirm zurückkehren"
+        "Projekt schließen und zum Startbildschirm zurückkehren"
     )
     window._action_switch_engagement.triggered.connect(window.close_engagement_requested.emit)
     toolbar.addAction(window._action_switch_engagement)

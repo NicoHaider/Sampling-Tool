@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -68,6 +69,7 @@ class ExportAuditPdfDialog(QDialog):
         default_output_dir: Path | None = None,
         default_use_briefpapier: bool | None = None,
         default_include_statistics: bool = True,
+        offer_date_filter: bool = False,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("AuditTrail-PDF exportieren")
@@ -76,6 +78,11 @@ class ExportAuditPdfDialog(QDialog):
 
         self._result: ExportAuditPdfDialogResult | None = None
         self._briefpapier_available = briefpapier_available
+        # Sprint 27: Der von/bis-Datumsfilter wird nur angeboten, wenn das
+        # app-weite Setting es vorgibt (Default aus → kein Datumsschritt, alle
+        # Events). Ist er aus, existieren die QDateEdit-Felder gar nicht und
+        # das Ergebnis trägt date_from/date_to = None.
+        self._offer_date_filter = offer_date_filter
         # Wenn das Setting nichts vorgibt, bleibt das alte Verhalten:
         # Briefpapier an, falls es überhaupt verfügbar ist.
         self._default_use_briefpapier = (
@@ -100,10 +107,6 @@ class ExportAuditPdfDialog(QDialog):
         outer.addWidget(self._buttons)
 
         # ---- Signals ----
-        self._from_check.toggled.connect(self._from_date.setEnabled)
-        self._from_check.toggled.connect(self._update_state)
-        self._to_check.toggled.connect(self._to_date.setEnabled)
-        self._to_check.toggled.connect(self._update_state)
         self._types_list.itemChanged.connect(lambda _i: self._update_state())
         self._select_all_btn.clicked.connect(lambda: self._set_all_types(True))
         self._select_none_btn.clicked.connect(lambda: self._set_all_types(False))
@@ -127,33 +130,33 @@ class ExportAuditPdfDialog(QDialog):
         left = QVBoxLayout()
         left.setSpacing(10)
 
-        # Zeitraum.
-        gb_range = QGroupBox("Zeitraum")
-        range_layout = QVBoxLayout(gb_range)
-        today = QDate.currentDate()
+        # Zeitraum (Sprint 27): nur wenn der app-weite Toggle aktiv ist. Die
+        # QDateEdit-Felder sind dann DIREKT editierbar – früher waren sie per
+        # `setEnabled(False)` deaktiviert und nur über separate Checkboxen
+        # freischaltbar, was den Filter faktisch „nicht ausfüllbar" machte.
+        if self._offer_date_filter:
+            gb_range = QGroupBox("Zeitraum")
+            range_layout = QVBoxLayout(gb_range)
+            today = QDate.currentDate()
 
-        from_row = QHBoxLayout()
-        self._from_check = QCheckBox("Von")
-        self._from_date = QDateEdit()
-        self._from_date.setDisplayFormat("yyyy-MM-dd")
-        self._from_date.setCalendarPopup(True)
-        self._from_date.setDate(today.addMonths(-3))
-        self._from_date.setEnabled(False)
-        from_row.addWidget(self._from_check)
-        from_row.addWidget(self._from_date, stretch=1)
-        range_layout.addLayout(from_row)
+            from_row = QHBoxLayout()
+            self._from_date = QDateEdit()
+            self._from_date.setDisplayFormat("yyyy-MM-dd")
+            self._from_date.setCalendarPopup(True)
+            self._from_date.setDate(today.addMonths(-3))
+            from_row.addWidget(QLabel("Von"))
+            from_row.addWidget(self._from_date, stretch=1)
+            range_layout.addLayout(from_row)
 
-        to_row = QHBoxLayout()
-        self._to_check = QCheckBox("Bis")
-        self._to_date = QDateEdit()
-        self._to_date.setDisplayFormat("yyyy-MM-dd")
-        self._to_date.setCalendarPopup(True)
-        self._to_date.setDate(today)
-        self._to_date.setEnabled(False)
-        to_row.addWidget(self._to_check)
-        to_row.addWidget(self._to_date, stretch=1)
-        range_layout.addLayout(to_row)
-        left.addWidget(gb_range)
+            to_row = QHBoxLayout()
+            self._to_date = QDateEdit()
+            self._to_date.setDisplayFormat("yyyy-MM-dd")
+            self._to_date.setCalendarPopup(True)
+            self._to_date.setDate(today)
+            to_row.addWidget(QLabel("Bis"))
+            to_row.addWidget(self._to_date, stretch=1)
+            range_layout.addLayout(to_row)
+            left.addWidget(gb_range)
 
         # Aktionstypen.
         gb_types = QGroupBox("Aktionstypen")
@@ -238,11 +241,9 @@ class ExportAuditPdfDialog(QDialog):
         if path is None:
             return
         date_from: date | None = (
-            self._from_date.date().toPyDate() if self._from_check.isChecked() else None
+            self._from_date.date().toPyDate() if self._offer_date_filter else None
         )
-        date_to: date | None = (
-            self._to_date.date().toPyDate() if self._to_check.isChecked() else None
-        )
+        date_to: date | None = self._to_date.date().toPyDate() if self._offer_date_filter else None
         self._result = ExportAuditPdfDialogResult(
             output_path=path,
             date_from=date_from,

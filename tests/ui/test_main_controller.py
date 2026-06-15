@@ -1563,9 +1563,11 @@ class TestSettingsIntegration:
             default_dir,
             default_use_briefpapier,
             default_include_statistics,
+            offer_date_filter,
         ):
             captured["default_use_briefpapier"] = default_use_briefpapier
             captured["default_include_statistics"] = default_include_statistics
+            captured["offer_date_filter"] = offer_date_filter
 
             dialog = ExportAuditPdfDialog(
                 engagement=engagement,
@@ -1575,6 +1577,7 @@ class TestSettingsIntegration:
                 default_output_dir=default_dir,
                 default_use_briefpapier=default_use_briefpapier,
                 default_include_statistics=default_include_statistics,
+                offer_date_filter=offer_date_filter,
             )
 
             def reject() -> int:
@@ -2621,5 +2624,78 @@ class TestReproducibilityViaController:
 
             assert seed2 == seed1
             assert r1 == r2
+        finally:
+            controller.handle_close_engagement()
+
+
+class TestSeedRelocationReproducibility:
+    """Sprint 27: Der Seed-Eingabeort ist in die Einstellungen verlagert –
+    die Determinismus-Garantie aus Sprint 21 bleibt erhalten."""
+
+    def test_same_seed_via_settings_same_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        fixed = dc_replace(AppSettings.defaults(), seed=24680)
+        controller = MainController(window, recent_store=recent_store, settings=fixed)
+        try:
+            _open_dataset(controller, window, populated_db)
+            # Verschiedene Zufalls-Listen pro Dialog-Open: Würde der feste Seed
+            # aus den Settings ignoriert, fielen die Ziehungen auseinander.
+            with _real_sampling_dialog_driver(seeds=[111, 222, 333, 444]):
+                controller.handle_new_sampling()
+                assert controller.session.sample is not None
+                r1 = tuple(controller.session.sample.selected_row_ids)
+                seed1 = controller.session.sample.config.seed
+
+                controller.handle_reset_sampling()
+                assert controller.session.sample is None
+
+                controller.handle_new_sampling()
+                assert controller.session.sample is not None
+                r2 = tuple(controller.session.sample.selected_row_ids)
+                seed2 = controller.session.sample.config.seed
+
+            assert seed1 == 24680
+            assert seed2 == 24680
+            assert r1 == r2
+        finally:
+            controller.handle_close_engagement()
+
+    def test_changed_settings_seed_used_for_next_draw(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        # „Geänderter Seed gilt für die nächste Ziehung": der Settings-Seed hat
+        # Vorrang vor dem gemerkten last_seed.
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            settings=dc_replace(AppSettings.defaults(), seed=1001),
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            with _real_sampling_dialog_driver(seeds=[111, 222, 333]):
+                controller.handle_new_sampling()
+                assert controller.session.sample is not None
+                assert controller.session.sample.config.seed == 1001
+
+                # User ändert den Seed in den Einstellungen.
+                controller.session.settings = dc_replace(controller.session.settings, seed=2002)
+                controller.handle_new_sampling()
+                assert controller.session.sample is not None
+                assert controller.session.sample.config.seed == 2002
         finally:
             controller.handle_close_engagement()

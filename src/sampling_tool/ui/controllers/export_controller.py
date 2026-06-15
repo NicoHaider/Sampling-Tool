@@ -9,10 +9,13 @@ Session-State.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable, Sequence
+from datetime import date
 
 from PyQt6.QtWidgets import QMessageBox
 
 from sampling_tool.audit.logger import AuditLogger
+from sampling_tool.core.models import AuditEvent
 from sampling_tool.io.exporter import ExportError
 from sampling_tool.persistence.repositories import AuditRepo, SampleRepo
 from sampling_tool.ui.controllers._factories import ControllerFactories
@@ -29,6 +32,29 @@ from sampling_tool.ui.workers.tasks import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def filter_audit_events(
+    events: Iterable[AuditEvent],
+    event_types: Sequence[str] | set[str],
+    date_from: date | None,
+    date_to: date | None,
+) -> list[AuditEvent]:
+    """Filtert Audit-Events nach Aktionstyp und (optionalem) Zeitraum.
+
+    `date_from`/`date_to` = None bedeutet „keine untere/obere Grenze" – ist
+    der Audit-Export-Datumsfilter aus (Sprint 27, Default), kommen beide als
+    None herein und der komplette Trail wird exportiert. Eine leere
+    `event_types`-Menge filtert nicht nach Typ (alle Typen).
+    """
+    selected = set(event_types)
+    return [
+        e
+        for e in events
+        if (not selected or e.event_type in selected)
+        and (date_from is None or e.timestamp.date() >= date_from)
+        and (date_to is None or e.timestamp.date() <= date_to)
+    ]
 
 
 class ExportController:
@@ -134,6 +160,7 @@ class ExportController:
             s.default_export_dir(),
             s.settings.default_include_briefpapier,
             s.settings.default_include_statistics,
+            s.settings.audit_export_offer_date_filter,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
@@ -141,13 +168,7 @@ class ExportController:
         if result is None:
             return
 
-        filtered = [
-            e
-            for e in events
-            if (not result.event_types or e.event_type in result.event_types)
-            and (result.date_from is None or e.timestamp.date() >= result.date_from)
-            and (result.date_to is None or e.timestamp.date() <= result.date_to)
-        ]
+        filtered = filter_audit_events(events, result.event_types, result.date_from, result.date_to)
 
         # Sprint 17: Worker-basiert.
         task = AuditPdfExportTask(

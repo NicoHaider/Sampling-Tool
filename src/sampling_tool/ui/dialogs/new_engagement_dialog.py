@@ -51,7 +51,7 @@ class NewEngagementDialog(QDialog):
         initial_engagement: Engagement | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Neues Engagement anlegen")
+        self.setWindowTitle("Neues Projekt anlegen")
         self.setModal(True)
         self.setMinimumWidth(440)
 
@@ -97,7 +97,7 @@ class NewEngagementDialog(QDialog):
         outer.setSpacing(12)
 
         intro = QLabel(
-            "Bitte alle Felder ausfüllen. Pro Engagement wird eine eigene "
+            "Bitte alle Felder ausfüllen. Pro Projekt wird eine eigene "
             "SQLite-Datei angelegt – im nächsten Schritt wählst du den "
             "Speicherort."
         )
@@ -189,9 +189,9 @@ class NewEngagementDialog(QDialog):
         default_target = default_dir / f"{sanitized}{DB_FILE_SUFFIX}"
         path_str, _filter = QFileDialog.getSaveFileName(
             self,
-            "Engagement speichern",
+            "Projekt speichern",
             str(default_target),
-            f"SQLite-Engagement (*{DB_FILE_SUFFIX})",
+            f"SQLite-Projekt (*{DB_FILE_SUFFIX})",
         )
         if not path_str:
             return

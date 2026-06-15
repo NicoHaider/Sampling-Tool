@@ -101,7 +101,7 @@ class WelcomeScreen(QWidget):
         actions = QHBoxLayout()
         actions.setSpacing(12)
 
-        self._new_button = QPushButton("Neues Engagement")
+        self._new_button = QPushButton("Neues Projekt")
         self._new_button.setMinimumHeight(44)
         self._new_button.clicked.connect(self.new_engagement_requested.emit)
 
@@ -131,7 +131,7 @@ class WelcomeScreen(QWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         outer.addWidget(scroll, stretch=2)
 
-        self._empty_label = QLabel("Noch keine Engagements geöffnet.")
+        self._empty_label = QLabel("Noch keine Projekte geöffnet.")
         self._empty_label.setStyleSheet("color: #B0B0B0; font-style: italic;")
         self._recent_layout.addWidget(self._empty_label)
         self._recent_layout.addStretch(1)
@@ -178,9 +178,9 @@ class WelcomeScreen(QWidget):
         start_dir = str(ENGAGEMENTS_DIR) if ENGAGEMENTS_DIR.exists() else ""
         path_str, _filter = QFileDialog.getOpenFileName(
             self,
-            "Engagement öffnen",
+            "Projekt öffnen",
             start_dir,
-            "SQLite-Engagement (*.db);;Alle Dateien (*)",
+            "SQLite-Projekt (*.db);;Alle Dateien (*)",
         )
         if path_str:
             self.open_engagement_requested.emit(Path(path_str))

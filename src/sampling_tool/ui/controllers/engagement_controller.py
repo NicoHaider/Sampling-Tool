@@ -84,7 +84,7 @@ class EngagementController:
                 created = EngagementRepo(db.connect()).get_or_create(engagement)
             except Exception as exc:  # pragma: no cover – defensiv
                 logger.exception("Engagement-Anlage fehlgeschlagen")
-                s.error(f"Engagement konnte nicht angelegt werden: {exc}")
+                s.error(f"Projekt konnte nicht angelegt werden: {exc}")
                 return
 
             self._adopt_database(db, db_path, created)
@@ -124,7 +124,7 @@ class EngagementController:
             return
 
         if engagement is None:
-            s.error("Die ausgewählte Datei enthält kein Engagement.")
+            s.error("Die ausgewählte Datei enthält kein Projekt.")
             return
 
         self._adopt_database(db, db_path, engagement)
@@ -138,8 +138,8 @@ class EngagementController:
             return
         answer = QMessageBox.question(
             s.window,
-            "Engagement schließen",
-            "Engagement schließen und zum Startbildschirm zurückkehren?",
+            "Projekt schließen",
+            "Projekt schließen und zum Startbildschirm zurückkehren?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -148,7 +148,7 @@ class EngagementController:
         self.handle_close_engagement()
 
     def handle_close_engagement(self) -> None:
-        """Aktuelles Engagement schließen und zum Welcome-Screen wechseln."""
+        """Aktuelles Projekt schließen und zum Welcome-Screen wechseln."""
         s = self.session
         # Tabelle vor dem Repo-Schließen leeren, sonst greift das Model auf
         # eine geschlossene Connection zu, wenn das nächste paintEvent läuft.
