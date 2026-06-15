@@ -151,6 +151,55 @@ class TestPanelVisibilityFlags:
         assert loaded.show_audit_trail is True
 
 
+class TestAuditExportDateFilterSetting:
+    """Sprint 27: app-weiter Toggle 'Audit-Export-Datumsfilter anbieten'."""
+
+    def test_default_is_false(self) -> None:
+        assert AppSettings.defaults().audit_export_offer_date_filter is False
+
+    def test_roundtrips_true(self) -> None:
+        original = replace(AppSettings.defaults(), audit_export_offer_date_filter=True)
+        save_settings(original)
+        loaded = load_settings()
+        assert loaded.audit_export_offer_date_filter is True
+
+    def test_missing_key_defaults_to_false(self) -> None:
+        # QSettings ohne den Key → load_settings liefert False.
+        loaded = load_settings()
+        assert loaded.audit_export_offer_date_filter is False
+
+
+class TestSeedSetting:
+    """Sprint 27: app-weiter Seed (None = zufällig, sonst fester Seed)."""
+
+    def test_default_is_none(self) -> None:
+        assert AppSettings.defaults().seed is None
+
+    def test_roundtrips_int(self) -> None:
+        original = replace(AppSettings.defaults(), seed=424242)
+        save_settings(original)
+        loaded = load_settings()
+        assert loaded.seed == 424242
+
+    def test_none_roundtrips(self) -> None:
+        original = replace(AppSettings.defaults(), seed=None)
+        save_settings(original)
+        loaded = load_settings()
+        assert loaded.seed is None
+
+    def test_missing_key_defaults_to_none(self) -> None:
+        loaded = load_settings()
+        assert loaded.seed is None
+
+    def test_seed_zero_roundtrips_as_value(self) -> None:
+        # 0 ist persistenz-seitig ein gültiger Wert; nur die Settings-UI
+        # mappt 0 → „zufällig". Hier prüfen wir die reine Persistenz.
+        original = replace(AppSettings.defaults(), seed=0)
+        save_settings(original)
+        loaded = load_settings()
+        assert loaded.seed == 0
+
+
 class TestFirstRunCompleted:
     def test_default_is_false(self) -> None:
         assert AppSettings.defaults().first_run_completed is False

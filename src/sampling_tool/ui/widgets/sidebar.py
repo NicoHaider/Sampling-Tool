@@ -52,7 +52,7 @@ class NavigationSidebar(QFrame):
         layout.setSpacing(0)
 
         # Engagement-Block
-        self._engagement_title = QLabel("Kein Engagement geladen")
+        self._engagement_title = QLabel("Kein Projekt geladen")
         self._engagement_title.setProperty("engagementTitle", True)
         self._engagement_title.setWordWrap(True)
 
@@ -93,7 +93,7 @@ class NavigationSidebar(QFrame):
     def set_engagement(self, engagement: Engagement | None) -> None:
         """Aktualisiert den Engagement-Header-Block."""
         if engagement is None:
-            self._engagement_title.setText("Kein Engagement geladen")
+            self._engagement_title.setText("Kein Projekt geladen")
             self._engagement_subtitle.setText("")
             return
         self._engagement_title.setText(engagement.client_name)

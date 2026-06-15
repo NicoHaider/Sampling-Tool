@@ -196,7 +196,7 @@ def _build_event_table(events: list[AuditEvent]) -> list[Any]:
         )
         return [
             Paragraph(
-                "Für dieses Engagement liegen noch keine Audit-Events vor.",
+                "Für dieses Projekt liegen noch keine Audit-Events vor.",
                 empty,
             )
         ]

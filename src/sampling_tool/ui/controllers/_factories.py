@@ -52,7 +52,7 @@ SamplingDialogFactory = Callable[
 ]
 ExportDialogFactory = Callable[["MainWindow", Dataset, str, str, Path | None], ExportSampleDialog]
 AuditPdfDialogFactory = Callable[
-    ["MainWindow", Engagement, list[str], bool, Path | None, bool, bool],
+    ["MainWindow", Engagement, list[str], bool, Path | None, bool, bool, bool],
     ExportAuditPdfDialog,
 ]
 ExcelReportDialogFactory = Callable[
@@ -150,6 +150,7 @@ def default_audit_pdf_factory(
     default_dir: Path | None,
     default_use_briefpapier: bool = True,
     default_include_statistics: bool = True,
+    offer_date_filter: bool = False,
 ) -> ExportAuditPdfDialog:
     return ExportAuditPdfDialog(
         engagement=engagement,
@@ -159,6 +160,7 @@ def default_audit_pdf_factory(
         default_output_dir=default_dir,
         default_use_briefpapier=default_use_briefpapier,
         default_include_statistics=default_include_statistics,
+        offer_date_filter=offer_date_filter,
     )
 
 

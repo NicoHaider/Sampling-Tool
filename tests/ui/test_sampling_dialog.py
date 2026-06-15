@@ -95,13 +95,6 @@ class TestSamplingDialog:
         dialog._filter_field.setCurrentText(NO_FILTER_LABEL)
         assert dialog._filter_value.isEnabled() is False
 
-    def test_dice_button_changes_seed(self, qtbot: QtBot) -> None:
-        dialog = SamplingDialog(*_make_dataset(), features=_ALL)
-        qtbot.addWidget(dialog)
-        dialog._seed_spin.setValue(7)
-        dialog._reroll_seed()
-        assert dialog._seed_spin.value() != 7
-
     def test_validation_blocks_cluster_without_field(self, qtbot: QtBot) -> None:
         ds = Dataset(name="leer", columns=())
         dialog = SamplingDialog(ds, features=_ALL)
@@ -176,10 +169,11 @@ class TestSamplingDialogSimpleMode:
     def test_simple_mode_creates_seed_widget(self, qtbot: QtBot) -> None:
         # Sprint 9.6 (Korrektur zu 9.3): Seed-Widget wandert in den Common-
         # Block. Reproduzierbarkeits-Transparenz auch im Default-Modus.
+        # Sprint 27: schreibgeschützt, kein Würfel-Button mehr.
         dialog = SamplingDialog(*_make_dataset(), features=_NONE)
         qtbot.addWidget(dialog)
         assert hasattr(dialog, "_seed_spin")
-        assert hasattr(dialog, "_seed_dice")
+        assert not hasattr(dialog, "_seed_dice")
 
     def test_simple_mode_does_not_create_method_specific_fields(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(*_make_dataset(), features=_NONE)
@@ -223,18 +217,6 @@ class TestSamplingDialogSimpleMode:
         assert result.config.size == 5
         assert result.config.seed == 424242
 
-    def test_simple_mode_wuerfel_aendert_seed(self, qtbot: QtBot) -> None:
-        dialog = SamplingDialog(*_make_dataset(), features=_NONE)
-        qtbot.addWidget(dialog)
-        seed_before = dialog._seed_spin.value()
-        # Mit 31-Bit-Range ist eine Kollision astronomisch unwahrscheinlich,
-        # aber zur Sicherheit ein kleiner Retry-Loop.
-        for _ in range(5):
-            dialog._seed_dice.click()
-            if dialog._seed_spin.value() != seed_before:
-                break
-        assert dialog._seed_spin.value() != seed_before
-
     def test_simple_mode_neuer_dialog_neuer_seed(self, qtbot: QtBot) -> None:
         # Sanity: zwei frische Dialoge liefern verschiedene Default-Seeds.
         seeds: set[int] = set()
@@ -243,6 +225,33 @@ class TestSamplingDialogSimpleMode:
             qtbot.addWidget(dialog)
             seeds.add(dialog._seed_spin.value())
         assert len(seeds) >= 4
+
+
+class TestSeedLock:
+    """Sprint 27: Seed im Haupt-Dialog schreibgeschützt, kein Würfel."""
+
+    def test_main_seed_field_readonly(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_NONE)
+        qtbot.addWidget(dialog)
+        assert dialog._seed_spin.isReadOnly() is True
+        assert not hasattr(dialog, "_seed_dice")
+
+    def test_main_seed_field_readonly_in_advanced(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_ALL)
+        qtbot.addWidget(dialog)
+        assert dialog._seed_spin.isReadOnly() is True
+
+    def test_set_initial_seed_still_lands_in_config(self, qtbot: QtBot) -> None:
+        # Programmatisch (set_initial_seed) bleibt der Seed setzbar und wandert
+        # unverändert in die SampleConfig – der RNG-/Zieh-Pfad ist unberührt.
+        dialog = SamplingDialog(*_make_dataset(), features=_NONE)
+        qtbot.addWidget(dialog)
+        dialog.set_initial_seed(98765)
+        dialog._size_spin.setValue(3)
+        dialog.accept()
+        result = dialog.get_result()
+        assert result is not None
+        assert result.config.seed == 98765
 
 
 class TestSamplingDialogSizeHint:

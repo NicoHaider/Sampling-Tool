@@ -160,6 +160,97 @@ class TestAdvancedModeToggle:
         assert dialog._chk_advanced_mode.isChecked() is False
 
 
+class TestAuditExportDateFilterToggle:
+    """Sprint 27: Reports-Tab-Checkbox für den Audit-Export-Datumsfilter."""
+
+    def test_default_unchecked(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        assert dialog._audit_export_date_filter.isChecked() is False
+
+    def test_prefilled_when_enabled(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        current = replace(defaults, audit_export_offer_date_filter=True)
+        dialog = SettingsDialog(current)
+        qtbot.addWidget(dialog)
+        assert dialog._audit_export_date_filter.isChecked() is True
+
+    def test_ok_propagates(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        dialog._audit_export_date_filter.setChecked(True)
+        dialog._on_accept()
+        result = dialog.get_settings()
+        assert result is not None
+        assert result.audit_export_offer_date_filter is True
+
+    def test_reset_restores_default(
+        self, qtbot: QtBot, defaults: AppSettings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        current = replace(defaults, audit_export_offer_date_filter=True)
+        dialog = SettingsDialog(current)
+        qtbot.addWidget(dialog)
+        monkeypatch.setattr(
+            QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes
+        )
+        dialog._on_reset_defaults()
+        assert dialog._audit_export_date_filter.isChecked() is False
+
+
+class TestSeedSettingField:
+    """Sprint 27: Seed wird ausschließlich in den Einstellungen geändert."""
+
+    def test_default_shows_random(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        # seed=None → SpinBox steht auf 0 (specialValueText „zufällig").
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        assert dialog._seed_spin.value() == 0
+
+    def test_prefilled_with_seed(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        current = replace(defaults, seed=12345)
+        dialog = SettingsDialog(current)
+        qtbot.addWidget(dialog)
+        assert dialog._seed_spin.value() == 12345
+
+    def test_seed_editable_in_settings(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        # Das Feld ist hier editierbar (anders als im Haupt-Dialog).
+        assert dialog._seed_spin.isReadOnly() is False
+        dialog._seed_spin.setValue(777)
+        dialog._on_accept()
+        result = dialog.get_settings()
+        assert result is not None
+        assert result.seed == 777
+
+    def test_zero_means_random(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        current = replace(defaults, seed=42)
+        dialog = SettingsDialog(current)
+        qtbot.addWidget(dialog)
+        dialog._seed_spin.setValue(0)
+        dialog._on_accept()
+        result = dialog.get_settings()
+        assert result is not None
+        assert result.seed is None
+
+    def test_dice_sets_positive_seed(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        dialog._seed_dice.click()
+        assert dialog._seed_spin.value() > 0
+
+    def test_reset_restores_random(
+        self, qtbot: QtBot, defaults: AppSettings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        current = replace(defaults, seed=5)
+        dialog = SettingsDialog(current)
+        qtbot.addWidget(dialog)
+        monkeypatch.setattr(
+            QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes
+        )
+        dialog._on_reset_defaults()
+        assert dialog._seed_spin.value() == 0
+
+
 class TestPanelVisibilityToggle:
     def test_dialog_zeigt_panel_checkboxen_mit_defaults(
         self, qtbot: QtBot, defaults: AppSettings

@@ -188,13 +188,13 @@ class TestMainWindowState:
 
 
 class TestSwitchEngagementToolbar:
-    """Sprint 5.6: neuer Toolbar-Button 'Engagement wechseln'."""
+    """Sprint 5.6: neuer Toolbar-Button 'Projekt wechseln' (Sprint 27 umbenannt)."""
 
     def test_toolbar_action_exists(self, qtbot: QtBot) -> None:
         win = MainWindow()
         qtbot.addWidget(win)
         assert hasattr(win, "_action_switch_engagement")
-        assert win._action_switch_engagement.text() == "Engagement wechseln"
+        assert win._action_switch_engagement.text() == "Projekt wechseln"
 
     def test_toolbar_action_emits_close_signal(self, qtbot: QtBot) -> None:
         win = MainWindow()
@@ -301,6 +301,52 @@ class TestBugReportToolbarButton:
         qtbot.addWidget(win)
         with qtbot.waitSignal(win.bug_report_requested, timeout=500):
             win._action_bug_report.trigger()
+
+
+class TestToolbarCompactOverflow:
+    """Sprint 27: kompaktere Toolbar + Überlauf-Erreichbarkeit."""
+
+    def test_toolbar_is_qtoolbar(self, qtbot: QtBot) -> None:
+        # Eine echte QToolBar (kein Custom-Widget-Layout) → automatischer
+        # Überlauf-/„»"-Extension-Button bei schmalem Fenster ist gegeben.
+        from PyQt6.QtWidgets import QToolBar
+
+        win = MainWindow()
+        qtbot.addWidget(win)
+        assert isinstance(win._toolbar, QToolBar)
+
+    def test_toolbar_icons_are_compact(self, qtbot: QtBot) -> None:
+        from PyQt6.QtCore import QSize
+
+        from sampling_tool.ui._window_toolbar import _TOOLBAR_ICON_SIZE
+
+        win = MainWindow()
+        qtbot.addWidget(win)
+        assert win._toolbar.iconSize() == QSize(_TOOLBAR_ICON_SIZE, _TOOLBAR_ICON_SIZE)
+
+    def test_all_main_actions_registered_in_toolbar(self, qtbot: QtBot) -> None:
+        # Alle Haupt-Aktionen sind als QToolBar-Actions registriert und damit
+        # auch bei Überlauf über das „»"-Menü erreichbar.
+        win = MainWindow()
+        qtbot.addWidget(win)
+        actions = win._toolbar.actions()
+        for attr in (
+            "_action_switch_engagement",
+            "_action_new",
+            "_action_open",
+            "_action_import",
+            "_action_new_sample",
+            "_action_reset_sampling",
+            "_action_undo",
+            "_action_redo",
+            "_action_export_sample",
+            "_action_export_pdf",
+            "_action_excel_report",
+            "_action_html_report",
+            "_action_settings",
+            "_action_bug_report",
+        ):
+            assert getattr(win, attr) in actions, f"{attr} fehlt in der Toolbar"
 
     def test_bug_report_action_hat_tooltip_und_icon(self, qtbot: QtBot) -> None:
         win = MainWindow()

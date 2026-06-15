@@ -37,7 +37,7 @@ class DuplicateEngagementDialog(QDialog):
 
     def __init__(self, db_path: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Engagement existiert bereits")
+        self.setWindowTitle("Projekt existiert bereits")
         self.setModal(True)
         self.setMinimumWidth(480)
 
@@ -50,9 +50,9 @@ class DuplicateEngagementDialog(QDialog):
         parent_dir = db_path.parent
         filename = db_path.name
         message = QLabel(
-            f"Im Ordner '{parent_dir}' existiert bereits ein Engagement "
+            f"Im Ordner '{parent_dir}' existiert bereits ein Projekt "
             f"'{filename}'.\n\n"
-            "Möchtest du das bestehende Engagement öffnen oder einen "
+            "Möchtest du das bestehende Projekt öffnen oder einen "
             "anderen Namen wählen?"
         )
         message.setWordWrap(True)

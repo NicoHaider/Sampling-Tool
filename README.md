@@ -35,6 +35,7 @@ aktuellen Sprint ab.
 | 24     | Performance-Polish: P-010 AuditTrail-Haystack-Cache (P-001/P-002 aus Pass 3 v2 waren seit Sprint 12.1 gefixt) | **done** |
 | 25     | Bugfix: Audit-Volltextsuche matcht Nicht-Wort-/Nicht-ASCII-Zeichen literal (rohe Nadel statt escaptem Pattern) | **done** |
 | 26     | Import-Performance (Profiling-first): orjson-Fast-Path im Tagged-Encoder (`OPT_PASSTHROUGH_DATETIME`), byte-identisch | **done** |
+| 27     | UI-Cleanup: Toolbar kompakt + Überlauf, Audit-Export-Datumsfilter gefixt + toggelbar (Default aus), „Engagement"→„Projekt" (nur sichtbarer Text), Seed nur in den Einstellungen änderbar (RNG unverändert) | **done** |
 
 ### Was Sprint 8 liefert
 

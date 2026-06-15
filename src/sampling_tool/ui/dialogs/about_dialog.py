@@ -68,13 +68,13 @@ CHANGELOG: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             "Grüne Sample-Markierung in der Tabelle",
             'Filter-Default für "Nur markierte Zeilen anzeigen"',
-            "Engagement-Wechsel-Button in der Toolbar",
+            "Projekt-Wechsel-Button in der Toolbar",
         ),
     ),
     (
         "v0.5.5",
         (
-            "Engagement-Auto-Versionierung beim Öffnen (archiv/)",
+            "Projekt-Auto-Versionierung beim Öffnen (archiv/)",
             "UX-Bugfixes rund um Filter, Highlight und Statusbar",
         ),
     ),

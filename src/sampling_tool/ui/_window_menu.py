@@ -35,12 +35,12 @@ def build_menu(window: MainWindow) -> None:
     assert file_menu is not None
     window._file_menu = file_menu
 
-    window._action_new = QAction("Neues Engagement…", window)
+    window._action_new = QAction("Neues Projekt…", window)
     window._action_new.setShortcut(QKeySequence.StandardKey.New)
     window._action_new.triggered.connect(window.new_engagement_requested.emit)
     file_menu.addAction(window._action_new)
 
-    window._action_open = QAction("Engagement öffnen…", window)
+    window._action_open = QAction("Projekt öffnen…", window)
     window._action_open.setShortcut(QKeySequence.StandardKey.Open)
     window._action_open.triggered.connect(window._on_open_clicked)
     file_menu.addAction(window._action_open)
@@ -52,11 +52,11 @@ def build_menu(window: MainWindow) -> None:
 
     file_menu.addSeparator()
     style = window.style()
-    window._action_close = QAction("Engagement schließen", window)
+    window._action_close = QAction("Projekt schließen", window)
     window._action_close.setShortcut(QKeySequence.StandardKey.Close)
     if style is not None:
         window._action_close.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon))
-    window._action_close.setToolTip("Engagement schließen und zum Startbildschirm zurückkehren")
+    window._action_close.setToolTip("Projekt schließen und zum Startbildschirm zurückkehren")
     window._action_close.triggered.connect(window.close_engagement_requested.emit)
     file_menu.addAction(window._action_close)
 

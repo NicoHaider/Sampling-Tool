@@ -123,7 +123,7 @@ class MultiSheetReportExporter:
         ws = wb.active
         assert ws is not None
         ws.title = "1. Übersicht"
-        ws.append(["BDO Audit Sampling Tool – Engagement-Bericht"])
+        ws.append(["BDO Audit Sampling Tool – Projekt-Bericht"])
         title_cell = ws.cell(row=1, column=1)
         title_cell.font = Font(bold=True, size=14, color="FFE81A3B")
         ws.append([])
@@ -133,7 +133,7 @@ class MultiSheetReportExporter:
             ("Prüfungstyp", engagement.audit_type or "—"),
             ("Auditor", engagement.auditor_name),
             ("Position", engagement.auditor_position or "—"),
-            ("Engagement-ID", engagement.id if engagement.id is not None else "—"),
+            ("Projekt-ID", engagement.id if engagement.id is not None else "—"),
             ("Bericht erstellt", _format_now()),
         ]
         for label, value in meta_rows:

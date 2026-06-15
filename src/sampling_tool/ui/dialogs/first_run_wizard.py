@@ -78,9 +78,9 @@ class _WelcomePage(QWizardPage):
         layout = QVBoxLayout(self)
         label = QLabel(
             "Dieses Tool zieht reproduzierbare Stichproben für Audit- und "
-            "Compliance-Engagements. Auf den nächsten Seiten wählst du:\n\n"
-            "  • Den Standard-Ordner für deine Engagement-Dateien\n"
-            "  • Optional deinen Namen (wird in neuen Engagements vorbelegt)\n\n"
+            "Compliance-Projekte. Auf den nächsten Seiten wählst du:\n\n"
+            "  • Den Standard-Ordner für deine Projekt-Dateien\n"
+            "  • Optional deinen Namen (wird in neuen Projekten vorbelegt)\n\n"
             'Alle Einstellungen lassen sich später unter „Einstellungen" '
             "jederzeit ändern."
         )
@@ -93,7 +93,7 @@ class _FolderPage(QWizardPage):
     def __init__(self) -> None:
         super().__init__()
         self.setTitle("Standard-Ordner")
-        self.setSubTitle("Hier speichert das Tool deine Engagement-Dateien (SQLite-DBs).")
+        self.setSubTitle("Hier speichert das Tool deine Projekt-Dateien (SQLite-DBs).")
         layout = QVBoxLayout(self)
 
         row = QHBoxLayout()
@@ -115,7 +115,7 @@ class _FolderPage(QWizardPage):
 
     def _on_browse_clicked(self) -> None:
         chosen = QFileDialog.getExistingDirectory(
-            self, "Engagements-Ordner wählen", self._line_edit.text()
+            self, "Projekt-Ordner wählen", self._line_edit.text()
         )
         if chosen:
             self._line_edit.setText(chosen)
@@ -145,7 +145,7 @@ class _AuditorPage(QWizardPage):
         super().__init__()
         self.setTitle("Auditor-Name (optional)")
         self.setSubTitle(
-            "Dein Name wird in neuen Engagements als Auditor vorbelegt. Kann leer bleiben."
+            "Dein Name wird in neuen Projekten als Auditor vorbelegt. Kann leer bleiben."
         )
         layout = QVBoxLayout(self)
         self._line_edit = QLineEdit()
@@ -179,6 +179,5 @@ class _SummaryPage(QWizardPage):
         auditor = wiz._page_auditor.auditor_name()
         auditor_display = auditor if auditor else "(nicht gesetzt)"
         self._summary.setText(
-            f"<b>Engagements-Ordner:</b><br>{folder}<br><br>"
-            f"<b>Auditor-Name:</b><br>{auditor_display}"
+            f"<b>Projekt-Ordner:</b><br>{folder}<br><br><b>Auditor-Name:</b><br>{auditor_display}"
         )

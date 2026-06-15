@@ -83,6 +83,10 @@ class AppSettings:
     default_include_briefpapier: bool
     default_include_statistics: bool
     custom_briefpapier_path: Path | None
+    # Sprint 27: Audit-PDF-Export bietet den von/bis-Datumsfilter nur an, wenn
+    # dieser Toggle aktiv ist. Default aus → der Export überspringt den
+    # Datumsschritt und exportiert alle Events (bisheriges Verhalten).
+    audit_export_offer_date_filter: bool
 
     # Sichtbare Panels (Allgemein-Tab)
     show_dashboard: bool
@@ -104,6 +108,13 @@ class AppSettings:
     # Onboarding
     first_run_completed: bool
 
+    # Sprint 27: app-weiter Sampling-Seed. None = kein fester Seed (es wird
+    # weiterhin zufällig gewürfelt und der zuletzt genutzte Seed gemerkt,
+    # Sprint-21-Verhalten). Ein gesetzter Seed gilt für die nächste Ziehung;
+    # geändert wird er ausschließlich in den Einstellungen (das Seed-Feld im
+    # Haupt-Dialog ist schreibgeschützt).
+    seed: int | None
+
     @classmethod
     def defaults(cls) -> AppSettings:
         """Werks-Default; wird genutzt, wenn `QSettings` leer ist oder Reset."""
@@ -114,6 +125,7 @@ class AppSettings:
             default_include_briefpapier=True,
             default_include_statistics=True,
             custom_briefpapier_path=None,
+            audit_export_offer_date_filter=False,
             show_dashboard=True,
             show_audit_trail=True,
             advanced_mode=False,
@@ -124,6 +136,7 @@ class AppSettings:
             show_cluster_feature=False,
             show_stratified_feature=False,
             first_run_completed=False,
+            seed=None,
         )
 
     # ---- Feature-Sichtbarkeit (Sprint 22) ------------------------------
@@ -197,6 +210,15 @@ def load_settings() -> AppSettings:
     custom_str = _str(s.value("settings/custom_briefpapier_path", ""))
     custom = Path(custom_str) if custom_str else None
 
+    # Sprint 27: Seed string-persistiert ("" = kein fester Seed, analog
+    # custom_briefpapier_path). Ungültige Werte fallen robust auf None zurück.
+    seed_str = _str(s.value("settings/seed", ""))
+    seed: int | None
+    try:
+        seed = int(seed_str) if seed_str else None
+    except ValueError:
+        seed = None
+
     log_level = _str(s.value("settings/log_level", base.log_level))
     if log_level not in LOG_LEVELS:
         log_level = base.log_level
@@ -225,6 +247,13 @@ def load_settings() -> AppSettings:
             s.value("settings/default_include_statistics", base.default_include_statistics)
         ),
         custom_briefpapier_path=custom,
+        audit_export_offer_date_filter=_bool(
+            s.value(
+                "settings/audit_export_offer_date_filter",
+                base.audit_export_offer_date_filter,
+            )
+        ),
+        seed=seed,
         show_dashboard=_bool(s.value("settings/show_dashboard", base.show_dashboard)),
         show_audit_trail=_bool(s.value("settings/show_audit_trail", base.show_audit_trail)),
         advanced_mode=_bool(s.value("settings/advanced_mode", base.advanced_mode)),
@@ -267,6 +296,11 @@ def save_settings(settings: AppSettings) -> None:
         "settings/custom_briefpapier_path",
         str(settings.custom_briefpapier_path) if settings.custom_briefpapier_path else "",
     )
+    s.setValue(
+        "settings/audit_export_offer_date_filter",
+        settings.audit_export_offer_date_filter,
+    )
+    s.setValue("settings/seed", str(settings.seed) if settings.seed is not None else "")
     s.setValue("settings/show_dashboard", settings.show_dashboard)
     s.setValue("settings/show_audit_trail", settings.show_audit_trail)
     s.setValue("settings/advanced_mode", settings.advanced_mode)
