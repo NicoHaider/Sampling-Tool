@@ -36,6 +36,7 @@ aktuellen Sprint ab.
 | 25     | Bugfix: Audit-Volltextsuche matcht Nicht-Wort-/Nicht-ASCII-Zeichen literal (rohe Nadel statt escaptem Pattern) | **done** |
 | 26     | Import-Performance (Profiling-first): orjson-Fast-Path im Tagged-Encoder (`OPT_PASSTHROUGH_DATETIME`), byte-identisch | **done** |
 | 27     | UI-Cleanup: Toolbar kompakt + Überlauf, Audit-Export-Datumsfilter gefixt + toggelbar (Default aus), „Engagement"→„Projekt" (nur sichtbarer Text), Seed nur in den Einstellungen änderbar (RNG unverändert) | **done** |
+| 28     | UI-Cleanup B: Vorlagen als Chip-Leiste + „+" im Stichproben-Dialog, Verwaltung (Bearbeiten/Umbenennen/Löschen/Duplizieren) in eigenem Fenster via Menü „Stichprobe → Vorlagen verwalten…" (Sprint-23-Mechanik unverändert) | **done** |
 
 ### Was Sprint 8 liefert
 

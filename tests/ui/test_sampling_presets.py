@@ -16,7 +16,6 @@ from typing import Any
 
 import pytest
 from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QInputDialog, QMessageBox
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.config import APP_NAME, APP_ORG
@@ -263,80 +262,7 @@ class TestPresetSamplingNeutrality:
         assert dialog.get_result() is None
 
 
-# ---------------------------------------------------------------------------
-# 4. Dialog-Controls (Combobox + Buttons) – Wiring
-# ---------------------------------------------------------------------------
-
-
-class TestPresetControls:
-    def test_save_button_persists_via_inputdialog(
-        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        store = PresetStore()
-        dialog = SamplingDialog(*_make_dataset(), features=_ALL, preset_store=store)
-        qtbot.addWidget(dialog)
-        dialog._size_spin.setValue(7)
-        monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Meine Vorlage", True))
-        dialog._on_save_preset()
-        got = store.get("Meine Vorlage")
-        assert got is not None
-        assert got.size == 7
-        # Combobox zeigt die neue Vorlage.
-        names = [dialog._preset_combo.itemText(i) for i in range(dialog._preset_combo.count())]
-        assert "Meine Vorlage" in names
-
-    def test_apply_button_applies_selected_preset(self, qtbot: QtBot) -> None:
-        store = PresetStore()
-        store.save(SamplingPreset(name="Gross", method=SamplingMethod.SIMPLE, size=9))
-        dialog = SamplingDialog(*_make_dataset(), features=_ALL, preset_store=store)
-        qtbot.addWidget(dialog)
-        dialog._preset_combo.setCurrentText("Gross")
-        dialog._on_apply_preset()
-        assert dialog._size_spin.value() == 9
-
-    def test_delete_button_removes_preset(
-        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        store = PresetStore()
-        store.save(SamplingPreset(name="Weg", method=SamplingMethod.SIMPLE, size=3))
-        dialog = SamplingDialog(*_make_dataset(), features=_ALL, preset_store=store)
-        qtbot.addWidget(dialog)
-        dialog._preset_combo.setCurrentText("Weg")
-        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
-        dialog._on_delete_preset()
-        assert store.names() == []
-
-    def test_rename_button_renames_preset(
-        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        store = PresetStore()
-        store.save(SamplingPreset(name="Alt", method=SamplingMethod.SIMPLE, size=3))
-        dialog = SamplingDialog(*_make_dataset(), features=_ALL, preset_store=store)
-        qtbot.addWidget(dialog)
-        dialog._preset_combo.setCurrentText("Alt")
-        monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Neu", True))
-        dialog._on_rename_preset()
-        assert store.names() == ["Neu"]
-
-    def test_save_overwrite_prompts_confirmation(
-        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        store = PresetStore()
-        store.save(SamplingPreset(name="X", method=SamplingMethod.SIMPLE, size=3))
-        dialog = SamplingDialog(*_make_dataset(), features=_ALL, preset_store=store)
-        qtbot.addWidget(dialog)
-        dialog._size_spin.setValue(11)
-        monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("X", True))
-        asked: list[bool] = []
-
-        def _question(*a: object, **k: object) -> QMessageBox.StandardButton:
-            asked.append(True)
-            return QMessageBox.StandardButton.Yes
-
-        monkeypatch.setattr(QMessageBox, "question", _question)
-        dialog._on_save_preset()
-        assert asked == [True]  # Überschreiben wurde bestätigt-abgefragt.
-        got = store.get("X")
-        assert got is not None
-        assert got.size == 11
-        assert len(store.list()) == 1
+# Die UI-Bedienung der Vorlagen (Chips + „+" im Stichproben-Dialog,
+# Verwaltungsfenster) ist seit Sprint 28 in tests/ui/test_template_chips.py und
+# tests/ui/test_template_manager_dialog.py abgedeckt. `apply_preset` /
+# `current_settings_as_preset` (oben) bleiben die unveränderte Sprint-23-Mechanik.

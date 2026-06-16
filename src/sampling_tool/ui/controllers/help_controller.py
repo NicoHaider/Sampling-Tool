@@ -14,6 +14,8 @@ from sampling_tool.ui.controllers._factories import ControllerFactories
 from sampling_tool.ui.controllers.workspace_session import WorkspaceSession
 from sampling_tool.ui.dialogs.about_dialog import AboutDialog
 from sampling_tool.ui.dialogs.bug_report_dialog import BugReportDialog
+from sampling_tool.ui.dialogs.template_manager_dialog import TemplateManagerDialog
+from sampling_tool.ui.preset_store import PresetStore
 from sampling_tool.ui.settings_store import PANEL_AUDIT_TRAIL, PANEL_DASHBOARD, save_settings
 
 
@@ -73,6 +75,16 @@ class HelpController:
             return
         save_settings(new_settings)
         self.session.apply_new_settings(new_settings)
+
+    def handle_manage_templates(self) -> None:
+        """Vorlagen-Verwaltungsfenster öffnen (Sprint 28, einziger Einstiegspunkt).
+
+        Vorlagen liegen app-weit (`PresetStore`/QSettings, Sprint 23) – das
+        Fenster braucht kein offenes Projekt. Bewusst genau **eine** Stelle,
+        damit später ein Passwort-Gate davorgeschaltet werden kann (jetzt noch
+        keins).
+        """
+        TemplateManagerDialog(PresetStore(), self.session.window).exec()
 
     def handle_hotkeys(self) -> None:
         """Statisches Info-Fenster mit Tastatur-Shortcuts."""

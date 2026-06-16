@@ -150,10 +150,24 @@ def build_menu(window: MainWindow) -> None:
     # ---- Sample ----
     sample_menu = menu_bar.addMenu("&Stichprobe")
     assert sample_menu is not None
+    window._sample_menu = sample_menu
 
     window._action_new_sample = QAction("Neue Stichprobe…", window)
     window._action_new_sample.triggered.connect(window.new_sample_requested.emit)
     sample_menu.addAction(window._action_new_sample)
+
+    # Sprint 28: Vorlagen-Verwaltungsfenster. App-weit erreichbar (auch ohne
+    # offenes Projekt), daher NICHT in `_set_workspace_actions_enabled` – die
+    # Action bleibt immer aktiv. Einziger Einstiegspunkt; ein Passwort-Gate
+    # kann später hier (oder im Handler) davorgeschaltet werden.
+    window._action_manage_templates = QAction("Vorlagen verwalten…", window)
+    window._action_manage_templates.setToolTip(
+        "Gespeicherte Vorlagen bearbeiten, umbenennen, duplizieren oder löschen"
+    )
+    window._action_manage_templates.triggered.connect(window.manage_templates_requested.emit)
+    sample_menu.addAction(window._action_manage_templates)
+
+    sample_menu.addSeparator()
 
     window._action_reset_sample = QAction("Auswahl zurücksetzen", window)
     window._action_reset_sample.triggered.connect(window.reset_sample_requested.emit)
