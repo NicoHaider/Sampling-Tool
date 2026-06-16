@@ -108,6 +108,48 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
 | 26     | Import-Performance (Profiling-first): Encode dominiert → orjson-Fast-Path im Tagged-Encoder (`OPT_PASSTHROUGH_DATETIME`), byte-identisch; `scripts/bench_import.py` | done |
 | 27     | UI-Cleanup: Toolbar kompakt + QToolBar-Überlauf, Audit-Export-Datumsfilter gefixt (QDateEdit war disabled) + app-weit toggelbar (Default aus), „Engagement"→„Projekt" (nur sichtbarer Text), Seed schreibgeschützt im Haupt-Dialog + nur in Settings änderbar (RNG unverändert) | done |
 | 28     | UI-Cleanup B: Vorlagen als Chip-Leiste + „+" im Stichproben-Dialog (Combobox/Buttons raus), Verwaltung (Bearbeiten/Umbenennen/Löschen/Duplizieren) in eigenem `TemplateManagerDialog` via Menü „Stichprobe → Vorlagen verwalten…"; Sprint-23-Mechanik unverändert wiederverwendet | done |
+| 29     | Import-Dialoge erweitert (auf Sprint-16-Basis additiv): „keine Kopfzeile" (generische Spalten `Spalte 1, …`) + Header-Detection/Vorschau jetzt auch für CSV; `import_file_configured` akzeptiert `sheet_name=None` (CSV) und `header_row=None` (keine Kopfzeile); saubere Dateien (1 Blatt, Header Zeile 1) bleiben byte-identisch | done |
+
+## Import-Dialoge: „keine Kopfzeile" + CSV (Sprint 29)
+
+Zwei Komfort-Features aus dem alten VBA-Tool – **additiv auf der
+Sprint-16-Infrastruktur** (kombinierter `ImportOptionsDialog` +
+`list_sheets`/`preview_sheet`/`import_file_configured`), nicht neu gebaut.
+Multi-Sheet-Auswahl und interaktive Kopfzeilen-Wahl existierten bereits
+seit Sprint 16; Sprint 29 schließt die zwei verbliebenen Lücken:
+
+- **„keine Kopfzeile".** Eine Checkbox im `ImportOptionsDialog` (sperrt den
+  Header-Spin). `ImportOptionsResult.header_row` wird dann `None`;
+  `ExcelImporter.import_file_configured(..., header_row=None)` vergibt
+  generische Spaltennamen `Spalte 1, Spalte 2, …` (`_generic_columns`) und
+  behandelt **alle** (nicht-leeren) Zeilen als Daten (`skip_rows=0`).
+- **CSV-Header-Detection.** `import_file_configured` verzweigt jetzt nach
+  Suffix (Excel/CSV); CSV ignoriert `sheet_name`. Neu: `preview_csv()`
+  (rohe 2D-Zellen + Confidence wie `preview_sheet`) und `_csv_reader_rows`
+  als gemeinsame Roh-Parse-Basis von Auto- (`_parse_csv`) und Override-Pfad
+  (`_import_csv_configured`). Der Dialog erkennt CSV (`self._is_csv`),
+  blendet das Sheet-Dropdown aus (`_sheet_combo is None`) und liefert
+  `sheet_name=None`.
+- **Dialog-Entscheidung zentralisiert.** `ExcelImporter.requires_options_dialog(path)`
+  kapselt „braucht es einen Dialog?" (Excel: >1 Blatt ODER `confidence != "high"`;
+  CSV: `confidence != "high"`). Der `WorkspaceController` ruft das für Excel
+  **und** CSV und reicht das `ImportOptionsResult` an den Worker durch.
+- **Worker explizit.** `ExcelImportTask.configured: bool` schaltet bewusst
+  auf `import_file_configured` um – ein reiner `None`-Check reicht nicht
+  mehr, weil `header_row=None`/`sheet_name=None` gültige Overrides sind.
+- **Verbesserte Auto-Erkennung (nur Vorschau).** `_detect_header_with_confidence`
+  überspringt jetzt *spärliche* Titel-/Metazeilen über der Tabelle
+  (Width-Matching: erste headerlike Zeile, die die volle Tabellenbreite
+  ausfüllt). Betrifft **nur** die Dialog-Vorschau; der byte-identische
+  Auto-Import (`import_file` → `_detect_header`) bleibt unberührt.
+
+**Rote Linie:** Coercion (`_coerce_*`, Sprint 26) unangetastet; Header-/
+Blatt-Wahl ändert nur die Auswahl der Rohzeilen, nicht deren Kodierung. Der
+saubere Default-Pfad (1 Blatt, Kopfzeile Zeile 1 → kein Dialog → `import_file`)
+ist byte-identisch (Oracle: `tests/integration/test_sprint29_import_dialogs.py::
+TestImportUnchangedForCleanFiles` + bestehende `test_import_result_unchanged.py`).
+Cancellation (Sprint 17) bleibt voll funktionsfähig (auch konfigurierter
+Excel-/CSV-Import).
 
 ## Einzel-Feature-Toggles + „Ansicht"-Menü (Sprint 22)
 

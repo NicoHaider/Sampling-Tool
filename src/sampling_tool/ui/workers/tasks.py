@@ -60,9 +60,13 @@ class ExcelImportTask:
     Connection wieder. Damit gibt es keine Shared-Connection mit dem
     Main-Thread.
 
-    ``sheet_name`` und ``header_row`` sind die optionalen Overrides aus
-    dem `ImportOptionsDialog` (Sprint 16). Beide ``None`` ⇒ Auto-Detect
-    (Standard-Pfad ``import_file``).
+    ``sheet_name`` und ``header_row`` sind die Overrides aus dem
+    `ImportOptionsDialog` (Sprint 16). ``configured`` schaltet bewusst
+    explizit zwischen Auto-Import (``import_file``, Default) und dem
+    Override-Pfad (``import_file_configured``) um – ein reiner ``None``-
+    Check reicht seit Sprint 29 nicht mehr, weil ``header_row=None``
+    („keine Kopfzeile") und ``sheet_name=None`` (CSV) gültige
+    Override-Werte sind.
     """
 
     path: Path
@@ -71,6 +75,7 @@ class ExcelImportTask:
     user_name: str
     sheet_name: str | None = None
     header_row: int | None = None
+    configured: bool = False
 
     def run(
         self,
@@ -81,7 +86,7 @@ class ExcelImportTask:
             progress=progress.report,
             cancellation=cancellation,
         )
-        if self.sheet_name is not None and self.header_row is not None:
+        if self.configured:
             result = importer.import_file_configured(self.path, self.sheet_name, self.header_row)
         else:
             result = importer.import_file(self.path)

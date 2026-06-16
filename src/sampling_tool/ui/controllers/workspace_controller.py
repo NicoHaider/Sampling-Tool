@@ -38,6 +38,7 @@ from sampling_tool.persistence.repositories import (
 )
 from sampling_tool.ui.controllers._factories import ControllerFactories
 from sampling_tool.ui.controllers.workspace_session import WorkspaceSession
+from sampling_tool.ui.dialogs.import_options_dialog import ImportOptionsResult
 from sampling_tool.ui.dialogs.progress_dialog import TaskProgressDialog
 from sampling_tool.ui.workers.tasks import ExcelImportTask, ExcelImportTaskResult
 
@@ -63,13 +64,14 @@ class WorkspaceController:
         if path is None:
             return
 
-        # Sprint 16: Bei Excel-Dateien prüfen, ob ein Sheet-/Header-Auswahl-
-        # Dialog erscheinen muss. Multi-Sheet ODER Header-Auto-Detection
-        # unsicher → Dialog. Sonst lautloser One-shot-Import.
-        configured: tuple[str, int] | None = None
-        if path.suffix.lower() in SUPPORTED_EXCEL_SUFFIXES:
+        # Sprint 16/29: prüfen, ob ein Sheet-/Header-Auswahl-Dialog erscheinen
+        # muss. Excel: Multi-Sheet ODER Header-Auto-Detection unsicher. CSV
+        # (Sprint 29): Header-Auto-Detection unsicher. Sonst lautloser
+        # One-shot-Import (unverändertes Verhalten für saubere Dateien).
+        configured: ImportOptionsResult | None = None
+        if path.suffix.lower() in SUPPORTED_EXCEL_SUFFIXES + SUPPORTED_CSV_SUFFIXES:
             try:
-                needs_dialog = self._import_needs_dialog(path)
+                needs_dialog = ExcelImporter().requires_options_dialog(path)
             except DataImportError as exc:
                 s.error(f"Import fehlgeschlagen: {exc}")
                 return
@@ -104,7 +106,7 @@ class WorkspaceController:
         return Path(path_str)
 
     def _do_import_with_progress(
-        self, path: Path, configured: tuple[str, int] | None
+        self, path: Path, configured: ImportOptionsResult | None
     ) -> ExcelImportTaskResult | None:
         """Worker-basierter Import + DB-Persist. UI bleibt während der
         Operation responsiv (Sprint 17 / P-008).
@@ -120,15 +122,17 @@ class WorkspaceController:
         assert s.engagement.id is not None
 
         # Sprint 17: Der Worker öffnet seine eigene Database-Instanz im
-        # Worker-Thread. Wir reichen nur den DB-Path durch.
-        sheet_name, header_row = configured if configured is not None else (None, None)
+        # Worker-Thread. Wir reichen nur den DB-Path durch. ``configured``
+        # schaltet explizit auf `import_file_configured` (Sprint 29: auch
+        # ``sheet_name``/``header_row`` == None sind gültige Overrides).
         task = ExcelImportTask(
             path=path,
             db_path=s.db.db_path,
             engagement_id=s.engagement.id,
             user_name=s.user_name(),
-            sheet_name=sheet_name,
-            header_row=header_row,
+            sheet_name=configured.sheet_name if configured is not None else None,
+            header_row=configured.header_row if configured is not None else None,
+            configured=configured is not None,
         )
         progress_dialog = TaskProgressDialog(f"Importiere {path.name}…", s.window)
         try:
@@ -153,33 +157,19 @@ class WorkspaceController:
                 self.session.window, "Import abgeschlossen", warning_text.strip()
             )
 
-    def _import_needs_dialog(self, path: Path) -> bool:
-        """Excel-Datei kurz probieren: Sheet-Liste + Header-Confidence.
+    def _run_import_options_dialog(self, path: Path) -> ImportOptionsResult | None:
+        """Öffnet den `ImportOptionsDialog` und liefert das `ImportOptionsResult` oder None.
 
-        Liefert ``True``, wenn der `ImportOptionsDialog` erscheinen soll
-        (Multi-Sheet ODER ``confidence != "high"``). Wirft `DataImportError`,
-        wenn die Datei nicht lesbar ist – Caller behandelt das einheitlich.
+        Die Dialog-/Header-Logik (welche Datei welchen Dialog braucht) lebt in
+        `ExcelImporter.requires_options_dialog`; hier wird nur das Ergebnis der
+        User-Interaktion durchgereicht.
         """
-        importer_probe = ExcelImporter()
-        sheets = importer_probe.list_sheets(path)
-        if not sheets:
-            return False
-        if len(sheets) > 1:
-            return True
-        preview = importer_probe.preview_sheet(path, sheets[0].name)
-        return preview.confidence != "high"
-
-    def _run_import_options_dialog(self, path: Path) -> tuple[str, int] | None:
-        """Öffnet den `ImportOptionsDialog` und liefert (sheet, header_row) oder None."""
         s = self.session
         importer_probe = ExcelImporter()
         dialog = self._factories.import_options(path, importer_probe, s.window)
         if dialog.exec() != int(QDialog.DialogCode.Accepted):
             return None
-        result = dialog.get_result()
-        if result is None:
-            return None
-        return result.sheet_name, result.header_row
+        return dialog.get_result()
 
     # ---- Sampling ------------------------------------------------------
 

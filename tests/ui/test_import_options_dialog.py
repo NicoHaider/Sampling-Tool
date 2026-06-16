@@ -107,7 +107,9 @@ class TestImportOptionsDialog:
         dialog = ImportOptionsDialog(multi_sheet_path, importer)
         qtbot.addWidget(dialog)
         # UserData = Sheet-Name; Display-Text enthält zusätzlich Dimensionen.
-        names = [dialog._sheet_combo.itemData(i) for i in range(dialog._sheet_combo.count())]
+        combo = dialog._sheet_combo
+        assert combo is not None
+        names = [combo.itemData(i) for i in range(combo.count())]
         assert names == ["Erstes", "Zweites", "Drittes"]
 
     def test_dialog_loads_preview_on_sheet_change(
@@ -117,7 +119,9 @@ class TestImportOptionsDialog:
         qtbot.addWidget(dialog)
         # Initial: erstes Sheet → 2 Spalten
         assert dialog._preview_table.columnCount() == 2
-        dialog._sheet_combo.setCurrentIndex(dialog._sheet_combo.findData("Zweites"))
+        combo = dialog._sheet_combo
+        assert combo is not None
+        combo.setCurrentIndex(combo.findData("Zweites"))
         assert dialog._preview_table.columnCount() == 3
 
     def test_dialog_preselects_detected_header_row_high(
@@ -164,7 +168,9 @@ class TestImportOptionsDialog:
     ) -> None:
         dialog = ImportOptionsDialog(multi_sheet_path, importer)
         qtbot.addWidget(dialog)
-        dialog._sheet_combo.setCurrentIndex(dialog._sheet_combo.findData("Zweites"))
+        combo = dialog._sheet_combo
+        assert combo is not None
+        combo.setCurrentIndex(combo.findData("Zweites"))
         dialog._header_spin.setValue(1)
         dialog._on_accept()
         result = dialog.get_result()
@@ -180,3 +186,96 @@ class TestImportOptionsDialog:
         dialog.reject()
         assert dialog.result() == int(QDialog.DialogCode.Rejected)
         assert dialog.get_result() is None
+
+
+# ---------------------------------------------------------------------------
+# Sprint 29: „keine Kopfzeile" + CSV
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def header_csv_path(tmp_path: Path) -> Path:
+    """CSV mit einer Titelzeile + Leerzeile, Kopfzeile in Zeile 3 (raw index 2)."""
+    path = tmp_path / "header.csv"
+    path.write_text(
+        "Quartalsbericht\n\nKonto,Bezeichnung,Saldo\n1000,Kasse,500.5\n2000,Bank,1234\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+class TestNoHeaderOption:
+    def test_no_header_checkbox_disables_header_spin(
+        self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter
+    ) -> None:
+        dialog = ImportOptionsDialog(simple_path, importer)
+        qtbot.addWidget(dialog)
+        assert dialog._header_spin.isEnabled() is True
+        dialog._no_header_check.setChecked(True)
+        assert dialog._header_spin.isEnabled() is False
+
+    def test_no_header_result_header_row_is_none(
+        self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter
+    ) -> None:
+        dialog = ImportOptionsDialog(simple_path, importer)
+        qtbot.addWidget(dialog)
+        dialog._no_header_check.setChecked(True)
+        dialog._on_accept()
+        result = dialog.get_result()
+        assert isinstance(result, ImportOptionsResult)
+        assert result.header_row is None
+        assert result.sheet_name == "Daten"
+
+    def test_no_header_keeps_ok_enabled_even_at_last_row(
+        self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter
+    ) -> None:
+        # Header-Spin auf letzte Zeile = ungültig für „mit Kopfzeile", aber
+        # „keine Kopfzeile" ist trotzdem gültig (alle Zeilen sind Daten).
+        dialog = ImportOptionsDialog(simple_path, importer)
+        qtbot.addWidget(dialog)
+        dialog._header_spin.setValue(3)
+        assert _ok_enabled(dialog) is False
+        dialog._no_header_check.setChecked(True)
+        assert _ok_enabled(dialog) is True
+
+
+class TestCsvImportOptions:
+    def test_csv_has_no_sheet_combo(
+        self, qtbot: QtBot, header_csv_path: Path, importer: ExcelImporter
+    ) -> None:
+        dialog = ImportOptionsDialog(header_csv_path, importer)
+        qtbot.addWidget(dialog)
+        assert dialog._sheet_combo is None
+
+    def test_csv_preview_renders_and_preselects_header(
+        self, qtbot: QtBot, header_csv_path: Path, importer: ExcelImporter
+    ) -> None:
+        dialog = ImportOptionsDialog(header_csv_path, importer)
+        qtbot.addWidget(dialog)
+        assert dialog._preview_table.rowCount() == 5
+        # Kopfzeile in raw row 3 (1-basiert) erkannt → Spin-Default 3.
+        assert dialog._header_spin.value() == 3
+
+    def test_csv_result_sheet_name_none(
+        self, qtbot: QtBot, header_csv_path: Path, importer: ExcelImporter
+    ) -> None:
+        dialog = ImportOptionsDialog(header_csv_path, importer)
+        qtbot.addWidget(dialog)
+        dialog._header_spin.setValue(3)
+        dialog._on_accept()
+        result = dialog.get_result()
+        assert isinstance(result, ImportOptionsResult)
+        assert result.sheet_name is None
+        assert result.header_row == 2
+
+    def test_csv_no_header_result(
+        self, qtbot: QtBot, header_csv_path: Path, importer: ExcelImporter
+    ) -> None:
+        dialog = ImportOptionsDialog(header_csv_path, importer)
+        qtbot.addWidget(dialog)
+        dialog._no_header_check.setChecked(True)
+        dialog._on_accept()
+        result = dialog.get_result()
+        assert isinstance(result, ImportOptionsResult)
+        assert result.sheet_name is None
+        assert result.header_row is None

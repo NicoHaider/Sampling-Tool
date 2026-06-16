@@ -145,6 +145,7 @@ class TestExcelImportTask:
             user_name="tester",
             sheet_name="Daten",
             header_row=2,
+            configured=True,
         )
         reporter, _ticks = _make_progress_reporter()
         result = task.run(reporter, CancellationToken())
@@ -152,6 +153,56 @@ class TestExcelImportTask:
 
         assert stored.columns == ("Konto", "Betrag")
         assert stored.row_count == 1
+
+    def test_import_configured_no_header_generates_generic_columns(self, tmp_path: Path) -> None:
+        """configured=True mit header_row=None ⇒ „keine Kopfzeile" (generische Spalten)."""
+        xlsx = tmp_path / "no_header.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "Daten"
+        ws.append([100, 200])
+        ws.append([300, 400])
+        wb.save(xlsx)
+
+        db_path, eng_id = _make_engagement_db(tmp_path)
+        task = ExcelImportTask(
+            path=xlsx,
+            db_path=db_path,
+            engagement_id=eng_id,
+            user_name="tester",
+            sheet_name="Daten",
+            header_row=None,
+            configured=True,
+        )
+        reporter, _ticks = _make_progress_reporter()
+        result = task.run(reporter, CancellationToken())
+        stored = result.dataset
+
+        assert stored.columns == ("Spalte 1", "Spalte 2")
+        assert stored.row_count == 2
+
+    def test_import_configured_csv_uses_header_row(self, tmp_path: Path) -> None:
+        """configured=True für CSV (sheet_name=None) ⇒ import_file_configured greift."""
+        csv_path = tmp_path / "data.csv"
+        csv_path.write_text("Konto,Betrag\n100,999\n200,888\n", encoding="utf-8")
+
+        db_path, eng_id = _make_engagement_db(tmp_path)
+        task = ExcelImportTask(
+            path=csv_path,
+            db_path=db_path,
+            engagement_id=eng_id,
+            user_name="tester",
+            sheet_name=None,
+            header_row=0,
+            configured=True,
+        )
+        reporter, _ticks = _make_progress_reporter()
+        result = task.run(reporter, CancellationToken())
+        stored = result.dataset
+
+        assert stored.columns == ("Konto", "Betrag")
+        assert stored.row_count == 2
 
 
 class TestReproducibility:

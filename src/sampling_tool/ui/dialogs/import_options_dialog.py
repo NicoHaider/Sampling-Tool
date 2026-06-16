@@ -1,12 +1,14 @@
-"""Sheet-/Header-Auswahl-Dialog beim Excel-Import.
+"""Sheet-/Header-Auswahl-Dialog beim Import (Excel + CSV).
 
 Wird vom `WorkspaceController.handle_import_excel` aufgerufen, wenn die
 Datei mehr als ein Sheet hat ODER die Header-Detection unsicher ist
-(``confidence != "high"``). Der User wählt das Sheet und markiert die
-Header-Zeile; das Ergebnis (``ImportOptionsResult``) bekommt der
-Importer via `import_file_configured`.
+(``confidence != "high"``). Der User wählt das Sheet (nur Excel, bei >1
+Blatt) und markiert die Kopfzeile – oder aktiviert **„keine Kopfzeile"**,
+dann werden generische Spaltennamen vergeben. Das Ergebnis
+(``ImportOptionsResult``) bekommt der Importer via `import_file_configured`.
 
-Sprint 16 – nachträglich aus dem VBA-Backlog portiert.
+Sprint 16 – aus dem VBA-Backlog portiert (Excel-Multi-Sheet + Header).
+Sprint 29 – additiv erweitert um „keine Kopfzeile" und CSV-Unterstützung.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QBrush, QColor, QFont
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -29,6 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sampling_tool.config import SUPPORTED_CSV_SUFFIXES
 from sampling_tool.io.importer import ExcelImporter, SheetInfo, SheetPreview
 
 # Erkannte Header-Zeile bekommt einen dezenten Grau-Hintergrund.
@@ -36,22 +40,26 @@ _HEADER_HINT_BG = QColor("#EEEEEE")
 # BDO-Rot für die "ambiguous"-Warnung. Bewusst keine Style-Import-
 # Abhängigkeit – Konstante reicht.
 _AMBIGUOUS_RED = "#D6001C"
+# Anzahl Vorschauzeilen – muss zur Importer-Default-`max_rows` passen.
+_PREVIEW_MAX_ROWS = 20
 
 
 @dataclass(frozen=True, slots=True)
 class ImportOptionsResult:
     """Ergebnis des `ImportOptionsDialog`.
 
-    `header_row` ist 0-basiert, passt direkt für
-    `ExcelImporter.import_file_configured`.
+    ``header_row`` ist 0-basiert, oder ``None`` für **„keine Kopfzeile"**
+    (generische Spaltennamen). ``sheet_name`` ist der gewählte Blattname
+    bei Excel, oder ``None`` bei CSV (CSV hat keine Tabellenblätter). Passt
+    direkt in `ExcelImporter.import_file_configured`.
     """
 
-    sheet_name: str
-    header_row: int
+    sheet_name: str | None
+    header_row: int | None
 
 
 class ImportOptionsDialog(QDialog):
-    """Kombinierter Dialog für Sheet-Auswahl + Header-Detection."""
+    """Kombinierter Dialog für Sheet-Auswahl + Header-Detection (Excel + CSV)."""
 
     def __init__(
         self,
@@ -67,7 +75,10 @@ class ImportOptionsDialog(QDialog):
         self._path = path
         self._importer = importer
         self._result: ImportOptionsResult | None = None
-        self._sheets: list[SheetInfo] = importer.list_sheets(path)
+        self._is_csv = path.suffix.lower() in SUPPORTED_CSV_SUFFIXES
+        # CSV hat keine Tabellenblätter; Excel listet die echten Sheets.
+        self._sheets: list[SheetInfo] = [] if self._is_csv else importer.list_sheets(path)
+        self._sheet_combo: QComboBox | None = None
         self._current_preview: SheetPreview | None = None
         # Sperrt das Preview-Reload, wenn wir programmatisch den Sheet/Spin setzen.
         self._loading = False
@@ -76,20 +87,21 @@ class ImportOptionsDialog(QDialog):
         outer.setContentsMargins(20, 20, 20, 20)
         outer.setSpacing(12)
 
-        # ---- Sheet-Auswahl ---------------------------------------------
-        sheet_row = QHBoxLayout()
-        sheet_row.addWidget(_caption("Sheet auswählen"))
-        self._sheet_combo = QComboBox()
-        for info in self._sheets:
-            self._sheet_combo.addItem(
-                f"{info.name}  ({info.row_count} Zeilen × {info.column_count} Spalten)",
-                info.name,
-            )
-        sheet_row.addWidget(self._sheet_combo, stretch=1)
-        outer.addLayout(sheet_row)
+        # ---- Sheet-Auswahl (nur Excel) ---------------------------------
+        if not self._is_csv:
+            sheet_row = QHBoxLayout()
+            sheet_row.addWidget(_caption("Sheet auswählen"))
+            self._sheet_combo = QComboBox()
+            for info in self._sheets:
+                self._sheet_combo.addItem(
+                    f"{info.name}  ({info.row_count} Zeilen × {info.column_count} Spalten)",
+                    info.name,
+                )
+            sheet_row.addWidget(self._sheet_combo, stretch=1)
+            outer.addLayout(sheet_row)
 
         # ---- Vorschau-Tabelle ------------------------------------------
-        outer.addWidget(_caption("Vorschau (erste 20 Zeilen)"))
+        outer.addWidget(_caption(f"Vorschau (erste {_PREVIEW_MAX_ROWS} Zeilen)"))
         self._preview_table = QTableWidget(0, 0, self)
         self._preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._preview_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
@@ -105,6 +117,8 @@ class ImportOptionsDialog(QDialog):
         self._header_spin.setMinimum(1)
         self._header_spin.setMaximum(1)
         header_row_layout.addWidget(self._header_spin)
+        self._no_header_check = QCheckBox("Keine Kopfzeile – Spaltennamen automatisch vergeben")
+        header_row_layout.addWidget(self._no_header_check)
         header_row_layout.addStretch(1)
         outer.addLayout(header_row_layout)
 
@@ -122,14 +136,19 @@ class ImportOptionsDialog(QDialog):
         outer.addWidget(self._buttons)
 
         # ---- Signals ---------------------------------------------------
-        self._sheet_combo.currentIndexChanged.connect(self._on_sheet_changed)
+        if self._sheet_combo is not None:
+            self._sheet_combo.currentIndexChanged.connect(self._on_sheet_changed)
         self._header_spin.valueChanged.connect(self._on_header_changed)
+        self._no_header_check.toggled.connect(self._on_no_header_toggled)
         self._buttons.accepted.connect(self._on_accept)
         self._buttons.rejected.connect(self.reject)
 
-        # Initiales Sheet laden – emittiert kein change-Signal weil Index
-        # bereits 0 ist, daher explizit aufrufen.
-        self._on_sheet_changed(0)
+        # Initiale Vorschau laden. Excel: über das (bereits auf Index 0
+        # stehende) Sheet-Dropdown. CSV: einmalig direkt.
+        if self._is_csv:
+            self._load_preview(self._csv_preview())
+        else:
+            self._on_sheet_changed(0)
 
     # ---- Public API ----------------------------------------------------
 
@@ -138,7 +157,7 @@ class ImportOptionsDialog(QDialog):
         return self._result
 
     def get_result_header_row(self) -> int:
-        """0-basierter Header-Index, wie er in `import_file_configured` geht."""
+        """0-basierter Header-Index (nur sinnvoll, wenn eine Kopfzeile gewählt ist)."""
         return self._header_spin.value() - 1
 
     # ---- Slots ---------------------------------------------------------
@@ -156,6 +175,21 @@ class ImportOptionsDialog(QDialog):
                 detected_header_row=None,
                 confidence="ambiguous",
             )
+        self._load_preview(preview)
+
+    def _csv_preview(self) -> SheetPreview:
+        try:
+            return self._importer.preview_csv(self._path)
+        except Exception:  # pragma: no cover – defensiv
+            return SheetPreview(
+                sheet_name=self._path.name,
+                rows=(),
+                detected_header_row=None,
+                confidence="ambiguous",
+            )
+
+    def _load_preview(self, preview: SheetPreview) -> None:
+        """Rendert eine Vorschau + setzt den Header-Spin (gemeinsam Excel/CSV)."""
         self._current_preview = preview
         self._loading = True
         try:
@@ -172,16 +206,26 @@ class ImportOptionsDialog(QDialog):
         self._refresh_visual_state()
         self._update_ok_enabled()
 
+    def _on_no_header_toggled(self, checked: bool) -> None:
+        # „keine Kopfzeile": Header-Spin sperren, Hervorhebung/Validierung anpassen.
+        self._header_spin.setEnabled(not checked)
+        self._refresh_visual_state()
+        self._update_ok_enabled()
+
     def _on_accept(self) -> None:
         if not self._is_valid():
             return
-        sheet_name = self._sheet_combo.currentData()
-        if not isinstance(sheet_name, str):
-            return
-        self._result = ImportOptionsResult(
-            sheet_name=sheet_name,
-            header_row=self._header_spin.value() - 1,
-        )
+        sheet_name: str | None
+        if self._is_csv:
+            sheet_name = None
+        else:
+            assert self._sheet_combo is not None
+            data = self._sheet_combo.currentData()
+            if not isinstance(data, str):
+                return
+            sheet_name = data
+        header_row = None if self._no_header_check.isChecked() else self._header_spin.value() - 1
+        self._result = ImportOptionsResult(sheet_name=sheet_name, header_row=header_row)
         self.accept()
 
     # ---- Rendering -----------------------------------------------------
@@ -219,7 +263,9 @@ class ImportOptionsDialog(QDialog):
         """Header-Zeile in der Preview-Tabelle hervorheben + Confidence-Hinweis."""
         if self._current_preview is None:
             return
-        header_index = self._header_spin.value() - 1
+        no_header = self._no_header_check.isChecked()
+        # Bei „keine Kopfzeile" wird keine Zeile hervorgehoben.
+        header_index = -1 if no_header else self._header_spin.value() - 1
         # Reset background + bold auf allen Cells.
         default_brush = QBrush()
         normal_font = QFont()
@@ -237,7 +283,14 @@ class ImportOptionsDialog(QDialog):
                 else:
                     item.setBackground(default_brush)
                     item.setFont(normal_font)
-        # Confidence-Text.
+        # Hinweis-Text.
+        if no_header:
+            self._confidence_label.setText(
+                "Keine Kopfzeile – alle Zeilen werden als Daten importiert "
+                "(Spaltennamen: Spalte 1, Spalte 2, …)."
+            )
+            self._confidence_label.setStyleSheet("color: #777777;")
+            return
         confidence = self._current_preview.confidence
         if confidence == "high":
             self._confidence_label.setText("Header automatisch erkannt.")
@@ -259,6 +312,19 @@ class ImportOptionsDialog(QDialog):
     def _is_valid(self) -> bool:
         if self._current_preview is None:
             return False
+        # „keine Kopfzeile": gültig, sobald überhaupt Zeilen vorhanden sind.
+        if self._no_header_check.isChecked():
+            return len(self._current_preview.rows) >= 1
+
+        header_index = self._header_spin.value() - 1
+        if self._is_csv:
+            # Mindestens eine Datenzeile nach dem Header – es sei denn, die
+            # Vorschau war abgeschnitten (dann liegen evtl. weitere Zeilen vor).
+            n = len(self._current_preview.rows)
+            return header_index < n - 1 or n >= _PREVIEW_MAX_ROWS
+
+        # Excel: echte Zeilenzahl aus den Sheet-Metadaten nutzen.
+        assert self._sheet_combo is not None
         sheet_name = self._sheet_combo.currentData()
         if not isinstance(sheet_name, str):
             return False
@@ -266,7 +332,6 @@ class ImportOptionsDialog(QDialog):
         if info is None:
             return False
         # Mindestens eine Datenzeile NACH dem Header.
-        header_index = self._header_spin.value() - 1
         return header_index < info.row_count - 1
 
     def _update_ok_enabled(self) -> None:
