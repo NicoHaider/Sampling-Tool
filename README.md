@@ -37,6 +37,7 @@ aktuellen Sprint ab.
 | 26     | Import-Performance (Profiling-first): orjson-Fast-Path im Tagged-Encoder (`OPT_PASSTHROUGH_DATETIME`), byte-identisch | **done** |
 | 27     | UI-Cleanup: Toolbar kompakt + Überlauf, Audit-Export-Datumsfilter gefixt + toggelbar (Default aus), „Engagement"→„Projekt" (nur sichtbarer Text), Seed nur in den Einstellungen änderbar (RNG unverändert) | **done** |
 | 28     | UI-Cleanup B: Vorlagen als Chip-Leiste + „+" im Stichproben-Dialog, Verwaltung (Bearbeiten/Umbenennen/Löschen/Duplizieren) in eigenem Fenster via Menü „Stichprobe → Vorlagen verwalten…" (Sprint-23-Mechanik unverändert) | **done** |
+| 29     | Import-Dialoge erweitert: „keine Kopfzeile" (generische Spaltennamen) + Header-Detection/Vorschau jetzt auch für CSV (Sprint-16-Dialog additiv ausgebaut); saubere Dateien bleiben byte-identisch | **done** |
 
 ### Was Sprint 8 liefert
 

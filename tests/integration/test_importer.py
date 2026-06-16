@@ -573,10 +573,22 @@ class TestImportFileConfigured:
         )
         assert [r.values for r in result1.rows] == [r.values for r in result2.rows]
 
-    def test_configured_csv_wirft(self, importer: ExcelImporter, utf8_csv: Path) -> None:
-        # CSVs haben keine Sheets – import_file_configured ist Excel-only.
-        with pytest.raises(DataImportError, match="nur für Excel"):
-            importer.import_file_configured(utf8_csv, sheet_name="Sheet", header_row=0)
+    def test_configured_csv_mit_header_row(self, importer: ExcelImporter, utf8_csv: Path) -> None:
+        # Sprint 29: import_file_configured gilt jetzt auch für CSV (sheet_name
+        # wird ignoriert). utf8_csv hat die Kopfzeile in Zeile 1.
+        result = importer.import_file_configured(utf8_csv, sheet_name=None, header_row=0)
+        rows = list(result.rows)
+        assert result.dataset.columns == ("Name", "Stadt")
+        assert len(rows) == 2
+        assert rows[0].values == {"Name": "Müller", "Stadt": "Wien"}
+
+    def test_configured_csv_gleich_auto(self, importer: ExcelImporter, utf8_csv: Path) -> None:
+        # Saubere CSV + Default-Kopfzeile (Zeile 1) ⇒ identisch zum Auto-Import.
+        auto = list(importer.import_file(utf8_csv).rows)
+        configured = list(
+            importer.import_file_configured(utf8_csv, sheet_name=None, header_row=0).rows
+        )
+        assert [r.values for r in auto] == [r.values for r in configured]
 
 
 # ---------------------------------------------------------------------------

@@ -470,7 +470,7 @@ class _StubImportOptionsDialog:
 
     DialogCode = QDialog.DialogCode
 
-    def __init__(self, sheet_name: str, header_row: int, accept: bool = True) -> None:
+    def __init__(self, sheet_name: str | None, header_row: int | None, accept: bool = True) -> None:
         from sampling_tool.ui.dialogs.import_options_dialog import ImportOptionsResult
 
         self._result = ImportOptionsResult(sheet_name=sheet_name, header_row=header_row)
@@ -642,6 +642,84 @@ class TestImportDialogDispatch:
             # Zweites Sheet hat 2 Datenzeilen, 3 Spalten.
             assert window.data_table().table_model().rowCount() == 2
             assert window.data_table().table_model().columnCount() == 3
+        finally:
+            controller.handle_close_engagement()
+
+    # ---- Sprint 29: CSV nimmt am Header-Detection-Dialog teil ----------
+
+    def test_clean_csv_skips_dialog(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        clean_csv = tmp_path / "clean_import.csv"
+        clean_csv.write_text("Konto,Betrag\n1000,500\n2000,600\n", encoding="utf-8")
+        dialog_calls: list[Path] = []
+
+        def factory(path: Path, _imp: object, _parent: object) -> object:
+            dialog_calls.append(path)
+            return _StubImportOptionsDialog(None, 0)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            import_options_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
+                    return_value=(str(clean_csv), ""),
+                ),
+                patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
+            ):
+                controller.handle_import_excel()
+            assert dialog_calls == [], "Saubere CSV darf KEINEN Dialog zeigen"
+            assert window.data_table().table_model().rowCount() == 2
+            assert window.data_table().table_model().columnCount() == 2
+        finally:
+            controller.handle_close_engagement()
+
+    def test_messy_csv_shows_dialog_and_imports_chosen_header(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        # Titelzeile + Leerzeile über der echten Kopfzeile (raw row 3, index 2).
+        messy_csv = tmp_path / "messy_import.csv"
+        messy_csv.write_text(
+            "Quartalsbericht\n\nKonto,Betrag\n1000,500\n2000,600\n", encoding="utf-8"
+        )
+        dialog_calls: list[Path] = []
+
+        def factory(path: Path, _imp: object, _parent: object) -> object:
+            dialog_calls.append(path)
+            return _StubImportOptionsDialog(None, 2)  # CSV: sheet_name=None, Header raw row 3
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            import_options_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
+                    return_value=(str(messy_csv), ""),
+                ),
+                patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
+            ):
+                controller.handle_import_excel()
+            assert len(dialog_calls) == 1, "Unsaubere CSV muss den Header-Dialog zeigen"
+            # Kopfzeile = Zeile 3 ⇒ Spalten (Konto, Betrag), 2 Datenzeilen.
+            assert window.data_table().table_model().columnCount() == 2
+            assert window.data_table().table_model().rowCount() == 2
         finally:
             controller.handle_close_engagement()
 

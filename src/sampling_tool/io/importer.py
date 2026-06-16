@@ -294,39 +294,125 @@ class ExcelImporter:
             confidence=confidence,
         )
 
+    def preview_csv(self, path: Path, max_rows: int = 20) -> SheetPreview:
+        """Liefert die ersten ``max_rows`` Roh-Zeilen einer CSV + Header-Heuristik.
+
+        Pendant zu `preview_sheet` für den CSV-Pfad (Sprint 29): rohe 2D-
+        Zellen OHNE Header-Interpretation, damit der Dialog sie als Tabelle
+        zeigen kann und der User die Kopfzeile selbst markiert. Werte gehen
+        durch `_coerce_value` (gleiche Coercion wie der Import).
+        """
+        suffix = path.suffix.lower()
+        if suffix not in SUPPORTED_CSV_SUFFIXES:
+            raise DataImportError(
+                f"CSV-Vorschau nur für CSV-Dateien verfügbar (Datei: {path.name})."
+            )
+        if max_rows < 0:
+            raise DataImportError("preview_csv(): max_rows muss >= 0 sein.")
+
+        text, _enc = _read_csv_text(path)
+        raw_rows = [
+            tuple(_coerce_value(c) for c in row) for row in _csv_reader_rows(text)[:max_rows]
+        ]
+        detected, confidence = _detect_header_with_confidence(raw_rows)
+        return SheetPreview(
+            sheet_name=path.name,
+            rows=tuple(raw_rows),
+            detected_header_row=detected,
+            confidence=confidence,
+        )
+
+    def requires_options_dialog(self, path: Path) -> bool:
+        """True, wenn der `ImportOptionsDialog` vor dem Import erscheinen soll.
+
+        - **Excel**: mehr als ein Blatt ODER Header-Auto-Erkennung unsicher
+          (``confidence != "high"``).
+        - **CSV**: Header-Auto-Erkennung unsicher.
+
+        Genau ein Blatt + sauber erkannte Kopfzeile (bzw. saubere CSV) ⇒
+        ``False`` – der lautlose Direkt-Import bleibt unverändert. Andere
+        Dateitypen ⇒ ``False`` (kein Dialog).
+        """
+        suffix = path.suffix.lower()
+        if suffix in SUPPORTED_CSV_SUFFIXES:
+            return self.preview_csv(path).confidence != "high"
+        if suffix in SUPPORTED_EXCEL_SUFFIXES:
+            sheets = self.list_sheets(path)
+            if not sheets:
+                return False
+            if len(sheets) > 1:
+                return True
+            return self.preview_sheet(path, sheets[0].name).confidence != "high"
+        return False
+
     def import_file_configured(
         self,
         path: Path,
-        sheet_name: str,
-        header_row: int,
+        sheet_name: str | None,
+        header_row: int | None,
     ) -> ImportResult:
-        """Excel-Import mit explizit gewählten Sheet + Header-Zeile.
+        """Import mit explizit gewähltem Sheet + Kopfzeile (User-Override aus dem Dialog).
 
-        ``header_row`` ist 0-basiert. Alle Zeilen davor zählen als
-        ``skipped_rows``, der Header definiert die Spalten, alle Zeilen
-        danach werden als Daten interpretiert (Leerzeilen weiterhin
-        geskipped). Skippt die Auto-Detection bewusst – ist der User-
-        Override aus dem `ImportOptionsDialog`.
+        ``header_row`` ist 0-basiert; ``None`` bedeutet **„keine Kopfzeile"** –
+        dann werden generische Spaltennamen (``Spalte 1, Spalte 2, …``)
+        vergeben und ALLE (nicht-leeren) Zeilen sind Daten. Ist eine
+        Kopfzeile gesetzt, zählen die Zeilen davor als ``skipped_rows``, die
+        Kopfzeile definiert die Spalten, Daten beginnen in der Folgezeile.
+        Skippt die Auto-Detection bewusst.
+
+        Sprint 29 – gilt für Excel UND CSV. Bei CSV wird ``sheet_name``
+        ignoriert (CSV hat keine Tabellenblätter). Die Coercion/Werte-Logik
+        bleibt unverändert: Header-/Blatt-Wahl ändert nur die Auswahl der
+        Rohzeilen.
         """
-        suffix = path.suffix.lower()
-        if suffix not in SUPPORTED_EXCEL_SUFFIXES:
-            raise DataImportError(
-                f"import_file_configured() ist nur für Excel-Dateien verfügbar "
-                f"(Datei: {path.name})."
-            )
-        if header_row < 0:
+        if header_row is not None and header_row < 0:
             raise DataImportError(f"Header-Zeile muss >= 0 sein (war: {header_row}).")
 
+        suffix = path.suffix.lower()
+        if suffix in SUPPORTED_CSV_SUFFIXES:
+            return self._import_csv_configured(path, header_row)
+        if suffix in SUPPORTED_EXCEL_SUFFIXES:
+            return self._import_excel_configured(path, sheet_name, header_row)
+        raise DataImportError(
+            f"Dateityp '{suffix}' wird nicht unterstützt. "
+            f"Erlaubt: {', '.join(SUPPORTED_EXCEL_SUFFIXES + SUPPORTED_CSV_SUFFIXES)}"
+        )
+
+    def _import_excel_configured(
+        self,
+        path: Path,
+        sheet_name: str | None,
+        header_row: int | None,
+    ) -> ImportResult:
         wb = CalamineWorkbook.from_path(str(path))
         sheet = _select_sheet(wb, sheet_name)
         if sheet.start is None:
-            raise DataImportError(f"Sheet '{sheet_name}' in '{path.name}' ist leer.")
+            raise DataImportError(f"Sheet '{sheet_name or 'Standard'}' in '{path.name}' ist leer.")
+
+        if header_row is None:
+            # „keine Kopfzeile": generische Spaltennamen aus der Blattbreite,
+            # alle Zeilen sind Daten (skip_rows=0).
+            columns = _generic_columns(int(sheet.width))
+            stats = ImportStats()
+            total_estimate = max(0, int(sheet.total_height))
+            dataset = Dataset(
+                name=path.stem,
+                columns=tuple(columns),
+                row_count=total_estimate,
+                source_file=str(path),
+            )
+            rows_iter = self._configured_row_generator(
+                sheet, columns, stats, total_estimate, skip_rows=0
+            )
+            return ImportResult(dataset=dataset, rows=rows_iter, stats=stats)
 
         header_raw, leading_skipped = _read_header_row(sheet, header_row)
         if header_raw is None:
+            # `height` ist die echte Zeilenzahl (was `iter_rows` liefert);
+            # `total_height` wäre die Range-Größe und damit irreführend.
             raise DataImportError(
                 f"Header-Zeile {header_row + 1} liegt jenseits der Daten in Sheet "
-                f"'{sheet_name}' (max. {int(sheet.total_height)} Zeilen)."
+                f"'{sheet_name or 'Standard'}' (max. {int(sheet.height)} Zeilen)."
             )
 
         columns, header_warnings = _normalize_columns(header_raw)
@@ -339,8 +425,67 @@ class ExcelImporter:
             source_file=str(path),
         )
         rows_iter = self._configured_row_generator(
-            sheet, columns, stats, total_estimate, header_row
+            sheet, columns, stats, total_estimate, skip_rows=header_row + 1
         )
+        return ImportResult(dataset=dataset, rows=rows_iter, stats=stats)
+
+    def _import_csv_configured(self, path: Path, header_row: int | None) -> ImportResult:
+        """CSV-Import mit explizit gewählter Kopfzeile bzw. „keine Kopfzeile".
+
+        Spiegelt `_import_csv`, ersetzt aber die Auto-Header-Erkennung durch
+        die explizite Wahl. Nutzt denselben `_csv_row_generator` (gleiche
+        Coercion) – nur die Auswahl der Rohzeilen unterscheidet sich.
+        """
+        text, encoding = _read_csv_text(path)
+        raw_rows = _csv_reader_rows(text)
+
+        warnings: list[str] = []
+        if header_row is None:
+            # Breite nur aus nicht-leeren Zeilen ableiten – eine Leerzeile mit
+            # Trennern (',,' → drei leere Felder) darf die Spaltenzahl nicht
+            # aufblähen.
+            width = max((len(r) for r in raw_rows if not _is_blank(r)), default=0)
+            columns = _generic_columns(width)
+            body = raw_rows
+            leading_skipped = 0
+        else:
+            if header_row >= len(raw_rows):
+                raise DataImportError(
+                    f"Header-Zeile {header_row + 1} liegt jenseits der Daten in "
+                    f"'{path.name}' (max. {len(raw_rows)} Zeilen)."
+                )
+            columns, warnings = _normalize_columns(list(raw_rows[header_row]))
+            body = raw_rows[header_row + 1 :]
+            leading_skipped = header_row
+
+        if not columns:
+            raise DataImportError(f"CSV-Datei '{path.name}' enthält keine Daten.")
+
+        # Trailing-Leerzeilen abschneiden, ohne sie als „übersprungen" zu zählen –
+        # konsistent mit dem Auto-Pfad (`_parse_csv`).
+        while body and _is_blank(body[-1]):
+            body = body[:-1]
+
+        data_rows: list[list[Any]] = []
+        skipped = leading_skipped
+        for raw in body:
+            if _is_blank(raw):
+                skipped += 1
+                continue
+            data_rows.append(list(raw))
+
+        if encoding != "utf-8":
+            warnings = [*warnings, f"CSV-Encoding erkannt als '{encoding}'."]
+
+        stats = ImportStats(skipped_rows=skipped, warnings=list(warnings))
+        total = len(data_rows)
+        dataset = Dataset(
+            name=path.stem,
+            columns=tuple(columns),
+            row_count=total,
+            source_file=str(path),
+        )
+        rows_iter = self._csv_row_generator(columns, data_rows, stats, total)
         return ImportResult(dataset=dataset, rows=rows_iter, stats=stats)
 
     def _configured_row_generator(
@@ -349,14 +494,17 @@ class ExcelImporter:
         columns: list[str],
         stats: ImportStats,
         total_estimate: int,
-        header_row: int,
+        skip_rows: int,
     ) -> Iterator[DatasetRow]:
-        """Generator: skipt bis zur Header-Zeile, dann yieldet Daten-Rows."""
+        """Generator: überspringt ``skip_rows`` Zeilen, yieldet dann Daten-Rows.
+
+        ``skip_rows`` ist ``header_row + 1`` (Kopfzeile + alles davor) bzw.
+        ``0`` im „keine Kopfzeile"-Fall.
+        """
         # Sprint 17: Cancel-Check vor dem ersten Read.
         self._check_cancel()
         rows_iter: Iterator[list[Any]] = iter(sheet.iter_rows())
-        # Header-Row + alle vorhergehenden überspringen.
-        for _ in range(header_row + 1):
+        for _ in range(skip_rows):
             try:
                 next(rows_iter)
             except StopIteration:
@@ -609,21 +757,34 @@ def _detect_header(
 def _detect_header_with_confidence(
     rows: list[tuple[Any, ...]],
 ) -> tuple[int | None, HeaderConfidence]:
-    """Header-Index + Confidence für `preview_sheet`.
+    """Header-Index + Confidence für die Dialog-Vorschau (`preview_sheet`/`preview_csv`).
 
-    - ``high``: erste Zeile (Index 0) ist headerlike.
-    - ``low``: Header headerlike, aber Leerzeilen oder Metadaten davor.
-    - ``ambiguous``: erste non-blank Zeile sieht NICHT wie ein Header aus,
-      oder das Sheet ist komplett leer. ``detected_header_row`` ist dann
-      die erste non-blank Zeile (Fallback) bzw. ``None``.
+    Heuristik (Sprint 29 – robuster gegen Titelzeilen): die Kopfzeile ist die
+    erste nicht-leere, überwiegend textige Zeile, die entweder (a) mehr als
+    eine Zelle füllt ODER (b) die volle Tabellenbreite ausfüllt. Damit werden
+    *spärliche* Einzelzellen-Titel darüber (z. B. „Quartalsbericht" in nur
+    einer Zelle) übersprungen, während eine echte Kopfzeile erkannt wird –
+    **auch wenn sie schmaler ist als eine breitere Daten-/Fußzeile darunter**
+    (eine breite Zeile UNTER der Kopfzeile darf die Kopfzeile nicht vetoen).
+
+    - ``high``: Kopfzeile in Zeile 1 (Index 0).
+    - ``low``: Kopfzeile headerlike, aber Leer-/Titelzeilen davor.
+    - ``ambiguous``: keine Zeile sieht wie eine Kopfzeile aus, oder die Daten
+      sind leer. ``detected_header_row`` ist dann die erste nicht-leere Zeile
+      (Fallback) bzw. ``None``.
+
+    Wird NUR von der Vorschau genutzt – der byte-identische Auto-Import
+    (`import_file`) hängt weiterhin an `_detect_header` und bleibt unberührt.
     """
-    for idx, row in enumerate(rows):
-        if _is_blank(row):
-            continue
-        if _looks_like_header(row):
+    non_blank = [(idx, row) for idx, row in enumerate(rows) if not _is_blank(row)]
+    if not non_blank:
+        return None, "ambiguous"
+    full_width = max(_non_empty_count(row) for _idx, row in non_blank)
+    for idx, row in non_blank:
+        count = _non_empty_count(row)
+        if _looks_like_header(row) and (count >= 2 or count == full_width):
             return idx, ("high" if idx == 0 else "low")
-        return idx, "ambiguous"
-    return None, "ambiguous"
+    return non_blank[0][0], "ambiguous"
 
 
 def _read_header_row(sheet: CalamineSheet, header_row: int) -> tuple[list[Any] | None, int]:
@@ -650,8 +811,17 @@ def _looks_like_header(row: list[Any] | tuple[Any, ...]) -> bool:
     return (string_like / len(non_empty)) >= _HEADER_STRING_RATIO
 
 
+def _non_empty_count(row: list[Any] | tuple[Any, ...]) -> int:
+    return sum(1 for c in row if c is not None and str(c).strip() != "")
+
+
 def _is_blank(row: list[Any] | tuple[Any, ...]) -> bool:
     return all(c is None or (isinstance(c, str) and c.strip() == "") for c in row)
+
+
+def _generic_columns(width: int) -> list[str]:
+    """Generische Spaltennamen für „keine Kopfzeile": ``Spalte 1, Spalte 2, …``."""
+    return [f"Spalte {i}" for i in range(1, width + 1)]
 
 
 def _normalize_columns(header_row: list[Any]) -> tuple[list[str], list[str]]:
@@ -705,16 +875,24 @@ def _read_csv_text(path: Path) -> tuple[str, str]:
     )
 
 
-def _parse_csv(text: str) -> tuple[list[str], list[list[Any]], int, list[str]]:
-    """Splittet CSV-Text in Header + Datenzeilen. Delimiter wird geschnüffelt."""
+def _csv_reader_rows(text: str) -> list[list[Any]]:
+    """Liest CSV-Text in rohe Zeilen-Listen. Delimiter wird geschnüffelt.
+
+    Gemeinsame Basis für `_parse_csv` (Auto-Pfad) und `_import_csv_configured`
+    / `preview_csv` (Sprint-29-Override-Pfad) – damit beide Pfade denselben
+    Dialekt und dieselbe Zeilenaufteilung sehen.
+    """
     sample = text[:8192] or text
     try:
         dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
     except csv.Error:
         dialect = csv.excel  # Default: Komma
+    return [list(row) for row in csv.reader(text.splitlines(), dialect=dialect)]
 
-    reader = csv.reader(text.splitlines(), dialect=dialect)
-    all_rows = [row for row in reader]
+
+def _parse_csv(text: str) -> tuple[list[str], list[list[Any]], int, list[str]]:
+    """Splittet CSV-Text in Header + Datenzeilen. Delimiter wird geschnüffelt."""
+    all_rows = _csv_reader_rows(text)
 
     # Leere Zeilen am Anfang strippen, davon zählen wir die ersten als
     # "leading blanks" für die skipped-Bilanz.
