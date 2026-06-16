@@ -73,6 +73,9 @@ class MainWindow(QMainWindow):
     about_requested = pyqtSignal()
     settings_requested = pyqtSignal()
     hotkeys_requested = pyqtSignal()
+    # Sprint 28 – Menü „Stichprobe → Vorlagen verwalten…": öffnet das
+    # Vorlagen-Verwaltungsfenster (app-weit, auch ohne offenes Projekt).
+    manage_templates_requested = pyqtSignal()
     dataset_selected = pyqtSignal(int)
     sample_selected = pyqtSignal(int)
     sample_filter_toggled = pyqtSignal(int)
@@ -91,6 +94,7 @@ class MainWindow(QMainWindow):
     _recent_menu: QMenu
     _help_menu: QMenu
     _view_menu: QMenu
+    _sample_menu: QMenu
     _action_new: QAction
     _action_open: QAction
     _action_close: QAction
@@ -101,6 +105,7 @@ class MainWindow(QMainWindow):
     _action_excel_report: QAction
     _action_html_report: QAction
     _action_new_sample: QAction
+    _action_manage_templates: QAction
     _action_reset_sample: QAction
     _action_reset_sampling: QAction
     _action_undo: QAction

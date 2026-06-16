@@ -300,6 +300,9 @@ class MainController:
     def handle_hotkeys(self) -> None:
         self.help.handle_hotkeys()
 
+    def handle_manage_templates(self) -> None:
+        self.help.handle_manage_templates()
+
     # ---- Backward-Compat: interne Helfer als Forwards ------------------
     #
     # Einzelne Tests greifen auf private Helper zu (z. B. `_refresh_audit_trail`
@@ -350,6 +353,8 @@ class MainController:
         w.about_requested.connect(self.help.handle_about)
         w.settings_requested.connect(self.help.handle_settings)
         w.hotkeys_requested.connect(self.help.handle_hotkeys)
+        # Sprint 28: Vorlagen-Verwaltungsfenster (einziger Einstiegspunkt).
+        w.manage_templates_requested.connect(self.help.handle_manage_templates)
         # Ansicht-Menü (Sprint 22): Einzel-Toggles + Panel-Toggles
         w.feature_toggled.connect(self.help.handle_feature_toggled)
         w.panel_toggled.connect(self.help.handle_panel_toggled)

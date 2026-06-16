@@ -107,6 +107,7 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
 | 25     | Bugfix: Audit-Volltextsuche matcht Nicht-Wort-/Nicht-ASCII-Zeichen literal (rohe Nadel statt escaptem Pattern) | done |
 | 26     | Import-Performance (Profiling-first): Encode dominiert → orjson-Fast-Path im Tagged-Encoder (`OPT_PASSTHROUGH_DATETIME`), byte-identisch; `scripts/bench_import.py` | done |
 | 27     | UI-Cleanup: Toolbar kompakt + QToolBar-Überlauf, Audit-Export-Datumsfilter gefixt (QDateEdit war disabled) + app-weit toggelbar (Default aus), „Engagement"→„Projekt" (nur sichtbarer Text), Seed schreibgeschützt im Haupt-Dialog + nur in Settings änderbar (RNG unverändert) | done |
+| 28     | UI-Cleanup B: Vorlagen als Chip-Leiste + „+" im Stichproben-Dialog (Combobox/Buttons raus), Verwaltung (Bearbeiten/Umbenennen/Löschen/Duplizieren) in eigenem `TemplateManagerDialog` via Menü „Stichprobe → Vorlagen verwalten…"; Sprint-23-Mechanik unverändert wiederverwendet | done |
 
 ## Einzel-Feature-Toggles + „Ansicht"-Menü (Sprint 22)
 
@@ -216,12 +217,11 @@ modale `SamplingDialog`. Deshalb sitzen dort:
   JSON, kaputte Einzel-Einträge) liefern eine leere bzw. bereinigte Liste statt
   eines Crashes (analog `ui/recent.py`).
 
-**UI.** Im Dialog (immer sichtbar, auch im Einfach-Modus) eine Gruppe
-„Vorlagen": Combobox (Index 0 = `NO_PRESET_LABEL` „(keine Vorlage)") + Buttons
-**Anwenden / Als Vorlage speichern… / Umbenennen / Löschen**. Speichern/
-Umbenennen nutzen `QInputDialog`, Überschreiben/Löschen fragen per
-`QMessageBox.question` (Bestätigung); die Überschreib-Bestätigung lebt im
-Dialog, der Store überschreibt rein. Der Dialog bekommt optional einen
+**UI (Sprint 23, in Sprint 28 ersetzt).** Ursprünglich eine Gruppe „Vorlagen"
+mit Combobox + Buttons (Anwenden / Als Vorlage speichern… / Umbenennen /
+Löschen). **Seit Sprint 28** ist das durch eine Chip-Leiste + „+" ersetzt,
+Verwaltung in einem eigenen Fenster – siehe Block „Vorlagen als Chips +
+Verwaltungsfenster (Sprint 28)". Der Dialog bekommt weiterhin optional einen
 `preset_store: PresetStore | None` injiziert (Default: echter Store) – Tests
 reichen einen isolierten Store durch.
 
@@ -231,6 +231,62 @@ dem Dialog). Getestet über den Sampler-Pfad
 (`tests/unit/test_presets.py::TestPresetSamplingNeutrality`) und den
 Dialog-Pfad (`tests/ui/test_sampling_presets.py::TestPresetSamplingNeutrality`,
 inkl. `test_apply_preset_does_not_draw`).
+
+## Vorlagen als Chips + Verwaltungsfenster (Sprint 28)
+
+UI-Neuanordnung der Sprint-23-Vorlagen für eine aufgeräumtere Bedienung
+(Zielgruppe BWL-Studierende). Die **Persistenz/Logik aus Sprint 23 wird
+unverändert wiederverwendet** – `PresetStore`, `apply_preset`,
+`current_settings_as_preset` bleiben die Single Source of Truth; keine neue
+Persistenz, kein Schema-/Migrations-Change, Vorlagen weiterhin app-weit
+(QSettings, **nicht** Projekt-DB).
+
+**Stichproben-Dialog: Chips + „+" statt Combobox + Buttons.** In
+`ui/dialogs/sampling_dialog.py` ist die „Vorlagen"-Gruppe jetzt eine
+horizontal scrollende **Chip-Leiste** (ein `QPushButton` je Vorlage) plus genau
+**ein** kleines „+". Klick auf einen Chip ruft das unveränderte
+`apply_preset(...)` (setzt nur Parameter, **zieht nicht**, lässt den Seed in
+Ruhe; übersprungene Filter werden wie in Sprint 23 per `QMessageBox.information`
+gemeldet). „+" ist der frühere `_on_save_preset`-Flow (Namensabfrage via
+`QInputDialog`, Überschreib-Bestätigung via `QMessageBox.question`, dann
+`PresetStore.save`). Der zuletzt angewandte Chip wird markiert; eine manuelle
+Änderung an Größe/Methode/Filter hebt die Markierung wieder auf
+(`_applying_preset`-Guard schützt sie während des Anwendens). Die alte
+Combobox + Anwenden/Umbenennen/Löschen-Buttons (und `NO_PRESET_LABEL`) sind
+entfernt.
+
+**Eigenes Verwaltungsfenster + Menüpunkt.** Bearbeiten/Umbenennen/Löschen/
+Duplizieren leben in `ui/dialogs/template_manager_dialog.py`
+(`TemplateManagerDialog`): Liste links, Bearbeiten-Formular rechts, alle
+Schreibvorgänge über `PresetStore`. Erreichbar über den neuen Menüeintrag
+**„Vorlagen verwalten…" im Menü „Stichprobe"** (`_window_menu.py`,
+`window._action_manage_templates`, Signal `manage_templates_requested`). Die
+Action ist **immer aktiv** (app-weit, auch ohne offenes Projekt – bewusst
+NICHT in `_set_workspace_actions_enabled`).
+
+**Einstiegspunkt / Passwort später.** Das Fenster wird über **genau einen**
+Einstiegspunkt geöffnet: `HelpController.handle_manage_templates`
+(`MainController.handle_manage_templates`-Fassade leitet weiter). Sprint 28
+implementiert **kein** Passwort – das Gate kann später vor diesem Handler (oder
+der Menü-Action) ergänzt werden, ohne weitere Umbauten.
+
+**Bearbeiten ohne geladene Population (bewusste Einschränkung).** Das Fenster
+ist app-weit erreichbar und kennt daher keine Population. Editierbar sind die
+populations-unabhängigen Felder (**Methode, Größe, Cluster-/Schicht-Feldname als
+Text, Schicht-Verteilung**). Der konkrete **Filter-Wert** lässt sich ohne
+Population nicht typ-sicher wählen (er kann ein `datetime`/`date`/`time` sein) –
+er wird im Verwaltungsfenster nur angezeigt und beim Speichern unverändert
+mitgereicht. Gesetzt/geändert werden Filter (mit Population) über das „+" im
+Stichproben-Dialog.
+
+**Tests.** `tests/ui/test_template_chips.py` (Chips, „+", Skip-Filter-Meldung,
+Reproduzierbarkeits-Neutralität, App-weit-Persistenz),
+`tests/ui/test_template_manager_dialog.py` (Liste, Umbenennen/Löschen/
+Duplizieren/Bearbeiten via Store, Spiegelung in den Chips),
+`tests/ui/test_manage_templates.py` (Menü-Action, App-weit-Enabled, einziger
+Einstiegspunkt). Die Sprint-23-Mechanik-Tests in
+`tests/ui/test_sampling_presets.py` bleiben (die alte
+`TestPresetControls`-Combobox-Klasse ist entfernt).
 
 ## Seed-Memory / Reproduzierbarkeit nach Reset (Sprint 21, Hotfix)
 
@@ -810,6 +866,12 @@ ui ──▶ controllers ──▶ core ◀── io
     (Allgemein / Reports / Erweitert), Reset-Button und Briefpapier-
     Vorschau via `QDesktopServices`. Konstruktor nimmt das aktuelle
     `AppSettings`; OK liefert ein neues `AppSettings`, Cancel `None`.
+  - `dialogs/template_manager_dialog.py` – `TemplateManagerDialog` (Sprint 28):
+    Verwaltungsfenster für Vorlagen (Liste + Bearbeiten/Umbenennen/Löschen/
+    Duplizieren), alles über `PresetStore`. Menü „Stichprobe → Vorlagen
+    verwalten…", einziger Einstiegspunkt `HelpController.handle_manage_templates`
+    (Passwort-Gate später ergänzbar). Siehe Block „Vorlagen als Chips +
+    Verwaltungsfenster (Sprint 28)" oben.
 
 ## Settings
 
