@@ -1,11 +1,14 @@
 """Dialog, wenn beim Anlegen ein Engagement im Zielordner schon existiert.
 
-Bietet drei Optionen statt eines stumpfen Überschreiben-Ja/Nein:
+Bietet vier Optionen statt eines stumpfen Überschreiben-Ja/Nein:
 - **Bestehendes öffnen** – delegiert zurück an `handle_open_engagement`
   (inkl. Snapshot + State-Restore). Verhindert versehentliches
-  Überschreiben mit leerer DB.
+  Überschreiben mit leerer DB. Bleibt der sicherste Default-Button.
 - **Anderen Namen wählen** – schickt den User zurück in den
   `NewEngagementDialog` mit den bisherigen Eingaben vorbefüllt.
+- **Überschreiben (mit Backup)** – sichert die bestehende `.db` zuerst ins
+  `archiv/` und legt dann ein frisches, leeres Projekt am selben Pfad an
+  (siehe `EngagementController._overwrite_with_backup`). Sprint 30.
 - **Abbrechen** – Workflow ohne Engagement-Wechsel beenden.
 """
 
@@ -30,6 +33,7 @@ class DuplicateEngagementChoice(IntEnum):
     CANCEL = 0
     OPEN_EXISTING = 1
     RENAME = 2
+    OVERWRITE = 3
 
 
 class DuplicateEngagementDialog(QDialog):
@@ -52,8 +56,9 @@ class DuplicateEngagementDialog(QDialog):
         message = QLabel(
             f"Im Ordner '{parent_dir}' existiert bereits ein Projekt "
             f"'{filename}'.\n\n"
-            "Möchtest du das bestehende Projekt öffnen oder einen "
-            "anderen Namen wählen?"
+            "Möchtest du das bestehende Projekt öffnen, einen anderen Namen "
+            "wählen oder es überschreiben? Beim Überschreiben wird das "
+            "bestehende Projekt zuvor automatisch ins archiv/-Verzeichnis gesichert."
         )
         message.setWordWrap(True)
         outer.addWidget(message)
@@ -69,12 +74,25 @@ class DuplicateEngagementDialog(QDialog):
         self._rename_btn = QPushButton("Anderen Namen wählen")
         self._rename_btn.clicked.connect(self._on_rename)
 
+        self._overwrite_btn = QPushButton("Überschreiben (mit Backup)")
+        # Dezente Warn-Anmutung über das bestehende `secondary`-QSS-Muster –
+        # kein neues Styling-System.
+        self._overwrite_btn.setProperty("secondary", True)
+        self._overwrite_btn.setToolTip(
+            "Sichert das bestehende Projekt ins archiv/-Verzeichnis und legt "
+            "dann ein frisches, leeres Projekt am selben Pfad an."
+        )
+        self._overwrite_btn.clicked.connect(self._on_overwrite)
+
         self._cancel_btn = QPushButton("Abbrechen")
         self._cancel_btn.clicked.connect(self._on_cancel)
 
+        # Reihenfolge links→rechts: Abbrechen, Anderen Namen wählen,
+        # Überschreiben (mit Backup), Bestehendes öffnen (Default rechts).
         button_row.addStretch(1)
         button_row.addWidget(self._cancel_btn)
         button_row.addWidget(self._rename_btn)
+        button_row.addWidget(self._overwrite_btn)
         button_row.addWidget(self._open_btn)
         outer.addLayout(button_row)
 
@@ -92,6 +110,10 @@ class DuplicateEngagementDialog(QDialog):
 
     def _on_rename(self) -> None:
         self._choice = DuplicateEngagementChoice.RENAME
+        self.accept()
+
+    def _on_overwrite(self) -> None:
+        self._choice = DuplicateEngagementChoice.OVERWRITE
         self.accept()
 
     def _on_cancel(self) -> None:

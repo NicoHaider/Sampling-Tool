@@ -428,6 +428,135 @@ class TestMainController:
 
 
 # ---------------------------------------------------------------------------
+# Sprint 30: Überschreiben-mit-Backup im Duplikat-Dialog
+# ---------------------------------------------------------------------------
+
+
+def _archive_db_files(parent_dir: Path) -> list[Path]:
+    """Alle `.db`-Snapshots im `archiv/`-Unterordner von `parent_dir`."""
+    archive = parent_dir / "archiv"
+    if not archive.exists():
+        return []
+    return sorted(p for p in archive.iterdir() if p.is_file() and p.suffix == ".db")
+
+
+class TestOverwriteWithBackup:
+    """Sprint 30: Wahl „Überschreiben" sichert zuerst ins archiv/ und legt
+    dann ein frisches, leeres Projekt am selben Pfad an."""
+
+    def test_overwrite_backs_up_then_creates_fresh(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        target = tmp_path / "ACME" / "ACME_ISAE.db"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"OLD-MARKER-CONTENT")
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _make_stub_new_dialog(parent, target, "ACME"),
+            duplicate_dialog_factory=lambda parent, db_path: _make_stub_duplicate_dialog(
+                parent, db_path, DuplicateEngagementChoice.OVERWRITE
+            ),
+        )
+        try:
+            with patch(
+                "sampling_tool.ui.controllers.engagement_controller.QMessageBox.information"
+            ):
+                controller.handle_new_engagement()
+
+            # (1) Backup mit altem Inhalt im archiv/.
+            backups = _archive_db_files(target.parent)
+            assert len(backups) == 1
+            assert backups[0].read_bytes() == b"OLD-MARKER-CONTENT"
+
+            # (2) Frisches, leeres Projekt am Zielpfad.
+            assert target.exists()
+            assert target.read_bytes() != b"OLD-MARKER-CONTENT"
+            assert window.is_workspace_visible() is True
+            assert window.sidebar().datasets_widget().count() == 0
+        finally:
+            controller.handle_close_engagement()
+
+    def test_overwrite_aborts_when_backup_fails(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        target = tmp_path / "ACME" / "ACME_ISAE.db"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"SENTINEL")
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _make_stub_new_dialog(parent, target, "ACME"),
+            duplicate_dialog_factory=lambda parent, db_path: _make_stub_duplicate_dialog(
+                parent, db_path, DuplicateEngagementChoice.OVERWRITE
+            ),
+        )
+        try:
+            with (
+                patch(
+                    "sampling_tool.persistence.version_manager.shutil.copy2",
+                    side_effect=OSError("archiv nicht beschreibbar"),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as warning,
+            ):
+                controller.handle_new_engagement()
+
+            # Alte DB unangetastet, kein frisches Projekt, Fehlermeldung gezeigt.
+            assert target.read_bytes() == b"SENTINEL"
+            assert _archive_db_files(target.parent) == []
+            assert warning.called
+            assert window.is_workspace_visible() is False
+        finally:
+            controller.handle_close_engagement()
+
+    def test_overwrite_shows_info_with_backup_path(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        target = tmp_path / "ACME" / "ACME_ISAE.db"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"OLD-MARKER-CONTENT")
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _make_stub_new_dialog(parent, target, "ACME"),
+            duplicate_dialog_factory=lambda parent, db_path: _make_stub_duplicate_dialog(
+                parent, db_path, DuplicateEngagementChoice.OVERWRITE
+            ),
+        )
+        try:
+            with patch(
+                "sampling_tool.ui.controllers.engagement_controller.QMessageBox.information"
+            ) as info:
+                controller.handle_new_engagement()
+
+            assert info.called
+            backups = _archive_db_files(target.parent)
+            assert len(backups) == 1
+            # Titel + Body gezielt prüfen (nicht alle Args in einen Blob falten).
+            title = info.call_args.args[1]
+            body = info.call_args.args[2]
+            assert title == "Projekt überschrieben"
+            assert "gesichert" in body
+            assert str(backups[0]) in body
+        finally:
+            controller.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
 # Sprint 16: ImportOptionsDialog-Dispatch
 # ---------------------------------------------------------------------------
 

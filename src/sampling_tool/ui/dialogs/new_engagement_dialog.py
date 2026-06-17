@@ -158,6 +158,20 @@ class NewEngagementDialog(QDialog):
             return self._audit_type_other.text().strip()
         return self._audit_type_combo.currentText()
 
+    def _default_target_name(self, sanitized_client: str) -> str:
+        """Baut den vorgeschlagenen Dateinamen `<mandant>_<prüfungstyp>.db`.
+
+        Die Prüfungsart wird mit demselben `sanitize_for_path` wie der Mandant
+        normalisiert (Umlaut-Transliteration, Leerzeichen→`_`, nur `A-Za-z0-9_-`),
+        damit zwei Projekte desselben Mandanten mit unterschiedlicher Prüfungsart
+        nicht kollidieren. Ohne Prüfungstyp (theoretisch – er ist Pflichtfeld)
+        fällt der Name defensiv auf `<mandant>.db` zurück, ohne ein leeres
+        `_`-Anhängsel."""
+        audit_type = self._selected_audit_type()
+        if audit_type:
+            return f"{sanitized_client}_{sanitize_for_path(audit_type)}{DB_FILE_SUFFIX}"
+        return f"{sanitized_client}{DB_FILE_SUFFIX}"
+
     def _is_valid(self) -> bool:
         if not self._auditor_name.text().strip():
             return False
@@ -186,7 +200,7 @@ class NewEngagementDialog(QDialog):
         sanitized = sanitize_for_path(self._client_name.text().strip())
         default_dir = self._engagements_dir / sanitized
         default_dir.mkdir(parents=True, exist_ok=True)
-        default_target = default_dir / f"{sanitized}{DB_FILE_SUFFIX}"
+        default_target = default_dir / self._default_target_name(sanitized)
         path_str, _filter = QFileDialog.getSaveFileName(
             self,
             "Projekt speichern",

@@ -75,6 +75,9 @@ class EngagementController:
                 if choice is DuplicateEngagementChoice.RENAME:
                     prefill = engagement
                     continue
+                if choice is DuplicateEngagementChoice.OVERWRITE:
+                    self._overwrite_with_backup(db_path, engagement)
+                    return
                 # CANCEL → komplettes Abbrechen
                 return
 
@@ -95,6 +98,55 @@ class EngagementController:
         dialog = self._factories.duplicate(self.session.window, db_path)
         dialog.exec()
         return dialog.choice()
+
+    def _overwrite_with_backup(self, db_path: Path, engagement: Engagement) -> None:
+        """Sichert die bestehende Ziel-`.db` ins `archiv/` und legt dann ein
+        frisches, leeres Projekt am selben Pfad an.
+
+        Datenverlust ist hier die rote Linie: das Backup läuft **vor** jedem
+        zerstörenden Schritt. Schlägt es fehl, bleibt die alte DB unangetastet
+        und der Vorgang bricht mit einer Fehlermeldung ab. Erst nach
+        erfolgreichem Backup wird die alte Datei entfernt und – exakt wie im
+        Normalfall in `handle_new_engagement` – ein frisches Projekt angelegt
+        und via `_adopt_database` ins UI übernommen.
+        """
+        s = self.session
+
+        # 1. Backup BEVOR irgendetwas zerstört wird – exakt die
+        #    EngagementVersionManager-Mechanik (archiv/<stem>_<ts>_<auditor>.db,
+        #    ohne .db-wal/.db-shm) wie beim Öffnen. Keine eigene Backup-Logik.
+        try:
+            backup_path = EngagementVersionManager(db_path).create_snapshot(s.user_name())
+        except Exception as exc:
+            logger.exception("Backup vor Überschreiben fehlgeschlagen")
+            s.error(
+                "Das bestehende Projekt konnte nicht gesichert werden – es "
+                f"wurde nichts überschrieben: {exc}"
+            )
+            return
+
+        # 2. Erst nach erfolgreichem Backup: alte DB (+ Session-Sidecars)
+        #    entfernen und ein frisches, leeres Projekt anlegen.
+        try:
+            _remove_db_files(db_path)
+            db = Database(db_path)
+            db.migrate()
+            created = EngagementRepo(db.connect()).get_or_create(engagement)
+        except Exception as exc:  # pragma: no cover – defensiv
+            logger.exception("Frisches Projekt nach Überschreiben fehlgeschlagen")
+            s.error(f"Projekt konnte nicht angelegt werden: {exc}")
+            return
+
+        # 3. UI/State/Recent/Restore wie im Normalpfad aufsetzen – ohne diesen
+        #    Aufruf bliebe das UI nach dem Überschreiben leer.
+        self._adopt_database(db, db_path, created)
+
+        # 4. Hinweis mit dem Backup-Pfad.
+        QMessageBox.information(
+            s.window,
+            "Projekt überschrieben",
+            f"Das bestehende Projekt wurde zuvor gesichert unter:\n{backup_path}",
+        )
 
     # ---- Open ----------------------------------------------------------
 
@@ -267,3 +319,20 @@ class EngagementController:
         s.update_undo_redo_state()
         # persist_state ist während restoring_state ein No-Op – passt.
         s.persist_state()
+
+
+# ---------------------------------------------------------------------------
+# Hilfen
+# ---------------------------------------------------------------------------
+
+
+def _remove_db_files(db_path: Path) -> None:
+    """Entfernt die `.db` samt SQLite-Session-Sidecars (`-wal`/`-shm`).
+
+    Beim Überschreiben muss ein wirklich *frisches, leeres* Projekt entstehen –
+    stehengebliebene WAL-/SHM-Dateien einer früheren Session würden sonst in
+    die neue DB hineinrecovern. Das Backup hat (wie bei `create_snapshot`) nur
+    die `.db` gesichert; die Sidecars sind reine Session-Hilfsdateien."""
+    db_path.unlink(missing_ok=True)
+    for sidecar_suffix in ("-wal", "-shm"):
+        db_path.with_name(db_path.name + sidecar_suffix).unlink(missing_ok=True)

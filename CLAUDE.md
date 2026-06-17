@@ -109,6 +109,46 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
 | 27     | UI-Cleanup: Toolbar kompakt + QToolBar-Überlauf, Audit-Export-Datumsfilter gefixt (QDateEdit war disabled) + app-weit toggelbar (Default aus), „Engagement"→„Projekt" (nur sichtbarer Text), Seed schreibgeschützt im Haupt-Dialog + nur in Settings änderbar (RNG unverändert) | done |
 | 28     | UI-Cleanup B: Vorlagen als Chip-Leiste + „+" im Stichproben-Dialog (Combobox/Buttons raus), Verwaltung (Bearbeiten/Umbenennen/Löschen/Duplizieren) in eigenem `TemplateManagerDialog` via Menü „Stichprobe → Vorlagen verwalten…"; Sprint-23-Mechanik unverändert wiederverwendet | done |
 | 29     | Import-Dialoge erweitert (auf Sprint-16-Basis additiv): „keine Kopfzeile" (generische Spalten `Spalte 1, …`) + Header-Detection/Vorschau jetzt auch für CSV; `import_file_configured` akzeptiert `sheet_name=None` (CSV) und `header_row=None` (keine Kopfzeile); saubere Dateien (1 Blatt, Header Zeile 1) bleiben byte-identisch | done |
+| 30     | Projekt-Anlage (UI/Bugfix): Prüfungsart im Default-Dateinamen (`<mandant>_<prüfungstyp>.db` via `sanitize_for_path`) + „Überschreiben (mit Backup)"-Option im `DuplicateEngagementDialog` (`OVERWRITE`), die die alte `.db` per `EngagementVersionManager.create_snapshot` ins `archiv/` sichert, bevor ein frisches Projekt angelegt wird; kein Schema-Change | done |
+
+## Projekt-Anlage: Prüfungsart im Dateinamen + Überschreiben-mit-Backup (Sprint 30)
+
+Zwei UI-/Workflow-Änderungen an der Engagement-Anlage, **kein** Schema-Change
+(die Prüfungsart liegt bereits als `Engagement.audit_type` vor – sie wird nur
+in den Dateinamen-Vorschlag gespiegelt).
+
+- **Prüfungsart im Default-Dateinamen.** `NewEngagementDialog._default_target_name`
+  baut den im `QFileDialog.getSaveFileName` vorgeschlagenen Namen als
+  `<sanitize(mandant)>_<sanitize(prüfungstyp)>.db` (z. B. „ISAE 3402 Typ 2" →
+  `…_ISAE_3402_Typ_2.db`). Es wird **dasselbe** `sanitize_for_path` wie für den
+  Mandanten wiederverwendet (Umlaut-Transliteration, Leerzeichen→`_`, nur
+  `A-Za-z0-9_-`) – keine zweite Sanitisierung. Der Unterordner bleibt
+  `<sanitize(mandant)>/`. Ohne Prüfungstyp (theoretisch – Pflichtfeld) fällt der
+  Name defensiv auf `<mandant>.db` zurück (kein leeres `_`-Anhängsel). Nur der
+  *Vorschlag* ändert sich; der User kann weiterhin frei umbenennen.
+- **„Überschreiben (mit Backup)" im Duplikat-Dialog.** Vierter Enum-Wert
+  `DuplicateEngagementChoice.OVERWRITE` + Button (dezente Warn-Anmutung via
+  bestehendem `secondary`-QSS-Muster). Button-Reihenfolge links→rechts:
+  Abbrechen, Anderen Namen wählen, Überschreiben (mit Backup), Bestehendes
+  öffnen (bleibt Default – sicherster Weg). Der Loop in
+  `EngagementController.handle_new_engagement` verzweigt parallel zu
+  OPEN_EXISTING/RENAME nach `_overwrite_with_backup(db_path, engagement)`.
+- **Backup ist Pflicht, Datenverlust die rote Linie.** `_overwrite_with_backup`
+  sichert die bestehende `.db` **zuerst** über die unveränderte
+  `EngagementVersionManager.create_snapshot`-Mechanik (`archiv/{stem}_{YYYY-MM-DD}_
+  {HH-MM-SS}_{Auditor}.db`, `.db-wal`/`.db-shm` werden **nicht** mitkopiert).
+  Erst **nach** erfolgreichem Backup wird die alte `.db` (samt `-wal`/`-shm`-
+  Sidecars via `_remove_db_files`, damit kein stale WAL hineinrecovert) entfernt
+  und – exakt wie im Normalfall – `Database(db_path).migrate()` +
+  `EngagementRepo.get_or_create(engagement)` + `self._adopt_database(...)`
+  ausgeführt. Danach ein `QMessageBox.information` mit dem Backup-Pfad. Schlägt
+  das Backup fehl, bleibt die alte DB unangetastet: `session.error(...)` +
+  Abbruch, **kein** Überschreiben.
+- **Tests.** `tests/ui/test_new_engagement_dialog.py::TestDefaultFilenameWithAuditType`,
+  `tests/ui/test_duplicate_engagement_dialog.py::TestOverwriteChoice`,
+  `tests/ui/test_main_controller.py::TestOverwriteWithBackup` (Backup-dann-frisch,
+  Abbruch-bei-Backup-Fehler, Info-Dialog mit Pfad). Der bestehende Duplikat-Loop
+  (CANCEL/OPEN_EXISTING/RENAME) bleibt unverändert grün.
 
 ## Import-Dialoge: „keine Kopfzeile" + CSV (Sprint 29)
 

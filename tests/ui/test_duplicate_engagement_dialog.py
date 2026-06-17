@@ -50,3 +50,21 @@ class TestDuplicateEngagementDialog:
         full_text = " ".join(label.text() for label in dialog.findChildren(QLabel))
         assert "some_mandant.db" in full_text
         assert "/tmp/some_mandant" in full_text
+
+
+class TestOverwriteChoice:
+    """Sprint 30: vierte Option „Überschreiben (mit Backup)"."""
+
+    def test_overwrite_button_sets_choice_overwrite(self, qtbot: QtBot) -> None:
+        dialog = DuplicateEngagementDialog(Path("/tmp/foo.db"))
+        qtbot.addWidget(dialog)
+        dialog._overwrite_btn.click()
+        assert dialog.choice() is DuplicateEngagementChoice.OVERWRITE
+        assert dialog.result() == int(dialog.DialogCode.Accepted)
+
+    def test_default_button_is_open_existing(self, qtbot: QtBot) -> None:
+        dialog = DuplicateEngagementDialog(Path("/tmp/foo.db"))
+        qtbot.addWidget(dialog)
+        # „Bestehendes öffnen" bleibt der sicherste Default-Button.
+        assert dialog._open_btn.isDefault() is True
+        assert dialog._overwrite_btn.isDefault() is False
