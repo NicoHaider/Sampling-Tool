@@ -23,6 +23,7 @@ from sampling_tool.ui.dialogs.export_audit_pdf_dialog import ExportAuditPdfDialo
 from sampling_tool.ui.dialogs.export_excel_report_dialog import ExportExcelReportDialog
 from sampling_tool.ui.dialogs.export_html_report_dialog import ExportHtmlReportDialog
 from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialog
+from sampling_tool.ui.dialogs.id_column_dialog import IdColumnDialog
 from sampling_tool.ui.dialogs.import_options_dialog import ImportOptionsDialog
 from sampling_tool.ui.dialogs.new_engagement_dialog import NewEngagementDialog
 from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialog
@@ -61,6 +62,8 @@ ExcelReportDialogFactory = Callable[
 HtmlReportDialogFactory = Callable[["MainWindow", Engagement, Path | None], ExportHtmlReportDialog]
 SettingsDialogFactory = Callable[["MainWindow", AppSettings], SettingsDialog]
 ImportOptionsDialogFactory = Callable[[Path, ExcelImporter, "MainWindow"], ImportOptionsDialog]
+# Sprint 31: optionaler Post-Import-Schritt – ID-Spalte für die Sidebar wählen.
+IdColumnDialogFactory = Callable[[list[str], str | None, "MainWindow"], IdColumnDialog]
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +87,7 @@ class ControllerFactories:
     html_report: HtmlReportDialogFactory
     settings: SettingsDialogFactory
     import_options: ImportOptionsDialogFactory
+    id_column: IdColumnDialogFactory
 
 
 # ---------------------------------------------------------------------------
@@ -188,3 +192,9 @@ def default_import_options_factory(
     path: Path, importer: ExcelImporter, parent: MainWindow
 ) -> ImportOptionsDialog:
     return ImportOptionsDialog(path=path, importer=importer, parent=parent)
+
+
+def default_id_column_factory(
+    columns: list[str], current: str | None, parent: MainWindow
+) -> IdColumnDialog:
+    return IdColumnDialog(columns, current=current, parent=parent)

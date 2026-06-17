@@ -91,6 +91,10 @@ class AppSettings:
     # Sichtbare Panels (Allgemein-Tab)
     show_dashboard: bool
     show_audit_trail: bool
+    # Sprint 31: blendet die optionale ID-Spalte je Sample in der Sidebar-
+    # Stichprobenliste ein. Default an (User-Wunsch). Reine Anzeige-Hilfe –
+    # ohne Einfluss auf Ziehung/Population (siehe DatasetIdColumnStore).
+    show_sample_id_column: bool
 
     # Erweitert
     advanced_mode: bool
@@ -128,6 +132,7 @@ class AppSettings:
             audit_export_offer_date_filter=False,
             show_dashboard=True,
             show_audit_trail=True,
+            show_sample_id_column=True,
             advanced_mode=False,
             undo_depth=DEFAULT_UNDO_DEPTH,
             snapshot_retention_days=DEFAULT_SNAPSHOT_RETENTION_DAYS,
@@ -256,6 +261,9 @@ def load_settings() -> AppSettings:
         seed=seed,
         show_dashboard=_bool(s.value("settings/show_dashboard", base.show_dashboard)),
         show_audit_trail=_bool(s.value("settings/show_audit_trail", base.show_audit_trail)),
+        show_sample_id_column=_bool(
+            s.value("settings/show_sample_id_column", base.show_sample_id_column)
+        ),
         advanced_mode=_bool(s.value("settings/advanced_mode", base.advanced_mode)),
         show_filter_feature=_bool(
             s.value("settings/show_filter_feature", base.show_filter_feature)
@@ -303,6 +311,7 @@ def save_settings(settings: AppSettings) -> None:
     s.setValue("settings/seed", str(settings.seed) if settings.seed is not None else "")
     s.setValue("settings/show_dashboard", settings.show_dashboard)
     s.setValue("settings/show_audit_trail", settings.show_audit_trail)
+    s.setValue("settings/show_sample_id_column", settings.show_sample_id_column)
     s.setValue("settings/advanced_mode", settings.advanced_mode)
     s.setValue("settings/show_filter_feature", settings.show_filter_feature)
     s.setValue("settings/show_cluster_feature", settings.show_cluster_feature)

@@ -110,6 +110,7 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
 | 28     | UI-Cleanup B: Vorlagen als Chip-Leiste + „+" im Stichproben-Dialog (Combobox/Buttons raus), Verwaltung (Bearbeiten/Umbenennen/Löschen/Duplizieren) in eigenem `TemplateManagerDialog` via Menü „Stichprobe → Vorlagen verwalten…"; Sprint-23-Mechanik unverändert wiederverwendet | done |
 | 29     | Import-Dialoge erweitert (auf Sprint-16-Basis additiv): „keine Kopfzeile" (generische Spalten `Spalte 1, …`) + Header-Detection/Vorschau jetzt auch für CSV; `import_file_configured` akzeptiert `sheet_name=None` (CSV) und `header_row=None` (keine Kopfzeile); saubere Dateien (1 Blatt, Header Zeile 1) bleiben byte-identisch | done |
 | 30     | Projekt-Anlage (UI/Bugfix): Prüfungsart im Default-Dateinamen (`<mandant>_<prüfungstyp>.db` via `sanitize_for_path`) + „Überschreiben (mit Backup)"-Option im `DuplicateEngagementDialog` (`OVERWRITE`), die die alte `.db` per `EngagementVersionManager.create_snapshot` ins `archiv/` sichert, bevor ein frisches Projekt angelegt wird; kein Schema-Change | done |
+| 31     | Import & Sidebar (UI): „Datensätze aus Ansicht entfernen" (audit-safer In-Memory-/Ansichts-Reset, kein DB-Delete) + Header-Zeile per Klick in der Vorschau-Tabelle wählbar (zusätzlich zum Spin) + optionale ID-Spalte je Dataset (QSettings statt Schema-Feld), app-weiter Toggle `show_sample_id_column`, Anzeige in der Sidebar-Stichprobenliste | done |
 
 ## Projekt-Anlage: Prüfungsart im Dateinamen + Überschreiben-mit-Backup (Sprint 30)
 
@@ -149,6 +150,69 @@ in den Dateinamen-Vorschlag gespiegelt).
   `tests/ui/test_main_controller.py::TestOverwriteWithBackup` (Backup-dann-frisch,
   Abbruch-bei-Backup-Fehler, Info-Dialog mit Pfad). Der bestehende Duplikat-Loop
   (CANCEL/OPEN_EXISTING/RENAME) bleibt unverändert grün.
+
+## Import & Sidebar: Ansicht leeren, Header-Klick, optionale ID-Spalte (Sprint 31)
+
+Drei unabhängige UI-Features, alle **additiv** und ohne Schema-/DB-Eingriff.
+
+- **Teil A – „Datensätze aus Ansicht entfernen" (`Datei`-Menü).** Bewusst ein
+  reiner *Ansichts*-Reset, **kein** Lösch-Feature. `WorkspaceController.
+  handle_clear_loaded_datasets` (Bestätigungs-`QMessageBox.question` +
+  Statusmeldung) ruft `WorkspaceSession.clear_view()`: leert aktive
+  Dataset-/Sample-Auswahl, Highlight, Sample-Filter, die Datentabelle und die
+  Sidebar-Listen – die Projekt-DB (`datasets`/`dataset_rows`/Audit-Events)
+  bleibt **unangetastet**. Lehnt sich an `EngagementController.
+  handle_close_engagement` an, schaltet aber **nicht** zum Welcome-Screen
+  (Projekt bleibt offen). **Warum kein hartes DB-Delete?** Identisch zur
+  Begründung beim Sampling-Reset (Sprint 20): der Append-only-Audit-Trail
+  (`audit_events`-Trigger, FK `ON DELETE SET NULL`) macht selektives Löschen
+  ohne Schema-Änderung unmöglich und würde den ISAE-3402-Trail verletzen. Nach
+  erneutem Öffnen/Reload sind die Datensätze wieder da (sie wurden nie
+  gelöscht). Neues Window-Signal `clear_loaded_datasets_requested`; die Action
+  hängt an `_set_workspace_actions_enabled` (nur mit offenem Projekt aktiv).
+- **Teil B – Header-Zeile per Klick wählbar.** Zusätzlich zum `_header_spin`
+  setzt jetzt auch ein Klick auf eine Vorschau-Zelle (`cellClicked`) oder den
+  vertikalen Zeilenkopf (`verticalHeader().sectionClicked`) die Kopfzeile.
+  **Single Source of Truth bleibt der Spin** – der Klick ruft nur
+  `_select_header_row`, das den Spin (1-basiert) setzt; der bestehende
+  `_on_header_changed`/`_refresh_visual_state`-Highlight-Pfad wird
+  wiederverwendet, nichts dupliziert. Die Tabelle bleibt auf
+  `SelectionMode.NoSelection` (das `clicked`-Signal feuert trotzdem) – so bleibt
+  das vorhandene Header-Highlight optisch dominant, keine störende
+  Zeilenselektion. Bei aktiver „keine Kopfzeile" ist der Klick wirkungslos
+  (Spin gesperrt) und deaktiviert die Checkbox **nicht**.
+- **Teil C – optionale ID-Spalte je Dataset → Sidebar-Stichprobenliste.** Beim
+  Import wählt der User optional eine Spalte als ID-Spalte (post-Import-Schritt:
+  `ui/dialogs/id_column_dialog.py`, Dropdown + „Keine", Default keine; immer
+  angeboten sobald der Import Spalten hat – unabhängig vom Header-Dialog). Die
+  Wahl wird **app-weit pro Dataset in `QSettings`** gemerkt
+  (`ui/dataset_id_store.py`, Key `dataset_id_columns/<db_stem>/<dataset_id>`),
+  **nicht** in der Projekt-DB.
+  **Warum QSettings statt Schema-Feld (verbindlich, analog `preset_store.py`
+  Sprint 23):** Die ID-Spalte ist ein reines pro-Dataset-*Anzeige*-Metadatum
+  für die Sidebar. Sie berührt weder Reproduzierbarkeit noch den Audit-Trail –
+  eine Ziehung ist von ihr vollkommen unabhängig (Import-Byte-Identität
+  bleibt gewahrt; getestet in `test_sprint29_import_dialogs.py::
+  TestImportUnchangedForCleanFiles`). Ein DB-/Schema-Eingriff wäre dafür
+  unangemessen (Hard Constraint „kein Schema-Change ohne Grund"). `dataset.id`
+  ist die stabile SQLite-Row-ID pro Projekt-DB; der `db_stem` macht den Key
+  projektweit eindeutig. Genutzt wird der gemeinsame
+  `settings_store.open_qsettings()`-Isolationspunkt.
+- **Teil C2 – app-weiter Toggle `AppSettings.show_sample_id_column`** (Default
+  `True`, via QSettings persistiert, Muster wie die übrigen Bool-Settings),
+  schaltbar im Settings-Dialog („Allgemein → Angezeigte Bereiche"). `Workspace
+  Session.apply_new_settings` wendet ihn live an (re-pusht die Sidebar-Samples).
+- **Anzeige (Sidebar).** `NavigationSidebar.set_samples(samples, id_column=None,
+  id_values_by_sample=None, show_sample_id_column=True)` und der Pass-Through
+  `MainWindow.set_samples` sind rückwärtskompatibel via Default-Args erweitert
+  (bestehende Aufrufe unverändert). Ist der Toggle an UND eine ID-Spalte gesetzt
+  UND liegen Werte vor, wird das Label ergänzt (`… · IDs: 1001, 1002, 1003, …`,
+  gekürzt via `format_sample_id_values`, erste `MAX_IDS_IN_LABEL=3`), sonst
+  bleibt es exakt das bisherige Format (Regressions-Referenz). Die ID-Werte holt
+  `WorkspaceSession._resolve_sample_ids` über `get_rows_by_ids` mit nur den
+  ersten N `selected_row_ids` – **kein** `get_all_rows`, Streaming-konform. Alle
+  Sidebar-Sample-Updates laufen jetzt zentral über `WorkspaceSession.
+  push_samples` (Auflösung der ID-Info an genau einer Stelle).
 
 ## Import-Dialoge: „keine Kopfzeile" + CSV (Sprint 29)
 

@@ -6,11 +6,13 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QDialog, QMessageBox
 from pytestqt.qtbot import QtBot
 
+from sampling_tool.config import APP_NAME, APP_ORG
 from sampling_tool.ui.dialogs.settings_dialog import SettingsDialog
-from sampling_tool.ui.settings_store import AppSettings
+from sampling_tool.ui.settings_store import AppSettings, load_settings, save_settings
 
 pytestmark = pytest.mark.ui
 
@@ -290,3 +292,67 @@ class TestPanelVisibilityToggle:
         dialog._on_reset_defaults()
         assert dialog._chk_show_dashboard.isChecked() is True
         assert dialog._chk_show_audit_trail.isChecked() is True
+
+
+class TestShowSampleIdColumnSetting:
+    """Sprint 31: app-weiter Toggle „ID in Stichprobenliste anzeigen" (Default an)."""
+
+    def test_show_sample_id_column_default_true(self) -> None:
+        assert AppSettings.defaults().show_sample_id_column is True
+
+    def test_dialog_checkbox_reflects_default(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        assert dialog._chk_show_sample_id_column.isChecked() is True
+
+    def test_dialog_prefilled_when_disabled(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        current = replace(defaults, show_sample_id_column=False)
+        dialog = SettingsDialog(current)
+        qtbot.addWidget(dialog)
+        assert dialog._chk_show_sample_id_column.isChecked() is False
+
+    def test_ok_propagates(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        dialog._chk_show_sample_id_column.setChecked(False)
+        dialog._on_accept()
+        result = dialog.get_settings()
+        assert result is not None
+        assert result.show_sample_id_column is False
+
+    def test_reset_restores_default_true(
+        self, qtbot: QtBot, defaults: AppSettings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        current = replace(defaults, show_sample_id_column=False)
+        dialog = SettingsDialog(current)
+        qtbot.addWidget(dialog)
+        monkeypatch.setattr(
+            QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes
+        )
+        dialog._on_reset_defaults()
+        assert dialog._chk_show_sample_id_column.isChecked() is True
+
+
+class TestShowSampleIdColumnRoundtrip:
+    """Sprint 31: show_sample_id_column übersteht QSettings-Save/Load."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+        monkeypatch.setattr(
+            "sampling_tool.ui.settings_store._qsettings",
+            lambda: QSettings(
+                QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME
+            ),
+        )
+
+    def test_roundtrip_save_load(self) -> None:
+        save_settings(replace(AppSettings.defaults(), show_sample_id_column=False))
+        assert load_settings().show_sample_id_column is False
+        save_settings(replace(AppSettings.defaults(), show_sample_id_column=True))
+        assert load_settings().show_sample_id_column is True
+
+    def test_missing_key_falls_back_to_default_true(self) -> None:
+        # Leerer Store (kein Key geschrieben) → Default True.
+        assert load_settings().show_sample_id_column is True

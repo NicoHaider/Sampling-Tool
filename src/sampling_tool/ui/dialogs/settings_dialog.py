@@ -137,6 +137,16 @@ class SettingsDialog(QDialog):
         self._chk_show_audit_trail.setToolTip(panel_tooltip)
         panels_layout.addWidget(self._chk_show_dashboard)
         panels_layout.addWidget(self._chk_show_audit_trail)
+
+        # Sprint 31: optionale ID-Spalte je Sample in der Sidebar-Stichprobenliste.
+        self._chk_show_sample_id_column = QCheckBox("ID in Stichprobenliste anzeigen")
+        self._chk_show_sample_id_column.setChecked(current.show_sample_id_column)
+        self._chk_show_sample_id_column.setToolTip(
+            "Zeigt in der Stichprobenliste die Werte der beim Import gewählten "
+            "ID-Spalte je Stichprobe an (z. B. „IDs: 1001, 1002, …“). Reine "
+            "Anzeige-Hilfe – ohne Einfluss auf die Ziehung."
+        )
+        panels_layout.addWidget(self._chk_show_sample_id_column)
         outer.addWidget(panels_box)
         outer.addStretch(1)
         return page
@@ -347,6 +357,7 @@ class SettingsDialog(QDialog):
         self._custom_briefpapier.clear()
         self._chk_show_dashboard.setChecked(defaults.show_dashboard)
         self._chk_show_audit_trail.setChecked(defaults.show_audit_trail)
+        self._chk_show_sample_id_column.setChecked(defaults.show_sample_id_column)
         self._chk_advanced_mode.setChecked(defaults.advanced_mode)
         self._undo_depth.setValue(defaults.undo_depth)
         self._snapshot_retention.setValue(defaults.snapshot_retention_days)
@@ -379,6 +390,7 @@ class SettingsDialog(QDialog):
             seed=seed_value if seed_value != 0 else None,
             show_dashboard=self._chk_show_dashboard.isChecked(),
             show_audit_trail=self._chk_show_audit_trail.isChecked(),
+            show_sample_id_column=self._chk_show_sample_id_column.isChecked(),
             advanced_mode=self._chk_advanced_mode.isChecked(),
             undo_depth=self._undo_depth.value(),
             snapshot_retention_days=self._snapshot_retention.value(),

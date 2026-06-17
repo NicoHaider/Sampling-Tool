@@ -39,6 +39,18 @@ from sampling_tool.ui.recent import RecentEngagementsStore
 pytestmark = pytest.mark.ui
 
 
+@pytest.fixture(autouse=True)
+def _stub_post_import_id_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sprint 31: der optionale Post-Import-ID-Spalten-Dialog ist modal – im
+    echten Import-Pfad dieser Tests (ohne eigenen ID-Dialog-Stub) würde
+    `exec()` headless blockieren. Rejected = „nichts wählen", berührt keine
+    bestehende Assertion (Dataset/Sample-Counts unverändert)."""
+    monkeypatch.setattr(
+        "sampling_tool.ui.dialogs.id_column_dialog.IdColumnDialog.exec",
+        lambda _self: int(QDialog.DialogCode.Rejected),
+    )
+
+
 @pytest.fixture
 def recent_store(tmp_path: Path) -> RecentEngagementsStore:
     return RecentEngagementsStore(path=tmp_path / "recent.json")

@@ -38,8 +38,10 @@ from sampling_tool.persistence.repositories import (
     EngagementStateRepo,
     SampleRepo,
 )
+from sampling_tool.ui.dataset_id_store import DatasetIdColumnStore
 from sampling_tool.ui.recent import RecentEngagementsStore
 from sampling_tool.ui.settings_store import AppSettings
+from sampling_tool.ui.widgets.sidebar import MAX_IDS_IN_LABEL, format_sample_id_values
 
 if TYPE_CHECKING:
     from sampling_tool.ui.main_window import MainWindow
@@ -137,6 +139,53 @@ class WorkspaceSession:
         self.datasets = DatasetRepo(self.db.connect()).list_for_engagement(self.engagement.id)
         self.window.set_datasets(self.datasets)
 
+    # ---- Sample-Sidebar inkl. optionaler ID-Spalte (Sprint 31) ---------
+
+    def push_samples(self, samples: list[SampleResult]) -> None:
+        """Reicht Samples an die Sidebar – inkl. optionaler ID-Spalten-Anzeige.
+
+        Zentraler Eintrittspunkt für ALLE Sample-Sidebar-Updates mit echten
+        Samples: löst die für das aktive Dataset gewählte ID-Spalte (QSettings,
+        siehe `DatasetIdColumnStore`) auf, materialisiert pro Sample nur die
+        ersten Werte fürs (gekürzte) Label und reicht alles via
+        `window.set_samples` durch. Ist der Toggle aus oder keine Spalte
+        gewählt, bleibt das Label bit-genau das bisherige Format.
+        """
+        id_column, id_values = self._resolve_sample_ids(samples)
+        self.window.set_samples(
+            samples,
+            id_column=id_column,
+            id_values_by_sample=id_values,
+            show_sample_id_column=self.settings.show_sample_id_column,
+        )
+
+    def _resolve_sample_ids(self, samples: list[SampleResult]) -> tuple[str | None, dict[int, str]]:
+        """Ermittelt (ID-Spalte, {sample_id: gekürzter ID-String}) für die Sidebar.
+
+        No-Op-Rückgabe `(None, {})`, wenn der Toggle aus ist, kein Dataset aktiv
+        ist, keine ID-Spalte gewählt wurde oder die gewählte Spalte nicht (mehr)
+        im aktiven Dataset existiert. Materialisiert pro Sample höchstens
+        `MAX_IDS_IN_LABEL` Row-Werte via `get_rows_by_ids` (Streaming-konform,
+        **kein** `get_all_rows`).
+        """
+        if not self.settings.show_sample_id_column:
+            return None, {}
+        if self.db is None or self.dataset is None or self.dataset.id is None:
+            return None, {}
+        id_column = DatasetIdColumnStore().get(self.db.db_path.stem, self.dataset.id)
+        if id_column is None or id_column not in self.dataset.columns:
+            return None, {}
+        repo = DatasetRepo(self.db.connect())
+        id_values: dict[int, str] = {}
+        for sample in samples:
+            if sample.id is None:
+                continue
+            head_ids = list(sample.selected_row_ids[:MAX_IDS_IN_LABEL])
+            rows = repo.get_rows_by_ids(self.dataset.id, head_ids)
+            values = [row.get(id_column) for row in rows]
+            id_values[sample.id] = format_sample_id_values(values, len(sample.selected_row_ids))
+        return id_column, id_values
+
     def refresh_audit_trail(self) -> None:
         """Lädt AuditEvents neu und gibt sie an AuditTrailView."""
         if not self.has_engagement():
@@ -233,6 +282,24 @@ class WorkspaceSession:
             show_dashboard=settings.show_dashboard,
             show_audit_trail=settings.show_audit_trail,
         )
+        # Sprint 31: ID-Spalten-Anzeige-Toggle live anwenden – die Sidebar-
+        # Stichprobenliste des aktiven Datasets wird mit dem neuen Toggle-Wert
+        # neu aufgebaut (kein Neustart nötig).
+        if self.has_active_dataset():
+            assert self.db is not None
+            assert self.dataset is not None
+            assert self.dataset.id is not None
+            samples = SampleRepo(self.db.connect()).list_for_dataset(self.dataset.id)
+            self.push_samples(samples)
+            # `push_samples` baut die Sidebar-Liste neu auf (Bullet/Bold weg) und
+            # `set_samples` deaktiviert den Export-Button – ist eine Stichprobe
+            # aktiv, die Markierung daher wieder setzen (analog `select_dataset`),
+            # sonst verliert man beim Settings-OK/Panel-Toggle die aktive-Sample-
+            # Markierung + den Export-Button, obwohl das Tabellen-Highlight bleibt.
+            if self.sample is not None:
+                self.window.highlight_sample(
+                    self.sample, filtered=self.filter_active_sample_id is not None
+                )
 
     def sync_view_menu(self) -> None:
         """Spiegelt die app-weiten View-Toggles ins „Ansicht"-Menü (Sprint 22).
@@ -288,7 +355,7 @@ class WorkspaceSession:
         self.window.show_dataset(dataset, DatasetRepo(self.db.connect()))
 
         samples = SampleRepo(self.db.connect()).list_for_dataset(dataset_id)
-        self.window.set_samples(samples)
+        self.push_samples(samples)
 
         sample_ids = {s_obj.id for s_obj in samples if s_obj.id is not None}
         if self.active_sample_id is not None and self.active_sample_id in sample_ids:
@@ -342,6 +409,44 @@ class WorkspaceSession:
         self.window.set_filter_only_sample(False)
         self.window.data_table().clear_highlight()
         self.window.clear_active_sample()
+        return True
+
+    # ---- Ansichts-Reset (Sprint 31) ------------------------------------
+
+    def clear_view(self) -> bool:
+        """Leert NUR die Ansicht (Datentabelle + Sidebar-Listen) – ohne DB-Eingriff.
+
+        Bewusst ein *Ansichts*-Reset, KEIN Lösch-Feature: weder `datasets`/
+        `dataset_rows` noch Audit-Events werden angefasst. Ein hartes Delete
+        wäre ohne Schema-Änderung gar nicht möglich (Append-only-Audit-FK, vgl.
+        `reset_sampling`) und würde den ISAE-3402-Trail verletzen. Das Projekt
+        bleibt offen; ein erneutes `reload_datasets`/Öffnen zeigt die
+        Datensätze wieder, weil sie nie gelöscht wurden.
+
+        Lehnt sich an `EngagementController.handle_close_engagement` an (Tabelle
+        + Sidebar leeren ohne DB-Eingriff), schaltet aber bewusst NICHT auf den
+        Welcome-Screen um. Liefert False als No-Op, wenn nichts geladen war.
+        """
+        if not self.has_engagement():
+            return False
+        if self.dataset is None and not self.datasets:
+            return False
+        # In-Memory-Auswahl/Highlight/Filter leeren (wie `reset_sampling`),
+        # zusätzlich das aktive Dataset und die Dataset-Liste.
+        self.dataset = None
+        self.sample = None
+        self.active_sample_id = None
+        self.filter_active_sample_id = None
+        self.datasets = []
+        # Tabelle VOR allem anderen leeren (Muster `handle_close_engagement`),
+        # damit kein paintEvent auf einer veralteten Verbindung landet.
+        self.window.data_table().clear_dataset()
+        self.window.clear_table()
+        self.window.set_filter_only_sample(False)
+        self.window.clear_active_sample()
+        self.window.set_datasets([])
+        self.window.set_samples([])
+        self.update_undo_redo_state()
         return True
 
     # ---- Engagement-Reset ----------------------------------------------

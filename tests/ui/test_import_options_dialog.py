@@ -239,6 +239,52 @@ class TestNoHeaderOption:
         assert _ok_enabled(dialog) is True
 
 
+class TestHeaderRowClick:
+    """Sprint 31: Klick auf eine Vorschau-Zeile wählt sie als Kopfzeile.
+
+    Geprüft über das `cellClicked`-/`sectionClicked`-Signal (Repo-Idiom, vgl.
+    `test_sidebar.py::itemClicked.emit`). Dass ein echter Maus-Klick diese
+    Signale auch im `NoSelection`-Modus feuert, ist Qt-Verhalten.
+    """
+
+    def test_click_row_sets_header_spin(
+        self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter
+    ) -> None:
+        dialog = ImportOptionsDialog(simple_path, importer)
+        qtbot.addWidget(dialog)
+        # simple_path: 3 Vorschau-Zeilen. Klick auf Zeile k=1 → Spin = k+1 = 2.
+        dialog._preview_table.cellClicked.emit(1, 0)
+        assert dialog._header_spin.value() == 2
+        # Geklickte Zeile ist als Kopfzeile hervorgehoben (Header-Hint-Background).
+        item = dialog._preview_table.item(1, 0)
+        assert item is not None
+        assert item.background().color().name() == "#eeeeee"
+
+    def test_click_vertical_header_sets_header_spin(
+        self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter
+    ) -> None:
+        dialog = ImportOptionsDialog(simple_path, importer)
+        qtbot.addWidget(dialog)
+        v_header = dialog._preview_table.verticalHeader()
+        assert v_header is not None
+        # Vertikaler Zeilenkopf: Klick auf Zeile k=1 → Spin 2.
+        v_header.sectionClicked.emit(1)
+        assert dialog._header_spin.value() == 2
+
+    def test_click_is_noop_when_no_header_checked(
+        self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter
+    ) -> None:
+        dialog = ImportOptionsDialog(simple_path, importer)
+        qtbot.addWidget(dialog)
+        dialog._no_header_check.setChecked(True)
+        assert dialog._header_spin.isEnabled() is False
+        before = dialog._header_spin.value()
+        dialog._preview_table.cellClicked.emit(1, 0)
+        # Spin unverändert UND die „keine Kopfzeile"-Checkbox bleibt aktiv.
+        assert dialog._header_spin.value() == before
+        assert dialog._no_header_check.isChecked() is True
+
+
 class TestCsvImportOptions:
     def test_csv_has_no_sheet_combo(
         self, qtbot: QtBot, header_csv_path: Path, importer: ExcelImporter
