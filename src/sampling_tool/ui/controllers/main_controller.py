@@ -41,6 +41,7 @@ from sampling_tool.ui.controllers._factories import (
     ExcelReportDialogFactory,
     ExportDialogFactory,
     HtmlReportDialogFactory,
+    IdColumnDialogFactory,
     ImportOptionsDialogFactory,
     SamplingDialogFactory,
     SettingsDialogFactory,
@@ -49,6 +50,7 @@ from sampling_tool.ui.controllers._factories import (
     default_excel_report_factory,
     default_export_factory,
     default_html_report_factory,
+    default_id_column_factory,
     default_import_options_factory,
     default_new_engagement_factory,
     default_sampling_factory,
@@ -95,6 +97,7 @@ class MainController:
         html_report_dialog_factory: HtmlReportDialogFactory | None = None,
         settings_dialog_factory: SettingsDialogFactory | None = None,
         import_options_dialog_factory: ImportOptionsDialogFactory | None = None,
+        id_column_dialog_factory: IdColumnDialogFactory | None = None,
         settings: AppSettings | None = None,
     ) -> None:
         # ---- Session aufbauen --------------------------------------
@@ -133,6 +136,9 @@ class MainController:
             import_options=import_options_dialog_factory
             if import_options_dialog_factory is not None
             else default_import_options_factory,
+            id_column=id_column_dialog_factory
+            if id_column_dialog_factory is not None
+            else default_id_column_factory,
         )
 
         # ---- Sub-Controller aufbauen -------------------------------
@@ -246,6 +252,9 @@ class MainController:
     def handle_import_excel(self) -> None:
         self.workspace.handle_import_excel()
 
+    def handle_clear_loaded_datasets(self) -> None:
+        self.workspace.handle_clear_loaded_datasets()
+
     def handle_new_sampling(self) -> None:
         self.workspace.handle_new_sampling()
 
@@ -332,6 +341,7 @@ class MainController:
         w.close_engagement_requested.connect(self.engagement.handle_close_engagement_requested)
         # Workspace-Mutationen
         w.import_excel_requested.connect(self.workspace.handle_import_excel)
+        w.clear_loaded_datasets_requested.connect(self.workspace.handle_clear_loaded_datasets)
         w.new_sample_requested.connect(self.workspace.handle_new_sampling)
         w.reset_sample_requested.connect(self.workspace.handle_reset)
         w.reset_sampling_requested.connect(self.workspace.handle_reset_sampling)

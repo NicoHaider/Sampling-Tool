@@ -122,6 +122,14 @@ class ImportOptionsDialog(QDialog):
         header_row_layout.addStretch(1)
         outer.addLayout(header_row_layout)
 
+        # Sprint 31: dezenter Hinweis, dass ein Klick auf eine Zeile sie als
+        # Kopfzeile wählt (additiv – ändert die Header-Spin-Logik nicht).
+        click_hint = QLabel(
+            "Tipp: Zeile in der Vorschau anklicken, um sie als Kopfzeile zu wählen."
+        )
+        click_hint.setStyleSheet("color: #999999; font-style: italic;")
+        outer.addWidget(click_hint)
+
         self._confidence_label = QLabel("")
         self._confidence_label.setWordWrap(True)
         outer.addWidget(self._confidence_label)
@@ -140,6 +148,13 @@ class ImportOptionsDialog(QDialog):
             self._sheet_combo.currentIndexChanged.connect(self._on_sheet_changed)
         self._header_spin.valueChanged.connect(self._on_header_changed)
         self._no_header_check.toggled.connect(self._on_no_header_toggled)
+        # Sprint 31: Klick auf eine Zelle ODER den vertikalen Zeilenkopf wählt
+        # die Zeile als Kopfzeile. Single Source of Truth bleibt der Spin – der
+        # Klick setzt nur ihn, der bestehende Highlight-Pfad erledigt den Rest.
+        self._preview_table.cellClicked.connect(self._on_preview_cell_clicked)
+        v_header = self._preview_table.verticalHeader()
+        if v_header is not None:
+            v_header.sectionClicked.connect(self._on_preview_header_clicked)
         self._buttons.accepted.connect(self._on_accept)
         self._buttons.rejected.connect(self.reject)
 
@@ -205,6 +220,25 @@ class ImportOptionsDialog(QDialog):
             return
         self._refresh_visual_state()
         self._update_ok_enabled()
+
+    def _on_preview_cell_clicked(self, row: int, _column: int) -> None:
+        self._select_header_row(row)
+
+    def _on_preview_header_clicked(self, logical_index: int) -> None:
+        self._select_header_row(logical_index)
+
+    def _select_header_row(self, row: int) -> None:
+        """Setzt die geklickte Vorschau-Zeile (0-basiert) als Kopfzeile.
+
+        Wirkt nur, wenn keine „keine Kopfzeile" aktiv ist – dann ist der Spin
+        gesperrt und der Klick bleibt bewusst wirkungslos (er deaktiviert die
+        Checkbox NICHT). Setzt ausschließlich den Spin (1-basiert); der
+        bestehende `_on_header_changed`-/Highlight-Pfad übernimmt den Rest.
+        """
+        if self._loading or self._no_header_check.isChecked():
+            return
+        if 0 <= row < self._header_spin.maximum():
+            self._header_spin.setValue(row + 1)
 
     def _on_no_header_toggled(self, checked: bool) -> None:
         # „keine Kopfzeile": Header-Spin sperren, Hervorhebung/Validierung anpassen.

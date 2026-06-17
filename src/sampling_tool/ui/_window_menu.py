@@ -60,6 +60,18 @@ def build_menu(window: MainWindow) -> None:
     window._action_close.triggered.connect(window.close_engagement_requested.emit)
     file_menu.addAction(window._action_close)
 
+    # Sprint 31: „Datensätze aus Ansicht entfernen" – bewusst ein reiner
+    # Ansichts-Reset (Tabelle + Sidebar-Listen leeren), KEIN DB-Delete. Die
+    # importierten Daten bleiben in der Projektdatei (audit-safe, ISAE-3402)
+    # und sind nach erneutem Öffnen wieder da.
+    window._action_clear_datasets = QAction("Datensätze aus Ansicht entfernen", window)
+    window._action_clear_datasets.setToolTip(
+        "Geladene Datensätze nur aus der Ansicht entfernen – die importierten "
+        "Daten bleiben in der Projektdatei erhalten"
+    )
+    window._action_clear_datasets.triggered.connect(window.clear_loaded_datasets_requested.emit)
+    file_menu.addAction(window._action_clear_datasets)
+
     file_menu.addSeparator()
     window._action_settings = QAction("Einstellungen…", window)
     window._action_settings.setShortcut(QKeySequence.StandardKey.Preferences)

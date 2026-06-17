@@ -279,6 +279,50 @@ class TestImportUnchangedForCleanFiles:
             for col, want_val in want.values.items():
                 assert type(got.values[col]) is type(want_val), f"Typ-Drift bei '{col}'"
 
+    def test_id_column_choice_does_not_change_import(
+        self,
+        importer: ExcelImporter,
+        clean_xlsx: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Sprint 31: die Wahl einer ID-Spalte (QSettings) ändert `dataset_rows` NICHT.
+
+        Die ID-Spalte ist eine reine Anzeige-Hilfe (Sidebar) und lebt in
+        QSettings – der Importer liest sie nie. Gleiche Datei → byte-identisches
+        Importergebnis, unabhängig davon, ob eine ID-Spalte gewählt wurde.
+        """
+        from PyQt6.QtCore import QSettings
+
+        from sampling_tool.config import APP_NAME, APP_ORG
+        from sampling_tool.ui.dataset_id_store import DatasetIdColumnStore
+
+        # QSettings isolieren, damit der Store-Schreibvorgang echte Prefs nicht anfasst.
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+        monkeypatch.setattr(
+            "sampling_tool.ui.settings_store._qsettings",
+            lambda: QSettings(
+                QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME
+            ),
+        )
+
+        # Referenz ohne ID-Wahl.
+        before = list(ExcelImporter().import_file(clean_xlsx).rows)
+        before_cols = ExcelImporter().import_file(clean_xlsx).dataset.columns
+
+        # ID-Spalte wählen = reine QSettings-Schreibung, völlig getrennt vom Import.
+        DatasetIdColumnStore().set("ACME_ISAE", 1, before_cols[0])
+
+        after_result = ExcelImporter().import_file(clean_xlsx)
+        after = list(after_result.rows)
+        assert after_result.dataset.columns == before_cols
+        assert [r.row_id for r in after] == [r.row_id for r in before]
+        assert [r.values for r in after] == [r.values for r in before]
+        for got, want in zip(after, before, strict=True):
+            for col, want_val in want.values.items():
+                assert type(got.values[col]) is type(want_val), f"Typ-Drift bei '{col}'"
+
 
 # ---------------------------------------------------------------------------
 # Cancellation (Sprint-17-Verhalten bleibt erhalten)

@@ -12,6 +12,9 @@ Glue-Logik zum Repo läuft im `MainController`.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
@@ -31,6 +34,27 @@ _SAMPLE_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 _SAMPLE_LABEL_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 _ACTIVE_PREFIX: str = "● "
 _SIDEBAR_WIDTH: int = 250
+# Sprint 31: Max. ID-Werte, die im Sample-Label gezeigt werden (Rest → „…“).
+MAX_IDS_IN_LABEL: int = 3
+
+
+def format_sample_id_values(
+    values: Sequence[Any], total: int, max_shown: int = MAX_IDS_IN_LABEL
+) -> str:
+    """Formatiert die ID-Werte eines Samples fürs Sidebar-Label (Sprint 31).
+
+    `values` sind die bereits materialisierten ersten Werte (höchstens
+    `max_shown` – der Controller lädt bewusst nicht mehr), `total` ist die
+    Gesamtzahl gezogener Zeilen. Zeigt bis zu `max_shown` Werte; gibt es mehr,
+    wird „…“ angehängt. Leere Eingabe → leerer String (kein Anhang im Label).
+    """
+    shown = [("" if v is None else str(v)) for v in list(values)[:max_shown]]
+    if not shown:
+        return ""
+    text = ", ".join(shown)
+    if total > len(shown):
+        text = f"{text}, …"
+    return text
 
 
 class NavigationSidebar(QFrame):
@@ -110,14 +134,34 @@ class NavigationSidebar(QFrame):
             self._datasets_list.addItem(item)
         self._datasets_empty.setVisible(not datasets)
 
-    def set_samples(self, samples: list[SampleResult]) -> None:
-        """Befüllt die Sample-Liste – mit Methode + Größe als Label."""
+    def set_samples(
+        self,
+        samples: list[SampleResult],
+        id_column: str | None = None,
+        id_values_by_sample: dict[int, str] | None = None,
+        show_sample_id_column: bool = True,
+    ) -> None:
+        """Befüllt die Sample-Liste – mit Methode + Größe als Label.
+
+        Sprint 31: optional ergänzt um die ID-Spalten-Werte je Sample. Die IDs
+        werden nur angehängt, wenn der app-weite Toggle an ist (`show_sample_
+        id_column`), eine ID-Spalte gewählt wurde (`id_column`) und für das
+        konkrete Sample ein (bereits gekürzter) Wert-String vorliegt. Sonst
+        bleibt das Label bit-genau das bisherige Format. Die ID-Werte werden
+        vom Controller hineingereicht (die Sidebar kennt nur Domain-Modelle).
+        """
         self._samples_list.clear()
+        show_ids = show_sample_id_column and bool(id_column) and id_values_by_sample is not None
         for idx, sample in enumerate(samples, start=1):
             label = (
                 f"#{idx} · {sample.config.method.value} · n={sample.actual_size} "
                 f"(seed {sample.config.seed})"
             )
+            if show_ids and sample.id is not None:
+                assert id_values_by_sample is not None
+                ids_text = id_values_by_sample.get(sample.id)
+                if ids_text:
+                    label = f"{label} · IDs: {ids_text}"
             item = QListWidgetItem(label)
             sample_id = sample.id if sample.id is not None else -1
             item.setData(_SAMPLE_ID_ROLE, sample_id)

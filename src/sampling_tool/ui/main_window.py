@@ -60,6 +60,9 @@ class MainWindow(QMainWindow):
     open_engagement_requested = pyqtSignal(Path)
     close_engagement_requested = pyqtSignal()
     import_excel_requested = pyqtSignal()
+    # Sprint 31 – „Datensätze aus Ansicht entfernen": reiner Ansichts-Reset
+    # (kein DB-Delete). Siehe WorkspaceController.handle_clear_loaded_datasets.
+    clear_loaded_datasets_requested = pyqtSignal()
     new_sample_requested = pyqtSignal()
     reset_sample_requested = pyqtSignal()
     reset_sampling_requested = pyqtSignal()
@@ -100,6 +103,7 @@ class MainWindow(QMainWindow):
     _action_close: QAction
     _action_settings: QAction
     _action_import: QAction
+    _action_clear_datasets: QAction
     _action_export_sample: QAction
     _action_export_pdf: QAction
     _action_excel_report: QAction
@@ -204,9 +208,25 @@ class MainWindow(QMainWindow):
         """Datasets in der Sidebar aktualisieren."""
         self._sidebar.set_datasets(datasets)
 
-    def set_samples(self, samples: list[SampleResult]) -> None:
-        """Samples in der Sidebar aktualisieren."""
-        self._sidebar.set_samples(samples)
+    def set_samples(
+        self,
+        samples: list[SampleResult],
+        id_column: str | None = None,
+        id_values_by_sample: dict[int, str] | None = None,
+        show_sample_id_column: bool = True,
+    ) -> None:
+        """Samples in der Sidebar aktualisieren.
+
+        Sprint 31: die ID-Spalten-Anzeige-Argumente werden rückwärtskompatibel
+        (Default-Args) an die Sidebar durchgereicht – bestehende Aufrufe
+        ``set_samples(samples)`` bleiben unverändert (kein ID-Anhang).
+        """
+        self._sidebar.set_samples(
+            samples,
+            id_column=id_column,
+            id_values_by_sample=id_values_by_sample,
+            show_sample_id_column=show_sample_id_column,
+        )
         self._action_export_sample.setEnabled(False)
 
     def show_dataset(self, dataset: Dataset, repo: DatasetRepo) -> None:
@@ -402,6 +422,7 @@ class MainWindow(QMainWindow):
         for action in (
             self._action_close,
             self._action_import,
+            self._action_clear_datasets,
             self._action_export_pdf,
             self._action_excel_report,
             self._action_html_report,

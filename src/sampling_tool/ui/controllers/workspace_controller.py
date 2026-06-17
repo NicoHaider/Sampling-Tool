@@ -38,6 +38,7 @@ from sampling_tool.persistence.repositories import (
 )
 from sampling_tool.ui.controllers._factories import ControllerFactories
 from sampling_tool.ui.controllers.workspace_session import WorkspaceSession
+from sampling_tool.ui.dataset_id_store import DatasetIdColumnStore
 from sampling_tool.ui.dialogs.import_options_dialog import ImportOptionsResult
 from sampling_tool.ui.dialogs.progress_dialog import TaskProgressDialog
 from sampling_tool.ui.workers.tasks import ExcelImportTask, ExcelImportTaskResult
@@ -89,6 +90,10 @@ class WorkspaceController:
             # Auto-Select des neuen Datasets via Session-Helper – identische
             # Logik wie `SelectionController.handle_dataset_selected`.
             s.select_dataset(task_result.dataset.id)
+            # Sprint 31: optionaler Schritt – ID-Spalte für die Sidebar-
+            # Übersicht wählen. Immer angeboten (unabhängig vom Header-Dialog),
+            # solange der Import Spalten hat.
+            self._ask_id_column(task_result.dataset)
         s.refresh_views()
         self._show_import_summary(task_result.stats)
 
@@ -157,6 +162,26 @@ class WorkspaceController:
                 self.session.window, "Import abgeschlossen", warning_text.strip()
             )
 
+    def _ask_id_column(self, dataset: Dataset) -> None:
+        """Optionaler Post-Import-Schritt (Sprint 31): ID-Spalte für die Sidebar wählen.
+
+        Wird nur gezeigt, wenn der Import Spalten hat. Unabhängig davon, ob der
+        Header-/Sheet-Dialog erschien (dort gibt es bei sauberen Dateien keinen
+        Dialog). Die Wahl landet in `QSettings` (`DatasetIdColumnStore`),
+        **nicht** in der DB – reine Anzeige-Hilfe, kein Schema-Eingriff. Cancel
+        oder „Keine" lässt die bisherige Wahl unverändert bzw. setzt sie zurück.
+        """
+        s = self.session
+        if s.db is None or dataset.id is None or not dataset.columns:
+            return
+        db_stem = s.db.db_path.stem
+        store = DatasetIdColumnStore()
+        current = store.get(db_stem, dataset.id)
+        dialog = self._factories.id_column(list(dataset.columns), current, s.window)
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return  # Cancel → keine Änderung (Schritt ist optional).
+        store.set(db_stem, dataset.id, dialog.selected_column())
+
     def _run_import_options_dialog(self, path: Path) -> ImportOptionsResult | None:
         """Öffnet den `ImportOptionsDialog` und liefert das `ImportOptionsResult` oder None.
 
@@ -170,6 +195,44 @@ class WorkspaceController:
         if dialog.exec() != int(QDialog.DialogCode.Accepted):
             return None
         return dialog.get_result()
+
+    def handle_clear_loaded_datasets(self) -> None:
+        """Entfernt die geladenen Datensätze NUR aus der Ansicht (kein DB-Delete).
+
+        Audit-safe (ISAE-3402): `datasets`/`dataset_rows`/Audit-Events bleiben
+        unangetastet – ein hartes Delete bräuchte einen Schema-Eingriff (vgl.
+        die Begründung bei `WorkspaceSession.reset_sampling`). Das ist bewusst
+        ein *Ansichts*-Reset, kein Lösch-Feature: das Projekt bleibt offen und
+        nach erneutem Öffnen/Reload sind die Datensätze wieder da. Mit
+        Bestätigungsdialog + Statusmeldung.
+        """
+        s = self.session
+        if not s.has_engagement():
+            return
+        if not s.datasets and s.dataset is None:
+            return  # Nichts geladen.
+
+        answer = QMessageBox.question(
+            s.window,
+            "Datensätze aus Ansicht entfernen",
+            "Die geladenen Datensätze werden aus der Ansicht entfernt. "
+            "Importierte Daten bleiben in der Projektdatei erhalten und sind "
+            "nach erneutem Öffnen wieder verfügbar.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        if not s.clear_view():
+            return
+
+        status = s.window.statusBar()
+        if status is not None:
+            status.showMessage(
+                "Datensätze aus der Ansicht entfernt – die Projektdatei bleibt unverändert.",
+                5000,
+            )
 
     # ---- Sampling ------------------------------------------------------
 
@@ -259,9 +322,9 @@ class WorkspaceController:
             s.error(f"Sample konnte nicht gespeichert werden: {exc}")
             return
 
-        # Sidebar + Tabelle aktualisieren.
+        # Sidebar + Tabelle aktualisieren (Sprint 31: inkl. optionaler ID-Spalte).
         samples = SampleRepo(s.db.connect()).list_for_dataset(s.dataset.id)
-        s.window.set_samples(samples)
+        s.push_samples(samples)
         s.sample = stored
         s.active_sample_id = stored.id
         # Sprint 21: Seed merken, damit der nächste Dialog-Open ihn vorbefüllt
@@ -470,7 +533,11 @@ class WorkspaceController:
         if s.db is None:
             return
 
-        if snapshot is None or snapshot.sample_id is None:
+        # Leerer Initialzustand ODER keine Population in der Ansicht (z. B. nach
+        # „Datensätze aus Ansicht entfernen", Sprint 31): leeren State anwenden,
+        # statt ein Sample-Highlight ohne sichtbares Dataset zu setzen (sonst
+        # inkonsistente UI + inkonsistenter persistierter `engagement_state`).
+        if snapshot is None or snapshot.sample_id is None or s.dataset is None:
             s.sample = None
             s.active_sample_id = None
             s.filter_active_sample_id = None
