@@ -40,6 +40,7 @@ aktuellen Sprint ab.
 | 29     | Import-Dialoge erweitert: „keine Kopfzeile" (generische Spaltennamen) + Header-Detection/Vorschau jetzt auch für CSV (Sprint-16-Dialog additiv ausgebaut); saubere Dateien bleiben byte-identisch | **done** |
 | 30     | Projekt-Anlage: Prüfungsart im Default-Dateinamen (`<mandant>_<prüfungstyp>.db` via `sanitize_for_path`) + „Überschreiben (mit Backup)"-Option im Duplikat-Dialog (sichert die alte `.db` ins `archiv/`, dann frisches Projekt) | **done** |
 | 31     | Import & Sidebar: „Datensätze aus Ansicht entfernen" (reiner Ansichts-Reset, kein DB-Delete) + Header-Zeile per Klick in der Vorschau wählbar + optionale ID-Spalte je Dataset (QSettings, kein Schema-Change), umschaltbar in den Einstellungen, in der Stichprobenliste angezeigt | **done** |
+| 32     | UI-Umbau: Vorlagen als Dropdown statt Chips im Stichproben-Dialog (Chip-Leiste + „+" raus, kompaktes `QComboBox` mit Platzhalter rein; Auswahl wendet die Vorlage an, manuelle Änderung setzt aufs Dropdown-Platzhalter zurück) + „Neue Vorlage…"-Button im Verwaltungsfenster (einziger Anlege-Weg; Sampling-/Reproduzierbarkeits-Mechanik unverändert) | **done** |
 
 ### Was Sprint 8 liefert
 

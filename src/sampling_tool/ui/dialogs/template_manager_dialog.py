@@ -14,8 +14,10 @@ auch ohne offenes Projekt – es kennt also keine Population. Editierbar sind
 daher die populations-unabhängigen Felder (Methode, Größe, Cluster-/Schicht-
 Feldname als Text, Schicht-Verteilung). Der konkrete **Filter-Wert** lässt
 sich ohne Population nicht typ-sicher wählen (er kann ein Datum sein); er wird
-deshalb hier nur angezeigt und unverändert mitgespeichert. Gesetzt/geändert
-werden Filter über das „+" im Stichproben-Dialog (mit geladener Population).
+deshalb hier nur angezeigt und beim Speichern unverändert mitgereicht.
+
+Seit Sprint 32 ist dieses Fenster die einzige Stelle, an der Vorlagen angelegt
+werden (Button „Neue Vorlage…"); das „+" im Stichproben-Dialog ist entfallen.
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import BDO_GREY, MIN_SAMPLE_SIZE
+from sampling_tool.config import BDO_GREY, DEFAULT_SAMPLE_SIZE, MIN_SAMPLE_SIZE
 from sampling_tool.core.models import SamplingMethod, StratifyMode
 from sampling_tool.core.presets import SamplingPreset
 from sampling_tool.ui.preset_store import PresetStore
@@ -88,7 +90,7 @@ class TemplateManagerDialog(QDialog):
 
         intro = QLabel(
             "Gespeicherte Vorlagen verwalten. Änderungen erscheinen beim nächsten "
-            "Öffnen des Stichproben-Dialogs in der Chip-Leiste."
+            "Öffnen des Stichproben-Dialogs im Dropdown."
         )
         intro.setWordWrap(True)
         intro.setStyleSheet(f"color: {BDO_GREY};")
@@ -104,8 +106,14 @@ class TemplateManagerDialog(QDialog):
         self._list = QListWidget()
         self._list.setMinimumWidth(200)
         left.addWidget(self._list, stretch=1)
+        # „Neue Vorlage…" ist der einzige Weg, eine Vorlage anzulegen (das „+"
+        # im Stichproben-Dialog ist seit Sprint 32 entfallen). Bewusst NICHT in
+        # `_on_selection_changed` deaktiviert – sonst gäbe es bei leerer Liste
+        # keinen Weg, die erste Vorlage zu erzeugen.
+        self._btn_new = QPushButton("Neue Vorlage…")
         list_buttons = QHBoxLayout()
         list_buttons.setSpacing(6)
+        list_buttons.addWidget(self._btn_new)
         self._btn_rename = QPushButton("Umbenennen…")
         self._btn_duplicate = QPushButton("Duplizieren")
         self._btn_delete = QPushButton("Löschen")
@@ -149,7 +157,8 @@ class TemplateManagerDialog(QDialog):
         edit_outer.addLayout(form)
 
         filter_hint = QLabel(
-            "Filter werden mit geladener Population über das „+“ im Stichproben-Dialog gesetzt."
+            "Der Filter ist populationsabhängig und hier nicht editierbar – er wird "
+            "unverändert beibehalten."
         )
         filter_hint.setWordWrap(True)
         filter_hint.setStyleSheet(f"color: {BDO_GREY}; font-size: 11px;")
@@ -170,6 +179,7 @@ class TemplateManagerDialog(QDialog):
     def _wire_signals(self) -> None:
         self._list.currentRowChanged.connect(self._on_selection_changed)
         self._edit_method.currentIndexChanged.connect(self._on_edit_method_changed)
+        self._btn_new.clicked.connect(self._on_new)
         self._btn_rename.clicked.connect(self._on_rename)
         self._btn_duplicate.clicked.connect(self._on_duplicate)
         self._btn_delete.clicked.connect(self._on_delete)
@@ -290,6 +300,27 @@ class TemplateManagerDialog(QDialog):
             filter_value=self._current_filter_value,
         )
         self._store.save(preset)
+        self._reload(select=name)
+
+    def _on_new(self) -> None:
+        """Legt eine neue Vorlage mit Default-Werten an und selektiert sie.
+
+        Einziger Weg, eine Vorlage zu erzeugen (das „+" im Stichproben-Dialog
+        ist seit Sprint 32 entfallen). Default: Methode SIMPLE, branchenübliche
+        Größe, ohne Filter/Cluster/Schicht – danach im rechten Formular sofort
+        bearbeitbar. Namenskollision nutzt die vorhandene Überschreib-Bestätigung.
+        """
+        name, ok = QInputDialog.getText(self, "Neue Vorlage", "Name der Vorlage:")
+        if not ok:
+            return
+        name = name.strip()
+        if not name:
+            return
+        if self._store.exists(name) and not self._confirm_overwrite(name):
+            return
+        self._store.save(
+            SamplingPreset(name=name, method=SamplingMethod.SIMPLE, size=DEFAULT_SAMPLE_SIZE)
+        )
         self._reload(select=name)
 
     def _on_rename(self) -> None:

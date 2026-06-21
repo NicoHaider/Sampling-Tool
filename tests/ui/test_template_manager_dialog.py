@@ -14,7 +14,7 @@ from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 from pytestqt.qtbot import QtBot
 
-from sampling_tool.config import APP_NAME, APP_ORG
+from sampling_tool.config import APP_NAME, APP_ORG, DEFAULT_SAMPLE_SIZE
 from sampling_tool.core.models import SamplingMethod, StratifyMode
 from sampling_tool.core.presets import SamplingPreset
 from sampling_tool.ui.dialogs.template_manager_dialog import TemplateManagerDialog
@@ -84,11 +84,11 @@ class TestTemplateManagerDialog:
         assert store.names() == ["Neu"]
         assert _list_names(dialog) == ["Neu"]
 
-    def test_changes_reflected_in_sampling_chips_after_reload(
+    def test_changes_reflected_in_sampling_dropdown_after_reload(
         self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from sampling_tool.core.models import Dataset
-        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialog
+        from sampling_tool.ui.dialogs.sampling_dialog import PRESET_PLACEHOLDER, SamplingDialog
         from sampling_tool.ui.settings_store import SamplingFeatures
 
         store = PresetStore()
@@ -99,18 +99,19 @@ class TestTemplateManagerDialog:
         monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Nachher", True))
         manager._on_rename()
 
-        # Ein neu geöffneter Stichproben-Dialog spiegelt die Umbenennung in den
-        # Chips (Chips laden frisch aus dem Store).
+        # Ein neu geöffneter Stichproben-Dialog spiegelt die Umbenennung im
+        # Dropdown (das Dropdown lädt frisch aus dem Store).
         dataset = Dataset(name="t", columns=("A",), row_count=4)
-        chips_dialog = SamplingDialog(
+        sampling_dialog = SamplingDialog(
             dataset,
             lambda _field: [],
             features=SamplingFeatures(),
             preset_store=PresetStore(),
         )
-        qtbot.addWidget(chips_dialog)
-        chip_names = [c.text() for c in chips_dialog._preset_chips]
-        assert chip_names == ["Nachher"]
+        qtbot.addWidget(sampling_dialog)
+        combo = sampling_dialog._preset_combo
+        items = [combo.itemText(i) for i in range(combo.count())]
+        assert items == [PRESET_PLACEHOLDER, "Nachher"]
 
     def test_edit_template_persists(self, qtbot: QtBot) -> None:
         store = PresetStore()
@@ -148,3 +149,90 @@ class TestTemplateManagerDialog:
         copy = store.get(copies[0])
         assert copy is not None
         assert copy.size == 7
+
+
+class TestCreateNewTemplate:
+    """Sprint 32 – „Neue Vorlage…" legt die erste/eine neue Vorlage an.
+
+    Da das „+" im Stichproben-Dialog entfällt, ist das Verwaltungsfenster der
+    einzige Ort, an dem Vorlagen angelegt werden.
+    """
+
+    def test_new_button_creates_default_preset_via_store(
+        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = PresetStore()
+        dialog = TemplateManagerDialog(store)
+        qtbot.addWidget(dialog)
+        monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Frisch", True))
+        dialog._btn_new.click()
+
+        # Neue Default-Vorlage liegt im Store …
+        got = store.get("Frisch")
+        assert got is not None
+        assert got.method == SamplingMethod.SIMPLE
+        assert got.size == DEFAULT_SAMPLE_SIZE
+        assert got.filter_field is None
+        assert got.cluster_field is None
+        assert got.stratum_field is None
+        assert got.stratify_mode == StratifyMode.PROPORTIONAL
+        # … und ist in der Liste selektiert (sofort bearbeitbar).
+        assert "Frisch" in _list_names(dialog)
+        assert dialog._selected_name() == "Frisch"
+
+    def test_new_button_enabled_with_empty_list(self, qtbot: QtBot) -> None:
+        # Ohne Vorlagen sind die per-Item-Aktionen aus – „Neue Vorlage…" bleibt
+        # bedienbar, sonst gäbe es keinen Weg, die erste Vorlage anzulegen.
+        store = PresetStore()
+        dialog = TemplateManagerDialog(store)
+        qtbot.addWidget(dialog)
+        assert dialog._list.count() == 0
+        assert dialog._btn_new.isEnabled() is True
+
+    def test_new_template_then_editable(
+        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = PresetStore()
+        dialog = TemplateManagerDialog(store)
+        qtbot.addWidget(dialog)
+        monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Frisch", True))
+        dialog._btn_new.click()
+
+        # Direkt im rechten Formular bearbeiten + speichern.
+        dialog._set_edit_method(SamplingMethod.STRATIFIED)
+        dialog._edit_size.setValue(42)
+        dialog._edit_stratum_field.setText("Land")
+        dialog._set_edit_stratify_mode(StratifyMode.EQUAL)
+        dialog._on_save_edit()
+
+        got = store.get("Frisch")
+        assert got is not None
+        assert got.size == 42
+        assert got.method == SamplingMethod.STRATIFIED
+        assert got.stratum_field == "Land"
+        assert got.stratify_mode == StratifyMode.EQUAL
+
+    def test_new_name_collision_confirms_overwrite(
+        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = PresetStore()
+        store.save(SamplingPreset(name="Da", method=SamplingMethod.SIMPLE, size=5))
+        dialog = TemplateManagerDialog(store)
+        qtbot.addWidget(dialog)
+        monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Da", True))
+        asked: list[bool] = []
+
+        def _question(*a: object, **k: object) -> QMessageBox.StandardButton:
+            asked.append(True)
+            return QMessageBox.StandardButton.Yes
+
+        monkeypatch.setattr(QMessageBox, "question", _question)
+        dialog._btn_new.click()
+
+        # Die vorhandene Überschreib-Bestätigung wurde genutzt …
+        assert asked == [True]
+        # … und die Default-Vorlage hat die alte ersetzt (kein Duplikat).
+        got = store.get("Da")
+        assert got is not None
+        assert got.size == DEFAULT_SAMPLE_SIZE
+        assert len(store.list()) == 1

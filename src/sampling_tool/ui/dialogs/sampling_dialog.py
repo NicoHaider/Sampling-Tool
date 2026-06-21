@@ -24,15 +24,11 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QFrame,
     QGroupBox,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMessageBox,
-    QPushButton,
     QRadioButton,
-    QScrollArea,
     QSpinBox,
     QStyle,
     QVBoxLayout,
@@ -40,8 +36,6 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.config import (
-    BDO_GREY,
-    BDO_RED,
     DEFAULT_SAMPLE_SIZE,
     MIN_SAMPLE_SIZE,
     SEED_MAX,
@@ -59,6 +53,10 @@ from sampling_tool.ui.preset_store import PresetStore
 from sampling_tool.ui.settings_store import SamplingFeatures
 
 NO_FILTER_LABEL: str = "(kein Filter)"
+
+# Erster, neutraler Dropdown-Eintrag (keine Vorlage). Steht auch dann zur
+# Verfügung, wenn keine Vorlagen gespeichert sind.
+PRESET_PLACEHOLDER: str = "(Vorlage wählen…)"
 
 # QSpinBox-Maximum: int32-signed-Limit. Die Größe wird dadurch faktisch
 # nicht mehr durch das Widget gecappt – stattdessen schlägt Validierung
@@ -124,16 +122,16 @@ class SamplingDialog(QDialog):
         # Sprint 23: app-weiter Preset-Store (benannte Profile). Default: echter
         # QSettings-Store; Tests können einen isolierten Store injizieren.
         self._preset_store = preset_store if preset_store is not None else PresetStore()
-        # Sprint 28: Vorlagen erscheinen als Chips (ein Chip je Vorlage). Der
-        # zuletzt angewandte Chip wird markiert; eine manuelle Änderung hebt die
-        # Markierung wieder auf. `_applying_preset` schützt die Markierung
+        # Sprint 32: Vorlagen erscheinen als Dropdown (ein Eintrag je Vorlage,
+        # plus ein neutraler Platzhalter). Die zuletzt angewandte Vorlage bleibt
+        # im Dropdown ausgewählt; eine manuelle Änderung setzt das Dropdown
+        # wieder auf den Platzhalter. `_applying_preset` schützt die Auswahl
         # während des Anwendens (die Widget-Updates dürfen sie nicht löschen).
-        self._preset_chips: list[QPushButton] = []
         self._applying_preset = False
 
         self._build_ui()
         self._wire_signals()
-        self._reload_preset_chips()
+        self._reload_preset_combo()
         if self._show_filter:
             self._refresh_filter_values()
         if self._show_methods:
@@ -211,38 +209,24 @@ class SamplingDialog(QDialog):
         intro.setStyleSheet("color: #7F7F7F;")
         outer.addWidget(intro)
 
-        # ---- Vorlagen (Sprint 28) ----
-        # Gespeicherte Vorlagen erscheinen als kompakte Chips – ein Klick wendet
-        # die Vorlage an (`apply_preset`: setzt nur Parameter, zieht NICHT). Das
-        # kleine „+" speichert die aktuellen Einstellungen als neue Vorlage.
-        # Bearbeiten/Umbenennen/Löschen leben im eigenen Verwaltungsfenster
-        # (Menü „Stichprobe → Vorlagen verwalten…"). Die Sprint-23-Mechanik
-        # (PresetStore/apply_preset) wird unverändert wiederverwendet – keine
-        # neue Persistenz. Bei vielen Vorlagen scrollt die Leiste horizontal,
-        # statt das Layout zu sprengen.
+        # ---- Vorlagen (Sprint 32) ----
+        # Gespeicherte Vorlagen erscheinen als kompaktes Dropdown – die Auswahl
+        # wendet die Vorlage an (`apply_preset`: setzt nur Parameter, zieht
+        # NICHT). Bei vielen Vorlagen scrollt das Dropdown nativ. Anlegen/
+        # Speichern/Bearbeiten/Umbenennen/Löschen leben ausschließlich im eigenen
+        # Verwaltungsfenster (Menü „Stichprobe → Vorlagen verwalten…"). Die
+        # Sprint-23-Mechanik (PresetStore/apply_preset) wird unverändert
+        # wiederverwendet – keine neue Persistenz.
         preset_box = QGroupBox("Vorlagen")
         preset_layout = QHBoxLayout(preset_box)
         preset_layout.setSpacing(8)
 
-        self._chip_scroll = QScrollArea()
-        self._chip_scroll.setWidgetResizable(True)
-        self._chip_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._chip_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._chip_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._chip_scroll.setFixedHeight(44)
-        chip_container = QWidget()
-        self._chip_layout = QHBoxLayout(chip_container)
-        self._chip_layout.setContentsMargins(0, 0, 0, 0)
-        self._chip_layout.setSpacing(6)
-        self._chip_scroll.setWidget(chip_container)
-
-        self._btn_add_preset = QPushButton("+")
-        self._btn_add_preset.setProperty("secondary", True)
-        self._btn_add_preset.setFixedWidth(36)
-        self._btn_add_preset.setToolTip("Aktuelle Einstellungen als neue Vorlage speichern")
-
-        preset_layout.addWidget(self._chip_scroll, stretch=1)
-        preset_layout.addWidget(self._btn_add_preset)
+        self._preset_combo = QComboBox()
+        self._preset_combo.setToolTip(
+            "Gespeicherte Vorlage anwenden (setzt nur Parameter, zieht nicht).\n"
+            "Vorlagen anlegen/bearbeiten: Menü „Stichprobe → Vorlagen verwalten…“."
+        )
+        preset_layout.addWidget(self._preset_combo, stretch=1)
         outer.addWidget(preset_box)
 
         # ---- Methode (nur wenn Cluster ODER Geschichtet freigeschaltet) ----
@@ -424,16 +408,19 @@ class SamplingDialog(QDialog):
 
     def _wire_signals(self) -> None:
         self._size_spin.valueChanged.connect(self._validate)
-        self._size_spin.valueChanged.connect(self._clear_chip_marker)
+        self._size_spin.valueChanged.connect(self._reset_combo_selection)
         self._resample_checkbox.toggled.connect(self._on_resample_toggled)
-        self._btn_add_preset.clicked.connect(self._on_save_preset)
+        # `activated` feuert nur bei echter Nutzer-Auswahl (nicht beim
+        # programmatischen Zurücksetzen auf den Platzhalter) – so wendet ein
+        # `setCurrentIndex(0)` keine Vorlage versehentlich an.
+        self._preset_combo.activated.connect(self._on_preset_selected)
         if self._show_methods:
             for rb in self._method_radios():
                 rb.toggled.connect(self._on_method_changed)
-                rb.toggled.connect(self._clear_chip_marker)
+                rb.toggled.connect(self._reset_combo_selection)
         if self._show_filter:
             self._filter_field.currentTextChanged.connect(self._refresh_filter_values)
-            self._filter_field.currentTextChanged.connect(self._clear_chip_marker)
+            self._filter_field.currentTextChanged.connect(self._reset_combo_selection)
             self._filter_value.currentTextChanged.connect(self._validate)
         if self._show_cluster:
             self._cluster_field.currentTextChanged.connect(self._validate)
@@ -656,60 +643,44 @@ class SamplingDialog(QDialog):
             return True
         return False
 
-    # ---- Vorlagen-Chips + „+" (Sprint 28) ------------------------------
+    # ---- Vorlagen-Dropdown (Sprint 32) ---------------------------------
 
-    def _reload_preset_chips(self) -> None:
-        """Baut die Chip-Leiste neu aus dem Store (ein Chip je Vorlage).
+    def _reload_preset_combo(self) -> None:
+        """Füllt das Dropdown neu aus dem Store (Platzhalter + je Vorlage ein Eintrag).
 
-        Wird beim Öffnen und nach jedem „+"-Speichern aufgerufen; so spiegeln
-        die Chips auch Änderungen aus dem Verwaltungsfenster beim nächsten
-        Öffnen wider.
+        Wird beim Öffnen aufgerufen; so spiegelt das Dropdown auch Änderungen
+        aus dem Verwaltungsfenster beim nächsten Öffnen wider. Leere Liste: nur
+        der Platzhalter, das Dropdown bleibt benutzbar. Der Vorlagen-Name wandert
+        als `userData` mit (der Platzhalter trägt keinen) – so unterscheidet
+        `_on_preset_selected` ihn typ-sicher von einer echten Vorlage.
         """
-        while self._chip_layout.count():
-            item = self._chip_layout.takeAt(0)
-            if item is None:
-                continue
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-        self._preset_chips = []
-        presets = self._preset_store.list()
-        if not presets:
-            hint = QLabel("Noch keine Vorlagen – mit „+“ speichern.")
-            hint.setStyleSheet(f"color: {BDO_GREY}; font-size: 11px;")
-            self._chip_layout.addWidget(hint)
-        else:
-            for preset in presets:
-                chip = self._make_chip(preset.name)
-                self._preset_chips.append(chip)
-                self._chip_layout.addWidget(chip)
-        self._chip_layout.addStretch(1)
+        self._preset_combo.blockSignals(True)
+        self._preset_combo.clear()
+        self._preset_combo.addItem(PRESET_PLACEHOLDER)
+        for preset in self._preset_store.list():
+            self._preset_combo.addItem(preset.name, userData=preset.name)
+        self._preset_combo.setCurrentIndex(0)
+        self._preset_combo.blockSignals(False)
 
-    def _make_chip(self, name: str) -> QPushButton:
-        """Erzeugt einen Chip-Button für eine Vorlage (Klick = anwenden)."""
-        chip = QPushButton(name)
-        chip.setProperty("secondary", True)
-        chip.setCheckable(True)
-        chip.setToolTip(f"Vorlage „{name}“ anwenden (setzt nur Parameter, zieht nicht)")
-        chip.setStyleSheet(
-            f"QPushButton:checked {{ border: 2px solid {BDO_RED}; font-weight: bold; }}"
-        )
-        chip.clicked.connect(lambda _checked=False, n=name: self._on_chip_clicked(n))
-        return chip
+    def _on_preset_selected(self, index: int) -> None:
+        """Wendet die im Dropdown gewählte Vorlage an und meldet übersprungene Filter.
 
-    def _on_chip_clicked(self, name: str) -> None:
-        """Wendet die Vorlage an (`apply_preset`) und meldet übersprungene Filter."""
+        `apply_preset` setzt nur Parameter (zieht NICHT, lässt den Seed in Ruhe).
+        Der Platzhalter (kein `userData`) ist ein No-Op.
+        """
+        name = self._preset_combo.itemData(index)
+        if name is None:
+            return
         preset = self._preset_store.get(name)
         if preset is None:
             # Vorlage wurde zwischenzeitlich entfernt (Verwaltungsfenster).
-            self._reload_preset_chips()
+            self._reload_preset_combo()
             return
         self._applying_preset = True
         try:
             result = self.apply_preset(preset)
         finally:
             self._applying_preset = False
-        self._mark_chip_applied(name)
         if result.skipped_filters:
             cols = ", ".join(f"„{c}“" for c in result.skipped_filters)
             QMessageBox.information(
@@ -720,46 +691,16 @@ class SamplingDialog(QDialog):
                 f"nicht vorhanden ist: {cols}.",
             )
 
-    def _mark_chip_applied(self, name: str) -> None:
-        """Markiert den zuletzt angewandten Chip (visuelle Rückmeldung)."""
-        for chip in self._preset_chips:
-            chip.setChecked(chip.text() == name)
+    def _reset_combo_selection(self) -> None:
+        """Setzt das Dropdown auf den Platzhalter zurück, sobald der Nutzer manuell ändert.
 
-    def _clear_chip_marker(self) -> None:
-        """Hebt die Chip-Markierung auf, sobald der Nutzer manuell ändert.
-
-        Während `apply_preset` selbst die Widgets setzt, bleibt die Markierung
+        Während `apply_preset` selbst die Widgets setzt, bleibt die Auswahl
         erhalten (`_applying_preset`-Guard) – sie spiegelt dann die unverändert
         angewandte Vorlage.
         """
         if self._applying_preset:
             return
-        for chip in self._preset_chips:
-            chip.setChecked(False)
-
-    def _on_save_preset(self) -> None:
-        """„+": Aktuelle Einstellungen als neue Vorlage speichern."""
-        name, ok = QInputDialog.getText(self, "Vorlage speichern", "Name der Vorlage:")
-        if not ok:
-            return
-        name = name.strip()
-        if not name:
-            return
-        if self._preset_store.exists(name) and not self._confirm_overwrite(name):
-            return
-        self._preset_store.save(self.current_settings_as_preset(name))
-        self._reload_preset_chips()
-        self._mark_chip_applied(name)
-
-    def _confirm_overwrite(self, name: str) -> bool:
-        answer = QMessageBox.question(
-            self,
-            "Vorlage überschreiben",
-            f"Eine Vorlage „{name}“ existiert bereits. Überschreiben?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return answer == QMessageBox.StandardButton.Yes
+        self._preset_combo.setCurrentIndex(0)
 
 
 # ---------------------------------------------------------------------------
