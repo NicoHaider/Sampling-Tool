@@ -262,7 +262,7 @@ class TestPresetSamplingNeutrality:
         assert dialog.get_result() is None
 
 
-# Die UI-Bedienung der Vorlagen (Chips + „+" im Stichproben-Dialog,
-# Verwaltungsfenster) ist seit Sprint 28 in tests/ui/test_template_chips.py und
+# Die UI-Bedienung der Vorlagen (Dropdown im Stichproben-Dialog seit Sprint 32,
+# Verwaltungsfenster) ist in tests/ui/test_template_dropdown.py und
 # tests/ui/test_template_manager_dialog.py abgedeckt. `apply_preset` /
 # `current_settings_as_preset` (oben) bleiben die unveränderte Sprint-23-Mechanik.
