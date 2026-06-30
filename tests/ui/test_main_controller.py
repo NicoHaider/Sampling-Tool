@@ -1783,6 +1783,8 @@ class TestSettingsIntegration:
             default_use_briefpapier,
             default_include_statistics,
             offer_date_filter,
+            default_company_key,
+            default_location_key,
         ):
             captured["default_use_briefpapier"] = default_use_briefpapier
             captured["default_include_statistics"] = default_include_statistics
@@ -1816,6 +1818,88 @@ class TestSettingsIntegration:
             controller.handle_export_audit_pdf()
             assert captured["default_use_briefpapier"] is False
             assert captured["default_include_statistics"] is False
+        finally:
+            controller.handle_close_engagement()
+
+    def test_audit_pdf_persists_and_resolves_company_location(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Sprint 33: nach dem Export werden bdo_company_key + bdo_location_key
+        app-weit persistiert und der AuditPdfExportTask erhält die aufgelösten
+        company + location."""
+        from pathlib import Path as _Path
+
+        from PyQt6.QtCore import QSettings
+
+        from sampling_tool.config import APP_NAME, APP_ORG
+        from sampling_tool.ui.dialogs.export_audit_pdf_dialog import (
+            ExportAuditPdfDialogResult,
+        )
+        from sampling_tool.ui.settings_store import load_settings
+        from sampling_tool.ui.workers.tasks import AuditPdfExportTask
+
+        # QSettings in tmp_path isolieren.
+        monkeypatch.setattr(
+            "sampling_tool.ui.settings_store._qsettings",
+            lambda: QSettings(
+                QSettings.Format.IniFormat,
+                QSettings.Scope.UserScope,
+                APP_ORG,
+                APP_NAME,
+            ),
+        )
+        QSettings.setPath(
+            QSettings.Format.IniFormat,
+            QSettings.Scope.UserScope,
+            str(tmp_path),
+        )
+
+        result = ExportAuditPdfDialogResult(
+            output_path=tmp_path / "trail.pdf",
+            date_from=None,
+            date_to=None,
+            event_types=set(),
+            use_briefpapier=False,
+            include_statistics=True,
+            company_key="consulting_gmbh",
+            location_key="linz",
+        )
+        captured: dict[str, AuditPdfExportTask] = {}
+
+        def fake_run_task(self: object, task: AuditPdfExportTask) -> _Path:
+            captured["task"] = task
+            return task.output_path
+
+        monkeypatch.setattr(
+            "sampling_tool.ui.controllers.export_controller.TaskProgressDialog.run_task",
+            fake_run_task,
+        )
+
+        factory = lambda *args, **kw: _StubExportDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            audit_pdf_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
+                controller.handle_export_audit_pdf()
+            task = captured["task"]
+            assert task.company is not None
+            assert task.company.key == "consulting_gmbh"
+            assert task.location is not None
+            assert task.location.key == "linz"
+            assert controller._settings.bdo_company_key == "consulting_gmbh"
+            assert controller._settings.bdo_location_key == "linz"
+            loaded = load_settings()
+            assert loaded.bdo_company_key == "consulting_gmbh"
+            assert loaded.bdo_location_key == "linz"
         finally:
             controller.handle_close_engagement()
 

@@ -90,6 +90,22 @@ class TestRoundtrip:
         loaded = load_settings()
         assert loaded.custom_briefpapier_path is None
 
+    def test_bdo_keys_round_trip(self) -> None:
+        original = replace(
+            AppSettings.defaults(),
+            bdo_company_key="consulting_gmbh",
+            bdo_location_key="linz",
+        )
+        save_settings(original)
+        loaded = load_settings()
+        assert loaded.bdo_company_key == "consulting_gmbh"
+        assert loaded.bdo_location_key == "linz"
+
+    def test_bdo_keys_default_empty_when_missing(self) -> None:
+        loaded = load_settings()
+        assert loaded.bdo_company_key == ""
+        assert loaded.bdo_location_key == ""
+
     def test_invalid_log_level_falls_back_to_default(self) -> None:
         # Direkt in QSettings einen unbekannten Wert ablegen.
         s = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME)

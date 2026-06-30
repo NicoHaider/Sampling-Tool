@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         Engagement,
         SampleResult,
     )
+    from sampling_tool.io.bdo_locations import BdoCompany, BdoLocation
     from sampling_tool.io.briefpapier import BriefpapierConfig
     from sampling_tool.ui.workers.task_worker import ProgressReporter
 
@@ -164,6 +165,9 @@ class AuditPdfExportTask:
     output_path: Path
     briefpapier: BriefpapierConfig | None
     include_statistics: bool
+    # Sprint 33 – gewählte BDO-Gesellschaft + Standort für den Adressblock.
+    location: BdoLocation | None = None
+    company: BdoCompany | None = None
 
     def run(self, progress: ProgressReporter, cancellation: CancellationToken) -> Path:
         cancellation.raise_if_cancelled()
@@ -171,7 +175,11 @@ class AuditPdfExportTask:
         # reportlab hat keinen Mid-Render-Cancel-Point. Wir prüfen nur
         # vor + nach dem Render. PDFs bei realistischen AuditTrail-Größen
         # (< 20k Events) sind seit Sprint 10.4 in < 2 s gerendert.
-        AuditTrailPDF(briefpapier=self.briefpapier).render(
+        AuditTrailPDF(
+            briefpapier=self.briefpapier,
+            location=self.location,
+            company=self.company,
+        ).render(
             self.engagement,
             self.events,
             self.output_path,

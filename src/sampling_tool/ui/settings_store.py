@@ -87,6 +87,11 @@ class AppSettings:
     # dieser Toggle aktiv ist. Default aus → der Export überspringt den
     # Datumsschritt und exportiert alle Events (bisheriges Verhalten).
     audit_export_offer_date_filter: bool
+    # Sprint 33: app-weit gemerkte BDO-Gesellschaft + Standort für den
+    # AuditTrail-PDF-Adressblock (stabile Keys aus io/bdo_locations.py). Leer ⇒
+    # „kein expliziter Wert", beim Export wird dann der jeweilige Default genutzt.
+    bdo_company_key: str
+    bdo_location_key: str
 
     # Sichtbare Panels (Allgemein-Tab)
     show_dashboard: bool
@@ -130,6 +135,8 @@ class AppSettings:
             default_include_statistics=True,
             custom_briefpapier_path=None,
             audit_export_offer_date_filter=False,
+            bdo_company_key="",
+            bdo_location_key="",
             show_dashboard=True,
             show_audit_trail=True,
             show_sample_id_column=True,
@@ -258,6 +265,8 @@ def load_settings() -> AppSettings:
                 base.audit_export_offer_date_filter,
             )
         ),
+        bdo_company_key=_str(s.value("settings/bdo_company_key", base.bdo_company_key)),
+        bdo_location_key=_str(s.value("settings/bdo_location_key", base.bdo_location_key)),
         seed=seed,
         show_dashboard=_bool(s.value("settings/show_dashboard", base.show_dashboard)),
         show_audit_trail=_bool(s.value("settings/show_audit_trail", base.show_audit_trail)),
@@ -308,6 +317,8 @@ def save_settings(settings: AppSettings) -> None:
         "settings/audit_export_offer_date_filter",
         settings.audit_export_offer_date_filter,
     )
+    s.setValue("settings/bdo_company_key", settings.bdo_company_key)
+    s.setValue("settings/bdo_location_key", settings.bdo_location_key)
     s.setValue("settings/seed", str(settings.seed) if settings.seed is not None else "")
     s.setValue("settings/show_dashboard", settings.show_dashboard)
     s.setValue("settings/show_audit_trail", settings.show_audit_trail)

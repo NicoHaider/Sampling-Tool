@@ -22,6 +22,38 @@ def defaults() -> AppSettings:
     return AppSettings.defaults()
 
 
+class TestBdoDefaultDropdowns:
+    """Sprint 33: zwei Standard-Dropdowns (BDO-Gesellschaft + Standort)."""
+
+    def test_leere_keys_zeigen_default(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        assert dialog._bdo_company.currentData() == "austria_gmbh"
+        assert dialog._bdo_location.currentData() == "wien"
+
+    def test_dropdowns_laden_aktuelle_keys(self, qtbot: QtBot) -> None:
+        current = replace(
+            AppSettings.defaults(),
+            bdo_company_key="consulting_gmbh",
+            bdo_location_key="linz",
+        )
+        dialog = SettingsDialog(current)
+        qtbot.addWidget(dialog)
+        assert dialog._bdo_company.currentData() == "consulting_gmbh"
+        assert dialog._bdo_location.currentData() == "linz"
+
+    def test_accept_speichert_gewaehlte_keys(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        dialog._bdo_company.setCurrentIndex(dialog._bdo_company.findData("audit_gmbh"))
+        dialog._bdo_location.setCurrentIndex(dialog._bdo_location.findData("graz"))
+        dialog._on_accept()
+        result = dialog.get_settings()
+        assert result is not None
+        assert result.bdo_company_key == "audit_gmbh"
+        assert result.bdo_location_key == "graz"
+
+
 class TestSettingsDialog:
     def test_dialog_constructs_with_defaults(self, qtbot: QtBot, defaults: AppSettings) -> None:
         dialog = SettingsDialog(defaults)

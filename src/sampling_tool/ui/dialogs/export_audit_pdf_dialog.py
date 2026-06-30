@@ -18,9 +18,11 @@ from pathlib import Path
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDateEdit,
     QDialog,
     QDialogButtonBox,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -32,6 +34,12 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.core.models import Engagement
+from sampling_tool.io.bdo_locations import (
+    companies,
+    default_company,
+    default_location,
+    locations,
+)
 from sampling_tool.ui.dialogs._export_base import ExportTargetWidget
 
 _DEFAULT_TYPES: tuple[str, ...] = (
@@ -55,6 +63,10 @@ class ExportAuditPdfDialogResult:
     event_types: set[str]
     use_briefpapier: bool
     include_statistics: bool
+    # Sprint 33 – gewählte BDO-Gesellschaft + Standort (stabile Keys).
+    # Defaults bewahren bestehende Konstruktions-Call-Sites (Tests) backward-compatible.
+    company_key: str = ""
+    location_key: str = ""
 
 
 class ExportAuditPdfDialog(QDialog):
@@ -70,6 +82,8 @@ class ExportAuditPdfDialog(QDialog):
         default_use_briefpapier: bool | None = None,
         default_include_statistics: bool = True,
         offer_date_filter: bool = False,
+        default_company_key: str | None = None,
+        default_location_key: str | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("AuditTrail-PDF exportieren")
@@ -78,6 +92,9 @@ class ExportAuditPdfDialog(QDialog):
 
         self._result: ExportAuditPdfDialogResult | None = None
         self._briefpapier_available = briefpapier_available
+        # Sprint 33 – Vorauswahl der beiden unabhängigen BDO-Dropdowns.
+        self._default_company_key = default_company_key
+        self._default_location_key = default_location_key
         # Sprint 27: Der von/bis-Datumsfilter wird nur angeboten, wenn das
         # app-weite Setting es vorgibt (Default aus → kein Datumsschritt, alle
         # Events). Ist er aus, existieren die QDateEdit-Felder gar nicht und
@@ -184,6 +201,9 @@ class ExportAuditPdfDialog(QDialog):
         types_layout.addLayout(types_btn_row)
         left.addWidget(gb_types, stretch=1)
 
+        # Sprint 33 – BDO-Gesellschaft & Standort (zwei UNABHÄNGIGE Dropdowns).
+        left.addWidget(self._build_bdo_group())
+
         # Optionen.
         gb_options = QGroupBox("Optionen")
         opt_layout = QVBoxLayout(gb_options)
@@ -199,6 +219,41 @@ class ExportAuditPdfDialog(QDialog):
         left.addWidget(gb_options)
 
         return left
+
+    def _build_bdo_group(self) -> QGroupBox:
+        """GroupBox mit zwei voneinander unabhängigen Dropdowns: Gesellschaft
+        und Standort. Sie filtern sich NICHT gegenseitig – jede Gesellschaft ist
+        mit jedem Standort kombinierbar (Kern der Sprint-33-Anforderung)."""
+        gb = QGroupBox("BDO-Gesellschaft & Standort")
+        form = QFormLayout(gb)
+
+        self._company_combo = QComboBox()
+        for company in companies():
+            self._company_combo.addItem(company.name, company.key)
+
+        self._location_combo = QComboBox()
+        for location in locations():
+            self._location_combo.addItem(
+                f"{location.display_name} ({location.bundesland})", location.key
+            )
+
+        self._preselect_combo(self._company_combo, self._default_company_key, default_company().key)
+        self._preselect_combo(
+            self._location_combo, self._default_location_key, default_location().key
+        )
+
+        form.addRow("Gesellschaft", self._company_combo)
+        form.addRow("Standort", self._location_combo)
+        return gb
+
+    @staticmethod
+    def _preselect_combo(combo: QComboBox, key: str | None, fallback_key: str) -> None:
+        """Wählt den Eintrag mit `key` vor; fehlt/unbekannt → `fallback_key`."""
+        idx = combo.findData(key) if key else -1
+        if idx < 0:
+            idx = combo.findData(fallback_key)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
 
     def _build_right(self, engagement: Engagement, default_output_dir: Path | None) -> QVBoxLayout:
         self._target = ExportTargetWidget(
@@ -251,5 +306,7 @@ class ExportAuditPdfDialog(QDialog):
             event_types=self._selected_types(),
             use_briefpapier=self._cb_briefpapier.isChecked(),
             include_statistics=self._cb_statistics.isChecked(),
+            company_key=self._company_combo.currentData() or "",
+            location_key=self._location_combo.currentData() or "",
         )
         self.accept()
