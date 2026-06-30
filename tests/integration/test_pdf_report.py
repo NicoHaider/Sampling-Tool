@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from sampling_tool.core.models import AuditEvent, Engagement
+from sampling_tool.io.bdo_locations import company_by_key, location_by_key
 from sampling_tool.io.pdf_report import AuditTrailPDF
 
 pypdf = pytest.importorskip("pypdf", reason="pypdf wird für die Inhalts-Prüfung gebraucht")
@@ -164,6 +165,158 @@ class TestAuditTrailPDF:
         AuditTrailPDF().render(engagement, events, out, include_statistics=False)
         text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
         assert "Statistiken" not in text
+
+
+class TestLandscapeLayout:
+    """Sprint 33: AuditTrail-PDF läuft im A4-Querformat, damit die „Datei"-
+    Spalte nicht mehr rechts aus der Tabelle/Seite läuft."""
+
+    def test_seite_ist_querformat(
+        self, engagement: Engagement, events: list[AuditEvent], tmp_path: Path
+    ) -> None:
+        out = tmp_path / "landscape.pdf"
+        AuditTrailPDF().render(engagement, events, out)
+        page = PdfReader(str(out)).pages[0]
+        assert float(page.mediabox.width) > float(page.mediabox.height)
+
+    def test_spaltenbreiten_summe_passt_in_nutzbare_breite(self) -> None:
+        # Nutzbare Breite A4-Querformat = 297mm − 2×20mm Rand = 257mm.
+        from reportlab.lib.units import mm
+
+        from sampling_tool.io.pdf_report import _EVENT_TABLE_COL_WIDTHS
+
+        assert sum(_EVENT_TABLE_COL_WIDTHS) <= 257 * mm
+
+
+class TestBdoAddressBlock:
+    """Sprint 33: gewählte BDO-Gesellschaft (fett oben) + Standort-Adresse
+    ersetzen den Platzhalter-Adressblock oben rechts. Gesellschaft und Standort
+    sind frei kombinierbar."""
+
+    def test_adressblock_mit_gesellschaft_und_standort(
+        self, engagement: Engagement, events: list[AuditEvent], tmp_path: Path
+    ) -> None:
+        company = company_by_key("austria_gmbh")
+        location = location_by_key("wien")
+        out = tmp_path / "addr.pdf"
+        AuditTrailPDF(company=company, location=location).render(engagement, events, out)
+        text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
+        assert "BDO Austria GmbH" in text
+        assert "Am Belvedere" in text  # Straße
+        assert "1100" in text  # PLZ
+        assert "Wien" in text  # Ort
+        assert "1000" in text  # Telefon-Suffix (+43 5 70 375 1000)
+
+    def test_freie_kombination_consulting_plus_linz(
+        self, engagement: Engagement, events: list[AuditEvent], tmp_path: Path
+    ) -> None:
+        # Kern der Anforderung: jede Gesellschaft mit jedem Standort kombinierbar.
+        company = company_by_key("consulting_gmbh")
+        location = location_by_key("linz")
+        out = tmp_path / "combo.pdf"
+        AuditTrailPDF(company=company, location=location).render(engagement, events, out)
+        text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
+        assert "BDO Consulting GmbH" in text
+        assert "Reuchlinstra" in text  # Straße (Prefix umgeht ß-Extraktions-Edgecase)
+        assert "4020" in text  # PLZ
+        assert "Linz" in text  # Ort
+        assert "4200" in text  # Telefon-Suffix (+43 5 70 375 4200)
+
+    def test_adressblock_ersetzt_platzhalter(
+        self, engagement: Engagement, events: list[AuditEvent], tmp_path: Path
+    ) -> None:
+        # Default-Briefpapier == Platzhalter-PDF. Mit gewählter Auswahl wird der
+        # Platzhalter NICHT mehr gezeichnet (kein doppelter Kopf).
+        out = tmp_path / "no_placeholder.pdf"
+        AuditTrailPDF(
+            company=company_by_key("consulting_gmbh"),
+            location=location_by_key("linz"),
+        ).render(engagement, events, out)
+        text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
+        assert "[BDO Austria GmbH]" not in text
+        assert "Adresse Zeile" not in text
+
+    def test_ohne_auswahl_bleibt_platzhalter(
+        self, engagement: Engagement, events: list[AuditEvent], tmp_path: Path
+    ) -> None:
+        # Backward-compatible: ohne company/location bleibt der Platzhalter.
+        out = tmp_path / "placeholder.pdf"
+        AuditTrailPDF().render(engagement, events, out)
+        text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
+        assert "[BDO Austria GmbH]" in text
+
+    def test_echtes_briefpapier_unterdrueckt_adressblock(
+        self,
+        engagement: Engagement,
+        events: list[AuditEvent],
+        briefpapier_png: Path,
+        tmp_path: Path,
+    ) -> None:
+        # Echtes (User-)Briefpapier hat eigenen Kopf → Adressblock NICHT zeichnen.
+        out = tmp_path / "real_bp.pdf"
+        AuditTrailPDF(
+            company=company_by_key("consulting_gmbh"),
+            location=location_by_key("linz"),
+            briefpapier=briefpapier_png,
+        ).render(engagement, events, out)
+        text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
+        assert "BDO Consulting GmbH" not in text
+
+    def test_draws_address_block_logik(self, briefpapier_png: Path) -> None:
+        company = company_by_key("consulting_gmbh")
+        location = location_by_key("linz")
+        # Platzhalter aktiv + Auswahl → Adressblock zeichnen, Hintergrund weglassen.
+        pdf_placeholder = AuditTrailPDF(company=company, location=location)
+        assert pdf_placeholder._draws_address_block() is True
+        assert pdf_placeholder._resolve_background() is None
+        # Echtes Briefpapier → kein Adressblock, Hintergrund bleibt.
+        pdf_real = AuditTrailPDF(company=company, location=location, briefpapier=briefpapier_png)
+        assert pdf_real._draws_address_block() is False
+        assert pdf_real._resolve_background() == briefpapier_png
+        # Keine Auswahl → kein Adressblock.
+        assert AuditTrailPDF()._draws_address_block() is False
+
+    def test_leere_adressfelder_werden_ausgelassen(
+        self, engagement: Engagement, events: list[AuditEvent], tmp_path: Path
+    ) -> None:
+        # Lustenau hat keine Straße hinterlegt → keine leere Zeile, Ort/Tel bleiben.
+        out = tmp_path / "lustenau.pdf"
+        AuditTrailPDF(
+            company=company_by_key("austria_gmbh"),
+            location=location_by_key("lustenau"),
+        ).render(engagement, events, out)
+        text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
+        assert "Lustenau" in text
+        assert "6890" in text
+
+    def test_zweimaliges_rendern_liefert_identischen_text(
+        self,
+        engagement: Engagement,
+        events: list[AuditEvent],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Determinismus-Schutz: gleiche Inputs (engagement/events/company/location)
+        # ⇒ identischer extrahierter Text. Footer-Zeitstempel wird gepinnt, weil
+        # er von der Uhrzeit (nicht den Inputs) abhängt – Byte-Identität des Files
+        # ist deshalb ohnehin nicht garantiert (siehe Sprint-Plan §4).
+        from datetime import datetime as _dt
+        from types import SimpleNamespace
+
+        fixed = _dt(2026, 6, 29, 12, 0, 0)
+        monkeypatch.setattr(
+            "sampling_tool.io.pdf_report.datetime", SimpleNamespace(now=lambda: fixed)
+        )
+        company = company_by_key("consulting_gmbh")
+        location = location_by_key("linz")
+        out1 = tmp_path / "det1.pdf"
+        out2 = tmp_path / "det2.pdf"
+        AuditTrailPDF(company=company, location=location).render(engagement, events, out1)
+        AuditTrailPDF(company=company, location=location).render(engagement, events, out2)
+        text1 = "\n".join(p.extract_text() for p in PdfReader(str(out1)).pages)
+        text2 = "\n".join(p.extract_text() for p in PdfReader(str(out2)).pages)
+        assert text1 == text2
+        assert "BDO Consulting GmbH" in text1
 
 
 class TestEventTableChunking:

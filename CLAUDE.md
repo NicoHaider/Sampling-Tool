@@ -112,6 +112,72 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
 | 30     | Projekt-Anlage (UI/Bugfix): Prüfungsart im Default-Dateinamen (`<mandant>_<prüfungstyp>.db` via `sanitize_for_path`) + „Überschreiben (mit Backup)"-Option im `DuplicateEngagementDialog` (`OVERWRITE`), die die alte `.db` per `EngagementVersionManager.create_snapshot` ins `archiv/` sichert, bevor ein frisches Projekt angelegt wird; kein Schema-Change | done |
 | 31     | Import & Sidebar (UI): „Datensätze aus Ansicht entfernen" (audit-safer In-Memory-/Ansichts-Reset, kein DB-Delete) + Header-Zeile per Klick in der Vorschau-Tabelle wählbar (zusätzlich zum Spin) + optionale ID-Spalte je Dataset (QSettings statt Schema-Feld), app-weiter Toggle `show_sample_id_column`, Anzeige in der Sidebar-Stichprobenliste | done |
 | 32     | UI-Umbau: Vorlagen als Dropdown statt Chips im Stichproben-Dialog (Chip-Leiste + „+" raus, `QComboBox` mit Platzhalter „(Vorlage wählen…)" rein; Auswahl ruft `apply_preset`, manuelle Größen-/Methoden-/Filter-Änderung setzt zurück auf den Platzhalter, `_applying_preset`-Guard portiert) + „Neue Vorlage…"-Button im `TemplateManagerDialog` (einziger Anlege-Weg, Default-Preset SIMPLE/`DEFAULT_SAMPLE_SIZE` ohne Filter/Cluster/Schicht); `apply_preset`/`current_settings_as_preset`/`PresetStore`/`SamplingPreset` unverändert → Reproduzierbarkeit/Byte-Identität unberührt | done |
+| 33     | AuditTrail-PDF: A4-Querformat (`landscape(A4)`) + neu verteilte Spaltenbreiten (Summe 257mm, großzügige „Datei"-Spalte, kein Überlauf) + zwei UNABHÄNGIGE Export-Dropdowns „BDO-Gesellschaft" + „Standort" (`io/bdo_locations.py`, frei kombinierbar, filtern sich nicht), die den Platzhalter-Adressblock ersetzen (Gesellschaft fett oben + Standort-Adresse rechts; Platzhalter-Briefpapier wird dabei unterdrückt, echtes Briefpapier behält eigenen Kopf); beide Keys app-weit via QSettings (`bdo_company_key`/`bdo_location_key`) gemerkt + in den Einstellungen als Default setzbar; kein Schema-Change, RNG/Excel/HTML unberührt | done |
+
+## AuditTrail-PDF: Querformat + BDO-Gesellschaft/Standort-Adressblock (Sprint 33)
+
+Zwei Änderungen am AuditTrail-PDF, **additiv** und ohne Schema-/DB-/Dependency-
+Eingriff. RNG-/Sampling-/Import-Pfade sowie `html_report.py`/
+`multi_report_exporter.py` (Excel) bleiben unangetastet.
+
+- **A4-Querformat.** `AuditTrailPDF.render` nutzt `pagesize=landscape(A4)`;
+  Ränder unverändert (20/20/22/22mm → nutzbare Breite 257mm). `_EVENT_TABLE_
+  COL_WIDTHS` neu verteilt (`35/45/35/18/20/32/72`mm, Summe **257mm**) mit
+  großzügiger „Datei"-Spalte, damit lange Dateinamen nicht mehr rechts aus der
+  Tabelle laufen. `_format_cell`-Wrap-Logik unverändert.
+- **BDO-Gesellschaft + Standort als zwei UNABHÄNGIGE Dropdowns.** Erfassung
+  **beim Export** (nicht bei Projektanlage), Persistenz **app-weit via QSettings**
+  (analog `default_auditor_name`) – kein Schema-Change. Die beiden Dropdowns
+  filtern sich **nicht** gegenseitig: **jede Gesellschaft ist mit jedem Standort
+  frei kombinierbar** (z. B. „BDO Consulting GmbH" + Linz).
+- **Single Source of Truth `io/bdo_locations.py`** (reine Daten + Lookups, keine
+  Qt-Imports): frozen `BdoLocation` (`key/display_name/bundesland/street/
+  postal_code/city/phone/email`, **kein** `company`-Feld) und frozen
+  `BdoCompany` (`key/name`); zwei getrennte `Final`-Tuples `BDO_LOCATIONS`
+  (alle 9 Bundesländer) + `BDO_COMPANIES`; Lookups `location_by_key`/
+  `company_by_key`/`default_location()` (Wien)/`default_company()`
+  (austria_gmbh)/`locations()`/`companies()`. Keine BDO-Adressen woanders
+  hartkodieren. (Lustenau-Straße und Bruck/Leitha-Adresse lagen nicht
+  verifiziert vor → leere Felder; der Adressblock lässt leere Zeilen aus.)
+- **Adressblock ersetzt den Platzhalter.** `AuditTrailPDF.__init__` bekommt
+  optional `location`/`company` (beide `None` ⇒ **exakt** bisheriges Verhalten,
+  backward-compatible). Bei Auswahl rendert `_build_header` einen rechtsbündigen
+  Adressblock als eigene Spalte neben dem Titel: **Gesellschaftsname fett oben**,
+  darunter Straße, PLZ+Ort, `Tel: <phone>`, optional E-Mail (leere Felder
+  ausgelassen). Der `[BDO Austria GmbH]…`-Platzhalter stammt aus dem
+  Platzhalter-Briefpapier (`config.DEFAULT_BRIEFPAPIER`,
+  `scripts/generate_placeholder_briefpapier.py`). Regel (`_draws_address_block`/
+  `_resolve_background`): Auswahl **und** aktives Briefpapier `== config.
+  DEFAULT_BRIEFPAPIER` → Platzhalter **nicht** als Hintergrund zeichnen (der
+  Block ersetzt ihn, kein doppelter Kopf); **echtes** (User-)Briefpapier aktiv →
+  Adressblock **nicht** zeichnen (eigener Kopf). Vergleich bewusst gegen
+  `config.DEFAULT_BRIEFPAPIER` (nicht „ist Default-Auflösung", da das auch ein
+  User-Override sein kann).
+- **Datenfluss.** `ExportAuditPdfDialog` (zwei `QComboBox`, unabhängig voll
+  befüllt, Vorauswahl über `default_company_key`/`default_location_key`) →
+  `ExportAuditPdfDialogResult.company_key`/`location_key` (Defaults `""`) →
+  `export_controller.handle_export_audit_pdf` löst via `company_by_key`/
+  `location_by_key` auf, gibt `company`/`location` an `AuditPdfExportTask`
+  (neue Konstruktor-Args an `AuditTrailPDF`) und **persistiert beide Keys**
+  (`replace(s.settings, …)` + `save_settings(…)` + `s.settings = …`, das leichte
+  Feature-Toggle-Muster, **nicht** `apply_new_settings`). `_factories.py`
+  (`AuditPdfDialogFactory`-Typ + `default_audit_pdf_factory`) um beide Keys
+  erweitert.
+- **Settings.** `AppSettings.bdo_company_key`/`bdo_location_key` (Default `""` ⇒
+  „kein expliziter Wert", beim Export dann der jeweilige Default) – in
+  dataclass/`defaults()`/`load_settings`/`save_settings` ergänzt. `SettingsDialog`
+  (Reports-Tab) bekommt zwei Standard-Dropdowns (gleiche unabhängige Logik wie
+  der Export-Dialog); `_on_accept`/`_on_reset_defaults` mitgezogen.
+- **Tests.** `tests/unit/test_bdo_locations.py` (Daten/Lookups/Unabhängigkeit),
+  `tests/integration/test_pdf_report.py::TestLandscapeLayout` (Querformat +
+  Breitensumme) + `::TestBdoAddressBlock` (Adressblock-Inhalt, freie Kombination
+  Consulting+Linz, Platzhalter-Unterdrückung, echtes-Briefpapier-Fall,
+  leere-Felder, Determinismus), `tests/ui/test_export_audit_pdf_dialog.py::
+  TestBdoCompanyLocationDropdowns` (beide voll befüllt, **unabhängig**,
+  Vorauswahl, Result-Keys), `tests/ui/test_settings_store.py` (Roundtrip beider
+  Keys), `tests/ui/test_settings_dialog.py::TestBdoDefaultDropdowns`,
+  `tests/ui/test_main_controller.py` (Persistenz beider Keys + aufgelöste
+  company/location am Task).
 
 ## Projekt-Anlage: Prüfungsart im Dateinamen + Überschreiben-mit-Backup (Sprint 30)
 

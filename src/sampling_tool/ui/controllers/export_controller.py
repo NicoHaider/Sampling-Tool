@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
+from dataclasses import replace
 from datetime import date
 
 from PyQt6.QtWidgets import QMessageBox
 
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.core.models import AuditEvent
+from sampling_tool.io.bdo_locations import company_by_key, location_by_key
 from sampling_tool.io.exporter import ExportError
 from sampling_tool.persistence.repositories import AuditRepo, SampleRepo
 from sampling_tool.ui.controllers._factories import ControllerFactories
@@ -24,6 +26,7 @@ from sampling_tool.ui.controllers.workspace_session import (
     WorkspaceSession,
 )
 from sampling_tool.ui.dialogs.progress_dialog import TaskProgressDialog
+from sampling_tool.ui.settings_store import save_settings
 from sampling_tool.ui.workers.tasks import (
     AuditPdfExportTask,
     ExcelReportTask,
@@ -161,12 +164,24 @@ class ExportController:
             s.settings.default_include_briefpapier,
             s.settings.default_include_statistics,
             s.settings.audit_export_offer_date_filter,
+            s.settings.bdo_company_key,
+            s.settings.bdo_location_key,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         result = dialog.get_result()
         if result is None:
             return
+
+        # Sprint 33: gewählte BDO-Gesellschaft + Standort app-weit merken
+        # (analog default_auditor_name) und auf die Daten-Objekte auflösen.
+        new_settings = replace(
+            s.settings,
+            bdo_company_key=result.company_key,
+            bdo_location_key=result.location_key,
+        )
+        save_settings(new_settings)
+        s.settings = new_settings
 
         filtered = filter_audit_events(events, result.event_types, result.date_from, result.date_to)
 
@@ -177,6 +192,8 @@ class ExportController:
             output_path=result.output_path,
             briefpapier=briefpapier if result.use_briefpapier else None,
             include_statistics=result.include_statistics,
+            company=company_by_key(result.company_key),
+            location=location_by_key(result.location_key),
         )
         progress_dialog = TaskProgressDialog("Erstelle AuditTrail-PDF…", s.window)
         try:

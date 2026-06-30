@@ -36,6 +36,12 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.config import DEFAULT_BRIEFPAPIER, SEED_MAX
+from sampling_tool.io.bdo_locations import (
+    companies,
+    default_company,
+    default_location,
+    locations,
+)
 from sampling_tool.ui.settings_store import (
     LOG_LEVELS,
     AppSettings,
@@ -46,6 +52,15 @@ from sampling_tool.ui.settings_store import (
 _SEED_SPIN_MAX: int = min(SEED_MAX, 2_147_483_647)
 # Label für den Seed-Wert 0 = kein fester Seed.
 _SEED_RANDOM_LABEL: str = "Zufällig (bei jeder Ziehung neu)"
+
+
+def _select_combo_by_key(combo: QComboBox, key: str, fallback_key: str) -> None:
+    """Wählt den Eintrag mit `key` vor; fehlt/unbekannt → `fallback_key`."""
+    idx = combo.findData(key) if key else -1
+    if idx < 0:
+        idx = combo.findData(fallback_key)
+    if idx >= 0:
+        combo.setCurrentIndex(idx)
 
 
 class SettingsDialog(QDialog):
@@ -216,6 +231,26 @@ class SettingsDialog(QDialog):
         self._preview_button = preview_button
 
         outer.addWidget(group)
+
+        # ---- Sprint 33: Standard-BDO-Gesellschaft + -Standort ----
+        # Zwei unabhängige Dropdowns (analog dem Export-Dialog) – sie filtern
+        # sich nicht gegenseitig. Speisen die Vorauswahl im Audit-PDF-Export.
+        bdo_box = QGroupBox("BDO-Adressblock (Standard für Audit-PDF)")
+        bdo_form = QFormLayout(bdo_box)
+        self._bdo_company = QComboBox()
+        for company in companies():
+            self._bdo_company.addItem(company.name, company.key)
+        self._bdo_location = QComboBox()
+        for location in locations():
+            self._bdo_location.addItem(
+                f"{location.display_name} ({location.bundesland})", location.key
+            )
+        _select_combo_by_key(self._bdo_company, current.bdo_company_key, default_company().key)
+        _select_combo_by_key(self._bdo_location, current.bdo_location_key, default_location().key)
+        bdo_form.addRow("Standard-BDO-Gesellschaft", self._bdo_company)
+        bdo_form.addRow("Standard-BDO-Standort", self._bdo_location)
+        outer.addWidget(bdo_box)
+
         outer.addStretch(1)
         return page
 
@@ -355,6 +390,8 @@ class SettingsDialog(QDialog):
         self._audit_export_date_filter.setChecked(defaults.audit_export_offer_date_filter)
         self._radio_placeholder.setChecked(True)
         self._custom_briefpapier.clear()
+        _select_combo_by_key(self._bdo_company, defaults.bdo_company_key, default_company().key)
+        _select_combo_by_key(self._bdo_location, defaults.bdo_location_key, default_location().key)
         self._chk_show_dashboard.setChecked(defaults.show_dashboard)
         self._chk_show_audit_trail.setChecked(defaults.show_audit_trail)
         self._chk_show_sample_id_column.setChecked(defaults.show_sample_id_column)
@@ -386,6 +423,8 @@ class SettingsDialog(QDialog):
             default_include_statistics=self._default_statistics.isChecked(),
             custom_briefpapier_path=custom_path,
             audit_export_offer_date_filter=self._audit_export_date_filter.isChecked(),
+            bdo_company_key=self._bdo_company.currentData() or "",
+            bdo_location_key=self._bdo_location.currentData() or "",
             # 0 (specialValueText) bedeutet „kein fester Seed" → None.
             seed=seed_value if seed_value != 0 else None,
             show_dashboard=self._chk_show_dashboard.isChecked(),

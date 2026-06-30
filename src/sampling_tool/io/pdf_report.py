@@ -19,7 +19,8 @@ from pathlib import Path
 from typing import Any, Final
 
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.enums import TA_RIGHT
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfgen.canvas import Canvas
@@ -31,9 +32,10 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from sampling_tool.config import BDO_RED
+from sampling_tool.config import BDO_RED, DEFAULT_BRIEFPAPIER
 from sampling_tool.core.formatting import format_event_timestamp
 from sampling_tool.core.models import AuditEvent, Engagement
+from sampling_tool.io.bdo_locations import BdoCompany, BdoLocation
 from sampling_tool.io.briefpapier import BriefpapierConfig, get_default_briefpapier
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,13 @@ logger = logging.getLogger(__name__)
 _BDO_RED_COLOR: Final = colors.HexColor(BDO_RED)
 _GREY_LIGHT: Final = colors.HexColor("#D9D9D9")
 _GREY_CORRECTION: Final = colors.HexColor("#FFF3D6")
+
+# Sprint 33 – Adressblock oben rechts (Gesellschaft fett + Standort-Adresse).
+_ADDRESS_COMPANY_COLOR: Final = colors.HexColor("#333333")
+_ADDRESS_TEXT_COLOR: Final = colors.HexColor("#595959")
+# Zwei-Spalten-Kopf (Titel links, Adresse rechts). Summe ≤ 257mm Nutzbreite.
+_HEADER_LEFT_WIDTH: Final[float] = 145 * mm
+_HEADER_RIGHT_WIDTH: Final[float] = 112 * mm
 
 # Sprint 10.4 – Event-Tabelle wird in Sub-Tables zu je `CHUNK_SIZE` Rows
 # gesplittet. reportlab.platypus.Table hat quadratisches Layout-Verhalten
@@ -54,14 +63,17 @@ CHUNK_SIZE: Final[int] = 500
 # brauchen Wrap, also Paragraph.
 _CELL_STRING_THRESHOLD: Final[int] = 60
 
+# Sprint 33 – A4-Querformat: nutzbare Breite 297mm − 2×20mm Rand = 257mm.
+# Großzügige „Datei"-Spalte (72mm), damit Dateinamen nicht mehr rechts aus
+# der Tabelle laufen. Summe == 257mm.
 _EVENT_TABLE_COL_WIDTHS: Final[tuple[float, ...]] = (
-    33 * mm,
-    30 * mm,
-    22 * mm,
-    14 * mm,
-    16 * mm,
-    20 * mm,
     35 * mm,
+    45 * mm,
+    35 * mm,
+    18 * mm,
+    20 * mm,
+    32 * mm,
+    72 * mm,
 )
 
 _EVENT_TABLE_HEADER: Final[list[str]] = [
@@ -89,6 +101,8 @@ class AuditTrailPDF:
     def __init__(
         self,
         briefpapier: Path | BriefpapierConfig | None = None,
+        location: BdoLocation | None = None,
+        company: BdoCompany | None = None,
     ) -> None:
         if isinstance(briefpapier, Path):
             if not briefpapier.exists():
@@ -100,6 +114,9 @@ class AuditTrailPDF:
             self.briefpapier_config = briefpapier
         else:
             self.briefpapier_config = get_default_briefpapier()
+        # Sprint 33 – optionaler BDO-Adressblock. Beide None ⇒ heutiges Verhalten.
+        self.location = location
+        self.company = company
 
     @property
     def briefpapier(self) -> Path | None:
@@ -107,6 +124,27 @@ class AuditTrailPDF:
         if self.briefpapier_config is None:
             return None
         return self.briefpapier_config.background_image
+
+    def _is_placeholder_briefpapier(self) -> bool:
+        """`True`, wenn das aktive Briefpapier exakt das mitgelieferte
+        Platzhalter-PDF ist. Bewusst Vergleich gegen `DEFAULT_BRIEFPAPIER`
+        (nicht „ist das Default-Auflösungsergebnis", das auch ein User-Override
+        sein kann)."""
+        return self.briefpapier is not None and self.briefpapier == DEFAULT_BRIEFPAPIER
+
+    def _draws_address_block(self) -> bool:
+        """Adressblock nur zeichnen, wenn Gesellschaft ODER Standort gewählt ist
+        UND das aktive Briefpapier der Platzhalter ist (dessen Kopf der Block
+        ersetzt). Bei echtem Briefpapier hat dieses einen eigenen Kopf → nicht."""
+        has_address = self.location is not None or self.company is not None
+        return has_address and self._is_placeholder_briefpapier()
+
+    def _resolve_background(self) -> Path | None:
+        """Hintergrund-Briefpapier oder `None`. Wird der Adressblock gezeichnet,
+        unterdrücken wir den Platzhalter (kein doppelter Kopf)."""
+        if self._draws_address_block():
+            return None
+        return self.briefpapier
 
     def render(
         self,
@@ -124,7 +162,7 @@ class AuditTrailPDF:
 
         doc = SimpleDocTemplate(
             str(output_path),
-            pagesize=A4,
+            pagesize=landscape(A4),
             leftMargin=20 * mm,
             rightMargin=20 * mm,
             topMargin=22 * mm,
@@ -133,14 +171,21 @@ class AuditTrailPDF:
             author=engagement.auditor_name,
         )
 
+        draws_address = self._draws_address_block()
         story: list[Any] = []
-        story.extend(_build_header(engagement))
+        story.extend(
+            _build_header(
+                engagement,
+                location=self.location if draws_address else None,
+                company=self.company if draws_address else None,
+            )
+        )
         story.append(Spacer(1, 6 * mm))
         story.extend(_build_event_table(events))
         if include_statistics:
             story.extend(_build_statistics(events))
 
-        on_page = _make_on_page(self.briefpapier)
+        on_page = _make_on_page(self._resolve_background())
         doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
         return output_path
 
@@ -150,7 +195,11 @@ class AuditTrailPDF:
 # ---------------------------------------------------------------------------
 
 
-def _build_header(engagement: Engagement) -> list[Any]:
+def _build_header(
+    engagement: Engagement,
+    location: BdoLocation | None = None,
+    company: BdoCompany | None = None,
+) -> list[Any]:
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         "BDOTitle",
@@ -167,7 +216,7 @@ def _build_header(engagement: Engagement) -> list[Any]:
         leading=14,
     )
 
-    block: list[Any] = [
+    title_block: list[Any] = [
         Paragraph("AuditTrail", title_style),
         Paragraph(f"<b>Mandant:</b> {_escape(engagement.client_name)}", meta_style),
         Paragraph(
@@ -180,7 +229,69 @@ def _build_header(engagement: Engagement) -> list[Any]:
             meta_style,
         ),
     ]
-    return block
+
+    # Ohne Gesellschaft/Standort bleibt der Kopf exakt wie bisher (Backward-Compat).
+    if location is None and company is None:
+        return title_block
+
+    address_block = _build_address_block(location, company)
+    header_table = Table(
+        [[title_block, address_block]],
+        colWidths=[_HEADER_LEFT_WIDTH, _HEADER_RIGHT_WIDTH],
+    )
+    header_table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    return [header_table]
+
+
+def _build_address_block(
+    location: BdoLocation | None,
+    company: BdoCompany | None,
+) -> list[Any]:
+    """Rechtsbündiger Adressblock: Gesellschaftsname fett oben, darunter die
+    Standort-Adresse. Leere Felder werden ausgelassen (keine Leerzeile)."""
+    styles = getSampleStyleSheet()
+    company_style = ParagraphStyle(
+        "BDOCompany",
+        parent=styles["BodyText"],
+        fontName="Helvetica-Bold",
+        fontSize=10,
+        leading=13,
+        alignment=TA_RIGHT,
+        textColor=_ADDRESS_COMPANY_COLOR,
+    )
+    address_style = ParagraphStyle(
+        "BDOAddress",
+        parent=styles["BodyText"],
+        fontSize=9,
+        leading=12,
+        alignment=TA_RIGHT,
+        textColor=_ADDRESS_TEXT_COLOR,
+    )
+
+    lines: list[Any] = []
+    if company is not None and company.name:
+        lines.append(Paragraph(_escape(company.name), company_style))
+    if location is not None:
+        if location.street:
+            lines.append(Paragraph(_escape(location.street), address_style))
+        city_line = " ".join(part for part in (location.postal_code, location.city) if part)
+        if city_line:
+            lines.append(Paragraph(_escape(city_line), address_style))
+        if location.phone:
+            lines.append(Paragraph(f"Tel: {_escape(location.phone)}", address_style))
+        if location.email:
+            lines.append(Paragraph(_escape(location.email), address_style))
+    return lines
 
 
 def _build_event_table(events: list[AuditEvent]) -> list[Any]:

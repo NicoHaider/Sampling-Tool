@@ -41,6 +41,7 @@ aktuellen Sprint ab.
 | 30     | Projekt-Anlage: Prüfungsart im Default-Dateinamen (`<mandant>_<prüfungstyp>.db` via `sanitize_for_path`) + „Überschreiben (mit Backup)"-Option im Duplikat-Dialog (sichert die alte `.db` ins `archiv/`, dann frisches Projekt) | **done** |
 | 31     | Import & Sidebar: „Datensätze aus Ansicht entfernen" (reiner Ansichts-Reset, kein DB-Delete) + Header-Zeile per Klick in der Vorschau wählbar + optionale ID-Spalte je Dataset (QSettings, kein Schema-Change), umschaltbar in den Einstellungen, in der Stichprobenliste angezeigt | **done** |
 | 32     | UI-Umbau: Vorlagen als Dropdown statt Chips im Stichproben-Dialog (Chip-Leiste + „+" raus, kompaktes `QComboBox` mit Platzhalter rein; Auswahl wendet die Vorlage an, manuelle Änderung setzt aufs Dropdown-Platzhalter zurück) + „Neue Vorlage…"-Button im Verwaltungsfenster (einziger Anlege-Weg; Sampling-/Reproduzierbarkeits-Mechanik unverändert) | **done** |
+| 33     | AuditTrail-PDF auf A4-Querformat (keine abgeschnittene „Datei"-Spalte mehr) + zwei unabhängige Dropdowns „BDO-Gesellschaft" und „Standort" im Export-Dialog (frei kombinierbar), die den Platzhalter-Adressblock ersetzen; beide app-weit via QSettings gemerkt + in den Einstellungen als Default setzbar (kein Schema-Change) | **done** |
 
 ### Was Sprint 8 liefert
 

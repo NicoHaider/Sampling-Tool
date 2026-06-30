@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QDialogButtonBox
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import AuditEvent, Engagement
+from sampling_tool.io.bdo_locations import companies, locations
 from sampling_tool.ui.controllers.export_controller import filter_audit_events
 from sampling_tool.ui.dialogs.export_audit_pdf_dialog import (
     ExportAuditPdfDialog,
@@ -35,6 +36,72 @@ def _ok_enabled(dialog: ExportAuditPdfDialog) -> bool:
     btn = box.button(QDialogButtonBox.StandardButton.Ok)
     assert btn is not None
     return bool(btn.isEnabled())
+
+
+class TestBdoCompanyLocationDropdowns:
+    """Sprint 33: zwei UNABHÄNGIGE Dropdowns (Gesellschaft + Standort), die sich
+    nicht gegenseitig filtern – jede Gesellschaft ist mit jedem Standort
+    kombinierbar."""
+
+    def _dialog(
+        self,
+        qtbot: QtBot,
+        *,
+        company_key: str | None = None,
+        location_key: str | None = None,
+    ) -> ExportAuditPdfDialog:
+        dialog = ExportAuditPdfDialog(
+            engagement=_engagement(),
+            event_types_available=["sampling"],
+            briefpapier_available=True,
+            default_company_key=company_key,
+            default_location_key=location_key,
+        )
+        qtbot.addWidget(dialog)
+        return dialog
+
+    def test_beide_dropdowns_voll_befuellt(self, qtbot: QtBot) -> None:
+        dialog = self._dialog(qtbot)
+        assert dialog._company_combo.count() == len(companies())
+        assert dialog._location_combo.count() == len(locations())
+
+    def test_dropdowns_sind_unabhaengig(self, qtbot: QtBot) -> None:
+        dialog = self._dialog(qtbot)
+        location_count_before = dialog._location_combo.count()
+        # Gesellschaft wechseln → Standort-Dropdown bleibt unverändert vollständig.
+        idx = dialog._company_combo.findData("consulting_gmbh")
+        assert idx >= 0
+        dialog._company_combo.setCurrentIndex(idx)
+        assert dialog._location_combo.count() == location_count_before
+        assert dialog._location_combo.count() == len(locations())
+
+    def test_vorauswahl_aus_keys(self, qtbot: QtBot) -> None:
+        dialog = self._dialog(qtbot, company_key="consulting_gmbh", location_key="linz")
+        assert dialog._company_combo.currentData() == "consulting_gmbh"
+        assert dialog._location_combo.currentData() == "linz"
+
+    def test_unbekannte_keys_fallen_auf_default(self, qtbot: QtBot) -> None:
+        dialog = self._dialog(qtbot, company_key=None, location_key="atlantis")
+        assert dialog._company_combo.currentData() == "austria_gmbh"
+        assert dialog._location_combo.currentData() == "wien"
+
+    def test_result_enthaelt_gewaehlte_keys(self, qtbot: QtBot, tmp_path: Path) -> None:
+        dialog = ExportAuditPdfDialog(
+            engagement=_engagement(),
+            event_types_available=["sampling"],
+            briefpapier_available=True,
+            default_output_dir=tmp_path,
+            default_company_key="austria_gmbh",
+            default_location_key="wien",
+        )
+        qtbot.addWidget(dialog)
+        dialog._company_combo.setCurrentIndex(dialog._company_combo.findData("consulting_gmbh"))
+        dialog._location_combo.setCurrentIndex(dialog._location_combo.findData("linz"))
+        dialog._on_accept()
+        result = dialog.get_result()
+        assert result is not None
+        assert result.company_key == "consulting_gmbh"
+        assert result.location_key == "linz"
 
 
 class TestExportAuditPdfDialog:
