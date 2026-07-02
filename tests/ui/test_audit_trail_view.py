@@ -57,6 +57,19 @@ def view(qtbot: QtBot) -> AuditTrailView:
     return v
 
 
+def _search_via_ui(view: AuditTrailView, text: str) -> None:
+    """Suchtext über den echten UI-Pfad setzen und den Debounce sofort flushen.
+
+    Sprint 34 / WP1: `textChanged` startet nur noch den 150-ms-Timer. Die
+    Bestands-Tests prüfen Treffer-Semantik (nicht Timing) – der manuelle
+    Flush hält sie deterministisch und schnell. Das Timer-Verhalten selbst
+    ist in `TestAuditSearchDebounce` abgedeckt.
+    """
+    view._search.setText(text)
+    view._search_debounce.stop()
+    view._apply_search_text()
+
+
 class TestAuditTrailModel:
     def test_set_events_populates_rows(self, qtbot: QtBot) -> None:
         model = AuditTrailModel()
@@ -130,7 +143,7 @@ class TestAuditTrailView:
             _make_event(user="bob", event_id=2),
         ]
         view.set_events(events)
-        view._search.setText("bob")
+        _search_via_ui(view, "bob")
         assert view.visible_row_count() == 1
 
     def test_double_click_emits_event_id(self, view: AuditTrailView, qtbot: QtBot) -> None:
@@ -233,7 +246,7 @@ class TestAuditTrailFilterProxyExtras:
             _make_event(event_type="sampling", user="anna", event_id=2),
         ]
         view.set_events(events)
-        view._search.setText("Stichprobe_BDO")
+        _search_via_ui(view, "Stichprobe_BDO")
         assert view.visible_row_count() == 1
 
     def test_search_matches_filename_in_import_field(self, view: AuditTrailView) -> None:
@@ -247,7 +260,7 @@ class TestAuditTrailFilterProxyExtras:
             _make_event(event_type="sampling", user="anna", event_id=2),
         ]
         view.set_events(events)
-        view._search.setText("buchungen")
+        _search_via_ui(view, "buchungen")
         assert view.visible_row_count() == 1
 
     def test_search_case_insensitive(self, view: AuditTrailView) -> None:
@@ -257,7 +270,7 @@ class TestAuditTrailFilterProxyExtras:
                 _make_event(user="bob", event_id=2),
             ]
         )
-        view._search.setText("ANNA")
+        _search_via_ui(view, "ANNA")
         assert view.visible_row_count() == 1
 
     def test_action_filter_reset_to_alle_shows_all(self, view: AuditTrailView) -> None:
@@ -572,7 +585,7 @@ class TestAuditSearchSpecialChars:
                 _make_event(event_id=3),
             ]
         )
-        view._search.setText(".csv")
+        _search_via_ui(view, ".csv")
         assert _visible_event_ids(view) == [1]
 
     def test_search_matches_umlaut(self, view: AuditTrailView) -> None:
@@ -583,10 +596,10 @@ class TestAuditSearchSpecialChars:
                 _make_event(event_id=3, user="anna"),
             ]
         )
-        view._search.setText("ö")
+        _search_via_ui(view, "ö")
         assert _visible_event_ids(view) == [1, 2]
         # Case-insensitiv auch für Nicht-ASCII.
-        view._search.setText("Ö")
+        _search_via_ui(view, "Ö")
         assert _visible_event_ids(view) == [1, 2]
 
     def test_search_matches_other_regex_metachars(self, view: AuditTrailView) -> None:
@@ -596,13 +609,13 @@ class TestAuditSearchSpecialChars:
                 _make_event(event_id=2, user="Team Audit QA"),
             ]
         )
-        view._search.setText("(audit)")
+        _search_via_ui(view, "(audit)")
         assert _visible_event_ids(view) == [1]
-        view._search.setText("+qa*")
+        _search_via_ui(view, "+qa*")
         assert _visible_event_ids(view) == [1]
         # Literal, NICHT als Regex: "a*" (null-oder-mehr 'a') würde als Regex
         # beide Events treffen – literal kommt "a*" nur in Event 1 vor.
-        view._search.setText("a*")
+        _search_via_ui(view, "a*")
         assert _visible_event_ids(view) == [1]
 
     def test_search_matches_phrase_with_space(self, view: AuditTrailView) -> None:
@@ -614,7 +627,7 @@ class TestAuditSearchSpecialChars:
                 _make_event(event_id=2, user="Team (Audit)+QA*"),
             ]
         )
-        view._search.setText("team audit")
+        _search_via_ui(view, "team audit")
         assert _visible_event_ids(view) == [1]
 
     def test_plain_text_search_unchanged(self, view: AuditTrailView) -> None:
@@ -623,7 +636,7 @@ class TestAuditSearchSpecialChars:
         events = _synthetic_events(30)
         view.set_events(events)
         for needle in ["bob", "sampling", "xlsx", "2026", "keintrefferxyz", "BOB"]:
-            view._search.setText(needle)
+            _search_via_ui(view, needle)
             expected = sorted(
                 evt.id
                 for evt in events
@@ -633,7 +646,82 @@ class TestAuditSearchSpecialChars:
 
     def test_empty_search_shows_all(self, view: AuditTrailView) -> None:
         view.set_events(_synthetic_events(10))
-        view._search.setText("anna")
+        _search_via_ui(view, "anna")
         assert view.visible_row_count() < 10
-        view._search.setText("")
+        _search_via_ui(view, "")
+        assert view.visible_row_count() == 10
+
+
+# ---------------------------------------------------------------------------
+# Sprint 34 / WP1: Debounce der Volltextsuche
+# ---------------------------------------------------------------------------
+
+
+class TestAuditSearchDebounce:
+    """Sprint 34 / WP1: `textChanged` startet nur noch den Debounce-Timer.
+
+    Gefiltert wird genau einmal pro Tipp-Pause (nach `AUDIT_SEARCH_DEBOUNCE_MS`)
+    statt einmal pro Tastenanschlag. Die Treffer-Semantik (literal,
+    case-insensitiv, Sprint 25) bleibt unverändert – der Proxy selbst ist
+    weiterhin synchron.
+    """
+
+    def test_typing_coalesces_filter_runs(
+        self, view: AuditTrailView, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        view.set_events(_synthetic_events(10))
+        proxy = view.proxy()
+        calls: list[str] = []
+        original = proxy.set_search_text
+
+        def spy(text: str) -> None:
+            calls.append(text)
+            original(text)
+
+        monkeypatch.setattr(proxy, "set_search_text", spy)
+
+        for fragment in (
+            "a",
+            "an",
+            "ann",
+            "anna",
+            "anna ",
+            "anna e",
+            "anna ex",
+            "anna exp",
+            "anna expo",
+            "anna export",
+        ):
+            view._search.setText(fragment)
+        assert calls == []  # während des Tippens läuft KEIN Filterlauf
+
+        qtbot.wait(AuditTrailView.AUDIT_SEARCH_DEBOUNCE_MS + 100)
+        assert calls == ["anna export"]  # genau EIN Lauf, mit dem finalen Text
+
+    def test_debounced_result_matches_immediate(self, qtbot: QtBot) -> None:
+        events = _synthetic_events(20)
+        debounced = AuditTrailView()
+        qtbot.addWidget(debounced)
+        debounced.set_events(events)
+        oracle = AuditTrailView()
+        qtbot.addWidget(oracle)
+        oracle.set_events(events)
+
+        oracle.proxy().set_search_text("anna")  # synchroner Direkt-Aufruf (Referenz)
+        debounced._search.setText("anna")
+        qtbot.wait(AuditTrailView.AUDIT_SEARCH_DEBOUNCE_MS + 100)
+
+        assert _visible_event_ids(debounced) == _visible_event_ids(oracle)
+        assert debounced.visible_row_count() == oracle.visible_row_count()
+
+    def test_clear_after_debounce_shows_all_rows(
+        self, view: AuditTrailView, qtbot: QtBot
+    ) -> None:
+        view.set_events(_synthetic_events(10))
+        view._search.setText("anna")
+        qtbot.wait(AuditTrailView.AUDIT_SEARCH_DEBOUNCE_MS + 100)
+        assert view.visible_row_count() < 10
+
+        view._search.setText("")  # Feld leeren – läuft über denselben Debounce-Pfad
+        qtbot.wait(AuditTrailView.AUDIT_SEARCH_DEBOUNCE_MS + 100)
         assert view.visible_row_count() == 10
