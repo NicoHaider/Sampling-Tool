@@ -493,3 +493,41 @@ class TestSamplingDialogGranularFeatures:
         assert result.config.filter_field is None
         assert result.config.cluster_field is None
         assert result.config.stratum_field is None
+
+
+class TestFilterDistinctValuesCache:
+    """Sprint 34 / WP5: distinct-Werte werden pro Dialog-Instanz memoisiert.
+
+    Der Provider (`DatasetRepo.distinct_values`) ist ein Full-Table-Scan pro
+    Aufruf; das Filter-Feld-Combo feuert `currentTextChanged` auch bei
+    Pfeiltasten-Navigation pro Tastendruck. Der Dialog ist modal – das
+    Dataset kann sich während seiner Lebensdauer nicht ändern, also darf
+    jede Spalte höchstens EINEN Provider-Call auslösen.
+    """
+
+    def test_repeated_field_visits_hit_provider_once_per_column(self, qtbot: QtBot) -> None:
+        dataset, provider = _make_dataset()
+        calls: list[str] = []
+
+        def counting(field: str) -> list[Any]:
+            calls.append(field)
+            return provider(field)
+
+        dialog = SamplingDialog(dataset, counting, features=SamplingFeatures(show_filter=True))
+        qtbot.addWidget(dialog)
+
+        for field in ("Land", "Konto", "Land", "Konto", "Land"):
+            dialog._filter_field.setCurrentText(field)
+        assert calls == ["Land", "Konto"]  # vorher: 5 Full-Table-Scans, einer pro Wechsel
+
+    def test_cached_values_fill_combo_identically(self, qtbot: QtBot) -> None:
+        dataset, provider = _make_dataset()
+        dialog = SamplingDialog(dataset, provider, features=SamplingFeatures(show_filter=True))
+        qtbot.addWidget(dialog)
+
+        dialog._filter_field.setCurrentText("Land")
+        first = [dialog._filter_value.itemData(i) for i in range(dialog._filter_value.count())]
+        dialog._filter_field.setCurrentText("Konto")
+        dialog._filter_field.setCurrentText("Land")
+        second = [dialog._filter_value.itemData(i) for i in range(dialog._filter_value.count())]
+        assert first == second == ["AUT", "CHE", "DEU"]

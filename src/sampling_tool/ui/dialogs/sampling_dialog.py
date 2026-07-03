@@ -107,6 +107,12 @@ class SamplingDialog(QDialog):
         # injiziert einen distinct-Werte-Provider (SQL-basiert). None, wenn das
         # Filter-Feld nicht freigeschaltet ist.
         self._distinct_values_provider = distinct_values_provider
+        # Sprint 34 / WP5: der Provider ist ein Full-Table-Scan pro Aufruf und
+        # `currentTextChanged` feuert auch bei Pfeiltasten-Navigation pro
+        # Tastendruck. Der Dialog ist modal – das Dataset ist während seiner
+        # Lebensdauer unveränderlich, also wird jede Spalte genau einmal
+        # geladen (Memo pro Dialog-Instanz, keine Invalidierung nötig).
+        self._distinct_cache: dict[str, tuple[Any, ...]] = {}
         self._current_sample = current_sample
         self._result: SamplingDialogResult | None = None
         self._columns = list(dataset.columns)
@@ -461,7 +467,11 @@ class SamplingDialog(QDialog):
             self._filter_value.setEnabled(False)
         else:
             self._filter_value.setEnabled(True)
-            for value in self._distinct_values_provider(field):
+            values = self._distinct_cache.get(field)
+            if values is None:
+                values = tuple(self._distinct_values_provider(field))
+                self._distinct_cache[field] = values
+            for value in values:
                 self._filter_value.addItem(_display(value), userData=value)
         self._filter_value.blockSignals(False)
         self._validate()
