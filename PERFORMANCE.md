@@ -52,9 +52,16 @@ String-Bau. Treffer-Semantik bit-identisch zum alten Inline-Aufbau
 TestAuditTrailFilterHaystackCache`). Kein neuer 1M-Probe-Lauf – `perf_probe.py`
 misst die AuditTrail-Filter-Phase nicht (siehe „nie gemessen (P-010)" unten).
 
-Follow-up-Kandidaten (Sprint 24; Stand nach Sprint 25):
-- **Offen:** Debounce/Delay für die Volltextsuche (z. B. 150 ms QTimer) würde
-  die verbleibende Keystroke-Latenz bei sehr großen Event-Listen kaschieren.
+Follow-up-Kandidaten (Sprint 24; Stand nach Sprint 34):
+- ~~Debounce/Delay für die Volltextsuche~~ → **Sprint 34 / WP1: umgesetzt** –
+  150-ms-QTimer im Widget (`AuditTrailView.AUDIT_SEARCH_DEBOUNCE_MS`, singleShot,
+  Restart pro `textChanged`); `AuditTrailFilterProxy.set_search_text` bleibt
+  synchron und API-unverändert, Treffer-Semantik identisch (Sprint-25-Invariante).
+  Zähler-Beleg statt Timing-Benchmark (deterministisch): Spy auf
+  `set_search_text` in `tests/ui/test_audit_trail_view.py::TestAuditSearchDebounce::
+  test_typing_coalesces_filter_runs` – 10 schnelle Keystrokes („a" → „anna export")
+  ⇒ **genau 1** Filterlauf mit dem finalen Text (vorher: 10 Läufe à ~120 ms bei
+  20k Events = ~1,2 s verdeckte Arbeit pro getipptem Suchwort).
 - ~~Needle-Lowercase-Cache~~ → **Sprint 25: umgesetzt** – `set_search_text`
   lowercased die Nadel einmal pro Filter-Änderung, nicht mehr pro Row.
 - ~~Escape-Bug der Volltextsuche~~ → **Sprint 25: gefixt** (siehe Block unten).
@@ -139,6 +146,81 @@ TestImportResultUnchanged` (Oracle gegen die eingefrorene Pre-Sprint-26-
 Referenz). Der Benchmark hat einen Smoke-Guard
 (`tests/integration/test_bench_import_runs.py`).
 
+**Sprint 34 – Startup-Import-Budget (M1):**
+
+Gemessen via `python -X importtime -c "import sampling_tool.ui.main_window,
+sampling_tool.ui.controllers.main_controller"` (3 Läufe, Darwin arm64,
+Python 3.13.13, 2026-07-02). Wall-Clock-Median (warm): **0,303 s**; Cold-Lauf
+(kumulativ `sampling_tool`): 0,746 s. Kumulative Anteile je Lib:
+
+| Lib | cold (ms) | warm (ms, Median) | in Startup-Kette? | WP2-Gate ≥ 300 ms? |
+|-----|----------:|------------------:|-------------------|--------------------|
+| matplotlib | 96,5 | 78,1 | ja (main_window → dashboard_view → chart_renderer → io.charts) | nein |
+| openpyxl | 118,5 | 39,4 | ja (io-Exporter) | nein |
+| numpy | 82,5 | 24,1 | ja (core/rng) | nein |
+| reportlab | 38,4 | 23,0 | ja (io.pdf_report via tasks.py) | nein |
+| PyQt6 | 60,8 | 13,5 | ja | nein |
+| jinja2 | 17,6 | 7,6 | ja (io.html_report, erst via Controller) | nein |
+| pandas | – | – | nicht installiert | – |
+
+**Entscheidung (WP2): bewusst nicht gefixt.** Der statische Verdacht stimmt
+(schwere Libs laden transitiv beim App-Start – schon `main_window` zieht
+matplotlib/reportlab/openpyxl), aber der Hebel ist zu klein: keine Lib erreicht
+das 300-ms-Gate, der gesamte Startup-Import liegt bei ~0,3 s (warm) bzw.
+~0,75 s (cold). Lazy-Imports + PyInstaller-`hiddenimports`-Pflege würden
+Komplexität ohne spürbaren Gewinn einkaufen.
+
+**Sprint 34 – Snapshot beim Projekt-Öffnen/Überschreiben (M3):**
+
+`EngagementVersionManager.create_snapshot` (reines `shutil.copy2`) isoliert
+gemessen mit synthetischen DB-Dateien (Zufallsbytes, Median aus 3, lokale SSD):
+
+| DB-Größe | Median | Läufe |
+|---------:|-------:|-------|
+| 50 MB | 0,009 s | 0,009 / 0,009 / 0,009 |
+| 200 MB | 0,035 s | 0,035 / 0,035 / 0,079 |
+| 500 MB | 0,259 s | 0,108 / 0,282 / 0,259 |
+
+**Entscheidung (WP3): bleibt synchron.** Gate war > 2 s bei realistischer
+Größe (≤ 200 MB); gemessen sind 0,035 s – selbst 500 MB bleiben unter 0,3 s.
+Ein Worker-Umbau (SnapshotTask + Progress-Dialog + Reihenfolge-Garantien in
+beiden Pfaden Öffnen/Überschreiben) stünde in keinem Verhältnis. Vorbehalt:
+Auf Windows-Netz-Shares kann das langsamer sein – falls das real auftritt,
+ist `ui/workers/tasks.py` (Worker-Muster, Sprint 17) der vorbereitete Ansatz.
+
+**Sprint 34 – WP5-Mikro-Pass (3 Items, je Zähler-Beleg, keine Verhaltensänderung):**
+
+1. **`refresh_views` lud die Audit-Events doppelt** – `refresh_audit_trail` +
+   `refresh_dashboard` machten je einen identischen
+   `AuditRepo.list_for_engagement`-Fetch (2× bis zu 10.000 Events dekodiert)
+   pro mutierender User-Aktion (8 Call-Sites: Import, Sampling, Reset,
+   Sampling-Reset, Undo, Redo, Export, Open/Close). Jetzt versorgt EIN
+   `collect_report_data`-Aufruf beide Views. Beleg:
+   `TestRefreshViewsSingleEventLoad` – 2 → 1 Event-Fetch (**−50 %**),
+   identische Events an beiden Views (Oracle).
+2. **Sampling-Dialog: Full-Table-Scan pro Filter-Feld-Wechsel** – der
+   P-005-Provider (`distinct_values`, SQL-`json_extract` über alle Rows) lief
+   bei jedem `currentTextChanged` erneut, auch beim Zurückwechseln auf eine
+   schon geladene Spalte (Pfeiltasten im Combo = ein Scan pro Tastendruck;
+   bei 1M Zeilen hunderte ms). Jetzt Memo pro modaler Dialog-Instanz (Dataset
+   währenddessen unveränderlich). Beleg: `TestFilterDistinctValuesCache` –
+   5 Wechsel über 2 Spalten: 5 → 2 Provider-Calls (Wiederholbesuch:
+   **Full-Scan → Dict-Lookup, −100 % Queries**), Combo-Inhalt bit-identisch.
+3. **Export-Dialog „Alle auswählen/abwählen" war O(N²)** – `itemChanged`
+   feuerte pro Spalten-Item → `_update_state` lief N-mal mit je O(N)-Scan +
+   Preview-Rebuild (300 Spalten ≈ 90.000 checkState-Reads pro Klick). Jetzt
+   Guard-Flag + genau ein Update am Ende, Endzustand identisch. Beleg:
+   `TestBulkCheckSingleUpdate` – 40 Spalten: 40 → 1 Update-Lauf (**−97,5 %**).
+
+Geprüft und bewusst NICHT umgesetzt (Kandidaten aus dem Fan-out-Scan):
+`AuditRepo.get_by_id` für den AuditTrail-Doppelklick (dokumentierter
+Semantik-Randfall bei Events außerhalb der 10k-Anzeige → verletzt „keine
+Verhaltensänderung"), Timestamp-Float-/DisplayRole-Caches in der
+AuditTrail-View und `data()`-Konstanten-Hoisting in der Datentabelle
+(schwächeres Aufwand/Hebel-Verhältnis, WP5-Limit von 3 Items erreicht) –
+Follow-up-Kandidaten für einen späteren Pass. QSettings-Reads in heißen
+Pfaden: Scan fand **keine** (data()/paint sind sauber).
+
 **Hinweis zur Mess-Tabelle unten:** Der 1M-Lauf stammt vom Sprint-11-Stand
 (Toolversion `19f18a1`) und liegt damit VOR den Sprint-12.1-Fixes für P-001
 (`setResizeContentsPrecision(100)` → Tabelle-Anzeige) und P-002
@@ -148,7 +230,48 @@ beschreiben den Zustand VOR diesen Fixes (inzwischen behoben); Regression-Guards
 `tests/ui/test_data_table.py` (Precision + Bulk-Load-Zähler) und
 `tests/unit/test_sampling.py::TestSimpleSamplerIdsPath` (Bit-Repro alt vs. neu).
 
-## Messung 1,000,000 Zeilen
+## Messung 1M – Sprint 34 (2026-07-02, Toolversion `6c4691e`)
+
+Re-Baseline via `scripts/perf_probe.py --sizes 1000000` (Darwin arm64,
+Python 3.13.13). Die Sprint-11-Tabelle unten war als Referenz wertlos
+geworden (VOR den P-001/P-002-Fixes gemessen) – dies ist der neue
+Vergleichsstand. Vergleichsspalte = historischer Sprint-11-Lauf (`19f18a1`).
+
+| Phase | Sprint 34 | Peak (tracemalloc) | Sprint 11 (hist.) | Δ |
+|-------|----------:|-------------------:|------------------:|---|
+| Setup (xlsx generieren) | 7.66 min | 141.2 MB | 7.71 min | = |
+| Import | 7.62 s | 5 KB | 7.60 s | = |
+| DB-Speicherung | 53.71 s | 41 KB | 53.41 s | = (Pipeline-Total 61.3 s < 90 s ✓) |
+| Tabelle-Anzeige | **0.27 s** | 371 KB | 34.58 s | **−99 % – P-001-Fix bestätigt** |
+| Sampling Simple | **4.50 s** | **46.2 MB** | 15.90 s / 1074.6 MB | **−72 % Zeit, −96 % RAM – P-002-Fix bestätigt** |
+| Sampling Cluster | 12.89 s | 1078.9 MB | 12.46 s | = (RAM-Materialisierung bekannt, P-003 deferred) |
+| Sampling Stratified | 16.43 s | 1077.7 MB | 15.82 s | +4 % (einzige Target-Verfehlung, s. u.) |
+| Filter-Toggle (an/aus) | 0.3 / 0.1 ms | 4 KB | 0.3 / 0.1 ms | = |
+| Highlight / Clear | 4.1 / 0.1 ms | 40 KB | 2.6 / 0.1 ms | = (ms-Rauschen) |
+| Excel-Export (Sample) | 0.28 s | 2.0 MB | 0.28 s | = |
+| Excel-Report (Multi-Sheet) | 0.15 s | 1.4 MB | 0.13 s | = |
+| HTML-Report | 0.25 s | 2.0 MB | 0.25 s | = |
+| AuditTrail-PDF (5k Events) | 4.45 s (0.7 MB PDF) | 16.4 MB | 3.85 s (0.5 MB PDF) | +16 % (Querformat; P-004-Verdikt s. u.) |
+
+Einzige Soft-Target-Verfehlung: **Sampling Stratified 16.43 s** vs. Target
+15 s (+9,5 %). Ursache bekannt (P-003: `_collect_pool`-/Strata-Materialisierung
+in `core/sampling.py`) und per Hard Constraint bewusst deferred – kein
+Sprint-34-Gegenstand, kein neues Finding.
+
+**P-004-Verdikt (AuditTrail-PDF 0,40 s → 3,85 s → 4,45 s):** Das Rätsel aus
+Pass 3 v2 ist geklärt: Die Zahl ist **reproduzierbar und KEIN Maschinen-Drift**.
+Isolierter Kontrolllauf (frischer Prozess, `--sizes 100 --quick
+--audit-events 5000`, also ohne 1-GB-Sampling-Kontext davor): **4,44 s** –
+identisch zu den 4,45 s im vollen 1M-Lauf. Damit sind die Drift-/GC-Hypothesen
+aus dem Review widerlegt; ~4,4 s ist der echte Renderaufwand für 5k
+synthetische Events auf dem aktuellen Stand. Der Anstieg 3,85 → 4,45 s (+16 %)
+gegenüber Sprint 11 geht plausibel aufs Sprint-33-Querformat (breitere
+„Datei"-Spalte → mehr Paragraph-Zellen, PDF 0,5 → 0,7 MB). Die historische
+Sprint-10.4-Marke von 0,40 s ist als Vergleichspunkt nicht belastbar
+(anderes Layout/Setup). Mit 4,45 s bei 5k Events liegt die Phase weit unter
+dem Soft-Target (< 30 s) – **kein Handlungsbedarf**.
+
+## Messung 1,000,000 Zeilen – historisch (Sprint 11, `19f18a1`, VOR P-001/P-002-Fixes)
 
 | Phase | Zeit | Peak (tracemalloc) | RSS-Delta | Anmerkung |
 |-------|-----:|-------------------:|----------:|-----------|
@@ -168,7 +291,7 @@ beschreiben den Zustand VOR diesen Fixes (inzwischen behoben); Regression-Guards
 | HTML-Report | 0.25 s | 2.0 MB | — |  |
 | AuditTrail-PDF | 3.85 s | 16.3 MB | — | 5000 events, 0.5 MB |
 
-## Soft-Target-Verfehlungen (Sprint-10.2-Kandidaten)
+## Soft-Target-Verfehlungen – historisch (Sprint-11-Lauf)
 
 | Größe | Phase | Gemessen | Skaliertes Target | Überschreitung |
 |------:|-------|---------:|------------------:|---------------:|
