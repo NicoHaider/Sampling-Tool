@@ -61,6 +61,9 @@ class ExportSampleDialog(QDialog):
         self._dataset = dataset
         self._result: ExportSampleDialogResult | None = None
         self._output_dir: Path | None = default_output_dir
+        # Sprint 34 / WP5: unterdrückt die per-Item-itemChanged-Updates
+        # während „Alle auswählen/abwählen" (sonst O(N²) pro Klick).
+        self._bulk_updating = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 20, 20, 20)
@@ -158,10 +161,21 @@ class ExportSampleDialog(QDialog):
 
     def _set_all_checked(self, checked: bool) -> None:
         state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-        for i in range(self._column_list.count()):
-            item = self._column_list.item(i)
-            if item is not None:
-                item.setCheckState(state)
+        # Sprint 34 / WP5: jedes setCheckState emittiert itemChanged →
+        # _update_state (O(N)-Scan + Preview-Rebuild). Während des Bulk-Setzens
+        # unterdrücken und danach genau EINMAL aktualisieren – Endzustand
+        # (Auswahl, OK-Button, Vorschau) identisch. Bewusst Guard-Flag statt
+        # blockSignals, damit die Item-Repaints der Views nicht unterdrückt
+        # werden.
+        self._bulk_updating = True
+        try:
+            for i in range(self._column_list.count()):
+                item = self._column_list.item(i)
+                if item is not None:
+                    item.setCheckState(state)
+        finally:
+            self._bulk_updating = False
+        self._update_state()
 
     def _selected_columns(self) -> list[str]:
         result: list[str] = []
@@ -185,6 +199,8 @@ class ExportSampleDialog(QDialog):
         return _FILENAME_PREVIEW.format(name=name, id=sid, date=datetime.now().strftime("%Y%m%d"))
 
     def _update_state(self) -> None:
+        if self._bulk_updating:
+            return
         self._preview_label.setText(self._build_preview())
         ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
         valid = (
