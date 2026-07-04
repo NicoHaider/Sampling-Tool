@@ -208,9 +208,22 @@ class WorkspaceSession:
         self.window.set_dashboard_data(self.engagement, datasets, samples, events)
 
     def refresh_views(self) -> None:
-        """Aktualisiert AuditTrail + Dashboard + Report-Buttons in einem Rutsch."""
-        self.refresh_audit_trail()
-        self.refresh_dashboard()
+        """Aktualisiert AuditTrail + Dashboard + Report-Buttons in einem Rutsch.
+
+        Sprint 34 / WP5: lädt die Report-Daten (inkl. der bis zu
+        ``AUDIT_EVENT_DISPLAY_LIMIT`` Audit-Events) genau EINMAL und verteilt
+        sie an beide Views. Vorher liefen ``refresh_audit_trail`` +
+        ``refresh_dashboard`` je einen identischen Event-Fetch – 2× 10k-Row-
+        Decode pro mutierender User-Aktion (9 Controller-Call-Sites: Import,
+        Sampling, Reset, Sampling-Reset, Undo, Redo, Export, Open, Close).
+        """
+        if not self.has_engagement():
+            self.window.set_audit_events([])
+            self.window.set_dashboard_data(None, [], [], [])
+        else:
+            datasets, samples, events = self.collect_report_data()
+            self.window.set_audit_events(events)
+            self.window.set_dashboard_data(self.engagement, datasets, samples, events)
         self.window.set_reports_enabled(self.engagement is not None and self.db is not None)
 
     def update_undo_redo_state(self) -> None:

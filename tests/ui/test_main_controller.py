@@ -3002,3 +3002,71 @@ class TestSeedRelocationReproducibility:
                 assert controller.session.sample.config.seed == 2002
         finally:
             controller.handle_close_engagement()
+
+
+class TestRefreshViewsSingleEventLoad:
+    """Sprint 34 / WP5: `refresh_views` lädt die Audit-Events genau EINMAL.
+
+    Vorher liefen `refresh_audit_trail` und `refresh_dashboard` je einen
+    identischen `AuditRepo.list_for_engagement`-Fetch (bis zu 10.000 Events,
+    2× pro mutierender User-Aktion – Import, Sampling, Reset, Undo/Redo,
+    Export, Open/Close).
+    """
+
+    def test_refresh_views_loads_events_once(
+        self,
+        controller: MainController,
+        populated_db: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from sampling_tool.core.models import AuditEvent
+        from sampling_tool.persistence.repositories import AuditRepo
+
+        controller.handle_open_engagement(populated_db)
+
+        calls: list[int] = []
+        original = AuditRepo.list_for_engagement
+
+        def counting(self: AuditRepo, engagement_id: int, limit: int = 100) -> list[AuditEvent]:
+            calls.append(engagement_id)
+            return original(self, engagement_id, limit=limit)
+
+        monkeypatch.setattr(AuditRepo, "list_for_engagement", counting)
+
+        controller.session.refresh_views()
+        assert len(calls) == 1  # vorher: 2 (AuditTrail + Dashboard je ein Fetch)
+
+    def test_refresh_views_still_feeds_both_views(
+        self,
+        controller: MainController,
+        window: MainWindow,
+        populated_db: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from sampling_tool.core.models import AuditEvent
+
+        controller.handle_open_engagement(populated_db)
+
+        seen: dict[str, list[AuditEvent]] = {}
+        original_set_events = window.set_audit_events
+        original_set_dashboard = window.set_dashboard_data
+
+        def capture_events(events: list[AuditEvent]) -> None:
+            seen["audit"] = list(events)
+            original_set_events(events)
+
+        def capture_dashboard(
+            engagement: Engagement | None,
+            datasets: list[Dataset],
+            samples: list[SampleResult],
+            events: list[AuditEvent],
+        ) -> None:
+            seen["dashboard"] = list(events)
+            original_set_dashboard(engagement, datasets, samples, events)
+
+        monkeypatch.setattr(window, "set_audit_events", capture_events)
+        monkeypatch.setattr(window, "set_dashboard_data", capture_dashboard)
+
+        controller.session.refresh_views()
+        # Beide Views werden weiterhin versorgt – mit identischen Events.
+        assert seen["audit"] == seen["dashboard"]

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, ClassVar, Final
 
 from PyQt6.QtCore import (
     QAbstractItemModel,
@@ -26,6 +26,7 @@ from PyQt6.QtCore import (
     QModelIndex,
     QSortFilterProxyModel,
     Qt,
+    QTimer,
     pyqtSignal,
 )
 from PyQt6.QtWidgets import (
@@ -293,6 +294,16 @@ class AuditTrailView(QWidget):
     event_double_clicked = pyqtSignal(int)
     refresh_requested = pyqtSignal()
 
+    # Sprint 34 / WP1: Debounce-Fenster der Volltextsuche in Millisekunden.
+    # Begründung (P-009-Lehre – kein unbegründeter Tuning-Wert): Ein einzelner
+    # Filterlauf kostet bei 20k Events ~120 ms (Sprint-25-Messung). 150 ms
+    # liegen knapp darüber, sodass beim flüssigen Tippen (Anschlagsabstand
+    # < 150 ms, also > ~6–7 Anschläge/s) alle Zwischenstände zu genau EINEM
+    # Lauf koaleszieren, bleiben aber unter der ~200-ms-Wahrnehmbarkeits-
+    # schwelle – die Suche fühlt sich weiterhin unmittelbar an.
+    # Treffer-Semantik unverändert (Proxy bleibt synchron).
+    AUDIT_SEARCH_DEBOUNCE_MS: ClassVar[int] = 150
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("AuditTrailView")
@@ -306,6 +317,13 @@ class AuditTrailView(QWidget):
 
         self._search = QLineEdit()
         self._search.setPlaceholderText("Suchen…")
+        # Sprint 34 / WP1: textChanged startet nur den Debounce-Timer; der
+        # eigentliche Filterlauf passiert genau einmal pro Tipp-Pause im
+        # Timeout-Slot. Auch das Feld-Leeren läuft über denselben Pfad.
+        self._search_debounce = QTimer(self)
+        self._search_debounce.setSingleShot(True)
+        self._search_debounce.setInterval(self.AUDIT_SEARCH_DEBOUNCE_MS)
+        self._search_debounce.timeout.connect(self._apply_search_text)
         self._search.textChanged.connect(self._on_search_changed)
         filter_row.addWidget(self._search, stretch=2)
 
@@ -394,8 +412,13 @@ class AuditTrailView(QWidget):
 
     # ---- Slots ----------------------------------------------------------
 
-    def _on_search_changed(self, text: str) -> None:
-        self._proxy.set_search_text(text)
+    def _on_search_changed(self, _text: str) -> None:
+        """Restartet den Debounce-Timer – gefiltert wird erst beim Timeout."""
+        self._search_debounce.start()
+
+    def _apply_search_text(self) -> None:
+        """Timeout-Slot: wendet den aktuellen Feldtext genau einmal an."""
+        self._proxy.set_search_text(self._search.text())
 
     def _on_action_changed(self, _index: int) -> None:
         key = self._action_combo.currentData()

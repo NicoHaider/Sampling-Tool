@@ -89,3 +89,42 @@ class TestExportSampleDialog:
         assert result.custom_name == "My"
         assert result.custom_id == "7"
         assert result.output_dir == tmp_path
+
+
+class TestBulkCheckSingleUpdate:
+    """Sprint 34 / WP5: „Alle auswählen/abwählen" aktualisiert genau einmal.
+
+    Vorher feuerte `itemChanged` pro Spalten-Item → `_update_state` lief
+    N-mal mit je einem O(N)-CheckState-Scan + Preview-Rebuild (O(N²) pro
+    Klick; Audit-Rohdaten haben oft 50–300 Spalten). Der Endzustand
+    (Auswahl, OK-Button, Vorschau) bleibt identisch.
+    """
+
+    def test_set_all_checked_runs_update_state_once(
+        self, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        columns = tuple(f"Spalte_{i}" for i in range(1, 41))
+        dataset = Dataset(name="Breit", columns=columns, row_count=1)
+        dialog = ExportSampleDialog(dataset, default_id="1", default_output_dir=tmp_path)
+        qtbot.addWidget(dialog)
+
+        calls: list[str] = []
+        original = dialog._build_preview
+
+        def counting() -> str:
+            calls.append("x")
+            return original()
+
+        # `_update_state` selbst hängt als Bound-Method am Signal – gezählt
+        # wird deshalb der Preview-Rebuild, den jeder echte Lauf ausführt.
+        monkeypatch.setattr(dialog, "_build_preview", counting)
+
+        dialog._set_all_checked(False)
+        assert len(calls) == 1  # vorher: 40 (einmal pro itemChanged)
+        assert dialog._selected_columns() == []
+        assert _ok_enabled(dialog) is False
+
+        calls.clear()
+        dialog._set_all_checked(True)
+        assert len(calls) == 1
+        assert len(dialog._selected_columns()) == 40
