@@ -114,6 +114,7 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
 | 32     | UI-Umbau: Vorlagen als Dropdown statt Chips im Stichproben-Dialog (Chip-Leiste + „+" raus, `QComboBox` mit Platzhalter „(Vorlage wählen…)" rein; Auswahl ruft `apply_preset`, manuelle Größen-/Methoden-/Filter-Änderung setzt zurück auf den Platzhalter, `_applying_preset`-Guard portiert) + „Neue Vorlage…"-Button im `TemplateManagerDialog` (einziger Anlege-Weg, Default-Preset SIMPLE/`DEFAULT_SAMPLE_SIZE` ohne Filter/Cluster/Schicht); `apply_preset`/`current_settings_as_preset`/`PresetStore`/`SamplingPreset` unverändert → Reproduzierbarkeit/Byte-Identität unberührt | done |
 | 33     | AuditTrail-PDF: A4-Querformat (`landscape(A4)`) + neu verteilte Spaltenbreiten (Summe 257mm, großzügige „Datei"-Spalte, kein Überlauf) + zwei UNABHÄNGIGE Export-Dropdowns „BDO-Gesellschaft" + „Standort" (`io/bdo_locations.py`, frei kombinierbar, filtern sich nicht), die den Platzhalter-Adressblock ersetzen (Gesellschaft fett oben + Standort-Adresse rechts; Platzhalter-Briefpapier wird dabei unterdrückt, echtes Briefpapier behält eigenen Kopf); beide Keys app-weit via QSettings (`bdo_company_key`/`bdo_location_key`) gemerkt + in den Einstellungen als Default setzbar; kein Schema-Change, RNG/Excel/HTML unberührt | done |
 | 34     | Performance-Pass (profiling-first): Such-Debounce im AuditTrail-Widget (150-ms-QTimer, Proxy bleibt synchron, Treffer-Semantik unverändert), Startup-Import-Budget gemessen (0,3 s – WP2-Lazy-Imports bewusst verworfen, Gate <300 ms/Lib), Snapshot-Messung (200 MB = 0,035 s – bleibt synchron), 1M-Re-Baseline (P-001/P-002-Fixes bestätigt: Tabelle 0,27 s, Simple 4,5 s/46 MB; P-004 geklärt: PDF 4,4 s reproduzierbar, kein Drift, < Target) + WP5-Mikro-Pass (refresh_views-Event-Doppel-Load, distinct-Memo im Sampling-Dialog, Export-Dialog-Bulk-Guard – je Zähler-Beleg); alles in PERFORMANCE.md | done |
+| 35     | Advanced-Sampling-Streaming (P-003) + Import-Pipeline (profiling-first): Cluster/Stratified ohne Filter laufen über `sample_pairs(iter_row_field_pairs)` – (row_id, feldwert)-Stream via `json_extract` + `_distinct_decode` statt vollem DatasetRow-Pool; bit-identische Ziehung (58 Unit-Oracles + E2E-Controller-Oracle + 1M-Benchmark-Assert), 1M: Cluster 4,62→1,35 s / Stratified 5,31→2,11 s, RAM 1,12 GB→~155 MB (−86 %); `sample`/`_select`/`_collect_pool` wörtlich unverändert, Filter/Resampling weiter klassisch. Import-Pipeline: Baseline + cProfile → Coercion-Hebel gemessen (Digit-Guard −4 %) und nach 20-%-Gate bewusst revertiert; bleibend: `TestCoerceStringEquivalenceOracle` (Semantik-Pin mit Fuzz), Doppel-Pass-Hypothese widerlegt, tracemalloc-Einordnung der probe-Zahlen | done |
 
 ## AuditTrail-PDF: Querformat + BDO-Gesellschaft/Standort-Adressblock (Sprint 33)
 
@@ -656,6 +657,12 @@ voll-materialisierten Listen.
 - `iter_rows(dataset_id)` – Streaming-Generator (sortiert).
 - `iter_row_ids(dataset_id)` – Light-Streaming nur über `row_index`,
   ohne JSON-Parsing.
+- `iter_row_field_pairs(dataset_id, column)` – Streaming über
+  `(row_index, decodierter Spaltenwert)` via SQL `json_extract` +
+  `_distinct_decode` (Sprint 35 / P-003), bit-identisch zu
+  `DatasetRow.get(column)` (Decode-Oracle). Speist die
+  `sample_pairs`-Pfade von Cluster-/StratifiedSampler – RAM ~ ein
+  2-Tupel pro Row statt des 15-Spalten-Dicts (1M: 1,12 GB → 155 MB).
 - `get_rows_by_ids(dataset_id, row_ids)` – Bulk-Lookup, behält
   Eingabe-Reihenfolge, ignoriert stale IDs, chunkt bei >900 Parametern
   (SQLite-Bind-Limit 999).
@@ -718,6 +725,10 @@ ui ──▶ controllers ──▶ core ◀── io
     Default). Production-Caller setzen `population_size=dataset.row_count`
     explizit, damit auch bei Sub-Sampling die Original-Population
     dokumentiert bleibt. Details siehe Streaming-Architektur-Block.
+    Ungefilterte Spezialpfade ohne Row-Materialisierung (bit-identisch,
+    Oracle-gepinnt): `SimpleSampler.sample_ids` (Sprint 12.1 / P-002)
+    sowie `ClusterSampler.sample_pairs`/`StratifiedSampler.sample_pairs`
+    über `(row_id, feldwert)`-Streams (Sprint 35 / P-003).
 - **`io/`** – Excel-/CSV-Import, Excel-Export, PDF-Report.
   - `importer.py` – `ExcelImporter` nutzt seit Sprint 10.2 die Rust-
     basierte `python-calamine`-Library für Excel-Reads (10–30× schneller
@@ -908,7 +919,12 @@ ui ──▶ controllers ──▶ core ◀── io
     row_count`. **Sprint 12.1 / P-002**: für `SimpleSampler` ohne
     Filter + ohne Sub-Sampling Spezialpfad via `sampler.sample_ids(
     repo.iter_row_ids(...))` – kein DatasetRow-Materialize, RAM-Peak
-    1 GB → <50 MB bei 1M-Datasets.
+    1 GB → <50 MB bei 1M-Datasets. **Sprint 35 / P-003**: analoge
+    Spezialpfade für Cluster/Stratified ohne Filter + ohne Sub-Sampling
+    via `sampler.sample_pairs(repo.iter_row_field_pairs(...))` –
+    bit-identische Ziehung (Oracles in `test_sampling.py` + E2E-Test),
+    RAM-Peak 1,12 GB → ~155 MB, Zeit −60/−71 % bei 1M. Gefilterte und
+    Resample-Ziehungen laufen weiter über `sample(iter_rows)`.
   - `controllers/selection_controller.py` – Dataset-/Sample-/Filter-
     Auswahl: `handle_dataset_selected` (delegiert an `session.select_
     dataset`), `handle_sample_selected`, `handle_sample_filter_toggled`
