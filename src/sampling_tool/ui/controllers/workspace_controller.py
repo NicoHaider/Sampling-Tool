@@ -304,14 +304,22 @@ class WorkspaceController:
                     repo.iter_row_ids(s.dataset.id),
                     population_size=s.dataset.row_count,
                 )
-            elif isinstance(sampler, ClusterSampler) and unfiltered_full_population:
-                assert result.config.cluster_field is not None  # via _validate_config
+            elif (
+                isinstance(sampler, ClusterSampler)
+                and unfiltered_full_population
+                and result.config.cluster_field is not None
+                and DatasetRepo.supports_field_pairs(result.config.cluster_field)
+            ):
                 sample_result = sampler.sample_pairs(
                     repo.iter_row_field_pairs(s.dataset.id, result.config.cluster_field),
                     population_size=s.dataset.row_count,
                 )
-            elif isinstance(sampler, StratifiedSampler) and unfiltered_full_population:
-                assert result.config.stratum_field is not None  # via _validate_config
+            elif (
+                isinstance(sampler, StratifiedSampler)
+                and unfiltered_full_population
+                and result.config.stratum_field is not None
+                and DatasetRepo.supports_field_pairs(result.config.stratum_field)
+            ):
                 sample_result = sampler.sample_pairs(
                     repo.iter_row_field_pairs(s.dataset.id, result.config.stratum_field),
                     population_size=s.dataset.row_count,

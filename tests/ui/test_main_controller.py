@@ -2705,6 +2705,43 @@ class TestSamplingPathDispatch:
         finally:
             controller.handle_close_engagement()
 
+    def test_cluster_field_with_quote_falls_back_to_classic_path(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Review-Finding Sprint 35: '"'/'\\' im Feldnamen brechen den
+        json-Pfad – die Weiche muss solche Spalten auf den klassischen
+        Pfad schicken (supports_field_pairs-Guard)."""
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        calls = _spy_create_sampler(monkeypatch)
+        # Spalte existiert im Dataset nicht → klassischer Pfad gruppiert
+        # alles unter None (1 Cluster); entscheidend ist nur der Dispatch.
+        result = SamplingDialogResult(
+            config=SampleConfig(
+                method=SamplingMethod.CLUSTER,
+                size=1,
+                seed=42,
+                cluster_field='Betrag "EUR"',
+            ),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            assert calls == ["sample"]
+        finally:
+            controller.handle_close_engagement()
+
     @pytest.mark.parametrize(
         ("method", "size"),
         [(SamplingMethod.CLUSTER, 2), (SamplingMethod.STRATIFIED, 5)],

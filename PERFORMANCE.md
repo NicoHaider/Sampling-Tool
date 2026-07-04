@@ -243,12 +243,13 @@ sortiert. Neu (P-002-Muster, alles additiv – `sample`/`_select`/
   pairs; Filter/Resampling → klassischer `sample(iter_rows)`-Pfad.
 
 **Vorher/Nachher (identische 1M-DB, 15 Spalten, Median aus 3 ohne
-tracemalloc; Peak aus separatem tracemalloc-Lauf):**
+tracemalloc; Peak aus separatem tracemalloc-Lauf; Endstand inkl. der
+Review-Fixes unten):**
 
 | Methode | vorher (rows) | nachher (pairs) | Δ Zeit | Δ RAM |
 |---------|--------------:|----------------:|-------:|------:|
-| Cluster (size=5, seed=43) | 4,62 s / 1124,8 MB | **1,35 s / 154,5 MB** | **−71 %** | **−86 %** |
-| Stratified (size=500, seed=44) | 5,31 s / 1123,6 MB | **2,11 s / 151,8 MB** | **−60 %** | **−86 %** |
+| Cluster (size=5, seed=43) | 4,74 s / 1124,8 MB | **1,52 s / 154,5 MB** | **−68 %** | **−86 %** |
+| Stratified (size=500, seed=44) | 5,35 s / 1123,6 MB | **2,30 s / 151,8 MB** | **−57 %** | **−86 %** |
 
 **Reproduzierbarkeit (rote Linie):** `selected_row_ids` beider Pfade sind
 auf der vollen 1M-DB **identisch** (Benchmark-Assert) und per Oracle-Tests
@@ -257,6 +258,29 @@ gepinnt: `TestClusterSamplerPairsPath`/`TestStratifiedSamplerPairsPath`
 Hash-Kollision, None-Keys, unsortierter Input, identische Fehlermeldungen)
 + E2E-Repro-Oracle über den echten Controller
 (`TestSamplingPathDispatch::test_pairs_path_result_matches_classic_reference`).
+
+**Zwei Review-Findings (adversariales Code-Review) wurden vor dem Merge
+gefixt – beide waren real erreichbare Bit-Repro-Gegenbeispiele:**
+
+1. **u64-Integer:** SQLites `json_extract` approximiert JSON-Integer
+   > 2^63 als REAL (`json_type` meldet weiter `'integer'`) – zwei
+   distinkte 19-stellige IDs wären im Pairs-Pfad zu einem Cluster
+   kollabiert. Fix: `exact_json`-Fallback-Spalte (CASE WHEN
+   `typeof='real'` bei `json_type='integer'` → exakter Voll-Decode nur
+   für diese Rows). Kostet ~0,2 s auf 1M (in der Tabelle enthalten).
+   Oracle: `test_u64_integers_decode_exactly` (2^63±1, 2^64−1, 1e20).
+2. **Spaltennamen mit `"`/`\`:** brechen das JSON-Path-Label →
+   `json_extract` liefert NULL für jede Row (alles wäre still in einer
+   None-Gruppe gelandet). Fix: `DatasetRepo.supports_field_pairs`-Guard –
+   Controller + perf_probe schicken solche Spalten auf den klassischen
+   Pfad; `iter_row_field_pairs` selbst wirft laut statt still falsch.
+   Tests: `test_unsupported_column_name_raises` +
+   `test_cluster_field_with_quote_falls_back_to_classic_path`.
+
+Follow-up-Notiz: `distinct_values` (P-005) hat dieselbe u64-Schwäche seit
+Sprint 19 – dort nur Dropdown-Anzeige, ein falsch decodierter Filter-Wert
+führt zu `SamplingError` statt stiller Falschziehung (deshalb kein
+Blocker); beim nächsten Persistence-Pass mitziehen.
 
 **Mess-Methodik-Hinweis:** Die perf_probe-Phasenzeiten laufen unter
 aktivem `tracemalloc` und sind dadurch ~2,5–3× überhöht (Cluster 12,9 s

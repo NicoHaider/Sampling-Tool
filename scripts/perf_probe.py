@@ -442,14 +442,22 @@ def run_probe_for_size(
                     sampling_repo.iter_row_ids(dataset.id),
                     population_size=dataset.row_count,
                 )
-            elif isinstance(sampler, ClusterSampler) and cfg.filter_field is None:
-                assert cfg.cluster_field is not None
+            elif (
+                isinstance(sampler, ClusterSampler)
+                and cfg.filter_field is None
+                and cfg.cluster_field is not None
+                and DatasetRepo.supports_field_pairs(cfg.cluster_field)
+            ):
                 sampled = sampler.sample_pairs(
                     sampling_repo.iter_row_field_pairs(dataset.id, cfg.cluster_field),
                     population_size=dataset.row_count,
                 )
-            elif isinstance(sampler, StratifiedSampler) and cfg.filter_field is None:
-                assert cfg.stratum_field is not None
+            elif (
+                isinstance(sampler, StratifiedSampler)
+                and cfg.filter_field is None
+                and cfg.stratum_field is not None
+                and DatasetRepo.supports_field_pairs(cfg.stratum_field)
+            ):
                 sampled = sampler.sample_pairs(
                     sampling_repo.iter_row_field_pairs(dataset.id, cfg.stratum_field),
                     population_size=dataset.row_count,

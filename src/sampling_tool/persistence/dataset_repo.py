@@ -202,6 +202,18 @@ class DatasetRepo:
         for r in cur:
             yield int(r["row_index"])
 
+    @staticmethod
+    def supports_field_pairs(column: str) -> bool:
+        """Ob ``iter_row_field_pairs`` diesen Spaltennamen sicher abbilden kann.
+
+        Sprint 35 (Review-Finding): ``"`` und ``\\`` im Spaltennamen brechen
+        das quoted JSON-Path-Label – ``json_extract`` liefert dann für JEDE
+        Row NULL, was Cluster/Strata still in eine None-Gruppe kippen würde.
+        Die Controller-Weiche (und perf_probe) prüfen hier und weichen für
+        solche Spalten auf den klassischen ``sample(iter_rows)``-Pfad aus.
+        """
+        return '"' not in column and "\\" not in column
+
     def iter_row_field_pairs(self, dataset_id: int, column: str) -> Iterator[tuple[int, Any]]:
         """Streaming über ``(row_index, decodierter Spaltenwert)``, sortiert.
 
@@ -209,20 +221,39 @@ class DatasetRepo:
         die row_id + den Wert EINES Feldes. ``json_extract`` zieht das Feld
         in C aus ``values_json``; decodiert wird mit exakt der
         ``_distinct_decode``-Mechanik aus P-005 – bit-identisch zu
-        ``DatasetRow.get(column)`` (Oracle-Test in
+        ``DatasetRow.get(column)`` (Oracle-Tests in
         ``tests/integration/test_iter_row_field_pairs.py``). Fehlender Key
         und JSON-``null`` liefern beide ``None`` (wie ``DatasetRow.get``).
-        RAM ~ ein 2-Tupel pro Row statt des vollen Spalten-Dicts; gleiche
-        ``"``-im-Spaltennamen-Limitierung wie ``distinct_values``.
+        RAM ~ ein 2-Tupel pro Row statt des vollen Spalten-Dicts.
+
+        u64-Grenzfall (Review-Finding Sprint 35): ``json_extract``
+        approximiert JSON-Integer > 2^63 als REAL, während ``json_type``
+        weiterhin ``'integer'`` meldet – solche Rows werden über den vollen
+        JSON-Decode exakt nachgeladen (``exact_json``-Spalte, NULL für alle
+        normalen Rows). Spaltennamen mit ``"``/``\\`` werden nicht
+        unterstützt (``supports_field_pairs``) – laut Fehler statt still
+        falsch.
         """
-        json_path = '$."' + column.replace('"', '""') + '"'
+        if not self.supports_field_pairs(column):
+            raise ValueError(
+                "iter_row_field_pairs unterstützt keine Spaltennamen mit '\"' oder "
+                f"'\\' (Spalte: {column!r}) – Caller weichen via supports_field_pairs "
+                f"auf iter_rows aus."
+            )
+        json_path = '$."' + column + '"'
         cur = self.conn.execute(
             "SELECT row_index, json_extract(values_json, ?) AS raw, "
-            "       json_type(values_json, ?) AS jtype "
+            "       json_type(values_json, ?) AS jtype, "
+            "       CASE WHEN json_type(values_json, ?) = 'integer' "
+            "                 AND typeof(json_extract(values_json, ?)) = 'real' "
+            "            THEN values_json END AS exact_json "
             "FROM dataset_rows WHERE dataset_id = ? ORDER BY row_index",
-            (json_path, json_path, dataset_id),
+            (json_path, json_path, json_path, json_path, dataset_id),
         )
         for r in cur:
+            if r["exact_json"] is not None:
+                yield int(r["row_index"]), _values_from_json(r["exact_json"]).get(column)
+                continue
             jtype = r["jtype"]
             value = None if jtype is None or jtype == "null" else _distinct_decode(r["raw"], jtype)
             yield int(r["row_index"]), value

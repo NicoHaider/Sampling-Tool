@@ -655,8 +655,7 @@ def _pairs_mixed_rows() -> tuple[DatasetRow, ...]:
     """
     keys = [None, 5, "5", 5.0, True, "x", None, 5, "x", "5", 5.0, True]
     return tuple(
-        DatasetRow(row_id=i + 1, values={"ks": key, "other": f"o{i}"})
-        for i, key in enumerate(keys)
+        DatasetRow(row_id=i + 1, values={"ks": key, "other": f"o{i}"}) for i, key in enumerate(keys)
     )
 
 
@@ -691,9 +690,7 @@ class TestClusterSamplerPairsPath:
     @pytest.mark.parametrize("seed", [0, 7, 999])
     def test_mixed_type_keys_and_none_match_classic(self, seed: int) -> None:
         rows = _pairs_mixed_rows()
-        cfg = SampleConfig(
-            method=SamplingMethod.CLUSTER, size=3, seed=seed, cluster_field="ks"
-        )
+        cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=3, seed=seed, cluster_field="ks")
         sampler = ClusterSampler(cfg)
         classic = sampler.sample(iter(rows), population_size=len(rows))
         via_pairs = sampler.sample_pairs(
@@ -701,9 +698,7 @@ class TestClusterSamplerPairsPath:
         )
         assert via_pairs.selected_row_ids == classic.selected_row_ids
 
-    def test_unsorted_pairs_input_matches_classic(
-        self, rows_100: tuple[DatasetRow, ...]
-    ) -> None:
+    def test_unsorted_pairs_input_matches_classic(self, rows_100: tuple[DatasetRow, ...]) -> None:
         """Pairs dürfen unsortiert ankommen – sample_pairs sortiert nach row_id."""
         cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=2, seed=42, cluster_field="Country")
         sampler = ClusterSampler(cfg)
@@ -714,9 +709,7 @@ class TestClusterSamplerPairsPath:
         )
         assert via_pairs.selected_row_ids == classic.selected_row_ids
 
-    def test_filter_field_set_rejects_pairs_path(
-        self, rows_100: tuple[DatasetRow, ...]
-    ) -> None:
+    def test_filter_field_set_rejects_pairs_path(self, rows_100: tuple[DatasetRow, ...]) -> None:
         cfg = SampleConfig(
             method=SamplingMethod.CLUSTER,
             size=2,
@@ -730,9 +723,7 @@ class TestClusterSamplerPairsPath:
                 [(r.row_id, r.get("Country")) for r in rows_100], population_size=100
             )
 
-    def test_too_many_clusters_raises_same_message(
-        self, rows_100: tuple[DatasetRow, ...]
-    ) -> None:
+    def test_too_many_clusters_raises_same_message(self, rows_100: tuple[DatasetRow, ...]) -> None:
         cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=99, seed=42, cluster_field="Country")
         with pytest.raises(SamplingError, match="nur 3 sind im Datensatz vorhanden"):
             ClusterSampler(cfg).sample_pairs(
@@ -793,9 +784,7 @@ class TestStratifiedSamplerPairsPath:
         )
         assert via_pairs.selected_row_ids == classic.selected_row_ids
 
-    def test_size_smaller_than_strata_count_raises(
-        self, rows_100: tuple[DatasetRow, ...]
-    ) -> None:
+    def test_size_smaller_than_strata_count_raises(self, rows_100: tuple[DatasetRow, ...]) -> None:
         cfg = SampleConfig(
             method=SamplingMethod.STRATIFIED, size=2, seed=42, stratum_field="Country"
         )
@@ -816,13 +805,9 @@ class TestStratifiedSamplerPairsPath:
         )
         sampler = StratifiedSampler(cfg)
         with pytest.raises(SamplingError, match="hat nur"):
-            sampler.sample_pairs(
-                [(r.row_id, r.get("ks")) for r in rows], population_size=len(rows)
-            )
+            sampler.sample_pairs([(r.row_id, r.get("ks")) for r in rows], population_size=len(rows))
 
-    def test_filter_field_set_rejects_pairs_path(
-        self, rows_100: tuple[DatasetRow, ...]
-    ) -> None:
+    def test_filter_field_set_rejects_pairs_path(self, rows_100: tuple[DatasetRow, ...]) -> None:
         cfg = SampleConfig(
             method=SamplingMethod.STRATIFIED,
             size=10,

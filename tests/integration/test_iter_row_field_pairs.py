@@ -80,7 +80,7 @@ def _mixed_rows() -> list[DatasetRow]:
         DatasetRow(
             row_id=4,
             values={
-                "txt": "Ünïcode / Pfad\\mit\"Quote",
+                "txt": 'Ünïcode / Pfad\\mit"Quote',
                 "zahl": 2**40,
                 "fl": 3.14159,
                 "wahr": False,
@@ -127,3 +127,42 @@ class TestIterRowFieldPairs:
         eng = _engagement_id(db)
         ds_id = _persist(db, eng, [], ("Land",))
         assert list(DatasetRepo(db.connect()).iter_row_field_pairs(ds_id, "Land")) == []
+
+    def test_u64_integers_decode_exactly(self, db: Database) -> None:
+        """Review-Finding Sprint 35: SQLites json_extract approximiert
+        JSON-Integer > 2^63 als REAL (json_type bleibt 'integer') – der
+        Pairs-Pfad muss trotzdem exakt decodieren (orjson persistiert bis
+        2^64−1 exakt). Sonst kollabieren distinkte u64-Cluster-Keys."""
+        eng = _engagement_id(db)
+        rows = [
+            DatasetRow(row_id=1, values={"N": 2**63 - 1}),  # i64-Max: normaler Pfad
+            DatasetRow(row_id=2, values={"N": 2**63 + 1}),  # u64: REAL-Approximation
+            DatasetRow(row_id=3, values={"N": 2**63 + 2}),  # u64: distinkter Nachbar
+            DatasetRow(row_id=4, values={"N": 2**64 - 1}),  # u64-Max (orjson-Grenze)
+            DatasetRow(row_id=5, values={"N": 1e20}),  # echter REAL bleibt float
+            DatasetRow(row_id=6, values={"N": -(2**63)}),  # i64-Min
+        ]
+        ds_id = _persist(db, eng, rows, ("N",))
+        repo = DatasetRepo(db.connect())
+        expected = [(r.row_id, r.get("N")) for r in repo.iter_rows(ds_id)]
+        got = list(repo.iter_row_field_pairs(ds_id, "N"))
+        assert got == expected
+        assert [type(v) for _, v in got] == [type(v) for _, v in expected]
+        # Die beiden u64-Nachbarn müssen distinkt bleiben (kein Kollaps).
+        assert got[1][1] != got[2][1]
+
+    def test_unsupported_column_name_raises(self, db: Database) -> None:
+        """Review-Finding Sprint 35: '"'/'\\' im SPALTENNAMEN brechen den
+        json-Pfad (json_extract → NULL für jede Row) – statt still alles in
+        eine None-Gruppe zu kippen, muss die Methode laut scheitern; die
+        Controller-Weiche schaltet solche Spalten vorher auf den
+        klassischen Pfad (`supports_field_pairs`)."""
+        eng = _engagement_id(db)
+        rows = [DatasetRow(row_id=1, values={'Betrag "EUR"': 1, "Soll\\Haben": "S"})]
+        ds_id = _persist(db, eng, rows, ('Betrag "EUR"', "Soll\\Haben"))
+        repo = DatasetRepo(db.connect())
+        for column in ('Betrag "EUR"', "Soll\\Haben"):
+            assert repo.supports_field_pairs(column) is False
+            with pytest.raises(ValueError, match="Spaltennamen"):
+                list(repo.iter_row_field_pairs(ds_id, column))
+        assert repo.supports_field_pairs("Konto") is True
