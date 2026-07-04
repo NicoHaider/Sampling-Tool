@@ -202,6 +202,31 @@ class DatasetRepo:
         for r in cur:
             yield int(r["row_index"])
 
+    def iter_row_field_pairs(self, dataset_id: int, column: str) -> Iterator[tuple[int, Any]]:
+        """Streaming über ``(row_index, decodierter Spaltenwert)``, sortiert.
+
+        Sprint 35 / P-003: Cluster-/Stratified-Sampler brauchen pro Row nur
+        die row_id + den Wert EINES Feldes. ``json_extract`` zieht das Feld
+        in C aus ``values_json``; decodiert wird mit exakt der
+        ``_distinct_decode``-Mechanik aus P-005 – bit-identisch zu
+        ``DatasetRow.get(column)`` (Oracle-Test in
+        ``tests/integration/test_iter_row_field_pairs.py``). Fehlender Key
+        und JSON-``null`` liefern beide ``None`` (wie ``DatasetRow.get``).
+        RAM ~ ein 2-Tupel pro Row statt des vollen Spalten-Dicts; gleiche
+        ``"``-im-Spaltennamen-Limitierung wie ``distinct_values``.
+        """
+        json_path = '$."' + column.replace('"', '""') + '"'
+        cur = self.conn.execute(
+            "SELECT row_index, json_extract(values_json, ?) AS raw, "
+            "       json_type(values_json, ?) AS jtype "
+            "FROM dataset_rows WHERE dataset_id = ? ORDER BY row_index",
+            (json_path, json_path, dataset_id),
+        )
+        for r in cur:
+            jtype = r["jtype"]
+            value = None if jtype is None or jtype == "null" else _distinct_decode(r["raw"], jtype)
+            yield int(r["row_index"]), value
+
     _SQLITE_VAR_LIMIT: ClassVar[int] = 900
 
     def get_rows_by_ids(
