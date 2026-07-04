@@ -175,7 +175,7 @@ class ExportSampleDialog(QDialog):
                     item.setCheckState(state)
         finally:
             self._bulk_updating = False
-        self._update_state()
+            self._update_state()
 
     def _selected_columns(self) -> list[str]:
         result: list[str] = []

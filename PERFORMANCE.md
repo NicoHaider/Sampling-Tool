@@ -193,8 +193,8 @@ ist `ui/workers/tasks.py` (Worker-Muster, Sprint 17) der vorbereitete Ansatz.
 1. **`refresh_views` lud die Audit-Events doppelt** – `refresh_audit_trail` +
    `refresh_dashboard` machten je einen identischen
    `AuditRepo.list_for_engagement`-Fetch (2× bis zu 10.000 Events dekodiert)
-   pro mutierender User-Aktion (8 Call-Sites: Import, Sampling, Reset,
-   Sampling-Reset, Undo, Redo, Export, Open/Close). Jetzt versorgt EIN
+   pro mutierender User-Aktion (9 Controller-Call-Sites: Import, Sampling,
+   Reset, Sampling-Reset, Undo, Redo, Export, Open, Close). Jetzt versorgt EIN
    `collect_report_data`-Aufruf beide Views. Beleg:
    `TestRefreshViewsSingleEventLoad` – 2 → 1 Event-Fetch (**−50 %**),
    identische Events an beiden Views (Oracle).

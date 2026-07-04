@@ -297,10 +297,11 @@ class AuditTrailView(QWidget):
     # Sprint 34 / WP1: Debounce-Fenster der Volltextsuche in Millisekunden.
     # Begründung (P-009-Lehre – kein unbegründeter Tuning-Wert): Ein einzelner
     # Filterlauf kostet bei 20k Events ~120 ms (Sprint-25-Messung). 150 ms
-    # liegen knapp darüber, sodass beim flüssigen Tippen (< ~6–7 Anschläge/s)
-    # alle Zwischenstände zu genau EINEM Lauf koaleszieren, bleiben aber unter
-    # der ~200-ms-Wahrnehmbarkeitsschwelle – die Suche fühlt sich weiterhin
-    # unmittelbar an. Treffer-Semantik unverändert (Proxy bleibt synchron).
+    # liegen knapp darüber, sodass beim flüssigen Tippen (Anschlagsabstand
+    # < 150 ms, also > ~6–7 Anschläge/s) alle Zwischenstände zu genau EINEM
+    # Lauf koaleszieren, bleiben aber unter der ~200-ms-Wahrnehmbarkeits-
+    # schwelle – die Suche fühlt sich weiterhin unmittelbar an.
+    # Treffer-Semantik unverändert (Proxy bleibt synchron).
     AUDIT_SEARCH_DEBOUNCE_MS: ClassVar[int] = 150
 
     def __init__(self, parent: QWidget | None = None) -> None:

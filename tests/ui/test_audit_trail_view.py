@@ -695,7 +695,8 @@ class TestAuditSearchDebounce:
             view._search.setText(fragment)
         assert calls == []  # während des Tippens läuft KEIN Filterlauf
 
-        qtbot.wait(AuditTrailView.AUDIT_SEARCH_DEBOUNCE_MS + 100)
+        qtbot.waitUntil(lambda: not view._search_debounce.isActive(), timeout=2000)
+        qtbot.wait(50)  # Settle-Fenster: ein fälschlicher Zweit-Lauf würde auffallen
         assert calls == ["anna export"]  # genau EIN Lauf, mit dem finalen Text
 
     def test_debounced_result_matches_immediate(self, qtbot: QtBot) -> None:
@@ -709,19 +710,17 @@ class TestAuditSearchDebounce:
 
         oracle.proxy().set_search_text("anna")  # synchroner Direkt-Aufruf (Referenz)
         debounced._search.setText("anna")
-        qtbot.wait(AuditTrailView.AUDIT_SEARCH_DEBOUNCE_MS + 100)
+        qtbot.waitUntil(lambda: not debounced._search_debounce.isActive(), timeout=2000)
 
         assert _visible_event_ids(debounced) == _visible_event_ids(oracle)
         assert debounced.visible_row_count() == oracle.visible_row_count()
 
-    def test_clear_after_debounce_shows_all_rows(
-        self, view: AuditTrailView, qtbot: QtBot
-    ) -> None:
+    def test_clear_after_debounce_shows_all_rows(self, view: AuditTrailView, qtbot: QtBot) -> None:
         view.set_events(_synthetic_events(10))
         view._search.setText("anna")
-        qtbot.wait(AuditTrailView.AUDIT_SEARCH_DEBOUNCE_MS + 100)
+        qtbot.waitUntil(lambda: not view._search_debounce.isActive(), timeout=2000)
         assert view.visible_row_count() < 10
 
         view._search.setText("")  # Feld leeren – läuft über denselben Debounce-Pfad
-        qtbot.wait(AuditTrailView.AUDIT_SEARCH_DEBOUNCE_MS + 100)
+        qtbot.waitUntil(lambda: not view._search_debounce.isActive(), timeout=2000)
         assert view.visible_row_count() == 10

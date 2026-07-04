@@ -3019,6 +3019,7 @@ class TestRefreshViewsSingleEventLoad:
         populated_db: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from sampling_tool.core.models import AuditEvent
         from sampling_tool.persistence.repositories import AuditRepo
 
         controller.handle_open_engagement(populated_db)
@@ -3026,7 +3027,7 @@ class TestRefreshViewsSingleEventLoad:
         calls: list[int] = []
         original = AuditRepo.list_for_engagement
 
-        def counting(self: AuditRepo, engagement_id: int, limit: int | None = None) -> list:
+        def counting(self: AuditRepo, engagement_id: int, limit: int = 100) -> list[AuditEvent]:
             calls.append(engagement_id)
             return original(self, engagement_id, limit=limit)
 
@@ -3042,18 +3043,23 @@ class TestRefreshViewsSingleEventLoad:
         populated_db: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from sampling_tool.core.models import AuditEvent
+
         controller.handle_open_engagement(populated_db)
 
-        seen: dict[str, list[object]] = {}
+        seen: dict[str, list[AuditEvent]] = {}
         original_set_events = window.set_audit_events
         original_set_dashboard = window.set_dashboard_data
 
-        def capture_events(events: list) -> None:
+        def capture_events(events: list[AuditEvent]) -> None:
             seen["audit"] = list(events)
             original_set_events(events)
 
         def capture_dashboard(
-            engagement: object, datasets: list, samples: list, events: list
+            engagement: Engagement | None,
+            datasets: list[Dataset],
+            samples: list[SampleResult],
+            events: list[AuditEvent],
         ) -> None:
             seen["dashboard"] = list(events)
             original_set_dashboard(engagement, datasets, samples, events)

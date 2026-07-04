@@ -214,8 +214,8 @@ class WorkspaceSession:
         ``AUDIT_EVENT_DISPLAY_LIMIT`` Audit-Events) genau EINMAL und verteilt
         sie an beide Views. Vorher liefen ``refresh_audit_trail`` +
         ``refresh_dashboard`` je einen identischen Event-Fetch – 2× 10k-Row-
-        Decode pro mutierender User-Aktion (Import, Sampling, Reset,
-        Undo/Redo, Export, Open/Close).
+        Decode pro mutierender User-Aktion (9 Controller-Call-Sites: Import,
+        Sampling, Reset, Sampling-Reset, Undo, Redo, Export, Open, Close).
         """
         if not self.has_engagement():
             self.window.set_audit_events([])
