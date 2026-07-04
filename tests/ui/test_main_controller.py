@@ -2760,12 +2760,10 @@ class TestSamplingPathDispatch:
         from sampling_tool.core.sampling import create_sampler
         from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
 
-        field_kwargs = (
-            {"cluster_field": "Konto"}
-            if method == SamplingMethod.CLUSTER
-            else {"stratum_field": "Konto"}
-        )
-        cfg = SampleConfig(method=method, size=size, seed=4711, **field_kwargs)
+        if method == SamplingMethod.CLUSTER:
+            cfg = SampleConfig(method=method, size=size, seed=4711, cluster_field="Konto")
+        else:
+            cfg = SampleConfig(method=method, size=size, seed=4711, stratum_field="Konto")
         result = SamplingDialogResult(config=cfg, from_sample_only=False)
         factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
