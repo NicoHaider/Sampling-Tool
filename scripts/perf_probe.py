@@ -54,7 +54,12 @@ from sampling_tool.core.models import (  # noqa: E402
     SamplingMethod,
     StratifyMode,
 )
-from sampling_tool.core.sampling import SimpleSampler, create_sampler  # noqa: E402
+from sampling_tool.core.sampling import (  # noqa: E402
+    ClusterSampler,
+    SimpleSampler,
+    StratifiedSampler,
+    create_sampler,
+)
 from sampling_tool.io import (  # noqa: E402
     AuditTrailPDF,
     ExcelExporter,
@@ -427,13 +432,34 @@ def run_probe_for_size(
         sampling_repo = DatasetRepo(db.connect())
         sampler = create_sampler(cfg)
         # Sprint 12.1 / P-002: SimpleSampler ohne Filter konsumiert nur
-        # row_ids (kein DatasetRow-Materialize). Spiegelt den Controller-
-        # Pfad (`handle_new_sampling`) – sonst würde der Probe-Lauf den
-        # RAM-Fix nicht messen.
+        # row_ids (kein DatasetRow-Materialize). Sprint 35 / P-003:
+        # Cluster/Stratified ohne Filter konsumieren (row_id, feldwert)-Pairs.
+        # Spiegelt den Controller-Pfad (`handle_new_sampling`) – sonst würde
+        # der Probe-Lauf die RAM-Fixes nicht messen.
         with measured(label) as m:
             if isinstance(sampler, SimpleSampler) and cfg.filter_field is None:
                 sampled = sampler.sample_ids(
                     sampling_repo.iter_row_ids(dataset.id),
+                    population_size=dataset.row_count,
+                )
+            elif (
+                isinstance(sampler, ClusterSampler)
+                and cfg.filter_field is None
+                and cfg.cluster_field is not None
+                and DatasetRepo.supports_field_pairs(cfg.cluster_field)
+            ):
+                sampled = sampler.sample_pairs(
+                    sampling_repo.iter_row_field_pairs(dataset.id, cfg.cluster_field),
+                    population_size=dataset.row_count,
+                )
+            elif (
+                isinstance(sampler, StratifiedSampler)
+                and cfg.filter_field is None
+                and cfg.stratum_field is not None
+                and DatasetRepo.supports_field_pairs(cfg.stratum_field)
+            ):
+                sampled = sampler.sample_pairs(
+                    sampling_repo.iter_row_field_pairs(dataset.id, cfg.stratum_field),
                     population_size=dataset.row_count,
                 )
             else:

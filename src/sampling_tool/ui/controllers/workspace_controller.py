@@ -25,7 +25,13 @@ from PyQt6.QtWidgets import QDialog, QFileDialog, QMessageBox
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.config import SUPPORTED_CSV_SUFFIXES, SUPPORTED_EXCEL_SUFFIXES
 from sampling_tool.core.models import Dataset, DatasetRow, Snapshot
-from sampling_tool.core.sampling import SamplingError, SimpleSampler, create_sampler
+from sampling_tool.core.sampling import (
+    ClusterSampler,
+    SamplingError,
+    SimpleSampler,
+    StratifiedSampler,
+    create_sampler,
+)
 from sampling_tool.io.importer import (
     DataImportError,
     ExcelImporter,
@@ -285,15 +291,37 @@ class WorkspaceController:
             sampler = create_sampler(result.config)
             # Sprint 12.1 / P-002: SimpleSampler ohne Filter + ohne Sub-Sampling
             # bekommt nur die row_ids (kein DatasetRow-Materialize).
-            # Cluster/Stratified und gefilterte Samples brauchen die Row-Values
-            # und gehen weiterhin durch den klassischen Streaming-Pfad.
-            if (
-                isinstance(sampler, SimpleSampler)
-                and result.config.filter_field is None
-                and not result.from_sample_only
-            ):
+            # Sprint 35 / P-003: Cluster/Stratified ohne Filter + ohne
+            # Sub-Sampling bekommen (row_id, feldwert)-Pairs – bit-identische
+            # Ziehung (Oracles in test_sampling.py), aber ohne den vollen
+            # 15-Spalten-Row-Pool im RAM. Gefilterte Samples und Resampling
+            # gehen weiterhin durch den klassischen Streaming-Pfad.
+            unfiltered_full_population = (
+                result.config.filter_field is None and not result.from_sample_only
+            )
+            if isinstance(sampler, SimpleSampler) and unfiltered_full_population:
                 sample_result = sampler.sample_ids(
                     repo.iter_row_ids(s.dataset.id),
+                    population_size=s.dataset.row_count,
+                )
+            elif (
+                isinstance(sampler, ClusterSampler)
+                and unfiltered_full_population
+                and result.config.cluster_field is not None
+                and DatasetRepo.supports_field_pairs(result.config.cluster_field)
+            ):
+                sample_result = sampler.sample_pairs(
+                    repo.iter_row_field_pairs(s.dataset.id, result.config.cluster_field),
+                    population_size=s.dataset.row_count,
+                )
+            elif (
+                isinstance(sampler, StratifiedSampler)
+                and unfiltered_full_population
+                and result.config.stratum_field is not None
+                and DatasetRepo.supports_field_pairs(result.config.stratum_field)
+            ):
+                sample_result = sampler.sample_pairs(
+                    repo.iter_row_field_pairs(s.dataset.id, result.config.stratum_field),
                     population_size=s.dataset.row_count,
                 )
             else:

@@ -638,3 +638,185 @@ class TestStratifiedSamplerEdgeCases:
         a = StratifiedSampler(cfg_a).sample(rows_100).selected_row_ids
         b = StratifiedSampler(cfg_b).sample(rows_100).selected_row_ids
         assert a != b
+
+
+# ---------------------------------------------------------------------------
+# Sprint 35 / P-003: Pairs-Pfad für Cluster + Stratified
+# ---------------------------------------------------------------------------
+
+
+def _pairs_mixed_rows() -> tuple[DatasetRow, ...]:
+    """Gemeine Gruppen-Schlüssel für die Pairs-Oracles.
+
+    Enthält bewusst: None-Werte, int 5 / float 5.0 / bool True (hash-gleich →
+    landen im selben dict-Key; der zuerst gesehene Wert wird Repräsentant und
+    bestimmt via str() die Sortier-Position) sowie str "5" (eigener Key).
+    Genau diese Fälle müssen im Pairs-Pfad identisch gruppieren.
+    """
+    keys = [None, 5, "5", 5.0, True, "x", None, 5, "x", "5", 5.0, True]
+    return tuple(
+        DatasetRow(row_id=i + 1, values={"ks": key, "other": f"o{i}"}) for i, key in enumerate(keys)
+    )
+
+
+class TestClusterSamplerPairsPath:
+    """Sprint 35 / P-003: `sample_pairs` ⇔ `sample(rows)` bit-identisch.
+
+    Der Pairs-Pfad darf die Ziehung nicht verändern (ISAE-3402): gleiche
+    Gruppierung in row_id-Reihenfolge, gleiche Key-Sortierung, gleiche
+    RNG-Konsumreihenfolge – nur ohne DatasetRow-Materialisierung.
+    """
+
+    @pytest.mark.parametrize("seed", [0, 1, 42, 12345, 2**31 - 1])
+    @pytest.mark.parametrize("n_clusters", [1, 2, 3])
+    def test_reproducibility_matches_classic_path(
+        self, rows_100: tuple[DatasetRow, ...], seed: int, n_clusters: int
+    ) -> None:
+        cfg = SampleConfig(
+            method=SamplingMethod.CLUSTER,
+            size=n_clusters,
+            seed=seed,
+            cluster_field="Country",
+        )
+        sampler = ClusterSampler(cfg)
+        classic = sampler.sample(iter(rows_100), population_size=len(rows_100))
+        via_pairs = sampler.sample_pairs(
+            ((r.row_id, r.get("Country")) for r in rows_100),
+            population_size=len(rows_100),
+        )
+        assert via_pairs.selected_row_ids == classic.selected_row_ids
+        assert via_pairs.population_size == classic.population_size
+
+    @pytest.mark.parametrize("seed", [0, 7, 999])
+    def test_mixed_type_keys_and_none_match_classic(self, seed: int) -> None:
+        rows = _pairs_mixed_rows()
+        cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=3, seed=seed, cluster_field="ks")
+        sampler = ClusterSampler(cfg)
+        classic = sampler.sample(iter(rows), population_size=len(rows))
+        via_pairs = sampler.sample_pairs(
+            ((r.row_id, r.get("ks")) for r in rows), population_size=len(rows)
+        )
+        assert via_pairs.selected_row_ids == classic.selected_row_ids
+
+    def test_unsorted_pairs_input_matches_classic(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        """Pairs dürfen unsortiert ankommen – sample_pairs sortiert nach row_id."""
+        cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=2, seed=42, cluster_field="Country")
+        sampler = ClusterSampler(cfg)
+        classic = sampler.sample(iter(rows_100), population_size=len(rows_100))
+        via_pairs = sampler.sample_pairs(
+            ((r.row_id, r.get("Country")) for r in reversed(rows_100)),
+            population_size=len(rows_100),
+        )
+        assert via_pairs.selected_row_ids == classic.selected_row_ids
+
+    def test_filter_field_set_rejects_pairs_path(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        cfg = SampleConfig(
+            method=SamplingMethod.CLUSTER,
+            size=2,
+            seed=42,
+            cluster_field="Country",
+            filter_field="Country",
+            filter_value="AUT",
+        )
+        with pytest.raises(SamplingError, match="sample_pairs ist nur für ungefiltertes"):
+            ClusterSampler(cfg).sample_pairs(
+                [(r.row_id, r.get("Country")) for r in rows_100], population_size=100
+            )
+
+    def test_too_many_clusters_raises_same_message(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=99, seed=42, cluster_field="Country")
+        with pytest.raises(SamplingError, match="nur 3 sind im Datensatz vorhanden"):
+            ClusterSampler(cfg).sample_pairs(
+                [(r.row_id, r.get("Country")) for r in rows_100],
+                population_size=len(rows_100),
+            )
+
+    def test_empty_pairs_raises(self) -> None:
+        cfg = SampleConfig(method=SamplingMethod.CLUSTER, size=1, seed=42, cluster_field="ks")
+        with pytest.raises(SamplingError, match="keine Datensätze"):
+            ClusterSampler(cfg).sample_pairs([], population_size=0)
+
+
+class TestStratifiedSamplerPairsPath:
+    """Sprint 35 / P-003: Stratified-`sample_pairs` ⇔ `sample(rows)` bit-identisch."""
+
+    @pytest.mark.parametrize("seed", [0, 1, 42, 12345, 2**31 - 1])
+    @pytest.mark.parametrize("mode", [StratifyMode.PROPORTIONAL, StratifyMode.EQUAL])
+    @pytest.mark.parametrize("size", [3, 10, 30])
+    def test_reproducibility_matches_classic_path(
+        self,
+        rows_100: tuple[DatasetRow, ...],
+        seed: int,
+        mode: StratifyMode,
+        size: int,
+    ) -> None:
+        cfg = SampleConfig(
+            method=SamplingMethod.STRATIFIED,
+            size=size,
+            seed=seed,
+            stratum_field="Country",
+            stratify_mode=mode,
+        )
+        sampler = StratifiedSampler(cfg)
+        classic = sampler.sample(iter(rows_100), population_size=len(rows_100))
+        via_pairs = sampler.sample_pairs(
+            ((r.row_id, r.get("Country")) for r in rows_100),
+            population_size=len(rows_100),
+        )
+        assert via_pairs.selected_row_ids == classic.selected_row_ids
+        assert via_pairs.population_size == classic.population_size
+
+    @pytest.mark.parametrize("seed", [0, 7, 999])
+    def test_mixed_type_keys_and_none_match_classic(self, seed: int) -> None:
+        rows = _pairs_mixed_rows()
+        # 5 Schichten: None, 5 (fasst 5.0 hash-gleich), "5", True, "x" → size >= 5.
+        cfg = SampleConfig(
+            method=SamplingMethod.STRATIFIED,
+            size=5,
+            seed=seed,
+            stratum_field="ks",
+            stratify_mode=StratifyMode.EQUAL,
+        )
+        sampler = StratifiedSampler(cfg)
+        classic = sampler.sample(iter(rows), population_size=len(rows))
+        via_pairs = sampler.sample_pairs(
+            ((r.row_id, r.get("ks")) for r in rows), population_size=len(rows)
+        )
+        assert via_pairs.selected_row_ids == classic.selected_row_ids
+
+    def test_size_smaller_than_strata_count_raises(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        cfg = SampleConfig(
+            method=SamplingMethod.STRATIFIED, size=2, seed=42, stratum_field="Country"
+        )
+        with pytest.raises(SamplingError, match="kleiner als die Anzahl der Schichten"):
+            StratifiedSampler(cfg).sample_pairs(
+                [(r.row_id, r.get("Country")) for r in rows_100],
+                population_size=len(rows_100),
+            )
+
+    def test_stratum_too_small_raises_same_message(self) -> None:
+        rows = _pairs_mixed_rows()  # Schicht "x" hat nur 2 Elemente
+        cfg = SampleConfig(
+            method=SamplingMethod.STRATIFIED,
+            size=12,
+            seed=42,
+            stratum_field="ks",
+            stratify_mode=StratifyMode.EQUAL,
+        )
+        sampler = StratifiedSampler(cfg)
+        with pytest.raises(SamplingError, match="hat nur"):
+            sampler.sample_pairs([(r.row_id, r.get("ks")) for r in rows], population_size=len(rows))
+
+    def test_filter_field_set_rejects_pairs_path(self, rows_100: tuple[DatasetRow, ...]) -> None:
+        cfg = SampleConfig(
+            method=SamplingMethod.STRATIFIED,
+            size=10,
+            seed=42,
+            stratum_field="Country",
+            filter_field="Country",
+            filter_value="AUT",
+        )
+        with pytest.raises(SamplingError, match="sample_pairs ist nur für ungefiltertes"):
+            StratifiedSampler(cfg).sample_pairs(
+                [(r.row_id, r.get("Country")) for r in rows_100], population_size=100
+            )

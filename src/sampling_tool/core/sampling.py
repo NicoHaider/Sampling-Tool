@@ -244,6 +244,63 @@ class ClusterSampler(BaseSampler):
 
         return [row.row_id for key in chosen_keys for row in clusters[key]]
 
+    def sample_pairs(
+        self,
+        pairs: Iterable[tuple[int, Any]],
+        population_size: int,
+    ) -> SampleResult:
+        """Spezialpfad ohne DatasetRow-Materialisierung (Sprint 35 / P-003).
+
+        Bit-genau identisch zu `sample(rows)` bei ungefiltertem Pool: die
+        Cluster-Bildung hängt nur an `(row_id, cluster_wert)` in
+        row_id-Reihenfolge, die Key-Sortierung läuft über dasselbe
+        `_sort_key`, und der Fisher-Yates-Shuffle über die Key-Liste
+        verbraucht dieselbe RNG-Sequenz (nur längenabhängig). Das Ergebnis
+        wird wie in `sample()` sortiert. Oracle-Tests:
+        `tests/unit/test_sampling.py::TestClusterSamplerPairsPath`.
+
+        Voraussetzung: `config.filter_field is None` – ein Filter greift auf
+        die Row-Values zu, dann ist der reguläre `sample(rows)`-Pfad nötig.
+
+        RAM-Wirkung bei 1M-Datasets: ~1.1 GB (DatasetRow-Pool) → ein
+        (int, wert)-Tupel pro Row (siehe PERFORMANCE.md Sprint 35).
+        """
+        if self.config.filter_field is not None:
+            raise SamplingError(
+                "sample_pairs ist nur für ungefiltertes Sampling – mit Filter "
+                "bitte sample(rows) verwenden, da die Filter-Bedingung auf "
+                "die Row-Values zugreift."
+            )
+        # key= nur row_id: Plain-sorted würde bei (theoretischem) row_id-
+        # Gleichstand die Werte vergleichen → TypeError bei Misch-Typen.
+        pool = sorted(pairs, key=lambda p: p[0])
+        if not pool:
+            raise SamplingError("Nach Anwendung des Filters sind keine Datensätze mehr verfügbar.")
+
+        clusters: dict[Any, list[int]] = defaultdict(list)
+        for row_id, value in pool:
+            clusters[value].append(row_id)
+
+        cluster_keys = sorted(clusters.keys(), key=_sort_key)
+
+        n_clusters_requested = self.config.size
+        if n_clusters_requested > len(cluster_keys):
+            raise SamplingError(
+                f"Es wurden {n_clusters_requested} Cluster angefordert, "
+                f"aber nur {len(cluster_keys)} sind im Datensatz vorhanden."
+            )
+
+        rng = make_rng(self.config.seed)
+        shuffled_keys = fisher_yates_shuffle(list(cluster_keys), rng)
+        chosen_keys = shuffled_keys[:n_clusters_requested]
+
+        selected = [rid for key in chosen_keys for rid in clusters[key]]
+        return SampleResult(
+            config=self.config,
+            selected_row_ids=tuple(sorted(selected)),
+            population_size=population_size,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Stratified Sampling
@@ -302,6 +359,78 @@ class StratifiedSampler(BaseSampler):
             shuffled = fisher_yates_shuffle(list(strata[key]), rng)
             selected.extend(row.row_id for row in shuffled[:target])
         return selected
+
+    def sample_pairs(
+        self,
+        pairs: Iterable[tuple[int, Any]],
+        population_size: int,
+    ) -> SampleResult:
+        """Spezialpfad ohne DatasetRow-Materialisierung (Sprint 35 / P-003).
+
+        Bit-genau identisch zu `sample(rows)` bei ungefiltertem Pool: die
+        Schicht-Bildung hängt nur an `(row_id, stratum_wert)` in
+        row_id-Reihenfolge; Key-Sortierung (`_sort_key`), Largest-Remainder-
+        Verteilung (nur längenabhängige Gewichte) und die RNG-Konsum-
+        reihenfolge (ein gemeinsamer `rng`, Shuffle pro Schicht in
+        Key-Reihenfolge – Swap-Sequenz hängt nur an der Listenlänge) sind
+        identisch. Oracle-Tests:
+        `tests/unit/test_sampling.py::TestStratifiedSamplerPairsPath`.
+
+        Voraussetzung: `config.filter_field is None` – ein Filter greift auf
+        die Row-Values zu, dann ist der reguläre `sample(rows)`-Pfad nötig.
+        """
+        if self.config.filter_field is not None:
+            raise SamplingError(
+                "sample_pairs ist nur für ungefiltertes Sampling – mit Filter "
+                "bitte sample(rows) verwenden, da die Filter-Bedingung auf "
+                "die Row-Values zugreift."
+            )
+        # key= nur row_id: Plain-sorted würde bei (theoretischem) row_id-
+        # Gleichstand die Werte vergleichen → TypeError bei Misch-Typen.
+        pool = sorted(pairs, key=lambda p: p[0])
+        if not pool:
+            raise SamplingError("Nach Anwendung des Filters sind keine Datensätze mehr verfügbar.")
+
+        strata: dict[Any, list[int]] = defaultdict(list)
+        for row_id, value in pool:
+            strata[value].append(row_id)
+
+        stratum_keys = sorted(strata.keys(), key=_sort_key)
+
+        total_size = self.config.size
+        if total_size < len(stratum_keys):
+            raise SamplingError(
+                f"Stichprobengröße ({total_size}) ist kleiner als die Anzahl der "
+                f"Schichten ({len(stratum_keys)}). Pro Schicht muss mindestens "
+                f"ein Element gezogen werden können."
+            )
+
+        # Gewichte wie `_compute_sizes`, nur über die id-Listen (gleiche Längen).
+        match self.config.stratify_mode:
+            case StratifyMode.PROPORTIONAL:
+                weights = [len(strata[k]) for k in stratum_keys]
+            case StratifyMode.EQUAL:
+                weights = [1 for _ in stratum_keys]
+        sizes_per_stratum = _largest_remainder(weights, total_size)
+
+        for key, target in zip(stratum_keys, sizes_per_stratum, strict=True):
+            available = len(strata[key])
+            if target > available:
+                raise SamplingError(
+                    f"Schicht '{key}' hat nur {available} Elemente, "
+                    f"benötigt werden aber {target}. Bitte Methode oder Größe anpassen."
+                )
+
+        rng = make_rng(self.config.seed)
+        selected: list[int] = []
+        for key, target in zip(stratum_keys, sizes_per_stratum, strict=True):
+            shuffled = fisher_yates_shuffle(list(strata[key]), rng)
+            selected.extend(shuffled[:target])
+        return SampleResult(
+            config=self.config,
+            selected_row_ids=tuple(sorted(selected)),
+            population_size=population_size,
+        )
 
     # ---- Größenverteilung ------------------------------------------------
 

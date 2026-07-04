@@ -221,6 +221,123 @@ AuditTrail-View und `data()`-Konstanten-Hoisting in der Datentabelle
 Follow-up-Kandidaten für einen späteren Pass. QSettings-Reads in heißen
 Pfaden: Scan fand **keine** (data()/paint sind sauber).
 
+**Sprint 35 – Advanced-Sampling-Streaming (P-003, Cluster/Stratified):**
+
+Der letzte große Streaming-Bruch ist geschlossen: `_collect_pool`
+materialisierte für Cluster/Stratified den vollen `DatasetRow`-Pool
+(~1,12 GB bei 1M Zeilen; bei 5M wäre das ~5,5 GB → OOM-Risiko auf
+16-GB-Geräten). Beide Sampler brauchen pro Row aber nur `(row_id, feldwert)`
+– der Shuffle hängt nur an Listenlängen und RNG, das Ergebnis wird ohnehin
+sortiert. Neu (P-002-Muster, alles additiv – `sample`/`_select`/
+`_collect_pool` wörtlich unverändert):
+
+- `DatasetRepo.iter_row_field_pairs(dataset_id, column)` – `(row_index,
+  Wert)`-Stream via `json_extract` + der P-005-erprobten
+  `_distinct_decode`-Mechanik (Decode-Oracle gegen `iter_rows` über alle
+  Import-Typen inkl. bool/int/float-Grenzfällen).
+- `ClusterSampler.sample_pairs` / `StratifiedSampler.sample_pairs` –
+  spiegeln `_select` exakt (gleiche Gruppierung in row_id-Reihenfolge,
+  gleiche `_sort_key`-Sortierung, gleiche Largest-Remainder-Gewichte,
+  gleiche RNG-Konsumreihenfolge). Nur für `filter_field is None`.
+- Controller-Weiche + perf_probe-Spiegel: ungefiltert + ohne Resampling →
+  pairs; Filter/Resampling → klassischer `sample(iter_rows)`-Pfad.
+
+**Vorher/Nachher (identische 1M-DB, 15 Spalten, Median aus 3 ohne
+tracemalloc; Peak aus separatem tracemalloc-Lauf; Endstand inkl. der
+Review-Fixes unten):**
+
+| Methode | vorher (rows) | nachher (pairs) | Δ Zeit | Δ RAM |
+|---------|--------------:|----------------:|-------:|------:|
+| Cluster (size=5, seed=43) | 4,74 s / 1124,8 MB | **1,52 s / 154,5 MB** | **−68 %** | **−86 %** |
+| Stratified (size=500, seed=44) | 5,35 s / 1123,6 MB | **2,30 s / 151,8 MB** | **−57 %** | **−86 %** |
+
+**Reproduzierbarkeit (rote Linie):** `selected_row_ids` beider Pfade sind
+auf der vollen 1M-DB **identisch** (Benchmark-Assert) und per Oracle-Tests
+gepinnt: `TestClusterSamplerPairsPath`/`TestStratifiedSamplerPairsPath`
+(58 Fälle: 5 Seeds × Größen × Modi, Misch-Typ-Keys inkl. 5/5.0/True-
+Hash-Kollision, None-Keys, unsortierter Input, identische Fehlermeldungen)
++ E2E-Repro-Oracle über den echten Controller
+(`TestSamplingPathDispatch::test_pairs_path_result_matches_classic_reference`).
+
+**Zwei Review-Findings (adversariales Code-Review) wurden vor dem Merge
+gefixt – beide waren real erreichbare Bit-Repro-Gegenbeispiele:**
+
+1. **u64-Integer:** SQLites `json_extract` approximiert JSON-Integer
+   > 2^63 als REAL (`json_type` meldet weiter `'integer'`) – zwei
+   distinkte 19-stellige IDs wären im Pairs-Pfad zu einem Cluster
+   kollabiert. Fix: `exact_json`-Fallback-Spalte (CASE WHEN
+   `typeof='real'` bei `json_type='integer'` → exakter Voll-Decode nur
+   für diese Rows). Kostet ~0,2 s auf 1M (in der Tabelle enthalten).
+   Oracle: `test_u64_integers_decode_exactly` (2^63±1, 2^64−1, 1e20).
+2. **Spaltennamen mit `"`/`\`:** brechen das JSON-Path-Label →
+   `json_extract` liefert NULL für jede Row (alles wäre still in einer
+   None-Gruppe gelandet). Fix: `DatasetRepo.supports_field_pairs`-Guard –
+   Controller + perf_probe schicken solche Spalten auf den klassischen
+   Pfad; `iter_row_field_pairs` selbst wirft laut statt still falsch.
+   Tests: `test_unsupported_column_name_raises` +
+   `test_cluster_field_with_quote_falls_back_to_classic_path`.
+
+Follow-up-Notiz: `distinct_values` (P-005) hat dieselbe u64-Schwäche seit
+Sprint 19 – dort nur Dropdown-Anzeige, ein falsch decodierter Filter-Wert
+führt zu `SamplingError` statt stiller Falschziehung (deshalb kein
+Blocker); beim nächsten Persistence-Pass mitziehen.
+
+**Mess-Methodik-Hinweis:** Die perf_probe-Phasenzeiten laufen unter
+aktivem `tracemalloc` und sind dadurch ~2,5–3× überhöht (Cluster 12,9 s
+probe vs. 4,6 s real; Stratified 16,4 s vs. 5,3 s). Für Vorher/Nachher-
+Vergleiche innerhalb EINES Laufs ist das ok, als Absolutwerte nicht –
+deshalb misst dieser Sprint mit separaten Timing-/RAM-Läufen
+(`tmp/perf/s35_bench_sampling.py`-Methodik). Die Stratified-Soft-Target-
+„Verfehlung" aus Sprint 34 (16,43 s > 15 s) war demnach ein
+Instrumentierungs-Artefakt; real lag die Phase bei ~5 s.
+
+**Sprint 35 – Import-Pipeline (profiling-first): gemessen, bewusst nicht gefixt.**
+
+Baseline (`scripts/bench_import.py`, 1M Zeilen, Median aus 3, Rev `abac095`):
+
+| Phase | xlsx | csv |
+|-------|-----:|----:|
+| Parse | **5149 ms (45 %)** | 2572 ms |
+| Encode | 4742 ms | **6276 ms (61 %)** |
+| – davon Coercion | 3217 ms | 5875 ms |
+| – davon Tagged-JSON | 1464 ms | 398 ms |
+| Write | 1648 ms | 1366 ms |
+| End-to-End | 12232 ms | 11257 ms |
+
+Dominanten: xlsx → Parse (calamine-Rust→Python-Konversion, ohne Engine-Wechsel
+kein Hebel), csv → Encode, davon 94 % Coercion. Zwei Coercion-Hebel wurden
+implementiert, gemessen und nach dem Gate **wieder revertiert**:
+
+1. **Digit-Guard** (nicht-numerische Texte ohne int()/float()-Exception-
+   Versuche): csv-Coercion 5875 → 5614 ms (**−4 %**). cProfile zeigt warum:
+   2,34 von 2,4 Mio. String-Zellen der realistischen Fixture enthalten
+   Ziffern (Datums-Strings, Belegnummern, Mischtexte) – der Guard greift
+   fast nie, kostet aber selbst einen Regex-Scan pro Zelle.
+2. **isinstance-Ketten-Umordnung** (str/float zuerst): xlsx-Coercion −1 %.
+   `isinstance` ist mit ~15 ns pro Check kein relevanter Posten (cProfile:
+   0,11 s tottime bei 2,7 Mio. Aufrufen, profiliert).
+
+Der verbleibende Hebel (Exception-freies Parsen über exakte int()/float()-
+Grammatik-Regexes inkl. Underscore-/Unicode-Ziffern-/inf-nan-Regeln) wurde
+per Profil auf ~15–18 % der Encode-Phase geschätzt – **unter dem 20 %-Gate**
+und mit erhöhtem Risiko direkt an der Byte-Identitäts-Rote-Linie (die
+Coercion DEFINIERT die importierten Werte). Entscheidung: nicht umgesetzt.
+Bleibender Ertrag des Passes:
+
+- **`TestCoerceStringEquivalenceOracle`** (tests/unit/test_importer_coerce.py):
+  eingefrorene Referenz-Implementierung + Nasty-Corpus + 5000er-Seeded-Fuzz
+  pinnt die Coercion-Semantik (Wert UND Typ, NaN-sicher via repr) für jede
+  zukünftige Optimierung.
+- **Doppel-Pass-Hypothese aus Pass 3 v2 widerlegt:** `_excel_header_pass`
+  konsumiert nur Zeilen bis zum Header (Größe kommt aus
+  `sheet.total_height`-Metadaten) – es gibt EINEN vollen Daten-Pass, kein
+  verstecktes Zweitparsen.
+- **Einordnung der „DB-Speicherung 53,7 s":** real läuft der komplette
+  1M-Import (8 Spalten, End-to-End inkl. Write) in ~12 s; die
+  perf_probe-Phasenwerte laufen unter `tracemalloc` und messen 15 Spalten –
+  als Absolutwerte nicht mit Alltags-Performance zu verwechseln (siehe
+  Mess-Methodik-Hinweis im Sprint-35-Sampling-Block).
+
 **Hinweis zur Mess-Tabelle unten:** Der 1M-Lauf stammt vom Sprint-11-Stand
 (Toolversion `19f18a1`) und liegt damit VOR den Sprint-12.1-Fixes für P-001
 (`setResizeContentsPrecision(100)` → Tabelle-Anzeige) und P-002

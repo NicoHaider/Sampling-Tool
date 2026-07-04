@@ -91,3 +91,148 @@ class TestNoneUndBool:
         result_false = _coerce_value(False)
         assert result_false is False
         assert type(result_false) is bool
+
+
+# ---------------------------------------------------------------------------
+# Sprint 35 / WP-B: Äquivalenz-Oracle für die Coercion-Implementierung
+# ---------------------------------------------------------------------------
+
+
+def _reference_coerce_string(value: str) -> object:
+    """Eingefrorene Kopie der Pre-Sprint-35-`_coerce_string`-Implementierung.
+
+    Bewusst NICHT aus dem Importer importiert – das Oracle vergleicht jede
+    spätere Implementierungs-Optimierung gegen die historische Semantik
+    (Byte-Identität der importierten Werte ist die rote Linie).
+    """
+    text = value.strip()
+    if text == "":
+        return None
+    try:
+        as_int: int | None = int(text)
+    except ValueError:
+        as_int = None
+    if as_int is not None:
+        return as_int
+    candidate = text.replace(",", ".") if "." not in text and text.count(",") == 1 else text
+    try:
+        as_float: float | None = float(candidate)
+    except ValueError:
+        as_float = None
+    if as_float is not None:
+        return as_float
+    return text
+
+
+_NASTY_CORPUS = [
+    "",
+    " ",
+    "\t\n",
+    "abc",
+    "Größe ß",
+    "Ünïcode",
+    "1",
+    "+1",
+    "-1",
+    "007",
+    "1_000",
+    "1_0.5",
+    "١٢٣",  # arabische Ziffern – int() akzeptiert sie
+    "１２３",  # fullwidth digits
+    "1.5",
+    "1,5",
+    "-1,5",
+    "+1,5",
+    "1.5.6",
+    "1,5,6",
+    "1,000.5",
+    "1.000,5",
+    ".5",
+    "5.",
+    "1e5",
+    "1E5",
+    "-1e-5",
+    "e5",
+    "inf",
+    "Infinity",
+    "-inf",
+    "+inf",
+    "NaN",
+    "nan",
+    "+nan",
+    "++inf",
+    "--1",
+    "0x10",
+    "0b101",
+    "  42  ",
+    "4 2",
+    "€5",
+    "5€",
+    "-",
+    "+",
+    ".",
+    ",",
+    "_",
+    "True",
+    "None",
+    "Buchung Nr. 17",
+    "KS01",
+    "2026-01-01",
+    "12:30",
+]
+
+
+class TestCoerceStringEquivalenceOracle:
+    """Sprint 35 / WP-B: Die Coercion DEFINIERT die importierten Werte/Typen
+    (Byte-Identitäts-Rote-Linie). Jede Implementierungs-Optimierung muss
+    exakt die historische Semantik liefern – Wert UND Typ."""
+
+    def test_nasty_corpus_matches_reference(self) -> None:
+        from sampling_tool.io.importer import _coerce_string
+
+        for text in _NASTY_CORPUS:
+            expected = _reference_coerce_string(text)
+            got = _coerce_string(text)
+            # repr-Vergleich statt ==: NaN != NaN (IEEE), und repr ist bei
+            # -0.0 vs 0.0 sogar strenger als ==.
+            assert repr(got) == repr(expected), repr(text)
+            assert type(got) is type(expected), repr(text)
+
+    def test_random_fuzz_matches_reference(self) -> None:
+        """Seeded Fuzz über das kritische Alphabet (Ziffern, Vorzeichen,
+        Komma/Punkt, Unterstrich, Exponent, Buchstaben, Unicode-Ziffern)."""
+        import random
+
+        from sampling_tool.io.importer import _coerce_string
+
+        rng = random.Random(4711)
+        alphabet = "0123456789+-.,_eEinfaNyz ٣５"
+        for _ in range(5000):
+            text = "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 12)))
+            expected = _reference_coerce_string(text)
+            got = _coerce_string(text)
+            # repr-Vergleich statt ==: NaN != NaN (IEEE), und repr ist bei
+            # -0.0 vs 0.0 sogar strenger als ==.
+            assert repr(got) == repr(expected), repr(text)
+            assert type(got) is type(expected), repr(text)
+
+    def test_coerce_value_type_dispatch_unchanged(self) -> None:
+        """Reihenfolge-Invarianten der isinstance-Kette: bool bleibt bool
+        (nicht int), date wird datetime, datetime bleibt datetime."""
+        from datetime import date, datetime, time
+
+        from sampling_tool.io.importer import _coerce_value
+
+        assert _coerce_value(True) is True
+        assert _coerce_value(False) is False
+        assert type(_coerce_value(True)) is bool
+        assert _coerce_value(datetime(2026, 1, 2, 3, 4)) == datetime(2026, 1, 2, 3, 4)
+        assert _coerce_value(date(2026, 1, 2)) == datetime(2026, 1, 2, 0, 0, 0)
+        assert type(_coerce_value(date(2026, 1, 2))) is datetime
+        assert _coerce_value(time(8, 30)) == time(8, 30)
+        assert _coerce_value(42.0) == 42
+        assert type(_coerce_value(42.0)) is int
+        assert _coerce_value(42.5) == 42.5
+        assert _coerce_value(7) == 7
+        assert _coerce_value(None) is None
+        assert _coerce_value([1, 2]) == "[1, 2]"  # Letztes Mittel: str()
