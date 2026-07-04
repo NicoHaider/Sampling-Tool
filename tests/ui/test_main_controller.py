@@ -2457,6 +2457,16 @@ def _spy_create_sampler(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
             sampler.sample_ids = track_sample_ids  # type: ignore[attr-defined]
 
+        # Sprint 35 / P-003: Cluster/Stratified haben einen pairs-Spezialpfad.
+        orig_sample_pairs = getattr(sampler, "sample_pairs", None)
+        if orig_sample_pairs is not None:
+
+            def track_sample_pairs(*args: Any, **kwargs: Any) -> Any:
+                calls.append("sample_pairs")
+                return orig_sample_pairs(*args, **kwargs)
+
+            sampler.sample_pairs = track_sample_pairs  # type: ignore[attr-defined]
+
         return sampler
 
     monkeypatch.setattr(
@@ -2559,13 +2569,14 @@ class TestSamplingPathDispatch:
         finally:
             controller.handle_close_engagement()
 
-    def test_cluster_always_uses_classic_path(
+    def test_cluster_unfiltered_uses_pairs_path(
         self,
         window: MainWindow,
         recent_store: RecentEngagementsStore,
         populated_db: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """Sprint 35 / P-003: Cluster ohne Filter + ohne Sub-Sampling → pairs."""
         from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
 
         calls = _spy_create_sampler(monkeypatch)
@@ -2588,17 +2599,52 @@ class TestSamplingPathDispatch:
         try:
             _open_dataset(controller, window, populated_db)
             controller.handle_new_sampling()
-            assert calls == ["sample"]
+            assert calls == ["sample_pairs"]
         finally:
             controller.handle_close_engagement()
 
-    def test_stratified_always_uses_classic_path(
+    def test_cluster_with_filter_uses_classic_path(
         self,
         window: MainWindow,
         recent_store: RecentEngagementsStore,
         populated_db: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        calls = _spy_create_sampler(monkeypatch)
+        result = SamplingDialogResult(
+            config=SampleConfig(
+                method=SamplingMethod.CLUSTER,
+                size=1,
+                seed=42,
+                cluster_field="Konto",
+                filter_field="Konto",
+                filter_value="K1",
+            ),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            assert calls == ["sample"]
+        finally:
+            controller.handle_close_engagement()
+
+    def test_stratified_unfiltered_uses_pairs_path(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Sprint 35 / P-003: Stratified ohne Filter + ohne Sub-Sampling → pairs."""
         from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
 
         calls = _spy_create_sampler(monkeypatch)
@@ -2621,7 +2667,90 @@ class TestSamplingPathDispatch:
         try:
             _open_dataset(controller, window, populated_db)
             controller.handle_new_sampling()
+            assert calls == ["sample_pairs"]
+        finally:
+            controller.handle_close_engagement()
+
+    def test_stratified_from_sample_only_uses_classic_path(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        calls = _spy_create_sampler(monkeypatch)
+        # Vorsample (rows 2,4) → 2 distinct Konto-Schichten, size=2 passt.
+        result = SamplingDialogResult(
+            config=SampleConfig(
+                method=SamplingMethod.STRATIFIED,
+                size=2,
+                seed=42,
+                stratum_field="Konto",
+            ),
+            from_sample_only=True,
+        )
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.handle_new_sampling()
             assert calls == ["sample"]
+        finally:
+            controller.handle_close_engagement()
+
+    @pytest.mark.parametrize(
+        ("method", "size"),
+        [(SamplingMethod.CLUSTER, 2), (SamplingMethod.STRATIFIED, 5)],
+    )
+    def test_pairs_path_result_matches_classic_reference(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        method: SamplingMethod,
+        size: int,
+    ) -> None:
+        """E2E-Repro-Oracle (Sprint 35): das Controller-Ergebnis über den
+        pairs-Pfad muss bit-identisch zur klassischen `sample(iter_rows)`-
+        Referenz mit identischer Config sein (ISAE-3402)."""
+        from sampling_tool.core.sampling import create_sampler
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        field_kwargs = (
+            {"cluster_field": "Konto"}
+            if method == SamplingMethod.CLUSTER
+            else {"stratum_field": "Konto"}
+        )
+        cfg = SampleConfig(method=method, size=size, seed=4711, **field_kwargs)
+        result = SamplingDialogResult(config=cfg, from_sample_only=False)
+        factory = lambda _p, _d, _r, _s, _am: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            drawn = controller.session.sample
+            assert drawn is not None
+
+            assert controller.session.db is not None
+            assert controller.session.dataset is not None
+            assert controller.session.dataset.id is not None
+            repo = DatasetRepo(controller.session.db.connect())
+            reference = create_sampler(cfg).sample(
+                repo.iter_rows(controller.session.dataset.id),
+                population_size=controller.session.dataset.row_count,
+            )
+            assert drawn.selected_row_ids == reference.selected_row_ids
         finally:
             controller.handle_close_engagement()
 
