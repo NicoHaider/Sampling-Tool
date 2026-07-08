@@ -50,6 +50,17 @@ class StratifyMode(StrEnum):
     """Gleichviele pro Schicht (Largest-Remainder bei Rundung)."""
 
 
+class FilterOperator(StrEnum):
+    """Vergleichsoperator für den optionalen Spaltenfilter (`SampleConfig`)."""
+
+    EQ = "eq"
+    NE = "ne"
+    GT = "gt"
+    GTE = "gte"
+    LT = "lt"
+    LTE = "lte"
+
+
 class UndoStack(StrEnum):
     """Stack-Identifier für `UndoManager` / `undo_snapshots`."""
 
@@ -139,6 +150,7 @@ class SampleConfig:
     # Optionaler Vorfilter (z. B. Country == "AUT")
     filter_field: str | None = None
     filter_value: Any = None
+    filter_operator: FilterOperator = FilterOperator.EQ
 
     description: str = ""
 
