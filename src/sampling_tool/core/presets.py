@@ -25,7 +25,12 @@ from dataclasses import dataclass
 from datetime import date, datetime, time
 from typing import Any, Final
 
-from sampling_tool.core.models import SampleConfig, SamplingMethod, StratifyMode
+from sampling_tool.core.models import (
+    FilterOperator,
+    SampleConfig,
+    SamplingMethod,
+    StratifyMode,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +45,7 @@ class SamplingPreset:
     stratify_mode: StratifyMode = StratifyMode.PROPORTIONAL
     filter_field: str | None = None
     filter_value: Any = None
+    filter_operator: FilterOperator = FilterOperator.EQ
 
     @classmethod
     def from_config(cls, name: str, config: SampleConfig) -> SamplingPreset:
@@ -57,6 +63,7 @@ class SamplingPreset:
             stratify_mode=config.stratify_mode,
             filter_field=config.filter_field,
             filter_value=config.filter_value,
+            filter_operator=config.filter_operator,
         )
 
     def to_config(self, seed: int) -> SampleConfig:
@@ -74,6 +81,7 @@ class SamplingPreset:
             stratify_mode=self.stratify_mode,
             filter_field=self.filter_field,
             filter_value=self.filter_value,
+            filter_operator=self.filter_operator,
         )
 
 
@@ -125,6 +133,7 @@ def _preset_to_dict(preset: SamplingPreset) -> dict[str, Any]:
         "stratify_mode": preset.stratify_mode.value,
         "filter_field": preset.filter_field,
         "filter_value": _encode_filter_value(preset.filter_value),
+        "filter_operator": preset.filter_operator.value,
     }
 
 
@@ -138,6 +147,7 @@ def _preset_from_dict(data: dict[str, Any]) -> SamplingPreset:
         stratify_mode=StratifyMode(data.get("stratify_mode", StratifyMode.PROPORTIONAL.value)),
         filter_field=data.get("filter_field"),
         filter_value=_decode_filter_value(data.get("filter_value")),
+        filter_operator=FilterOperator(data.get("filter_operator", FilterOperator.EQ.value)),
     )
 
 
