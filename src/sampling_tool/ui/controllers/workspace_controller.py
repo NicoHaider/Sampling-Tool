@@ -295,8 +295,11 @@ class WorkspaceController:
         distinct_provider: Callable[[str], Sequence[Any]] | None = (
             (lambda col: repo.distinct_values(dataset_id, col)) if features.show_filter else None
         )
+        match_count_provider = (
+            self._make_match_count_provider(repo, dataset_id) if features.show_filter else None
+        )
         dialog = self._factories.sampling(
-            s.window, s.dataset, distinct_provider, s.sample, features
+            s.window, s.dataset, distinct_provider, s.sample, features, match_count_provider
         )
         # Seed-Quelle auflösen (Sprint 27): ein fester Seed aus den
         # Einstellungen hat Vorrang („geänderter Seed gilt für die nächste
@@ -538,6 +541,25 @@ class WorkspaceController:
         s.persist_state()
 
     # ---- intern --------------------------------------------------------
+
+    def _make_match_count_provider(
+        self, repo: DatasetRepo, dataset_id: int
+    ) -> Callable[[str, FilterOperator, Any, bool], int]:
+        """Baut den Trefferzahl-Provider für die Größen-/Filter-Vorschau des Dialogs.
+
+        Liest `session.sample` bewusst *bei Aufruf* (nicht beim Dialog-Bau): der
+        Dialog reicht den Live-Stand der Resample-Checkbox durch, und die Zählung
+        muss die aktuell aktive Stichprobe widerspiegeln.
+        """
+        s = self.session
+
+        def _provider(field: str, operator: FilterOperator, value: Any, restrict: bool) -> int:
+            restrict_ids = (
+                list(s.sample.selected_row_ids) if restrict and s.sample is not None else None
+            )
+            return _count_filter_matches(repo, dataset_id, field, operator, value, restrict_ids)
+
+        return _provider
 
     def _build_sampling_iterator(
         self,
