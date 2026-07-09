@@ -2126,7 +2126,7 @@ class TestEngagementStateRestore:
 
 
 class TestFeatureVisibilityPropagation:
-    def test_controller_uebergibt_alle_features_aus_bei_simple(
+    def test_controller_uebergibt_default_features_bei_simple(
         self,
         window: MainWindow,
         recent_store: RecentEngagementsStore,
@@ -2158,7 +2158,9 @@ class TestFeatureVisibilityPropagation:
             _open_dataset(controller, window, populated_db)
             controller.handle_new_sampling()
             features = received["features"]
-            assert features.show_filter is False
+            # Sprint 36: Filter ist ab Werk sichtbar (auch ohne Advanced-Mode),
+            # Cluster/Geschichtet bleiben aus.
+            assert features.show_filter is True
             assert features.show_cluster is False
             assert features.show_stratified is False
         finally:
@@ -2285,7 +2287,7 @@ class TestNewSamplingDistinctProvider:
         finally:
             controller.handle_close_engagement()
 
-    def test_simple_mode_passes_none_provider(
+    def test_hidden_filter_passes_none_provider(
         self,
         window: MainWindow,
         recent_store: RecentEngagementsStore,
@@ -2307,11 +2309,15 @@ class TestNewSamplingDistinctProvider:
             captured["provider"] = provider
             return _StubSamplingDialog(None, accept=False)
 
+        # Sprint 36: Filter ist ab Werk sichtbar, deshalb hier explizit aus, um
+        # den „kein Provider ohne sichtbaren Filter"-Zweig zu treffen.
         controller = MainController(
             window,
             recent_store=recent_store,
             sampling_dialog_factory=fake_factory,  # type: ignore[arg-type]
-            settings=dc_replace(AppSettings.defaults(), advanced_mode=False),
+            settings=dc_replace(
+                AppSettings.defaults(), advanced_mode=False, show_filter_feature=False
+            ),
         )
         try:
             _open_dataset(controller, window, populated_db)

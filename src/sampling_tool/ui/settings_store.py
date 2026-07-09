@@ -144,7 +144,11 @@ class AppSettings:
             undo_depth=DEFAULT_UNDO_DEPTH,
             snapshot_retention_days=DEFAULT_SNAPSHOT_RETENTION_DAYS,
             log_level=DEFAULT_LOG_LEVEL,
-            show_filter_feature=False,
+            # Sprint 36: Spalten-Filter ist ab Werk sichtbar (unabhängig von
+            # Advanced-Mode). Bewusste Verhaltensänderung – auch für
+            # Bestandsuser ohne explizit gesetzten Key. Cluster/Geschichtet
+            # bleiben Default aus.
+            show_filter_feature=True,
             show_cluster_feature=False,
             show_stratified_feature=False,
             first_run_completed=False,
