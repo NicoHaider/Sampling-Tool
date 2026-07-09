@@ -24,13 +24,14 @@ from PyQt6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.config import SUPPORTED_CSV_SUFFIXES, SUPPORTED_EXCEL_SUFFIXES
-from sampling_tool.core.models import Dataset, DatasetRow, Snapshot
+from sampling_tool.core.models import Dataset, DatasetRow, FilterOperator, Snapshot
 from sampling_tool.core.sampling import (
     ClusterSampler,
     SamplingError,
     SimpleSampler,
     StratifiedSampler,
     create_sampler,
+    matches_filter,
 )
 from sampling_tool.io.importer import (
     DataImportError,
@@ -50,6 +51,33 @@ from sampling_tool.ui.dialogs.progress_dialog import TaskProgressDialog
 from sampling_tool.ui.workers.tasks import ExcelImportTask, ExcelImportTaskResult
 
 logger = logging.getLogger(__name__)
+
+
+def _count_filter_matches(
+    repo: DatasetRepo,
+    dataset_id: int,
+    column: str,
+    operator: FilterOperator,
+    value: Any,
+    restrict_to_ids: Sequence[int] | None,
+) -> int:
+    """Zählt Rows, die den Filter erfüllen – dieselbe `matches_filter`-Logik wie die
+    Ziehung, damit Vorschau-Zahl und tatsächlicher Pool nie auseinanderlaufen.
+
+    `restrict_to_ids` (gesetzt bei „nur aus aktueller Auswahl"): zählt innerhalb der
+    bestehenden Stichprobe (kleine, beschränkte Menge → get_rows_by_ids ist ok).
+    Sonst Streaming über die volle Tabelle: bevorzugt (row_id, wert)-Pairs
+    (json_extract, RAM ~ ein 2-Tupel/Row); Spalten mit `"`/`\\` im Namen können das
+    nicht → Fallback auf iter_rows.
+    """
+    if restrict_to_ids is not None:
+        rows = repo.get_rows_by_ids(dataset_id, restrict_to_ids)
+        return sum(1 for r in rows if matches_filter(r.get(column), operator, value))
+    if DatasetRepo.supports_field_pairs(column):
+        pairs = repo.iter_row_field_pairs(dataset_id, column)
+        return sum(1 for _, v in pairs if matches_filter(v, operator, value))
+    rows_iter = repo.iter_rows(dataset_id)
+    return sum(1 for r in rows_iter if matches_filter(r.get(column), operator, value))
 
 
 class WorkspaceController:
