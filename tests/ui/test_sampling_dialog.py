@@ -3,20 +3,27 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date, datetime
 from typing import Any
 
 import pytest
-from PyQt6.QtWidgets import QDialogButtonBox
+from PyQt6.QtWidgets import QDialogButtonBox, QLineEdit
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import (
     Dataset,
+    FilterOperator,
     SampleConfig,
     SampleResult,
     SamplingMethod,
     StratifyMode,
 )
-from sampling_tool.ui.dialogs.sampling_dialog import NO_FILTER_LABEL, SamplingDialog
+from sampling_tool.core.presets import SamplingPreset
+from sampling_tool.ui.dialogs.sampling_dialog import (
+    NO_FILTER_LABEL,
+    SamplingDialog,
+    _parse_filter_threshold,
+)
 from sampling_tool.ui.settings_store import SamplingFeatures
 
 pytestmark = pytest.mark.ui
@@ -531,3 +538,268 @@ class TestFilterDistinctValuesCache:
         dialog._filter_field.setCurrentText("Land")
         second = [dialog._filter_value.itemData(i) for i in range(dialog._filter_value.count())]
         assert first == second == ["AUT", "CHE", "DEU"]
+
+
+# ---------------------------------------------------------------------------
+# Sprint 36: Filter-Operatoren + Schwellenwert-Feld + Match-Preview
+# ---------------------------------------------------------------------------
+
+_FILTER = SamplingFeatures(show_filter=True)
+
+
+def _select_operator(dialog: SamplingDialog, operator: FilterOperator) -> None:
+    """Wählt den Operator im Combo per userData-Match."""
+    combo = dialog._filter_operator
+    for i in range(combo.count()):
+        if combo.itemData(i) == operator:
+            combo.setCurrentIndex(i)
+            return
+    raise AssertionError(f"Operator {operator} nicht im Combo gefunden")
+
+
+def _make_match_provider() -> tuple[
+    Callable[[str, FilterOperator, Any, bool], int],
+    list[tuple[str, FilterOperator, Any, bool]],
+]:
+    """Zähl-Fake für den Match-Count-Provider: liefert 3 (restrict) bzw. 7."""
+    calls: list[tuple[str, FilterOperator, Any, bool]] = []
+
+    def provider(field: str, operator: FilterOperator, value: Any, restrict: bool) -> int:
+        calls.append((field, operator, value, restrict))
+        return 3 if restrict else 7
+
+    return provider, calls
+
+
+class TestFilterOperatorUI:
+    """Operator-Combo, Zwei-Modus-Wertfeld, Preview-Timing, Decision-Table."""
+
+    def test_operator_switch_toggles_value_widget(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_FILTER)
+        qtbot.addWidget(dialog)
+        # Default EQ → distinct-Dropdown-Seite.
+        assert dialog._filter_value_stack.currentWidget() is dialog._filter_value
+        # Ordering-Op → Textfeld-Seite.
+        _select_operator(dialog, FilterOperator.GT)
+        assert dialog._filter_value_stack.currentWidget() is dialog._filter_value_text
+        assert isinstance(dialog._filter_value_stack.currentWidget(), QLineEdit)
+        # Zurück zu NE (EQ/NE) → wieder Dropdown-Seite.
+        _select_operator(dialog, FilterOperator.NE)
+        assert dialog._filter_value_stack.currentWidget() is dialog._filter_value
+
+    def test_operator_combo_has_six_items(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_FILTER)
+        qtbot.addWidget(dialog)
+        ops = {dialog._filter_operator.itemData(i) for i in range(dialog._filter_operator.count())}
+        assert ops == set(FilterOperator)
+        assert dialog._filter_operator.currentData() == FilterOperator.EQ
+
+    def test_preview_reacts_on_editing_finished_not_per_keystroke(self, qtbot: QtBot) -> None:
+        ds, dist = _make_dataset()
+        match_provider, calls = _make_match_provider()
+        dialog = SamplingDialog(
+            ds, dist, features=_FILTER, filter_match_count_provider=match_provider
+        )
+        qtbot.addWidget(dialog)
+        dialog._filter_field.setCurrentText("Betrag")  # EQ-Modus: ein Provider-Call
+        _select_operator(dialog, FilterOperator.GT)  # Textfeld leer → kein Call
+        before = len(calls)
+        # Tastendruck-für-Tastendruck: textChanged feuert, editingFinished nicht.
+        for partial in ("1", "10", "100"):
+            dialog._filter_value_text.setText(partial)
+        assert len(calls) == before  # kein Full-Table-Scan pro Zeichen
+        dialog._filter_value_text.editingFinished.emit()
+        assert len(calls) == before + 1  # ein Scan bei editingFinished
+        assert calls[-1] == ("Betrag", FilterOperator.GT, 100, False)
+
+    def test_size_hint_decision_table(self, qtbot: QtBot) -> None:
+        ds, dist = _make_dataset()
+        match_provider, calls = _make_match_provider()
+        dialog = SamplingDialog(
+            ds,
+            dist,
+            current_sample=_make_sample((1, 3, 5, 7)),
+            features=_FILTER,
+            filter_match_count_provider=match_provider,
+        )
+        qtbot.addWidget(dialog)
+
+        # F=nein, R=nein → Datasetgröße.
+        assert dialog._effective_max_sample_size() == 12
+        # F=nein, R=ja → Größe des bestehenden Samples.
+        dialog._resample_checkbox.setChecked(True)
+        assert dialog._effective_max_sample_size() == 4
+        dialog._resample_checkbox.setChecked(False)
+        assert calls == []  # ohne aktiven Filter kein Provider-Aufruf
+
+        # Filter aktivieren (EQ / distinct-Wert).
+        dialog._filter_field.setCurrentText("Betrag")
+        dialog._filter_value.setCurrentIndex(0)
+        # F=ja, R=nein → Provider(..., False) == 7.
+        assert dialog._effective_max_sample_size() == 7
+        assert "7" in dialog._lbl_size_hint.text()
+        # F=ja, R=ja → Provider(..., True) == 3.
+        dialog._resample_checkbox.setChecked(True)
+        assert dialog._effective_max_sample_size() == 3
+        assert "3" in dialog._lbl_size_hint.text()
+
+    def test_provider_none_falls_back_to_dataset_size(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_FILTER)  # kein Provider
+        qtbot.addWidget(dialog)
+        dialog._filter_field.setCurrentText("Betrag")
+        dialog._filter_value.setCurrentIndex(0)
+        # Aktiver Filter, aber Provider None → kein Crash, Datasetgröße.
+        assert dialog._effective_max_sample_size() == 12
+
+    def test_match_count_is_memoized(self, qtbot: QtBot) -> None:
+        ds, dist = _make_dataset()
+        match_provider, calls = _make_match_provider()
+        dialog = SamplingDialog(
+            ds,
+            dist,
+            current_sample=_make_sample((1, 3, 5, 7)),
+            features=_FILTER,
+            filter_match_count_provider=match_provider,
+        )
+        qtbot.addWidget(dialog)
+        dialog._filter_field.setCurrentText("Betrag")  # 1. Call (…, False)
+        dialog._filter_value.setCurrentIndex(0)
+        # Resample hin und her: nur zwei distinkte restrict-Kombis.
+        for checked in (True, False, True, False):
+            dialog._resample_checkbox.setChecked(checked)
+        assert len(calls) == 2
+
+    def test_parse_filter_threshold_order(self) -> None:
+        assert _parse_filter_threshold("1000") == 1000
+        assert type(_parse_filter_threshold("1000")) is int
+        assert _parse_filter_threshold("1.5") == 1.5
+        assert type(_parse_filter_threshold("1.5")) is float
+        assert _parse_filter_threshold("2024-01-01") == date(2024, 1, 1)
+        assert type(_parse_filter_threshold("2024-01-01")) is date
+        assert _parse_filter_threshold("2024-01-01T10:00") == datetime(2024, 1, 1, 10, 0)
+        assert type(_parse_filter_threshold("2024-01-01T10:00")) is datetime
+        assert _parse_filter_threshold("abc") == "abc"
+        assert type(_parse_filter_threshold("abc")) is str
+
+    def test_build_config_eq_mode(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_FILTER)
+        qtbot.addWidget(dialog)
+        dialog._filter_field.setCurrentText("Land")
+        dialog._filter_value.setCurrentIndex(0)  # "AUT"
+        cfg = dialog._build_config()
+        assert cfg.filter_operator == FilterOperator.EQ
+        assert cfg.filter_field == "Land"
+        assert cfg.filter_value == "AUT"
+
+    def test_build_config_ordering_mode(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_FILTER)
+        qtbot.addWidget(dialog)
+        dialog._filter_field.setCurrentText("Betrag")
+        _select_operator(dialog, FilterOperator.GTE)
+        dialog._filter_value_text.setText("1000")
+        cfg = dialog._build_config()
+        assert cfg.filter_operator == FilterOperator.GTE
+        assert cfg.filter_field == "Betrag"
+        assert cfg.filter_value == 1000
+        assert type(cfg.filter_value) is int
+
+    def test_build_config_no_filter_is_bit_identical(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_FILTER)
+        qtbot.addWidget(dialog)
+        cfg = dialog._build_config()
+        assert cfg.filter_field is None
+        assert cfg.filter_value is None
+
+    def test_validation_blocks_empty_threshold(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_FILTER)
+        qtbot.addWidget(dialog)
+        dialog._filter_field.setCurrentText("Betrag")
+        _select_operator(dialog, FilterOperator.GT)
+        # Leerer Schwellenwert → OK gesperrt.
+        assert _ok_enabled(dialog) is False
+        dialog._filter_value_text.setText("500")
+        assert _ok_enabled(dialog) is True
+
+    def test_apply_preset_ordering_operator(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_FILTER)
+        qtbot.addWidget(dialog)
+        preset = SamplingPreset(
+            name="p",
+            method=SamplingMethod.SIMPLE,
+            size=3,
+            filter_field="Betrag",
+            filter_value=1000,
+            filter_operator=FilterOperator.GT,
+        )
+        dialog.apply_preset(preset)
+        assert dialog._filter_operator.currentData() == FilterOperator.GT
+        assert dialog._filter_value_stack.currentWidget() is dialog._filter_value_text
+        assert dialog._filter_value_text.text() == "1000"
+        assert dialog._filter_field.currentText() == "Betrag"
+
+    def test_apply_preset_eq_operator_uses_dropdown(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_FILTER)
+        qtbot.addWidget(dialog)
+        preset = SamplingPreset(
+            name="p",
+            method=SamplingMethod.SIMPLE,
+            size=3,
+            filter_field="Land",
+            filter_value="AUT",
+            filter_operator=FilterOperator.EQ,
+        )
+        dialog.apply_preset(preset)
+        assert dialog._filter_operator.currentData() == FilterOperator.EQ
+        assert dialog._filter_value_stack.currentWidget() is dialog._filter_value
+        assert dialog._filter_field.currentText() == "Land"
+        assert dialog._filter_value.currentText() == "AUT"
+
+    def test_preview_value_agrees_with_build_config(self, qtbot: QtBot) -> None:
+        # Struktureller Gleichlauf: der Wert, den der Preview zählt, ist exakt
+        # der, den die Ziehung nutzt – für beide Modi (EQ-Dropdown + Ordering).
+        dialog = SamplingDialog(*_make_dataset(), features=_FILTER)
+        qtbot.addWidget(dialog)
+        dialog._filter_field.setCurrentText("Land")
+        dialog._filter_value.setCurrentIndex(0)  # EQ / "AUT"
+        assert dialog._active_filter_query()[2] == dialog._build_config().filter_value
+        dialog._filter_field.setCurrentText("Betrag")
+        _select_operator(dialog, FilterOperator.LT)  # Ordering / Schwellenwert
+        dialog._filter_value_text.setText("500")
+        assert dialog._active_filter_query()[2] == dialog._build_config().filter_value == 500
+
+    def test_apply_preset_refreshes_size_hint(self, qtbot: QtBot) -> None:
+        # Ordering-Preset: der Schwellenwert wird per setText gesetzt (kein
+        # editingFinished) → nur das explizite _update_size_hint in apply_preset
+        # hält den „max. N verfügbar"-Hinweis aktuell.
+        ds, dist = _make_dataset()
+        match_provider, calls = _make_match_provider()
+        dialog = SamplingDialog(
+            ds, dist, features=_FILTER, filter_match_count_provider=match_provider
+        )
+        qtbot.addWidget(dialog)
+        preset = SamplingPreset(
+            name="p",
+            method=SamplingMethod.SIMPLE,
+            size=3,
+            filter_field="Betrag",
+            filter_value=1000,
+            filter_operator=FilterOperator.GT,
+        )
+        dialog.apply_preset(preset)
+        assert ("Betrag", FilterOperator.GT, 1000, False) in calls
+        assert "7" in dialog._lbl_size_hint.text()
+
+    def test_manual_threshold_edit_resets_preset_dropdown(self, qtbot: QtBot) -> None:
+        # editingFinished am Schwellenwert-Feld = manuelle Filteränderung →
+        # Vorlagen-Dropdown zurück auf den Platzhalter.
+        dialog = SamplingDialog(*_make_dataset(), features=_FILTER)
+        qtbot.addWidget(dialog)
+        dialog._filter_field.setCurrentText("Betrag")
+        _select_operator(dialog, FilterOperator.GT)
+        dialog._preset_combo.setCurrentIndex(0)
+        # Simuliere eine gemerkte Vorlage im Dropdown.
+        dialog._preset_combo.addItem("Vorlage X", userData="Vorlage X")
+        dialog._preset_combo.setCurrentIndex(dialog._preset_combo.count() - 1)
+        dialog._filter_value_text.setText("42")
+        dialog._filter_value_text.editingFinished.emit()
+        assert dialog._preset_combo.currentIndex() == 0
