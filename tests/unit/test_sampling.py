@@ -10,6 +10,7 @@ Pflichten dieser Suite:
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -17,6 +18,7 @@ from sampling_tool.core import (
     BaseSampler,
     ClusterSampler,
     DatasetRow,
+    FilterOperator,
     SampleConfig,
     SamplingError,
     SamplingMethod,
@@ -24,6 +26,7 @@ from sampling_tool.core import (
     StratifiedSampler,
     StratifyMode,
     create_sampler,
+    matches_filter,
 )
 
 # ---------------------------------------------------------------------------
@@ -820,3 +823,225 @@ class TestStratifiedSamplerPairsPath:
             StratifiedSampler(cfg).sample_pairs(
                 [(r.row_id, r.get("Country")) for r in rows_100], population_size=100
             )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 36 / T1: Filter-Operatoren (=, ≠, >, ≥, <, ≤)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def rows_numeric() -> tuple[DatasetRow, ...]:
+    """5 Zeilen mit numerischer Spalte `amount` (10/20/30/40/50), row_id 1..5."""
+    return tuple(DatasetRow(row_id=i, values={"amount": i * 10}) for i in range(1, 6))
+
+
+class TestFilterOperatorMatching:
+    """Reine Semantik von `matches_filter` – ohne Sampler-Drumherum."""
+
+    def test_eq_on_compatible_types(self) -> None:
+        assert matches_filter(30, FilterOperator.EQ, 30) is True
+        assert matches_filter(30, FilterOperator.EQ, 31) is False
+
+    def test_ne_on_compatible_types(self) -> None:
+        assert matches_filter(30, FilterOperator.NE, 31) is True
+        assert matches_filter(30, FilterOperator.NE, 30) is False
+
+    def test_gt(self) -> None:
+        assert matches_filter(5, FilterOperator.GT, 3) is True
+        assert matches_filter(5, FilterOperator.GT, 5) is False
+        assert matches_filter(3, FilterOperator.GT, 5) is False
+
+    def test_gte(self) -> None:
+        assert matches_filter(5, FilterOperator.GTE, 5) is True
+        assert matches_filter(6, FilterOperator.GTE, 5) is True
+        assert matches_filter(4, FilterOperator.GTE, 5) is False
+
+    def test_lt(self) -> None:
+        assert matches_filter(3, FilterOperator.LT, 5) is True
+        assert matches_filter(5, FilterOperator.LT, 5) is False
+        assert matches_filter(6, FilterOperator.LT, 5) is False
+
+    def test_lte(self) -> None:
+        assert matches_filter(5, FilterOperator.LTE, 5) is True
+        assert matches_filter(4, FilterOperator.LTE, 5) is True
+        assert matches_filter(6, FilterOperator.LTE, 5) is False
+
+    def test_ordering_works_on_int_float_mix(self) -> None:
+        # int vs. float ist eine kompatible Ordnung → kein TypeError.
+        assert matches_filter(5, FilterOperator.GT, 4.5) is True
+        assert matches_filter(4.5, FilterOperator.LT, 5) is True
+
+    def test_ordering_works_on_str_vs_str(self) -> None:
+        # str-vs-str ist kompatibel orderbar.
+        assert matches_filter("b", FilterOperator.GT, "a") is True
+        assert matches_filter("a", FilterOperator.LTE, "a") is True
+
+    @pytest.mark.parametrize(
+        "operator",
+        [FilterOperator.GT, FilterOperator.GTE, FilterOperator.LT, FilterOperator.LTE],
+    )
+    def test_ordering_with_none_row_value_is_false(self, operator: FilterOperator) -> None:
+        # None vs. int → TypeError → kontrolliertes False, kein Crash.
+        assert matches_filter(None, operator, 5) is False
+
+    @pytest.mark.parametrize(
+        "operator",
+        [FilterOperator.GT, FilterOperator.GTE, FilterOperator.LT, FilterOperator.LTE],
+    )
+    def test_ordering_with_none_filter_value_is_false(self, operator: FilterOperator) -> None:
+        assert matches_filter(5, operator, None) is False
+
+    @pytest.mark.parametrize(
+        "operator",
+        [FilterOperator.GT, FilterOperator.GTE, FilterOperator.LT, FilterOperator.LTE],
+    )
+    def test_ordering_str_vs_int_is_false(self, operator: FilterOperator) -> None:
+        # inkompatible Typen (str vs. int) → TypeError gefangen → False.
+        assert matches_filter("5", operator, 5) is False
+        assert matches_filter(5, operator, "5") is False
+
+    def test_eq_ne_across_arbitrary_types_never_crash(self) -> None:
+        # EQ/NE sind für beliebige Typ-Kombinationen definiert (kein TypeError).
+        assert matches_filter(None, FilterOperator.EQ, None) is True
+        assert matches_filter("a", FilterOperator.NE, 1) is True
+        assert matches_filter("a", FilterOperator.EQ, 1) is False
+        assert matches_filter(None, FilterOperator.NE, 5) is True
+        # int/float-Gleichheit (5 == 5.0) bleibt True.
+        assert matches_filter(5, FilterOperator.EQ, 5.0) is True
+
+    # -- datetime/date: Kernfall Datumsbereich-Filter von Buchungen ----------
+    # Diese Operatoren existieren primär, um Buchungen nach Datum zu filtern;
+    # Filter-Werte in dieser App können legitim datetime/date/time sein.
+
+    def test_datetime_vs_datetime_ordering_works(self) -> None:
+        early = datetime(2024, 1, 1, 10, 0)
+        late = datetime(2024, 6, 30, 12, 0)
+        assert matches_filter(late, FilterOperator.GT, early) is True
+        assert matches_filter(early, FilterOperator.GT, late) is False
+        assert matches_filter(early, FilterOperator.GTE, early) is True
+        assert matches_filter(early, FilterOperator.LT, late) is True
+        assert matches_filter(late, FilterOperator.LT, early) is False
+        assert matches_filter(late, FilterOperator.LTE, late) is True
+
+    def test_date_vs_date_ordering_works(self) -> None:
+        early = date(2024, 1, 1)
+        late = date(2024, 12, 31)
+        assert matches_filter(late, FilterOperator.GT, early) is True
+        assert matches_filter(early, FilterOperator.GTE, early) is True
+        assert matches_filter(early, FilterOperator.LT, late) is True
+        assert matches_filter(late, FilterOperator.LTE, late) is True
+        assert matches_filter(early, FilterOperator.LT, early) is False
+
+    @pytest.mark.parametrize(
+        "operator",
+        [FilterOperator.GT, FilterOperator.GTE, FilterOperator.LT, FilterOperator.LTE],
+    )
+    def test_date_vs_datetime_ordering_is_false_not_crash(self, operator: FilterOperator) -> None:
+        # date vs. datetime ist in Python nicht order-vergleichbar (TypeError).
+        # Vertrag: kontrolliertes False, kein Abbruch der Ziehung.
+        d, dt = date(2024, 1, 1), datetime(2024, 1, 1, 0, 0)
+        assert matches_filter(d, operator, dt) is False
+        assert matches_filter(dt, operator, d) is False
+
+    @pytest.mark.parametrize(
+        "operator",
+        [FilterOperator.GT, FilterOperator.GTE, FilterOperator.LT, FilterOperator.LTE],
+    )
+    def test_naive_vs_aware_datetime_ordering_is_false_not_crash(
+        self, operator: FilterOperator
+    ) -> None:
+        # naive vs. timezone-aware datetime → TypeError → kontrolliertes False.
+        naive = datetime(2024, 1, 1, 10, 0)
+        aware = datetime(2024, 1, 1, 10, 0, tzinfo=UTC)
+        assert matches_filter(naive, operator, aware) is False
+        assert matches_filter(aware, operator, naive) is False
+
+
+class TestCollectPoolOperatorFilter:
+    """`_collect_pool` filtert mit dem konfigurierten Operator; total zählt alle."""
+
+    @pytest.mark.parametrize(
+        ("operator", "expected_ids"),
+        [
+            (FilterOperator.EQ, [3]),
+            (FilterOperator.NE, [1, 2, 4, 5]),
+            (FilterOperator.GT, [4, 5]),
+            (FilterOperator.GTE, [3, 4, 5]),
+            (FilterOperator.LT, [1, 2]),
+            (FilterOperator.LTE, [1, 2, 3]),
+        ],
+    )
+    def test_operator_selects_expected_rows(
+        self,
+        rows_numeric: tuple[DatasetRow, ...],
+        operator: FilterOperator,
+        expected_ids: list[int],
+    ) -> None:
+        cfg = SampleConfig(
+            method=SamplingMethod.SIMPLE,
+            size=1,
+            seed=1,
+            filter_field="amount",
+            filter_value=30,
+            filter_operator=operator,
+        )
+        pool, total = SimpleSampler(cfg)._collect_pool(iter(rows_numeric))
+
+        assert sorted(r.row_id for r in pool) == expected_ids
+        assert total == len(rows_numeric)  # total zählt IMMER alle Eingabe-Rows
+
+    def test_default_operator_is_equality(self, rows_numeric: tuple[DatasetRow, ...]) -> None:
+        # Ohne filter_operator ⇒ Default EQ ⇒ exakt wie das frühere `== value`.
+        cfg = SampleConfig(
+            method=SamplingMethod.SIMPLE,
+            size=1,
+            seed=1,
+            filter_field="amount",
+            filter_value=30,
+        )
+        pool, total = SimpleSampler(cfg)._collect_pool(iter(rows_numeric))
+        assert sorted(r.row_id for r in pool) == [3]
+        assert total == len(rows_numeric)
+
+
+class TestFilterReproducibilityOracle:
+    """ISAE-3402-Regressions-Oracle: EQ (implizit ODER explizit) zieht bit-genau
+    wie der alte Gleichheits-Pfad – über mehrere Seeds."""
+
+    @pytest.mark.parametrize("seed", [1, 42, 12345])
+    def test_eq_default_and_explicit_match_classic_equality(
+        self, rows_100: tuple[DatasetRow, ...], seed: int
+    ) -> None:
+        field, value = "Country", "AUT"
+
+        cfg_implicit = SampleConfig(
+            method=SamplingMethod.SIMPLE,
+            size=10,
+            seed=seed,
+            filter_field=field,
+            filter_value=value,
+        )
+        cfg_explicit = SampleConfig(
+            method=SamplingMethod.SIMPLE,
+            size=10,
+            seed=seed,
+            filter_field=field,
+            filter_value=value,
+            filter_operator=FilterOperator.EQ,
+        )
+        # Deterministisches Oracle: manuell nach Gleichheit vorfiltern, dann
+        # ungefiltert ziehen == exakt das alte `r.get(field) == value`-Verhalten.
+        cfg_nofilter = SampleConfig(method=SamplingMethod.SIMPLE, size=10, seed=seed)
+        expected = (
+            SimpleSampler(cfg_nofilter)
+            .sample([r for r in rows_100 if r.get(field) == value])
+            .selected_row_ids
+        )
+
+        implicit_ids = SimpleSampler(cfg_implicit).sample(rows_100).selected_row_ids
+        explicit_ids = SimpleSampler(cfg_explicit).sample(rows_100).selected_row_ids
+
+        assert implicit_ids == explicit_ids
+        assert implicit_ids == expected
+        assert explicit_ids == expected

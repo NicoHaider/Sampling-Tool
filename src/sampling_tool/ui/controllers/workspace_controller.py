@@ -24,13 +24,20 @@ from PyQt6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.config import SUPPORTED_CSV_SUFFIXES, SUPPORTED_EXCEL_SUFFIXES
-from sampling_tool.core.models import Dataset, DatasetRow, Snapshot
+from sampling_tool.core.models import (
+    Dataset,
+    DatasetRow,
+    FilterOperator,
+    SampleResult,
+    Snapshot,
+)
 from sampling_tool.core.sampling import (
     ClusterSampler,
     SamplingError,
     SimpleSampler,
     StratifiedSampler,
     create_sampler,
+    matches_filter,
 )
 from sampling_tool.io.importer import (
     DataImportError,
@@ -47,9 +54,37 @@ from sampling_tool.ui.controllers.workspace_session import WorkspaceSession
 from sampling_tool.ui.dataset_id_store import DatasetIdColumnStore
 from sampling_tool.ui.dialogs.import_options_dialog import ImportOptionsResult
 from sampling_tool.ui.dialogs.progress_dialog import TaskProgressDialog
+from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
 from sampling_tool.ui.workers.tasks import ExcelImportTask, ExcelImportTaskResult
 
 logger = logging.getLogger(__name__)
+
+
+def _count_filter_matches(
+    repo: DatasetRepo,
+    dataset_id: int,
+    column: str,
+    operator: FilterOperator,
+    value: Any,
+    restrict_to_ids: Sequence[int] | None,
+) -> int:
+    """Zählt Rows, die den Filter erfüllen – dieselbe `matches_filter`-Logik wie die
+    Ziehung, damit Vorschau-Zahl und tatsächlicher Pool nie auseinanderlaufen.
+
+    `restrict_to_ids` (gesetzt bei „nur aus aktueller Auswahl"): zählt innerhalb der
+    bestehenden Stichprobe (kleine, beschränkte Menge → get_rows_by_ids ist ok).
+    Sonst Streaming über die volle Tabelle: bevorzugt (row_id, wert)-Pairs
+    (json_extract, RAM ~ ein 2-Tupel/Row); Spalten mit `"`/`\\` im Namen können das
+    nicht → Fallback auf iter_rows.
+    """
+    if restrict_to_ids is not None:
+        rows = repo.get_rows_by_ids(dataset_id, restrict_to_ids)
+        return sum(1 for r in rows if matches_filter(r.get(column), operator, value))
+    if DatasetRepo.supports_field_pairs(column):
+        pairs = repo.iter_row_field_pairs(dataset_id, column)
+        return sum(1 for _, v in pairs if matches_filter(v, operator, value))
+    rows_iter = repo.iter_rows(dataset_id)
+    return sum(1 for r in rows_iter if matches_filter(r.get(column), operator, value))
 
 
 class WorkspaceController:
@@ -267,8 +302,11 @@ class WorkspaceController:
         distinct_provider: Callable[[str], Sequence[Any]] | None = (
             (lambda col: repo.distinct_values(dataset_id, col)) if features.show_filter else None
         )
+        match_count_provider = (
+            self._make_match_count_provider(repo, dataset_id) if features.show_filter else None
+        )
         dialog = self._factories.sampling(
-            s.window, s.dataset, distinct_provider, s.sample, features
+            s.window, s.dataset, distinct_provider, s.sample, features, match_count_provider
         )
         # Seed-Quelle auflösen (Sprint 27): ein fester Seed aus den
         # Einstellungen hat Vorrang („geänderter Seed gilt für die nächste
@@ -288,52 +326,18 @@ class WorkspaceController:
             return
 
         try:
-            sampler = create_sampler(result.config)
-            # Sprint 12.1 / P-002: SimpleSampler ohne Filter + ohne Sub-Sampling
-            # bekommt nur die row_ids (kein DatasetRow-Materialize).
-            # Sprint 35 / P-003: Cluster/Stratified ohne Filter + ohne
-            # Sub-Sampling bekommen (row_id, feldwert)-Pairs – bit-identische
-            # Ziehung (Oracles in test_sampling.py), aber ohne den vollen
-            # 15-Spalten-Row-Pool im RAM. Gefilterte Samples und Resampling
-            # gehen weiterhin durch den klassischen Streaming-Pfad.
-            unfiltered_full_population = (
-                result.config.filter_field is None and not result.from_sample_only
-            )
-            if isinstance(sampler, SimpleSampler) and unfiltered_full_population:
-                sample_result = sampler.sample_ids(
-                    repo.iter_row_ids(s.dataset.id),
-                    population_size=s.dataset.row_count,
-                )
-            elif (
-                isinstance(sampler, ClusterSampler)
-                and unfiltered_full_population
-                and result.config.cluster_field is not None
-                and DatasetRepo.supports_field_pairs(result.config.cluster_field)
-            ):
-                sample_result = sampler.sample_pairs(
-                    repo.iter_row_field_pairs(s.dataset.id, result.config.cluster_field),
-                    population_size=s.dataset.row_count,
-                )
-            elif (
-                isinstance(sampler, StratifiedSampler)
-                and unfiltered_full_population
-                and result.config.stratum_field is not None
-                and DatasetRepo.supports_field_pairs(result.config.stratum_field)
-            ):
-                sample_result = sampler.sample_pairs(
-                    repo.iter_row_field_pairs(s.dataset.id, result.config.stratum_field),
-                    population_size=s.dataset.row_count,
-                )
-            else:
-                effective_rows, population_size = self._build_sampling_iterator(
-                    repo, s.dataset, result.from_sample_only
-                )
-                sample_result = sampler.sample(effective_rows, population_size=population_size)
+            sample_result = self._draw_sample_result(repo, s.dataset, result)
         except SamplingError as exc:
             s.error(f"Stichprobe konnte nicht gezogen werden: {exc}")
             return
 
-        parent_sample_id = s.sample.id if result.from_sample_only and s.sample is not None else None
+        # Sprint 36 / WP-B: eine Nachstichprobe zieht aus derselben Eltern-
+        # Stichproben-Lineage wie das Sub-Sampling (from_sample_only).
+        parent_sample_id = (
+            s.sample.id
+            if (result.from_sample_only or result.exclude_sample_ids) and s.sample is not None
+            else None
+        )
         sample_result = replace(sample_result, parent_sample_id=parent_sample_id)
 
         try:
@@ -511,6 +515,88 @@ class WorkspaceController:
 
     # ---- intern --------------------------------------------------------
 
+    def _make_match_count_provider(
+        self, repo: DatasetRepo, dataset_id: int
+    ) -> Callable[[str, FilterOperator, Any, bool], int]:
+        """Baut den Trefferzahl-Provider für die Größen-/Filter-Vorschau des Dialogs.
+
+        Liest `session.sample` bewusst *bei Aufruf* (nicht beim Dialog-Bau): der
+        Dialog reicht den Live-Stand der Resample-Checkbox durch, und die Zählung
+        muss die aktuell aktive Stichprobe widerspiegeln.
+        """
+        s = self.session
+
+        def _provider(field: str, operator: FilterOperator, value: Any, restrict: bool) -> int:
+            restrict_ids = (
+                list(s.sample.selected_row_ids) if restrict and s.sample is not None else None
+            )
+            return _count_filter_matches(repo, dataset_id, field, operator, value, restrict_ids)
+
+        return _provider
+
+    def _draw_sample_result(
+        self,
+        repo: DatasetRepo,
+        dataset: Dataset,
+        result: SamplingDialogResult,
+    ) -> SampleResult:
+        """Wählt den Sampler-Pfad und zieht die Stichprobe. Kann `SamplingError` werfen.
+
+        Sprint 12.1 / P-002: SimpleSampler ohne Filter + ohne Sub-Sampling bekommt
+        nur die row_ids (kein DatasetRow-Materialize). Sprint 35 / P-003:
+        Cluster/Stratified ohne Filter + ohne Sub-Sampling bekommen
+        (row_id, feldwert)-Pairs – bit-identische Ziehung (Oracles in
+        test_sampling.py), aber ohne den vollen 15-Spalten-Row-Pool im RAM.
+        Sprint 36 / WP-B: eine Nachstichprobe (exclude_sample_ids) darf NIE einen
+        der P-002/P-003-Fastpaths nehmen – sie geht immer über den klassischen
+        `sample(rows)`-Pfad, damit der Ausschluss-Filter greift. Gefilterte und
+        Resample-Ziehungen laufen ebenfalls klassisch.
+        """
+        s = self.session
+        assert dataset.id is not None
+        sampler = create_sampler(result.config)
+        unfiltered_full_population = (
+            result.config.filter_field is None
+            and not result.from_sample_only
+            and not result.exclude_sample_ids
+        )
+        if isinstance(sampler, SimpleSampler) and unfiltered_full_population:
+            return sampler.sample_ids(
+                repo.iter_row_ids(dataset.id),
+                population_size=dataset.row_count,
+            )
+        if (
+            isinstance(sampler, ClusterSampler)
+            and unfiltered_full_population
+            and result.config.cluster_field is not None
+            and DatasetRepo.supports_field_pairs(result.config.cluster_field)
+        ):
+            return sampler.sample_pairs(
+                repo.iter_row_field_pairs(dataset.id, result.config.cluster_field),
+                population_size=dataset.row_count,
+            )
+        if (
+            isinstance(sampler, StratifiedSampler)
+            and unfiltered_full_population
+            and result.config.stratum_field is not None
+            and DatasetRepo.supports_field_pairs(result.config.stratum_field)
+        ):
+            return sampler.sample_pairs(
+                repo.iter_row_field_pairs(dataset.id, result.config.stratum_field),
+                population_size=dataset.row_count,
+            )
+        if result.exclude_sample_ids and s.sample is not None:
+            # Sprint 36 / WP-B: Nachstichprobe – klassischer Pfad über einen
+            # Iterator, der die bereits gezogene aktive Stichprobe ausschließt.
+            effective_rows, population_size = self._build_supplement_iterator(
+                repo, dataset, s.sample.selected_row_ids
+            )
+            return sampler.sample(effective_rows, population_size=population_size)
+        effective_rows, population_size = self._build_sampling_iterator(
+            repo, dataset, result.from_sample_only
+        )
+        return sampler.sample(effective_rows, population_size=population_size)
+
     def _build_sampling_iterator(
         self,
         repo: DatasetRepo,
@@ -536,6 +622,27 @@ class WorkspaceController:
             sample_ids = list(s.sample.selected_row_ids)
             return repo.get_rows_by_ids(dataset.id, sample_ids), len(sample_ids)
         return repo.iter_rows(dataset.id), dataset.row_count
+
+    def _build_supplement_iterator(
+        self,
+        repo: DatasetRepo,
+        dataset: Dataset,
+        exclude_ids: Sequence[int],
+    ) -> tuple[Iterable[DatasetRow], int]:
+        """Alle Rows AUSSER den übergebenen IDs – Basis minus bereits gezogener Stichprobe.
+
+        `population_size` ist die tatsächlich verfügbare Restmenge
+        (row_count - len(exclude)), nicht die volle Dataset-Größe – dokumentiert die
+        für DIESE Ziehung reale Population (Audit-Nachstichprobe ohne Dubletten).
+        """
+        assert dataset.id is not None
+        exclude_set = frozenset(exclude_ids)
+        filtered = (row for row in repo.iter_rows(dataset.id) if row.row_id not in exclude_set)
+        # Invariante: exclude_ids ⊆ Dataset (das aktive Sample gehört zu diesem
+        # Dataset; Rows werden nie gelöscht) → len(exclude_set) zählt exakt die
+        # ausgeschlossenen Rows, damit die population_size-Mathe (row_count -
+        # len(exclude)) stimmt.
+        return filtered, dataset.row_count - len(exclude_set)
 
     def _push_undo_snapshot(self) -> None:
         """Aktuellen Sample/Filter-State auf den Undo-Stack legen."""

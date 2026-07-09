@@ -18,10 +18,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, assert_never
 
 from sampling_tool.core.models import (
     DatasetRow,
+    FilterOperator,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -114,7 +115,7 @@ class BaseSampler(ABC):
         total = 0
         for r in rows:
             total += 1
-            if r.get(field) == value:
+            if matches_filter(r.get(field), self.config.filter_operator, value):
                 pool.append(r)
         return pool, total
 
@@ -463,6 +464,37 @@ def create_sampler(config: SampleConfig) -> BaseSampler:
             return ClusterSampler(config)
         case SamplingMethod.STRATIFIED:
             return StratifiedSampler(config)
+
+
+# ---------------------------------------------------------------------------
+# Filter-Matching (modul-öffentlich)
+# ---------------------------------------------------------------------------
+
+
+def matches_filter(row_value: Any, operator: FilterOperator, filter_value: Any) -> bool:
+    """Prüft `row_value <operator> filter_value` für den Vorfilter einer Ziehung.
+
+    EQ/NE gelten für beliebige Typ-Kombinationen. GT/GTE/LT/LTE liefern bei
+    inkompatiblen Typen (None, str vs. int, date vs. datetime, naiv vs. aware,
+    …) ein kontrolliertes False statt eines Crashs – kein stiller Fehlschlag,
+    aber auch kein Abbruch der ganzen Ziehung wegen einer einzelnen Zeile.
+    """
+    if operator == FilterOperator.EQ:
+        return bool(row_value == filter_value)
+    if operator == FilterOperator.NE:
+        return bool(row_value != filter_value)
+    try:
+        if operator == FilterOperator.GT:
+            return bool(row_value > filter_value)
+        if operator == FilterOperator.GTE:
+            return bool(row_value >= filter_value)
+        if operator == FilterOperator.LT:
+            return bool(row_value < filter_value)
+        if operator == FilterOperator.LTE:
+            return bool(row_value <= filter_value)
+    except TypeError:
+        return False
+    assert_never(operator)
 
 
 # ---------------------------------------------------------------------------

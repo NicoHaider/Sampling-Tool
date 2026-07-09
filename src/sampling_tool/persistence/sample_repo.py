@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 from sampling_tool.core.models import (
+    FilterOperator,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -33,8 +34,8 @@ class SampleRepo:
                 "INSERT INTO samples "
                 "(dataset_id, method, sample_size, population_size, seed, "
                 " filter_field, filter_value, cluster_field, stratum_field, "
-                " stratify_mode, parent_sample_id, created_at, created_by) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " stratify_mode, filter_operator, parent_sample_id, created_at, created_by) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     dataset_id,
                     cfg.method.value,
@@ -46,6 +47,7 @@ class SampleRepo:
                     cfg.cluster_field,
                     cfg.stratum_field,
                     cfg.stratify_mode.value,
+                    cfg.filter_operator.value,
                     result.parent_sample_id,
                     result.drawn_at,
                     created_by,
@@ -110,6 +112,7 @@ class SampleRepo:
             ),
             filter_field=row["filter_field"],
             filter_value=_json_or_none_load(row["filter_value"]),
+            filter_operator=FilterOperator(row["filter_operator"]),
         )
         return SampleResult(
             config=config,

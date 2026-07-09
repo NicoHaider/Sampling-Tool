@@ -13,6 +13,7 @@ from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
     Engagement,
+    FilterOperator,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -338,6 +339,55 @@ class TestSampleRepo:
 
     def test_get_by_id_unknown_returns_none(self, db: Database) -> None:
         assert SampleRepo(db.connect()).get_by_id(99999) is None
+
+    def test_roundtrip_preserves_filter_operator(self, db: Database, engagement_id: int) -> None:
+        dataset_id = _persist_dataset(db, engagement_id)
+        repo = SampleRepo(db.connect())
+        cfg = SampleConfig(
+            method=SamplingMethod.SIMPLE,
+            size=3,
+            seed=7,
+            filter_field="Col1",
+            filter_value="V5",
+            filter_operator=FilterOperator.GT,
+        )
+        result = SampleResult(
+            config=cfg,
+            selected_row_ids=(6, 7, 8),
+            population_size=10,
+        )
+        sid = repo.create_from_result(result, dataset_id, "anna")
+
+        loaded = repo.get_by_id(sid)
+        assert loaded is not None
+        # Nicht-Default-Operator überlebt Save/Reload.
+        assert loaded.config.filter_operator == FilterOperator.GT
+        # Restliche Config roundtrippt unverändert.
+        assert loaded.config.method == SamplingMethod.SIMPLE
+        assert loaded.config.size == 3
+        assert loaded.config.seed == 7
+        assert loaded.config.filter_field == "Col1"
+        assert loaded.config.filter_value == "V5"
+        assert loaded.selected_row_ids == (6, 7, 8)
+
+    def test_legacy_row_without_operator_reads_as_equality(
+        self, db: Database, engagement_id: int
+    ) -> None:
+        # Alt-Zeile ohne filter_operator (Spalten-DEFAULT greift) → EQ.
+        dataset_id = _persist_dataset(db, engagement_id)
+        conn = db.connect()
+        cur = conn.execute(
+            "INSERT INTO samples "
+            "(dataset_id, method, sample_size, population_size, seed, created_by) "
+            "VALUES (?, 'simple', 2, 10, 42, 'anna')",
+            (dataset_id,),
+        )
+        sample_id = cur.lastrowid
+        assert sample_id is not None
+
+        loaded = SampleRepo(conn).get_by_id(sample_id)
+        assert loaded is not None
+        assert loaded.config.filter_operator == FilterOperator.EQ
 
 
 # ===========================================================================

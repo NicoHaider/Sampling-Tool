@@ -19,12 +19,12 @@ class TestSchemaVersion:
 
     def test_latest_after_migration(self, db: Database) -> None:
         # Fixture migriert bereits.
-        assert db.schema_version() == 2
+        assert db.schema_version() == 3
 
     def test_migration_is_idempotent(self, db: Database) -> None:
         db.migrate()  # erneut – darf nichts ändern
         db.migrate()
-        assert db.schema_version() == 2
+        assert db.schema_version() == 3
 
 
 class TestMigrationsApply:
@@ -122,7 +122,8 @@ class TestMigrationV1ToV2:
         upgraded = Database(db_path)
         try:
             upgraded.migrate()
-            assert upgraded.schema_version() == 2
+            # `migrate()` zieht bis zur LATEST-Version durch (nicht nur +1).
+            assert upgraded.schema_version() == 3
 
             # Bestehende Daten überleben.
             row = (
@@ -138,6 +139,82 @@ class TestMigrationV1ToV2:
                 upgraded.connect().execute("SELECT COUNT(*) AS c FROM engagement_state").fetchone()
             )
             assert count["c"] == 0
+        finally:
+            upgraded.close()
+
+
+class TestMigrationV2ToV3:
+    """Regression: bestehende Sprint-8.2-DBs (schema_version=2) müssen ohne
+    Datenverlust auf v3 hochgezogen werden. Bestandssamples hatten implizit
+    Gleichheits-Filter – der Backfill setzt `filter_operator='eq'`, damit das
+    historische Verhalten exakt erhalten bleibt (ISAE-3402)."""
+
+    @staticmethod
+    def _migration_sql(name: str) -> str:
+        return (
+            Path(__file__).resolve().parents[2]
+            / "src"
+            / "sampling_tool"
+            / "persistence"
+            / "migrations"
+            / name
+        ).read_text(encoding="utf-8")
+
+    def test_v2_db_is_upgraded_in_place(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "legacy_v2.db"
+
+        # Schritt 1: Sprint-8.2-Stand simulieren – Migrationen 001 + 002 anwenden.
+        legacy = Database(db_path)
+        try:
+            conn = legacy.connect()
+            conn.executescript(self._migration_sql("001_initial.sql"))
+            conn.executescript(self._migration_sql("002_engagement_state.sql"))
+            assert legacy.schema_version() == 2
+
+            with legacy.session() as c:
+                c.execute(
+                    "INSERT INTO engagements (auditor_name, client_name) VALUES (?, ?)",
+                    ("Anna", "ACME"),
+                )
+                c.execute(
+                    "INSERT INTO datasets (engagement_id, name, row_count, columns_json) "
+                    "VALUES (1, 'DS', 3, '[]')",
+                )
+                # Pre-Migration-Spaltenset: OHNE filter_operator.
+                c.execute(
+                    "INSERT INTO samples "
+                    "(dataset_id, method, sample_size, population_size, seed, "
+                    " filter_field, filter_value, created_by) "
+                    "VALUES (1, 'simple', 2, 3, 42, 'Country', '\"AUT\"', 'anna')",
+                )
+        finally:
+            legacy.close()
+
+        # Schritt 2: dieselbe DB-Datei normal öffnen (wie der Controller).
+        upgraded = Database(db_path)
+        try:
+            upgraded.migrate()
+            assert upgraded.schema_version() == 3
+
+            row = (
+                upgraded.connect()
+                .execute(
+                    "SELECT method, sample_size, population_size, seed, "
+                    "filter_field, filter_value, created_by, filter_operator "
+                    "FROM samples"
+                )
+                .fetchone()
+            )
+            # Bestehende Sample-Daten überleben unverändert.
+            assert row["method"] == "simple"
+            assert row["sample_size"] == 2
+            assert row["population_size"] == 3
+            assert row["seed"] == 42
+            assert row["filter_field"] == "Country"
+            assert row["filter_value"] == '"AUT"'
+            assert row["created_by"] == "anna"
+            # Historische-Gleichheit-Garantie: Backfill auf 'eq'.
+            assert row["filter_operator"] == "eq"
         finally:
             upgraded.close()
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from PyQt6.QtCore import Qt
@@ -27,9 +28,11 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QRadioButton,
     QSpinBox,
+    QStackedWidget,
     QStyle,
     QVBoxLayout,
     QWidget,
@@ -43,6 +46,7 @@ from sampling_tool.config import (
 )
 from sampling_tool.core.models import (
     Dataset,
+    FilterOperator,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -63,6 +67,23 @@ PRESET_PLACEHOLDER: str = "(Vorlage wählen…)"
 # beim Accept zu (siehe `accept()`).
 _SPINBOX_MAX: int = 2_147_483_647
 
+# Sprint 36: Vergleichsoperatoren des Spaltenfilters. Der sichtbare Label-Text
+# steht im Combo, das `FilterOperator`-Member als `userData`.
+_FILTER_OPERATOR_ITEMS: tuple[tuple[str, FilterOperator], ...] = (
+    ("= (gleich)", FilterOperator.EQ),
+    ("≠ (ungleich)", FilterOperator.NE),
+    ("> (größer als)", FilterOperator.GT),
+    ("≥ (größer/gleich)", FilterOperator.GTE),
+    ("< (kleiner als)", FilterOperator.LT),
+    ("≤ (kleiner/gleich)", FilterOperator.LTE),
+)
+
+# Ordering-Operatoren nutzen ein freies Schwellenwert-Textfeld statt des
+# distinct-Werte-Dropdowns (EQ/NE).
+_ORDERING_OPERATORS: frozenset[FilterOperator] = frozenset(
+    {FilterOperator.GT, FilterOperator.GTE, FilterOperator.LT, FilterOperator.LTE}
+)
+
 
 @dataclass(frozen=True, slots=True)
 class SamplingDialogResult:
@@ -70,6 +91,11 @@ class SamplingDialogResult:
 
     config: SampleConfig
     from_sample_only: bool = False
+    # Sprint 36 / WP-B: reine UI-Anweisung wie `from_sample_only` (nicht in
+    # SampleConfig/Persistenz). True → Nachstichprobe: aus der Basispopulation
+    # ziehen, aber bereits gezogene Datensätze garantiert ausschließen. Der
+    # Controller setzt den Ausschluss um.
+    exclude_sample_ids: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +122,7 @@ class SamplingDialog(QDialog):
         *,
         features: SamplingFeatures | None = None,
         preset_store: PresetStore | None = None,
+        filter_match_count_provider: Callable[[str, FilterOperator, Any, bool], int] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Neue Stichprobe")
@@ -113,6 +140,13 @@ class SamplingDialog(QDialog):
         # Lebensdauer unveränderlich, also wird jede Spalte genau einmal
         # geladen (Memo pro Dialog-Instanz, keine Invalidierung nötig).
         self._distinct_cache: dict[str, tuple[Any, ...]] = {}
+        # Sprint 36: liefert die Trefferzahl eines aktiven Filters (Feld,
+        # Operator, Wert, restrict-auf-aktuelle-Auswahl) für den Size-Hint.
+        # Ein Aufruf ist ein Full-Table-Scan; deshalb wird das Ergebnis pro
+        # (Feld, Operator, repr(Wert), restrict) memoisiert (Dataset ist modal
+        # unveränderlich, keine Invalidierung nötig – wie `_distinct_cache`).
+        self._filter_match_count_provider = filter_match_count_provider
+        self._match_count_cache: dict[tuple[str, FilterOperator, str, bool], int] = {}
         self._current_sample = current_sample
         self._result: SamplingDialogResult | None = None
         self._columns = list(dataset.columns)
@@ -198,6 +232,9 @@ class SamplingDialog(QDialog):
         if self._show_methods:
             self._on_method_changed()
         self._validate()
+        # Nach einem gefilterten Preset muss der „max. N verfügbar"-Hinweis den
+        # neuen Filter widerspiegeln (idempotent + memoisiert).
+        self._update_size_hint()
         return AppliedPresetResult(skipped_filters=tuple(skipped_filters))
 
     # ---- UI-Aufbau -----------------------------------------------------
@@ -283,12 +320,25 @@ class SamplingDialog(QDialog):
             self._filter_field = QComboBox()
             self._filter_field.addItem(NO_FILTER_LABEL)
             self._filter_field.addItems(self._columns)
+            self._filter_operator = QComboBox()
+            for label, operator in _FILTER_OPERATOR_ITEMS:
+                self._filter_operator.addItem(label, userData=operator)
+            # Sprint 36: der Wert-Eingabe-Bereich schaltet je Operator um –
+            # distinct-Dropdown (EQ/NE) vs. freies Schwellenwert-Feld
+            # (>, ≥, <, ≤). Ein QStackedWidget hält beide Seiten; Seite 0 ist
+            # das Dropdown (Default EQ), Seite 1 das Textfeld.
             self._filter_value = QComboBox()
             self._filter_value.setEnabled(False)
+            self._filter_value_text = QLineEdit()
+            self._filter_value_text.setPlaceholderText("Schwellenwert…")
+            self._filter_value_stack = QStackedWidget()
+            self._filter_value_stack.addWidget(self._filter_value)
+            self._filter_value_stack.addWidget(self._filter_value_text)
             filter_row = QHBoxLayout()
             filter_row.setSpacing(8)
-            filter_row.addWidget(self._filter_field, stretch=1)
-            filter_row.addWidget(self._filter_value, stretch=2)
+            filter_row.addWidget(self._filter_field, stretch=2)
+            filter_row.addWidget(self._filter_operator, stretch=0)
+            filter_row.addWidget(self._filter_value_stack, stretch=3)
             filter_widget = QWidget()
             filter_widget.setLayout(filter_row)
             form.addRow("Filter (optional)", filter_widget)
@@ -327,13 +377,23 @@ class SamplingDialog(QDialog):
         # Der Filter "Nur aus aktueller Auswahl ziehen" entspricht semantisch
         # dem from_sample_only-Flag – er bleibt auch im Simple-Mode erreichbar,
         # damit Resampling jederzeit möglich ist.
-        self._resample_checkbox = QCheckBox("Nur aus aktueller Auswahl ziehen (Resampling)")
+        self._resample_checkbox = QCheckBox("Nur aus aktueller Auswahl ziehen (einschränken)")
         if self._current_sample is None or not self._current_sample.selected_row_ids:
             self._resample_checkbox.setEnabled(False)
             self._resample_checkbox.setToolTip(
-                "Es ist kein Sample aktiv – Resampling nicht möglich."
+                "Es ist kein Sample aktiv – Einschränken auf die Auswahl nicht möglich."
             )
         outer.addWidget(self._resample_checkbox)
+
+        # ---- Nachstichprobe / Ergänzen (Sprint 36 / WP-B) ----
+        # Gegenstück zum Resample-Filter: zieht aus der Basispopulation, schließt
+        # aber garantiert die bereits gezogenen Datensätze aus (keine Duplikate).
+        # Reine UI-Anweisung; der Controller setzt den Ausschluss um.
+        self._supplement_checkbox = QCheckBox(
+            "Ergänzen – bereits gezogene Datensätze ausschließen (Nachstichprobe)"
+        )
+        self._configure_supplement_enablement()
+        outer.addWidget(self._supplement_checkbox)
 
         # ---- Seed-Zeile (in beiden Modi sichtbar) ----
         # Sprint 27: Der Seed ist hier schreibgeschützt – der Wert bleibt
@@ -412,10 +472,23 @@ class SamplingDialog(QDialog):
         layout.addWidget(text_lbl)
         return hint
 
+    def _configure_supplement_enablement(self) -> None:
+        """Sperrt die Nachstichprobe-Checkbox ohne Sample bzw. wenn alles gezogen ist."""
+        if self._current_sample is None or not self._current_sample.selected_row_ids:
+            self._supplement_checkbox.setEnabled(False)
+            self._supplement_checkbox.setToolTip(
+                "Es ist kein Sample aktiv – Nachstichprobe nicht möglich."
+            )
+        elif self._dataset.row_count <= len(self._current_sample.selected_row_ids):
+            # Ganze Population ist bereits gezogen → nichts mehr zu ergänzen.
+            self._supplement_checkbox.setEnabled(False)
+            self._supplement_checkbox.setToolTip("Es sind keine ungezogenen Datensätze mehr übrig.")
+
     def _wire_signals(self) -> None:
         self._size_spin.valueChanged.connect(self._validate)
         self._size_spin.valueChanged.connect(self._reset_combo_selection)
         self._resample_checkbox.toggled.connect(self._on_resample_toggled)
+        self._supplement_checkbox.toggled.connect(self._on_supplement_toggled)
         # `activated` feuert nur bei echter Nutzer-Auswahl (nicht beim
         # programmatischen Zurücksetzen auf den Platzhalter) – so wendet ein
         # `setCurrentIndex(0)` keine Vorlage versehentlich an.
@@ -427,7 +500,18 @@ class SamplingDialog(QDialog):
         if self._show_filter:
             self._filter_field.currentTextChanged.connect(self._refresh_filter_values)
             self._filter_field.currentTextChanged.connect(self._reset_combo_selection)
+            self._filter_field.currentTextChanged.connect(self._update_size_hint)
             self._filter_value.currentTextChanged.connect(self._validate)
+            self._filter_value.currentIndexChanged.connect(self._update_size_hint)
+            self._filter_operator.currentIndexChanged.connect(self._on_filter_operator_changed)
+            self._filter_operator.activated.connect(self._reset_combo_selection)
+            # Preview/Size-Hint darf NICHT pro Tastendruck den Provider (Full-
+            # Table-Scan) triggern → nur `editingFinished` (Enter/Fokusverlust),
+            # nicht `textChanged`. Die reine Leer-Validierung ist billig und
+            # läuft pro Tastendruck weiter (kein Provider-Aufruf).
+            self._filter_value_text.editingFinished.connect(self._update_size_hint)
+            self._filter_value_text.editingFinished.connect(self._reset_combo_selection)
+            self._filter_value_text.textChanged.connect(self._validate)
         if self._show_cluster:
             self._cluster_field.currentTextChanged.connect(self._validate)
         if self._show_stratified:
@@ -476,19 +560,118 @@ class SamplingDialog(QDialog):
         self._filter_value.blockSignals(False)
         self._validate()
 
-    def _on_resample_toggled(self, _checked: bool) -> None:
+    def _on_filter_operator_changed(self) -> None:
+        """Schaltet die Wert-Eingabe zwischen distinct-Dropdown (EQ/NE) und Textfeld.
+
+        Ordering-Operatoren (>, ≥, <, ≤) brauchen einen freien Schwellenwert;
+        EQ/NE bleiben beim distinct-Werte-Dropdown. Danach Validierung + Size-
+        Hint (bei aktivem Filter ein Provider-Scan, hier zulässig).
+        """
+        is_ordering = self._filter_operator.currentData() in _ORDERING_OPERATORS
+        self._filter_value_stack.setCurrentWidget(
+            self._filter_value_text if is_ordering else self._filter_value
+        )
+        self._validate()
+        self._update_size_hint()
+
+    def _on_resample_toggled(self, checked: bool) -> None:
         # Kein hartes Cap mehr – Hint-Label informiert, Accept-Validierung
         # fängt Überschreitung ab.
+        # Mutual Exclusion mit der Nachstichprobe (Sprint 36 / WP-B): rekursions-
+        # sicher, weil setChecked(False) auf eine bereits ungecheckte Box nichts
+        # emittiert und der Gegen-Slot mit checked=False keinen Rück-Uncheck macht.
+        if checked and self._supplement_checkbox.isChecked():
+            self._supplement_checkbox.setChecked(False)
         self._update_size_hint()
         self._validate()
+
+    def _on_supplement_toggled(self, checked: bool) -> None:
+        # Mutual Exclusion mit dem Resample-Filter (siehe `_on_resample_toggled`).
+        if checked and self._resample_checkbox.isChecked():
+            self._resample_checkbox.setChecked(False)
+        # Bewusst KEIN _update_size_hint(): eine exakte „Rest nach Ausschluss"-
+        # Obergrenze (v. a. mit aktivem Spaltenfilter) bräuchte einen dedizierten
+        # Count, den der Match-Count-Provider nicht liefert (sein restrict-auf-IDs
+        # schließt das Sample EIN, kann es nicht AUSschließen); die Filter+
+        # Nachstichprobe-Komposition ist laut Plan out-of-scope. Ein zu großer
+        # Ergänzungs-Zug wird beim Ziehen im Controller validiert (klare deutsche
+        # Fehlermeldung), also kein stiller Fehlschlag. Der Hint würde hier nur
+        # einen irreführenden Wert zeigen – deshalb nur validieren.
+        self._validate()
+
+    def _filter_is_active(self) -> bool:
+        """Ist ein Spaltenfilter mit brauchbarem Wert gesetzt?
+
+        Brauchbar heißt: Feld ≠ `NO_FILTER_LABEL` UND (für EQ/NE ein
+        auswählbarer distinct-Wert, für Ordering-Ops ein nicht-leerer
+        Schwellenwert-Text). Der Provider-`None`-Fall wird vom Aufrufer
+        (`_effective_max_sample_size`) abgefangen.
+        """
+        if not self._show_filter:
+            return False
+        field = self._filter_field.currentText()
+        if field == NO_FILTER_LABEL or not field:
+            return False
+        if self._filter_operator.currentData() in _ORDERING_OPERATORS:
+            return bool(self._filter_value_text.text().strip())
+        return self._filter_value.count() > 0
+
+    def _current_filter_value(self, operator: FilterOperator) -> Any:
+        """Leitet den Filter-Wert je Modus ab (Ordering-Text vs. EQ/NE-Dropdown).
+
+        Single Source of Truth für Preview (`_active_filter_query`) UND Ziehung
+        (`_build_config`): so zählt der Preview strukturell garantiert dieselbe
+        Population, die auch gezogen wird – kein Auseinanderlaufen bei künftigen
+        Edits (genau das, was dieses Feature verhindern soll).
+        """
+        if operator in _ORDERING_OPERATORS:
+            return _parse_filter_threshold(self._filter_value_text.text())
+        value = self._filter_value.currentData(int(Qt.ItemDataRole.UserRole))
+        if value is None:
+            value = self._filter_value.currentText()
+        return value
+
+    def _active_filter_query(self) -> tuple[str, FilterOperator, Any]:
+        """(Feld, Operator, Wert) des aktiven Filters – Wert je Modus aufgelöst."""
+        field = self._filter_field.currentText()
+        operator: FilterOperator = self._filter_operator.currentData()
+        return field, operator, self._current_filter_value(operator)
+
+    def _match_count(
+        self,
+        provider: Callable[[str, FilterOperator, Any, bool], int],
+        field: str,
+        operator: FilterOperator,
+        value: Any,
+        restrict: bool,
+    ) -> int:
+        """Trefferzahl des Filters via Provider, memoisiert pro (Feld, Op, Wert, restrict)."""
+        # `repr`, nicht `str`: der Key MUSS Typen unterscheiden – `matches_filter`
+        # vergleicht per `==`, und int 5 ≠ str "5". `str(5) == str("5")` würde
+        # kollidieren und einen veralteten Count für gemischt-typige Spalten zeigen.
+        key = (field, operator, repr(value), restrict)
+        cached = self._match_count_cache.get(key)
+        if cached is not None:
+            return cached
+        count = provider(field, operator, value, restrict)
+        self._match_count_cache[key] = count
+        return count
 
     def _effective_max_sample_size(self) -> int:
         """Aktuell zulässige Maximalgröße der Stichprobe.
 
-        Bei aktivem Resampling-Filter ist das die Größe des bestehenden
-        Samples, sonst die Datasetgröße.
+        Entscheidungstabelle (F = aktiver Filter mit Provider, R = Resampling):
+        F/R nein/nein → Datasetgröße; nein/ja → Größe des bestehenden Samples;
+        ja/nein → Provider(…, False); ja/ja → Provider(…, True). Der Provider
+        (Full-Table-Scan) wird nie mit `None` oder ohne brauchbaren Wert
+        aufgerufen.
         """
-        if self._resample_checkbox.isChecked() and self._current_sample is not None:
+        restrict = self._resample_checkbox.isChecked()
+        provider = self._filter_match_count_provider
+        if provider is not None and self._filter_is_active():
+            field, operator, value = self._active_filter_query()
+            return max(self._match_count(provider, field, operator, value, restrict), 1)
+        if restrict and self._current_sample is not None:
             return max(len(self._current_sample.selected_row_ids), 1)
         return self._max_population
 
@@ -524,6 +707,7 @@ class SamplingDialog(QDialog):
         self._result = SamplingDialogResult(
             config=self._build_config(),
             from_sample_only=self._resample_checkbox.isChecked(),
+            exclude_sample_ids=self._supplement_checkbox.isChecked(),
         )
         super().accept()
 
@@ -547,11 +731,12 @@ class SamplingDialog(QDialog):
         method = self._selected_method()
         filter_field: str | None = None
         filter_value: Any = None
-        if self._show_filter and self._filter_field.currentText() != NO_FILTER_LABEL:
-            filter_field = self._filter_field.currentText()
-            filter_value = self._filter_value.currentData(int(Qt.ItemDataRole.UserRole))
-            if filter_value is None:
-                filter_value = self._filter_value.currentText()
+        filter_operator: FilterOperator = FilterOperator.EQ
+        if self._show_filter:
+            filter_operator = self._filter_operator.currentData()
+            if self._filter_field.currentText() != NO_FILTER_LABEL:
+                filter_field = self._filter_field.currentText()
+                filter_value = self._current_filter_value(filter_operator)
         stratify_mode = StratifyMode.PROPORTIONAL
         if self._show_stratified and self._radio_equal.isChecked():
             stratify_mode = StratifyMode.EQUAL
@@ -568,6 +753,7 @@ class SamplingDialog(QDialog):
             stratify_mode=stratify_mode,
             filter_field=filter_field,
             filter_value=filter_value,
+            filter_operator=filter_operator,
         )
 
     def _validation_error(self) -> str | None:
@@ -578,12 +764,12 @@ class SamplingDialog(QDialog):
             return "Cluster-Sampling benötigt ein Cluster-Feld."
         if method == SamplingMethod.STRATIFIED and not self._stratum_field.currentText():
             return "Geschichtete Stichprobe benötigt ein Schicht-Feld."
-        if (
-            self._show_filter
-            and self._filter_field.currentText() != NO_FILTER_LABEL
-            and self._filter_value.count() == 0
-        ):
-            return "Das Filterfeld enthält keine Werte – Filter entfernen."
+        if self._show_filter and self._filter_field.currentText() != NO_FILTER_LABEL:
+            if self._filter_operator.currentData() in _ORDERING_OPERATORS:
+                if not self._filter_value_text.text().strip():
+                    return "Bitte einen Schwellenwert für den Vergleich eingeben."
+            elif self._filter_value.count() == 0:
+                return "Das Filterfeld enthält keine Werte – Filter entfernen."
         return None
 
     def _validate(self) -> None:
@@ -615,9 +801,11 @@ class SamplingDialog(QDialog):
 
         Übersprungen (und in `skipped` gemeldet) wird der Filter, wenn seine
         **Spalte** in der aktuellen Population fehlt ODER wenn der gespeicherte
-        **Wert** dort nicht (mehr) vorkommt. So fällt der Dialog nie still auf
-        einen anderen Wert zurück – „kein stiller Fehlschlag" (ISAE-3402).
+        **Wert** (nur EQ/NE-Dropdown) dort nicht (mehr) vorkommt. So fällt der
+        Dialog nie still auf einen anderen Wert zurück – „kein stiller
+        Fehlschlag" (ISAE-3402). Der Operator wird immer gespiegelt.
         """
+        self._apply_preset_operator(preset.filter_operator)
         if preset.filter_field is None:
             self._filter_field.setCurrentText(NO_FILTER_LABEL)
             return
@@ -632,10 +820,21 @@ class SamplingDialog(QDialog):
         self._filter_field.setCurrentText(preset.filter_field)
         self._filter_field.blockSignals(False)
         self._refresh_filter_values()
-        if not self._select_filter_value(preset.filter_value):
+        if preset.filter_operator in _ORDERING_OPERATORS:
+            # Ordering-Ops: Wert ins Schwellenwert-Textfeld (kein distinct-Match
+            # gegen die Population – ein Vergleichswert muss dort nicht vorkommen).
+            self._filter_value_text.setText(_display(preset.filter_value))
+        elif not self._select_filter_value(preset.filter_value):
             # Spalte ja, aber der Wert kommt in dieser Population nicht vor.
             self._filter_field.setCurrentText(NO_FILTER_LABEL)
             skipped.append(preset.filter_field)
+
+    def _apply_preset_operator(self, operator: FilterOperator) -> None:
+        """Wählt den Operator im Combo (schaltet über den Slot die Wert-Eingabe um)."""
+        for i in range(self._filter_operator.count()):
+            if self._filter_operator.itemData(i) == operator:
+                self._filter_operator.setCurrentIndex(i)
+                return
 
     def _select_filter_value(self, value: Any) -> bool:
         """Wählt den Filter-Wert per typ-erhaltendem userData-Match (Fallback Text).
@@ -722,6 +921,34 @@ def _display(value: Any) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+def _parse_filter_threshold(text: str) -> Any:
+    """Parst einen Schwellenwert-Text für Ordering-Filter (>, ≥, <, ≤).
+
+    Reihenfolge: int → float → datetime → Rohstring (Fallback). Ein reines Datum
+    („2024-06-30") wird bewusst als `datetime` (Mitternacht) geparst, NICHT als
+    `date`: Datums-Spalten liegen nach dem Import als `datetime` vor (der Importer
+    coerct `date` → `datetime.combine(…, 00:00)`), und `datetime > date` wirft
+    `TypeError` – ein reiner `date`-Schwellenwert würde gegen eine datetime-Spalte
+    also nichts matchen. `datetime.fromisoformat` akzeptiert beide Formen
+    („2024-06-30" und „2024-06-30T10:00"). Bewusst NICHT `_coerce_value`/
+    `_coerce_string` (Import-Coercion) – ein eigener, kleiner Parser nur für
+    dieses Textfeld.
+    """
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        pass
+    return text
 
 
 def _generate_random_seed() -> int:

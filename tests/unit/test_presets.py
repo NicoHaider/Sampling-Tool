@@ -17,6 +17,7 @@ import pytest
 
 from sampling_tool.core.models import (
     DatasetRow,
+    FilterOperator,
     SampleConfig,
     SamplingMethod,
     StratifyMode,
@@ -192,3 +193,58 @@ class TestPresetSamplingNeutrality:
         preset_result = create_sampler(from_preset).sample(list(rows), population_size=len(rows))
 
         assert manual_result.selected_row_ids == preset_result.selected_row_ids
+
+
+class TestFilterOperatorPresetRoundtrip:
+    """Sprint 36 (T3): das Preset trägt den Filter-Operator; alte JSON ohne
+    den Key lädt rückwärtskompatibel als `EQ`."""
+
+    @staticmethod
+    def _config_with_gt() -> SampleConfig:
+        return SampleConfig(
+            method=SamplingMethod.SIMPLE,
+            size=3,
+            seed=1,
+            filter_field="Betrag",
+            filter_value=500,
+            filter_operator=FilterOperator.GT,
+        )
+
+    def test_serialization_roundtrip_preserves_operator(self) -> None:
+        preset = SamplingPreset.from_config("Beträge > 500", self._config_with_gt())
+        restored = deserialize_presets(serialize_presets([preset]))[0]
+        assert restored.filter_operator == FilterOperator.GT
+        assert restored.filter_field == "Betrag"
+        assert restored.filter_value == 500
+        assert restored == preset
+
+    def test_old_json_without_operator_key_loads_as_eq(self) -> None:
+        # Kritische Garantie: bereits gespeicherte Presets (JSON ohne den
+        # `filter_operator`-Key) müssen weiterhin laden – als Default `EQ`.
+        raw = json.dumps(
+            [
+                {
+                    "name": "alt",
+                    "method": SamplingMethod.SIMPLE.value,
+                    "size": 5,
+                    "cluster_field": None,
+                    "stratum_field": None,
+                    "stratify_mode": StratifyMode.PROPORTIONAL.value,
+                    "filter_field": "Status",
+                    "filter_value": "offen",
+                }
+            ]
+        )
+        restored = deserialize_presets(raw)
+        assert len(restored) == 1
+        assert restored[0].filter_operator == FilterOperator.EQ
+        assert restored[0].filter_field == "Status"
+        assert restored[0].filter_value == "offen"
+
+    def test_from_config_carries_operator(self) -> None:
+        preset = SamplingPreset.from_config("x", self._config_with_gt())
+        assert preset.filter_operator == FilterOperator.GT
+
+    def test_to_config_passthrough_operator(self) -> None:
+        preset = SamplingPreset.from_config("x", self._config_with_gt())
+        assert preset.to_config(seed=7).filter_operator == preset.filter_operator

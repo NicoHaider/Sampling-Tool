@@ -119,16 +119,43 @@ class TestFeatureToggles:
         assert loaded.show_cluster_feature is False
         assert loaded.show_stratified_feature is True
 
-    def test_default_state_matches_today(self) -> None:
-        # Ohne Advanced + ohne Einzel-Toggles ist alles versteckt – identisch
-        # zum heutigen Standard-UI.
+    def test_default_state(self) -> None:
+        # Sprint 36: Filter ist ab Werk sichtbar (unabhängig von Advanced),
+        # Cluster/Geschichtet bleiben versteckt.
         defaults = AppSettings.defaults()
         assert defaults.advanced_mode is False
-        assert defaults.show_filter_feature is False
+        assert defaults.show_filter_feature is True
         assert defaults.show_cluster_feature is False
         assert defaults.show_stratified_feature is False
-        for feature in (FEATURE_FILTER, FEATURE_CLUSTER, FEATURE_STRATIFIED):
+        assert defaults.resolve_feature_visible(FEATURE_FILTER) is True
+        for feature in (FEATURE_CLUSTER, FEATURE_STRATIFIED):
             assert defaults.resolve_feature_visible(feature) is False
+
+    def test_filter_feature_default_is_true(self) -> None:
+        # Sprint 36 – Werks-Default für den Spalten-Filter ist jetzt True.
+        assert AppSettings.defaults().show_filter_feature is True
+
+    def test_cluster_and_stratified_defaults_stay_false(self) -> None:
+        # Absicherung gegen versehentliches Mit-Umschalten (nur Filter flippt).
+        defaults = AppSettings.defaults()
+        assert defaults.show_cluster_feature is False
+        assert defaults.show_stratified_feature is False
+
+    def test_filter_visible_by_default_without_advanced_mode(self) -> None:
+        # ODER-Logik unverändert; der neue Default reicht bereits, damit der
+        # Filter ohne Advanced-Mode sichtbar ist.
+        defaults = AppSettings.defaults()
+        assert defaults.advanced_mode is False
+        assert defaults.resolve_feature_visible(FEATURE_FILTER) is True
+
+    def test_load_from_empty_qsettings_yields_filter_true(self) -> None:
+        # Fallback-Pfad: leerer QSettings-Store (kein gesetzter Key) → der neue
+        # Default schlägt durch, auch für Bestandsuser ohne expliziten Key.
+        loaded = load_settings()
+        assert loaded.show_filter_feature is True
+        # Cluster/Geschichtet bleiben Default aus.
+        assert loaded.show_cluster_feature is False
+        assert loaded.show_stratified_feature is False
 
     def test_feature_toggle_returns_raw_individual_value(self) -> None:
         # `feature_toggle` ist der reine Einzel-Toggle (ohne Advanced-Mode).
