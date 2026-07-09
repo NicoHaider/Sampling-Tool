@@ -2935,6 +2935,338 @@ class TestSamplingPathDispatch:
 
 
 # ---------------------------------------------------------------------------
+# Sprint 36 / T9 (WP-B): Ergänzungs-/Nachstichprobe ohne Dubletten
+# ---------------------------------------------------------------------------
+
+
+def _activate_existing_sample(controller: MainController, window: MainWindow) -> int:
+    """Wählt die im `populated_db` vorhandene Stichprobe (row_ids 2,4) aktiv und
+    liefert deren id zurück."""
+    sample_id = _first_item_data(window.sidebar().samples_widget())
+    controller.handle_sample_selected(sample_id)
+    assert controller.session.sample is not None
+    assert tuple(controller.session.sample.selected_row_ids) == (2, 4)
+    return sample_id
+
+
+class TestSupplementarySampling:
+    """Sprint 36 / T9 (WP-B): Ergänzungs-/Nachstichprobe (`exclude_sample_ids`).
+
+    Zieht aus der Basispopulation, schließt aber die bereits gezogene aktive
+    Stichprobe garantiert aus (keine Dubletten). Reproduzierbarkeit ist heilig
+    (ISAE-3402): gleicher Seed + gleiche Daten + gleiche Exclude-IDs ⇒
+    bit-identische Stichprobe.
+
+    Task 0 verifiziert: die `_resample_checkbox` ist nach einer ersten Ziehung
+    korrekt aktiviert (kein Bug gefunden) – WP-B ergänzt hier nur das
+    Supplement-Feature.
+
+    Fixture-Daten (`populated_db`): row_ids 1..5, Betrag 10/20/30/40/50,
+    vorhandene Stichprobe = row_ids (2, 4).
+    """
+
+    def test_build_supplement_iterator_excludes_exactly_given_ids(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            assert controller.session.db is not None
+            assert controller.session.dataset is not None
+            repo = DatasetRepo(controller.session.db.connect())
+            rows, population_size = controller.workspace._build_supplement_iterator(
+                repo, controller.session.dataset, [2, 4]
+            )
+            yielded = [row.row_id for row in rows]
+            # Exakt die Basis minus Exclude, in iter_rows-Reihenfolge.
+            assert yielded == [1, 3, 5]
+            # population_size = row_count - len(exclude).
+            assert population_size == 5 - 2
+        finally:
+            controller.handle_close_engagement()
+
+    def test_supplement_draw_is_duplicate_free_and_skips_fastpath(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        # Spy: der ungefilterte SimpleSampler-Fastpath (sample_ids) DARF bei einer
+        # Nachstichprobe NICHT laufen – sonst könnte er die Exclude-IDs mitziehen.
+        calls = _spy_create_sampler(monkeypatch)
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=42),
+            exclude_sample_ids=True,
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            _activate_existing_sample(controller, window)
+            controller.handle_new_sampling()
+            assert controller.session.sample is not None
+            drawn = set(controller.session.sample.selected_row_ids)
+            # Klassischer Pfad (sample), NICHT der sample_ids-Fastpath.
+            assert calls == ["sample"]
+            # Dublettenfrei: keine der ausgeschlossenen IDs (2, 4) taucht auf ...
+            assert drawn.isdisjoint({2, 4})
+            # ... und alles stammt aus der Restmenge {1, 3, 5}.
+            assert drawn == {1, 3, 5}  # size=3 über die 3-elementige Restmenge
+        finally:
+            controller.handle_close_engagement()
+
+    def test_supplement_population_size_is_remainder(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
+            exclude_sample_ids=True,
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            _activate_existing_sample(controller, window)
+            controller.handle_new_sampling()
+            assert controller.session.sample is not None
+            # row_count 5 - 2 ausgeschlossene = 3 reale Population dieser Ziehung.
+            assert controller.session.sample.population_size == 3
+        finally:
+            controller.handle_close_engagement()
+
+    def test_supplement_sets_parent_sample_id(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
+            exclude_sample_ids=True,
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            parent_id = _activate_existing_sample(controller, window)
+            controller.handle_new_sampling()
+            stored = controller.session.sample
+            assert stored is not None
+            assert stored.parent_sample_id == parent_id
+            # Auch persistiert (round-trip über den Repo).
+            assert controller.session.db is not None
+            assert stored.id is not None
+            reloaded = SampleRepo(controller.session.db.connect()).get_by_id(stored.id)
+            assert reloaded is not None
+            assert reloaded.parent_sample_id == parent_id
+        finally:
+            controller.handle_close_engagement()
+
+    def test_supplement_reproducible_same_seed_identical(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        """ISAE-3402-Oracle: gleicher Seed + gleiche Exclude-IDs ⇒ bit-identisch.
+
+        Größe 2 über die 3-elementige Restmenge {1,3,5}, damit die Auswahl
+        tatsächlich vom Shuffle abhängt (nicht triviale Vollmenge). Jede Ziehung
+        startet aus einer frischen DB-Kopie (identischer Ausgangszustand), damit
+        die zuvor persistierte Nachstichprobe die Ausgangslage nicht verschiebt.
+        """
+        import shutil
+
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        def _draw(seed: int, tag: str) -> tuple[int, ...]:
+            fresh_dir = tmp_path / tag
+            fresh_dir.mkdir()
+            fresh_db = fresh_dir / "engagement.db"
+            shutil.copy2(populated_db, fresh_db)
+
+            result = SamplingDialogResult(
+                config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=seed),
+                exclude_sample_ids=True,
+            )
+            factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(  # noqa: E731
+                result
+            )
+            controller = MainController(
+                window,
+                recent_store=recent_store,
+                sampling_dialog_factory=factory,  # type: ignore[arg-type]
+            )
+            try:
+                _open_dataset(controller, window, fresh_db)
+                _activate_existing_sample(controller, window)
+                controller.handle_new_sampling()
+                assert controller.session.sample is not None
+                drawn = tuple(controller.session.sample.selected_row_ids)
+                # Immer dublettenfrei, egal welcher Seed.
+                assert set(drawn).issubset({1, 3, 5})
+                return drawn
+            finally:
+                controller.handle_close_engagement()
+
+        # Mehrere Seeds, jeder zweimal aus frischer DB-Kopie gezogen ⇒ pro Seed
+        # bit-identisch (Oracle über mehrere Läufe/Seeds, ISAE-3402).
+        first_99 = _draw(seed=99, tag="a")
+        second_99 = _draw(seed=99, tag="b")
+        assert first_99 == second_99  # Seed 99 ⇒ identisch
+
+        first_100 = _draw(seed=100, tag="c")
+        second_100 = _draw(seed=100, tag="d")
+        assert first_100 == second_100  # Seed 100 ⇒ ebenfalls bit-identisch
+
+    def test_supplement_composes_with_column_filter(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        """Filter + Supplement gleichzeitig: Ausschluss (Iterator) zuerst,
+        Spaltenfilter (_collect_pool) danach – beide Bedingungen gelten.
+
+        Betrag GT 20 trifft row_ids {3,4,5}; Exclude entfernt {2,4} ⇒ die
+        gemeinsame Antwort ist {3,5}."""
+        from sampling_tool.core.models import FilterOperator
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(
+                method=SamplingMethod.SIMPLE,
+                size=2,
+                seed=7,
+                filter_field="Betrag",
+                filter_operator=FilterOperator.GT,
+                filter_value=20,
+            ),
+            exclude_sample_ids=True,
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            _activate_existing_sample(controller, window)
+            controller.handle_new_sampling()
+            assert controller.session.sample is not None
+            drawn = set(controller.session.sample.selected_row_ids)
+            # (a) alle erfüllen den Filter (Betrag > 20 ⇒ row_ids 3,4,5) UND
+            # (b) keiner ist in der ausgeschlossenen Stichprobe {2,4}.
+            assert drawn == {3, 5}
+            assert drawn.issubset({3, 4, 5})
+            assert drawn.isdisjoint({2, 4})
+        finally:
+            controller.handle_close_engagement()
+
+    def test_supplement_without_active_sample_falls_through(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        """Guard: exclude_sample_ids=True aber KEINE aktive Stichprobe ⇒ sichere
+        klassische Voll-Populations-Ziehung (kein Crash, kein Fastpath-Missbrauch)."""
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
+            exclude_sample_ids=True,
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            assert controller.session.sample is None  # nichts aktiv ausgewählt
+            controller.handle_new_sampling()
+            assert controller.session.sample is not None
+            drawn = set(controller.session.sample.selected_row_ids)
+            # Volle Population {1..5}, kein Ausschluss, kein parent.
+            assert drawn.issubset({1, 2, 3, 4, 5})
+            assert controller.session.sample.population_size == 5
+            assert controller.session.sample.parent_sample_id is None
+        finally:
+            controller.handle_close_engagement()
+
+    def test_oversized_supplement_surfaces_clean_error(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        """Größe > Restmenge ⇒ sauberer SamplingError an den User (QMessageBox),
+        keine (Teil-)Stichprobe persistiert, aktive Stichprobe unverändert.
+
+        Der Dialog cappt die Supplement-Größe bewusst nicht (T8); die Validierung
+        passiert im Controller zur Ziehzeit. Restmenge nach Ausschluss von (2, 4)
+        ist {1, 3, 5} = 3 Rows – size 4 übersteigt sie.
+        """
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=4, seed=7),
+            exclude_sample_ids=True,
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            active_id = _activate_existing_sample(controller, window)
+            with patch(
+                "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+            ) as warning:
+                controller.handle_new_sampling()
+            # Fehler wurde dem User gezeigt ...
+            assert warning.called
+            # ... und es wurde KEINE neue (Teil-)Stichprobe gezogen: die aktive
+            # Stichprobe (row_ids 2, 4) bleibt unverändert.
+            assert controller.session.sample is not None
+            assert controller.session.sample.id == active_id
+            assert set(controller.session.sample.selected_row_ids) == {2, 4}
+        finally:
+            controller.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
 # Sprint 20: Sampling-Reset (Toolbar) – In-Memory-Reset, audit-trail-erhaltend
 # ---------------------------------------------------------------------------
 
