@@ -91,6 +91,11 @@ class SamplingDialogResult:
 
     config: SampleConfig
     from_sample_only: bool = False
+    # Sprint 36 / WP-B: reine UI-Anweisung wie `from_sample_only` (nicht in
+    # SampleConfig/Persistenz). True → Nachstichprobe: aus der Basispopulation
+    # ziehen, aber bereits gezogene Datensätze garantiert ausschließen. Der
+    # Controller setzt den Ausschluss um.
+    exclude_sample_ids: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,13 +377,23 @@ class SamplingDialog(QDialog):
         # Der Filter "Nur aus aktueller Auswahl ziehen" entspricht semantisch
         # dem from_sample_only-Flag – er bleibt auch im Simple-Mode erreichbar,
         # damit Resampling jederzeit möglich ist.
-        self._resample_checkbox = QCheckBox("Nur aus aktueller Auswahl ziehen (Resampling)")
+        self._resample_checkbox = QCheckBox("Nur aus aktueller Auswahl ziehen (einschränken)")
         if self._current_sample is None or not self._current_sample.selected_row_ids:
             self._resample_checkbox.setEnabled(False)
             self._resample_checkbox.setToolTip(
                 "Es ist kein Sample aktiv – Resampling nicht möglich."
             )
         outer.addWidget(self._resample_checkbox)
+
+        # ---- Nachstichprobe / Ergänzen (Sprint 36 / WP-B) ----
+        # Gegenstück zum Resample-Filter: zieht aus der Basispopulation, schließt
+        # aber garantiert die bereits gezogenen Datensätze aus (keine Duplikate).
+        # Reine UI-Anweisung; der Controller setzt den Ausschluss um.
+        self._supplement_checkbox = QCheckBox(
+            "Ergänzen – bereits gezogene Datensätze ausschließen (Nachstichprobe)"
+        )
+        self._configure_supplement_enablement()
+        outer.addWidget(self._supplement_checkbox)
 
         # ---- Seed-Zeile (in beiden Modi sichtbar) ----
         # Sprint 27: Der Seed ist hier schreibgeschützt – der Wert bleibt
@@ -457,10 +472,23 @@ class SamplingDialog(QDialog):
         layout.addWidget(text_lbl)
         return hint
 
+    def _configure_supplement_enablement(self) -> None:
+        """Sperrt die Nachstichprobe-Checkbox ohne Sample bzw. wenn alles gezogen ist."""
+        if self._current_sample is None or not self._current_sample.selected_row_ids:
+            self._supplement_checkbox.setEnabled(False)
+            self._supplement_checkbox.setToolTip(
+                "Es ist kein Sample aktiv – Nachstichprobe nicht möglich."
+            )
+        elif self._dataset.row_count <= len(self._current_sample.selected_row_ids):
+            # Ganze Population ist bereits gezogen → nichts mehr zu ergänzen.
+            self._supplement_checkbox.setEnabled(False)
+            self._supplement_checkbox.setToolTip("Es sind keine ungezogenen Datensätze mehr übrig.")
+
     def _wire_signals(self) -> None:
         self._size_spin.valueChanged.connect(self._validate)
         self._size_spin.valueChanged.connect(self._reset_combo_selection)
         self._resample_checkbox.toggled.connect(self._on_resample_toggled)
+        self._supplement_checkbox.toggled.connect(self._on_supplement_toggled)
         # `activated` feuert nur bei echter Nutzer-Auswahl (nicht beim
         # programmatischen Zurücksetzen auf den Platzhalter) – so wendet ein
         # `setCurrentIndex(0)` keine Vorlage versehentlich an.
@@ -546,10 +574,29 @@ class SamplingDialog(QDialog):
         self._validate()
         self._update_size_hint()
 
-    def _on_resample_toggled(self, _checked: bool) -> None:
+    def _on_resample_toggled(self, checked: bool) -> None:
         # Kein hartes Cap mehr – Hint-Label informiert, Accept-Validierung
         # fängt Überschreitung ab.
+        # Mutual Exclusion mit der Nachstichprobe (Sprint 36 / WP-B): rekursions-
+        # sicher, weil setChecked(False) auf eine bereits ungecheckte Box nichts
+        # emittiert und der Gegen-Slot mit checked=False keinen Rück-Uncheck macht.
+        if checked and self._supplement_checkbox.isChecked():
+            self._supplement_checkbox.setChecked(False)
         self._update_size_hint()
+        self._validate()
+
+    def _on_supplement_toggled(self, checked: bool) -> None:
+        # Mutual Exclusion mit dem Resample-Filter (siehe `_on_resample_toggled`).
+        if checked and self._resample_checkbox.isChecked():
+            self._resample_checkbox.setChecked(False)
+        # Bewusst KEIN _update_size_hint(): eine exakte „Rest nach Ausschluss"-
+        # Obergrenze (v. a. mit aktivem Spaltenfilter) bräuchte einen dedizierten
+        # Count, den der Match-Count-Provider nicht liefert (sein restrict-auf-IDs
+        # schließt das Sample EIN, kann es nicht AUSschließen); die Filter+
+        # Nachstichprobe-Komposition ist laut Plan out-of-scope. Ein zu großer
+        # Ergänzungs-Zug wird beim Ziehen im Controller validiert (klare deutsche
+        # Fehlermeldung), also kein stiller Fehlschlag. Der Hint würde hier nur
+        # einen irreführenden Wert zeigen – deshalb nur validieren.
         self._validate()
 
     def _filter_is_active(self) -> bool:
@@ -660,6 +707,7 @@ class SamplingDialog(QDialog):
         self._result = SamplingDialogResult(
             config=self._build_config(),
             from_sample_only=self._resample_checkbox.isChecked(),
+            exclude_sample_ids=self._supplement_checkbox.isChecked(),
         )
         super().accept()
 

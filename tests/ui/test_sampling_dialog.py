@@ -803,3 +803,131 @@ class TestFilterOperatorUI:
         dialog._filter_value_text.setText("42")
         dialog._filter_value_text.editingFinished.emit()
         assert dialog._preset_combo.currentIndex() == 0
+
+
+# ---------------------------------------------------------------------------
+# Sprint 36 / WP-B: Ergänzungs-Checkbox (Nachstichprobe) + Umbenennung
+# ---------------------------------------------------------------------------
+
+
+def _full_sample() -> SampleResult:
+    """Sample, das die gesamte Population (`_make_dataset`.row_count == 12) zieht."""
+    return _make_sample(tuple(range(1, 13)))
+
+
+class TestSupplementCheckbox:
+    """Sprint 36 / WP-B: „Ergänzen"-Checkbox, Enablement, Mutual Exclusion."""
+
+    def test_renamed_resample_label(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_ALL)
+        qtbot.addWidget(dialog)
+        assert dialog._resample_checkbox.text() == "Nur aus aktueller Auswahl ziehen (einschränken)"
+
+    def test_supplement_disabled_when_no_current_sample(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), current_sample=None, features=_ALL)
+        qtbot.addWidget(dialog)
+        assert dialog._supplement_checkbox.isEnabled() is False
+        assert (
+            dialog._supplement_checkbox.toolTip()
+            == "Es ist kein Sample aktiv – Nachstichprobe nicht möglich."
+        )
+
+    def test_supplement_enabled_with_remaining_rows(self, qtbot: QtBot) -> None:
+        ds, provider = _make_dataset()
+        dialog = SamplingDialog(
+            ds, provider, current_sample=_make_sample((1, 3, 5, 7)), features=_ALL
+        )
+        qtbot.addWidget(dialog)
+        # row_count 12 > 4 gezogene → es bleibt etwas übrig → aktiv.
+        assert dialog._supplement_checkbox.isEnabled() is True
+
+    def test_supplement_disabled_when_population_fully_drawn(self, qtbot: QtBot) -> None:
+        ds, provider = _make_dataset()
+        dialog = SamplingDialog(ds, provider, current_sample=_full_sample(), features=_ALL)
+        qtbot.addWidget(dialog)
+        # row_count 12 <= 12 gezogene → nichts mehr übrig → gesperrt.
+        assert dialog._supplement_checkbox.isEnabled() is False
+        assert (
+            dialog._supplement_checkbox.toolTip()
+            == "Es sind keine ungezogenen Datensätze mehr übrig."
+        )
+
+    def test_checking_supplement_unchecks_resample(self, qtbot: QtBot) -> None:
+        ds, provider = _make_dataset()
+        dialog = SamplingDialog(
+            ds, provider, current_sample=_make_sample((1, 3, 5, 7)), features=_ALL
+        )
+        qtbot.addWidget(dialog)
+        dialog._resample_checkbox.setChecked(True)
+        dialog._supplement_checkbox.setChecked(True)
+        assert dialog._supplement_checkbox.isChecked() is True
+        assert dialog._resample_checkbox.isChecked() is False
+
+    def test_checking_resample_unchecks_supplement(self, qtbot: QtBot) -> None:
+        ds, provider = _make_dataset()
+        dialog = SamplingDialog(
+            ds, provider, current_sample=_make_sample((1, 3, 5, 7)), features=_ALL
+        )
+        qtbot.addWidget(dialog)
+        dialog._supplement_checkbox.setChecked(True)
+        dialog._resample_checkbox.setChecked(True)
+        assert dialog._resample_checkbox.isChecked() is True
+        assert dialog._supplement_checkbox.isChecked() is False
+
+    def test_mutual_exclusion_never_both_checked(self, qtbot: QtBot) -> None:
+        # Fertig-Laufen des Tests beweist Rekursionssicherheit; zusätzlich die
+        # Endzustände nach mehrfachem Hin-und-Her prüfen.
+        ds, provider = _make_dataset()
+        dialog = SamplingDialog(
+            ds, provider, current_sample=_make_sample((1, 3, 5, 7)), features=_ALL
+        )
+        qtbot.addWidget(dialog)
+        for _ in range(5):
+            dialog._resample_checkbox.setChecked(True)
+            assert dialog._supplement_checkbox.isChecked() is False
+            dialog._supplement_checkbox.setChecked(True)
+            assert dialog._resample_checkbox.isChecked() is False
+        assert not (
+            dialog._resample_checkbox.isChecked() and dialog._supplement_checkbox.isChecked()
+        )
+
+    def test_result_supplement_checked(self, qtbot: QtBot) -> None:
+        ds, provider = _make_dataset()
+        dialog = SamplingDialog(
+            ds, provider, current_sample=_make_sample((1, 3, 5, 7)), features=_ALL
+        )
+        qtbot.addWidget(dialog)
+        dialog._size_spin.setValue(3)
+        dialog._supplement_checkbox.setChecked(True)
+        dialog.accept()
+        result = dialog.get_result()
+        assert result is not None
+        assert result.exclude_sample_ids is True
+        assert result.from_sample_only is False
+
+    def test_result_resample_checked(self, qtbot: QtBot) -> None:
+        ds, provider = _make_dataset()
+        dialog = SamplingDialog(
+            ds, provider, current_sample=_make_sample((1, 3, 5, 7)), features=_ALL
+        )
+        qtbot.addWidget(dialog)
+        dialog._size_spin.setValue(3)
+        dialog._resample_checkbox.setChecked(True)
+        dialog.accept()
+        result = dialog.get_result()
+        assert result is not None
+        assert result.exclude_sample_ids is False
+        assert result.from_sample_only is True
+
+    def test_result_neither_checked(self, qtbot: QtBot) -> None:
+        ds, provider = _make_dataset()
+        dialog = SamplingDialog(
+            ds, provider, current_sample=_make_sample((1, 3, 5, 7)), features=_ALL
+        )
+        qtbot.addWidget(dialog)
+        dialog._size_spin.setValue(3)
+        dialog.accept()
+        result = dialog.get_result()
+        assert result is not None
+        assert result.exclude_sample_ids is False
+        assert result.from_sample_only is False
