@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -674,12 +674,27 @@ class TestFilterOperatorUI:
         assert type(_parse_filter_threshold("1000")) is int
         assert _parse_filter_threshold("1.5") == 1.5
         assert type(_parse_filter_threshold("1.5")) is float
-        assert _parse_filter_threshold("2024-01-01") == date(2024, 1, 1)
-        assert type(_parse_filter_threshold("2024-01-01")) is date
+        # Reines Datum wird bewusst als datetime (Mitternacht) geparst, damit ein
+        # Datums-Schwellenwert gegen die datetime-Spalten des Imports vergleichbar
+        # ist (datetime > date würfe TypeError → Filter träfe nichts).
+        assert _parse_filter_threshold("2024-01-01") == datetime(2024, 1, 1, 0, 0)
+        assert type(_parse_filter_threshold("2024-01-01")) is datetime
         assert _parse_filter_threshold("2024-01-01T10:00") == datetime(2024, 1, 1, 10, 0)
         assert type(_parse_filter_threshold("2024-01-01T10:00")) is datetime
         assert _parse_filter_threshold("abc") == "abc"
         assert type(_parse_filter_threshold("abc")) is str
+
+    def test_date_threshold_matches_datetime_column(self) -> None:
+        """Regression (Sprint 36 Final-Review): ein reines Datum als Schwellenwert
+        matcht die datetime-Werte einer Datums-Spalte (statt TypeError → nichts).
+        """
+        from sampling_tool.core.models import FilterOperator
+        from sampling_tool.core.sampling import matches_filter
+
+        threshold = _parse_filter_threshold("2024-06-30")
+        # Spaltenwert wie vom Importer geliefert (date → datetime.combine(…, 00:00)).
+        assert matches_filter(datetime(2024, 7, 1, 10, 0), FilterOperator.GT, threshold) is True
+        assert matches_filter(datetime(2024, 6, 29, 0, 0), FilterOperator.GT, threshold) is False
 
     def test_build_config_eq_mode(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(*_make_dataset(), features=_FILTER)

@@ -14,7 +14,7 @@ from __future__ import annotations
 import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 
 from PyQt6.QtCore import Qt
@@ -381,7 +381,7 @@ class SamplingDialog(QDialog):
         if self._current_sample is None or not self._current_sample.selected_row_ids:
             self._resample_checkbox.setEnabled(False)
             self._resample_checkbox.setToolTip(
-                "Es ist kein Sample aktiv – Resampling nicht möglich."
+                "Es ist kein Sample aktiv – Einschränken auf die Auswahl nicht möglich."
             )
         outer.addWidget(self._resample_checkbox)
 
@@ -926,9 +926,15 @@ def _display(value: Any) -> str:
 def _parse_filter_threshold(text: str) -> Any:
     """Parst einen Schwellenwert-Text für Ordering-Filter (>, ≥, <, ≤).
 
-    Reihenfolge verbindlich: int → float → date → datetime → Rohstring (Fallback).
-    Bewusst NICHT `_coerce_value`/`_coerce_string` (Import-Coercion) – ein eigener,
-    kleiner Parser nur für dieses Textfeld.
+    Reihenfolge: int → float → datetime → Rohstring (Fallback). Ein reines Datum
+    („2024-06-30") wird bewusst als `datetime` (Mitternacht) geparst, NICHT als
+    `date`: Datums-Spalten liegen nach dem Import als `datetime` vor (der Importer
+    coerct `date` → `datetime.combine(…, 00:00)`), und `datetime > date` wirft
+    `TypeError` – ein reiner `date`-Schwellenwert würde gegen eine datetime-Spalte
+    also nichts matchen. `datetime.fromisoformat` akzeptiert beide Formen
+    („2024-06-30" und „2024-06-30T10:00"). Bewusst NICHT `_coerce_value`/
+    `_coerce_string` (Import-Coercion) – ein eigener, kleiner Parser nur für
+    dieses Textfeld.
     """
     try:
         return int(text)
@@ -936,10 +942,6 @@ def _parse_filter_threshold(text: str) -> Any:
         pass
     try:
         return float(text)
-    except ValueError:
-        pass
-    try:
-        return date.fromisoformat(text)
     except ValueError:
         pass
     try:
