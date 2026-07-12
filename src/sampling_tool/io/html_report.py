@@ -25,7 +25,6 @@ from jinja2 import (
     Environment,
     FileSystemLoader,
     TemplateNotFound,
-    select_autoescape,
 )
 
 from sampling_tool.core.formatting import format_optional_timestamp
@@ -83,7 +82,7 @@ class HtmlReportGenerator:
             self._template_name = template_path.name
         self._env = Environment(
             loader=loader,
-            autoescape=select_autoescape(["html"]),
+            autoescape=True,
             keep_trailing_newline=True,
         )
 

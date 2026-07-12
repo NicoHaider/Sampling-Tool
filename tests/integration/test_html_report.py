@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -185,3 +186,19 @@ class TestHtmlReportGenerator:
         # ihre Header (<th>Methode</th>) verschwinden.
         assert "<h2>Stichproben</h2>" not in html
         assert "<th>Methode</th>" not in html
+
+    def test_html_report_escapes_html_special_chars(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        samples: list[SampleResult],
+        events: list[AuditEvent],
+    ) -> None:
+        malicious_engagement = replace(engagement, client_name='<b>&"Muster')
+        out = tmp_path / "escaped.html"
+        HtmlReportGenerator().render(malicious_engagement, [], samples, events, out)
+        html = out.read_text(encoding="utf-8")
+        assert "<b>" not in html
+        assert "&lt;b&gt;" in html
+        assert "&amp;" in html
+        assert "&#34;Muster" in html
