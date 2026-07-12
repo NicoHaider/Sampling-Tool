@@ -707,7 +707,10 @@ ui ──▶ controllers ──▶ core ◀── io
     `Dataset` ist seit Sprint 11.1 nur Metadaten (`columns`, `row_count`,
     `source_file`, Engagement-FK) – Rows leben im Repo (siehe Block
     "Streaming-Architektur" oben).
-  - `rng.py` – `make_rng(seed)` + `fisher_yates_shuffle` über `numpy.random.default_rng`
+  - `rng.py` – `make_rng(seed)` + `fisher_yates_shuffle`; seit Sprint 39 (R-001)
+    expliziter `Generator(PCG64(seed))`-BitGenerator (output-identisch zum
+    vorherigen `numpy.random.default_rng`-Default), siehe Abschnitt
+    „Versionsfester RNG-Vertrag (Sprint 39 / S1.2, R-001)".
   - `presets.py` – `SamplingPreset` (Sprint 23): benanntes Template einer
     Stichproben-Konfiguration (= `SampleConfig` minus Seed/Daten/Ergebnis) +
     stdlib-JSON-Serialisierung. Qt-/SQL-/I/O-frei. Siehe Block „Sampling-Presets
@@ -1242,7 +1245,7 @@ Grobe Übersetzungstafel zwischen altem VBA-Tool und neuer Python-Architektur.
 | VBA (alt)                                  | Python (neu)                                       |
 |--------------------------------------------|----------------------------------------------------|
 | `modSampling.bas` – Random-Logik           | `core/sampling.py` + `core/rng.py`                 |
-| `Rnd()` / `Randomize`                      | `numpy.random.default_rng(seed)` (reproduzierbar!) |
+| `Rnd()` / `Randomize`                      | `core.rng.make_rng(seed)` (reproduzierbar! seit Sprint 39 `Generator(PCG64(seed))`) |
 | Inline-Shuffle in VBA                      | `fisher_yates_shuffle()` in `core/rng.py`          |
 | `clsEngagement.cls`                        | `core.models.Engagement` (frozen dataclass)        |
 | `clsDataset.cls`                           | `core.models.Dataset` + `DatasetRow`               |
@@ -1348,10 +1351,30 @@ ISAE-3402-Anforderung: Jede gezogene Stichprobe muss zu jedem späteren Zeitpunk
 gespeichertem Seed + gespeichertem Datensatz identisch reproduziert werden können.
 
 Konsequenzen für den Code:
-- **Niemals** `random` aus stdlib verwenden. Immer `numpy.random.default_rng(seed)`.
+- **Niemals** `random` aus stdlib verwenden. Immer `core.rng.make_rng(seed)`
+  (seit Sprint 39 / R-001: expliziter `Generator(PCG64(seed))`-BitGenerator –
+  output-identisch zum vorherigen `numpy.random.default_rng(seed)`, siehe
+  Block „Versionsfester RNG-Vertrag" unten).
 - **Niemals** Zeitstempel, UUIDs oder Hash-Ordnung in die Stichprobenauswahl einfließen lassen.
 - Sortierung vor RNG-Verbrauch immer deterministisch (z. B. nach `row_id`).
-- Tests müssen explizit „same seed → same result" verifizieren.
+- Tests müssen explizit „same seed → same result" verifizieren (plus Golden-
+  Vektoren für Bit-Identität über NumPy-Versionen/OS hinweg, siehe unten).
+
+## Versionsfester RNG-Vertrag (Sprint 39 / S1.2, R-001)
+
+`core.rng.make_rng(seed)` gibt `Generator(PCG64(seed))` zurück (expliziter
+BitGenerator statt des impliziten `np.random.default_rng`-Defaults, der sich
+versionsübergreifend ändern darf). `core.rng.SAMPLING_ALGORITHM_VERSION`
+(aktuell `"bdo-v1"`) ist die **einzige** Quelle für die Algorithmus-Version;
+jedes `SampleResult` trägt sie (`algorithm_version`, Migration `004`,
+Backfill = `bdo-v1` für Bestandssamples). `numpy` ist nach oben gepinnt
+(`>=2.0,<3`) – die Bit-Identität gilt nur innerhalb dieser Range. Abgesichert
+durch `tests/unit/test_golden_vectors.py` (committete Referenz-Row-IDs über
+alle Methoden/Filter-Operatoren/Stratify-Modi + Nachstichprobe, 5 Seeds,
+CI-geprüft auf Ubuntu/Windows/macOS). **Rote Linie:** kein Wechsel des
+Ziehungs-Algorithmus (`rng.integers(0, i+1)`, Fisher-Yates, Key-Sortierung,
+Largest-Remainder bleiben unverändert) – nur die BitGenerator-Konstruktion
+wurde explizit gemacht.
 
 ## Konventionen für Tests
 

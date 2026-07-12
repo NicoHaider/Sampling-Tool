@@ -39,7 +39,10 @@ dependencies = [
     # Persistenz-Schicht – 3–10× schneller als stdlib-json bei
     # Bulk-Inserts von DatasetRows. Hat py.typed-Marker.
     "orjson>=3.10",
-    "numpy>=2.0",
+    # Obergrenze <3: PCG64-Rohstream-Determinismus (SAMPLING_ALGORITHM_VERSION
+    # "bdo-v1", Sprint 39 / R-001) ist nur innerhalb dieser Range durch die
+    # Golden-Vektoren abgesichert.
+    "numpy>=2.0,<3",
     "matplotlib>=3.8",
     "reportlab>=4.2",
     "pdfrw>=0.4",

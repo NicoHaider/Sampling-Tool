@@ -1,22 +1,31 @@
 """Reproduzierbare Zufallszahlen + Fisher-Yates-Shuffle.
 
 Zentrale Stelle für jede Form von Zufall im Tool. **Niemals `random` aus der
-stdlib verwenden** – nur `numpy.random.default_rng(seed)`. Damit ist jede
-Stichprobe bei gleichem Seed bit-genau rekonstruierbar (ISAE-3402-Pflicht).
+stdlib verwenden** – nur `make_rng(seed)` (expliziter `PCG64`-BitGenerator).
+Bit-genau reproduzierbar für einen gegebenen `SAMPLING_ALGORITHM_VERSION` bei
+gepinnter numpy-Range (`numpy>=2.0,<3`, siehe `pyproject.toml`); abgesichert
+durch Golden-Vektoren auf Windows+macOS (`tests/unit/test_golden_vectors.py`).
 """
 
 from __future__ import annotations
 
-from typing import TypeVar
+from typing import Final, TypeVar
 
-import numpy as np
-from numpy.random import Generator
+from numpy.random import PCG64, Generator
 
 T = TypeVar("T")
 
+SAMPLING_ALGORITHM_VERSION: Final[str] = "bdo-v1"
+"""Version des Ziehungs-Algorithmus – pro Sample persistiert (Sprint 39 / R-001).
+
+Ändert sich nur, wenn sich der tatsächliche Ziehungs-Output ändert (neuer
+BitGenerator-Rohstream, andere Shuffle-Logik, andere Verteilungsmethode).
+`bdo-v1` deckt den seit Sprint 1 unveränderten Fisher-Yates-Kern ab.
+"""
+
 
 def make_rng(seed: int) -> Generator:
-    """Erzeugt einen deterministischen NumPy-Generator.
+    """Erzeugt einen deterministischen NumPy-Generator (expliziter `PCG64`-Kern).
 
     Args:
         seed: Nicht-negativer Integer (siehe `config.SEED_MIN`/`SEED_MAX`).
@@ -26,16 +35,18 @@ def make_rng(seed: int) -> Generator:
     """
     if seed < 0:
         raise ValueError(f"Seed muss nicht-negativ sein, bekommen: {seed}")
-    return np.random.default_rng(seed)
+    return Generator(PCG64(seed))
 
 
 def fisher_yates_shuffle(items: list[T], rng: Generator) -> list[T]:
     """In-place Fisher-Yates-Shuffle über den übergebenen RNG.
 
     Implementiert den klassischen Knuth-Algorithmus (rückwärts iterierend)
-    statt `rng.shuffle()`, weil wir damit Determinismus über NumPy-Versionen
-    hinweg garantieren – `rng.shuffle` darf intern optimiert werden, der
-    Index-Tausch ist spezifiziert.
+    statt `rng.shuffle()`, weil dessen interne Swap-Reihenfolge nicht
+    spezifiziert ist und sich ändern darf – `rng.integers(0, i+1)` ist es.
+    Zusammen mit der gepinnten numpy-Range (`>=2.0,<3`) und den Golden-
+    Vektoren (`tests/unit/test_golden_vectors.py`, Win+macOS) bleibt der
+    Output für `SAMPLING_ALGORITHM_VERSION` bit-genau reproduzierbar.
 
     Args:
         items: Liste, die gemischt wird (in-place, wird zusätzlich zurückgegeben).

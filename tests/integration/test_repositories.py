@@ -389,6 +389,35 @@ class TestSampleRepo:
         assert loaded is not None
         assert loaded.config.filter_operator == FilterOperator.EQ
 
+    def test_sample_persists_algorithm_version(self, db: Database, engagement_id: int) -> None:
+        """Sprint 39 / R-001: Ziehen → Speichern → Laden erhält `algorithm_version`."""
+        dataset_id = _persist_dataset(db, engagement_id)
+        repo = SampleRepo(db.connect())
+        sid = repo.create_from_result(_make_result(), dataset_id, "anna")
+
+        loaded = repo.get_by_id(sid)
+        assert loaded is not None
+        assert loaded.algorithm_version == "bdo-v1"
+
+    def test_legacy_row_without_algorithm_version_backfills_bdo_v1(
+        self, db: Database, engagement_id: int
+    ) -> None:
+        """Migration 004: Bestandszeile ohne die Spalte defaultet auf 'bdo-v1'."""
+        dataset_id = _persist_dataset(db, engagement_id)
+        conn = db.connect()
+        cur = conn.execute(
+            "INSERT INTO samples "
+            "(dataset_id, method, sample_size, population_size, seed, created_by) "
+            "VALUES (?, 'simple', 2, 10, 42, 'anna')",
+            (dataset_id,),
+        )
+        sample_id = cur.lastrowid
+        assert sample_id is not None
+
+        loaded = SampleRepo(conn).get_by_id(sample_id)
+        assert loaded is not None
+        assert loaded.algorithm_version == "bdo-v1"
+
 
 # ===========================================================================
 # AuditRepo
