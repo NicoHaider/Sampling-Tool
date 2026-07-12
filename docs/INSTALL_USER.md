@@ -89,7 +89,7 @@ Allgemein → Engagement-Verzeichnis* änderbar.
 **Das Tool startet nicht / stürzt direkt ab.**
 Schicke bitte einen Bug-Report via *Hilfe → Bug Report* im Tool – falls das
 Tool gar nicht startet, melde dich direkt bei Nico Haider
-(nicohaider47@gmail.com) und schicke wenn möglich den Inhalt der
+(nico.haider@bdo.at) und schicke wenn möglich den Inhalt der
 Konsole / des Terminals.
 
 **Brauche ich Python oder Excel?**
