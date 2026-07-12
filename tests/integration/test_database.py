@@ -9,6 +9,17 @@ import pytest
 from sampling_tool.persistence.database import Database
 
 
+def _migration_sql(name: str) -> str:
+    return (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "sampling_tool"
+        / "persistence"
+        / "migrations"
+        / name
+    ).read_text(encoding="utf-8")
+
+
 class TestSchemaVersion:
     def test_zero_before_migration(self) -> None:
         db = Database(Path(":memory:"))
@@ -19,12 +30,12 @@ class TestSchemaVersion:
 
     def test_latest_after_migration(self, db: Database) -> None:
         # Fixture migriert bereits.
-        assert db.schema_version() == 3
+        assert db.schema_version() == 4
 
     def test_migration_is_idempotent(self, db: Database) -> None:
         db.migrate()  # erneut – darf nichts ändern
         db.migrate()
-        assert db.schema_version() == 3
+        assert db.schema_version() == 4
 
 
 class TestMigrationsApply:
@@ -100,15 +111,7 @@ class TestMigrationV1ToV2:
         legacy = Database(db_path)
         try:
             conn = legacy.connect()
-            v1_sql = (
-                Path(__file__).resolve().parents[2]
-                / "src"
-                / "sampling_tool"
-                / "persistence"
-                / "migrations"
-                / "001_initial.sql"
-            ).read_text(encoding="utf-8")
-            conn.executescript(v1_sql)
+            conn.executescript(_migration_sql("001_initial.sql"))
             with legacy.session() as c:
                 c.execute(
                     "INSERT INTO engagements (auditor_name, client_name) VALUES (?, ?)",
@@ -123,7 +126,7 @@ class TestMigrationV1ToV2:
         try:
             upgraded.migrate()
             # `migrate()` zieht bis zur LATEST-Version durch (nicht nur +1).
-            assert upgraded.schema_version() == 3
+            assert upgraded.schema_version() == 4
 
             # Bestehende Daten überleben.
             row = (
@@ -149,17 +152,6 @@ class TestMigrationV2ToV3:
     Gleichheits-Filter – der Backfill setzt `filter_operator='eq'`, damit das
     historische Verhalten exakt erhalten bleibt (ISAE-3402)."""
 
-    @staticmethod
-    def _migration_sql(name: str) -> str:
-        return (
-            Path(__file__).resolve().parents[2]
-            / "src"
-            / "sampling_tool"
-            / "persistence"
-            / "migrations"
-            / name
-        ).read_text(encoding="utf-8")
-
     def test_v2_db_is_upgraded_in_place(self, tmp_path: Path) -> None:
         db_path = tmp_path / "legacy_v2.db"
 
@@ -167,8 +159,8 @@ class TestMigrationV2ToV3:
         legacy = Database(db_path)
         try:
             conn = legacy.connect()
-            conn.executescript(self._migration_sql("001_initial.sql"))
-            conn.executescript(self._migration_sql("002_engagement_state.sql"))
+            conn.executescript(_migration_sql("001_initial.sql"))
+            conn.executescript(_migration_sql("002_engagement_state.sql"))
             assert legacy.schema_version() == 2
 
             with legacy.session() as c:
@@ -194,13 +186,14 @@ class TestMigrationV2ToV3:
         upgraded = Database(db_path)
         try:
             upgraded.migrate()
-            assert upgraded.schema_version() == 3
+            assert upgraded.schema_version() == 4
 
             row = (
                 upgraded.connect()
                 .execute(
                     "SELECT method, sample_size, population_size, seed, "
-                    "filter_field, filter_value, created_by, filter_operator "
+                    "filter_field, filter_value, created_by, filter_operator, "
+                    "algorithm_version "
                     "FROM samples"
                 )
                 .fetchone()
@@ -215,6 +208,62 @@ class TestMigrationV2ToV3:
             assert row["created_by"] == "anna"
             # Historische-Gleichheit-Garantie: Backfill auf 'eq'.
             assert row["filter_operator"] == "eq"
+            # Sprint 39 / R-001: Bestandssample wurde mit bdo-v1 gezogen.
+            assert row["algorithm_version"] == "bdo-v1"
+        finally:
+            upgraded.close()
+
+
+class TestMigrationV3ToV4:
+    """Regression: bestehende Sprint-36-DBs (schema_version=3) müssen ohne
+    Datenverlust auf v4 hochgezogen werden (Sprint 39 / S1.2, R-001).
+    Bestandssamples wurden exakt mit dem heutigen Algorithmus gezogen –
+    der Backfill setzt `algorithm_version='bdo-v1'`, keine Schätzung."""
+
+    def test_v3_db_is_upgraded_in_place(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "legacy_v3.db"
+
+        # Schritt 1: Sprint-36-Stand simulieren – Migrationen 001-003 anwenden.
+        legacy = Database(db_path)
+        try:
+            conn = legacy.connect()
+            conn.executescript(_migration_sql("001_initial.sql"))
+            conn.executescript(_migration_sql("002_engagement_state.sql"))
+            conn.executescript(_migration_sql("003_filter_operator.sql"))
+            assert legacy.schema_version() == 3
+
+            with legacy.session() as c:
+                c.execute(
+                    "INSERT INTO engagements (auditor_name, client_name) VALUES (?, ?)",
+                    ("Anna", "ACME"),
+                )
+                c.execute(
+                    "INSERT INTO datasets (engagement_id, name, row_count, columns_json) "
+                    "VALUES (1, 'DS', 3, '[]')",
+                )
+                # Pre-Migration-Spaltenset: OHNE algorithm_version.
+                c.execute(
+                    "INSERT INTO samples "
+                    "(dataset_id, method, sample_size, population_size, seed, created_by) "
+                    "VALUES (1, 'simple', 2, 3, 42, 'anna')",
+                )
+        finally:
+            legacy.close()
+
+        # Schritt 2: dieselbe DB-Datei normal öffnen (wie der Controller).
+        upgraded = Database(db_path)
+        try:
+            upgraded.migrate()
+            assert upgraded.schema_version() == 4
+
+            row = (
+                upgraded.connect()
+                .execute("SELECT method, sample_size, algorithm_version FROM samples")
+                .fetchone()
+            )
+            assert row["method"] == "simple"
+            assert row["sample_size"] == 2
+            assert row["algorithm_version"] == "bdo-v1"
         finally:
             upgraded.close()
 

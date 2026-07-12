@@ -16,6 +16,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from sampling_tool.core.rng import SAMPLING_ALGORITHM_VERSION
+
 
 def _utcnow() -> datetime:
     """Aktueller UTC-Zeitstempel (timezone-aware)."""
@@ -162,6 +164,9 @@ class SampleResult:
     config: SampleConfig
     selected_row_ids: tuple[int, ...]
     population_size: int
+    # Version des Ziehungs-Algorithmus, pro Sample persistiert (Sprint 39 / R-001).
+    # `SAMPLING_ALGORITHM_VERSION` in `core.rng` ist die Single Source of Truth.
+    algorithm_version: str = SAMPLING_ALGORITHM_VERSION
     drawn_at: datetime = field(default_factory=_utcnow)
     parent_sample_id: int | None = None
     created_by: str = "system"

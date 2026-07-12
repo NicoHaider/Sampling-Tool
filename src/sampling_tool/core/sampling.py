@@ -1,8 +1,10 @@
 """Stichprobenverfahren: Simple, Cluster, Stratified.
 
 Drei Sampler erben von `BaseSampler`. Alle nutzen `make_rng(seed)` +
-`fisher_yates_shuffle` aus `core.rng` – damit ist jede Ziehung bei gleichem
-Seed und gleichem Eingabe-Datensatz bit-genau reproduzierbar.
+`fisher_yates_shuffle` aus `core.rng` – bei gleichem Seed und gleichem
+Eingabe-Datensatz bit-genau reproduzierbar für den gestempelten
+`SAMPLING_ALGORITHM_VERSION` bei gepinnter numpy-Range; abgesichert durch
+Golden-Vektoren (`tests/unit/test_golden_vectors.py`, Win+macOS).
 
 Public API:
     SamplingError      – einheitliche Fehlerklasse
@@ -28,7 +30,7 @@ from sampling_tool.core.models import (
     SamplingMethod,
     StratifyMode,
 )
-from sampling_tool.core.rng import fisher_yates_shuffle, make_rng
+from sampling_tool.core.rng import SAMPLING_ALGORITHM_VERSION, fisher_yates_shuffle, make_rng
 
 
 class SamplingError(ValueError):
@@ -93,6 +95,7 @@ class BaseSampler(ABC):
             config=self.config,
             selected_row_ids=tuple(sorted(selected_ids)),
             population_size=total_population,
+            algorithm_version=SAMPLING_ALGORITHM_VERSION,
         )
 
     # ---- vor-/nachgelagerte Hilfen --------------------------------------
@@ -196,6 +199,7 @@ class SimpleSampler(BaseSampler):
             config=self.config,
             selected_row_ids=tuple(sorted(shuffled[:n])),
             population_size=population_size,
+            algorithm_version=SAMPLING_ALGORITHM_VERSION,
         )
 
 
@@ -300,6 +304,7 @@ class ClusterSampler(BaseSampler):
             config=self.config,
             selected_row_ids=tuple(sorted(selected)),
             population_size=population_size,
+            algorithm_version=SAMPLING_ALGORITHM_VERSION,
         )
 
 
@@ -431,6 +436,7 @@ class StratifiedSampler(BaseSampler):
             config=self.config,
             selected_row_ids=tuple(sorted(selected)),
             population_size=population_size,
+            algorithm_version=SAMPLING_ALGORITHM_VERSION,
         )
 
     # ---- Größenverteilung ------------------------------------------------

@@ -34,8 +34,9 @@ class SampleRepo:
                 "INSERT INTO samples "
                 "(dataset_id, method, sample_size, population_size, seed, "
                 " filter_field, filter_value, cluster_field, stratum_field, "
-                " stratify_mode, filter_operator, parent_sample_id, created_at, created_by) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " stratify_mode, filter_operator, parent_sample_id, created_at, created_by, "
+                " algorithm_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     dataset_id,
                     cfg.method.value,
@@ -51,6 +52,7 @@ class SampleRepo:
                     result.parent_sample_id,
                     result.drawn_at,
                     created_by,
+                    result.algorithm_version,
                 ),
             )
             sample_id = cur.lastrowid
@@ -118,6 +120,7 @@ class SampleRepo:
             config=config,
             selected_row_ids=selected_row_ids,
             population_size=row["population_size"],
+            algorithm_version=row["algorithm_version"],
             drawn_at=row["created_at"],
             parent_sample_id=row["parent_sample_id"],
             created_by=row["created_by"],
