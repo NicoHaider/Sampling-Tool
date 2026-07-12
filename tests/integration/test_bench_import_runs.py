@@ -18,10 +18,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 def test_bench_import_quick_laeuft_durch(tmp_path: Path) -> None:
     """Mit `--quick` (1000 Zeilen, 1 Lauf) beide Formate <1 Minute."""
-    env = {
-        "QT_QPA_PLATFORM": "offscreen",
-        "PATH": os.environ.get("PATH", ""),
-    }
+    # Umgebung erben (nicht neu bauen): ohne `USERPROFILE` bricht `Path.home()`
+    # auf Windows schon beim Import von `config` mit RuntimeError ab.
+    # `PYTHONIOENCODING` erzwingt zusaetzlich UTF-8 im Kind: `bench_import.py`
+    # schreibt Kaesten-/Sigma-Zeichen (Σ → ─ └ ├) nach stdout, die sich in der
+    # Windows-ANSI-Codepage (cp1252) nicht kodieren lassen – bei umgeleitetem
+    # stdout stirbt das Skript sonst mit UnicodeEncodeError.
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "PYTHONIOENCODING": "utf-8"}
     result = subprocess.run(
         [
             sys.executable,
@@ -30,6 +33,7 @@ def test_bench_import_quick_laeuft_durch(tmp_path: Path) -> None:
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
         env=env,
         cwd=tmp_path,

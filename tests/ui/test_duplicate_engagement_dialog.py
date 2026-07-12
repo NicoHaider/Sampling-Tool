@@ -49,7 +49,9 @@ class TestDuplicateEngagementDialog:
         qtbot.addWidget(dialog)
         full_text = " ".join(label.text() for label in dialog.findChildren(QLabel))
         assert "some_mandant.db" in full_text
-        assert "/tmp/some_mandant" in full_text
+        # Der Dialog interpoliert `db_path.parent` – auf Windows also mit
+        # Backslashes. Erwartungswert daher aus demselben Path ableiten.
+        assert str(db_path.parent) in full_text
 
 
 class TestOverwriteChoice:
