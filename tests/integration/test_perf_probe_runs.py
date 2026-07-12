@@ -7,6 +7,7 @@ Performance selbst – das ist Discovery, gehört nicht in den CI-Lauf.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -18,10 +19,11 @@ def test_perf_probe_kleine_groesse_laeuft_durch(tmp_path: Path) -> None:
     """Mit `--sizes 100 --quick --audit-events 10` <1 Minute."""
     output = tmp_path / "PERFORMANCE.md"
     work_dir = tmp_path / "perf_work"
-    env = {
-        "QT_QPA_PLATFORM": "offscreen",
-        "PATH": __import__("os").environ.get("PATH", ""),
-    }
+    # Die Umgebung wird geerbt, nicht neu gebaut: ein gestripptes env hat auf
+    # Windows kein `USERPROFILE`, womit `Path.home()` beim blossen Import von
+    # `config` mit RuntimeError abbricht (POSIX faellt auf die pwd-DB zurueck
+    # und verdeckt das). Es ist ein reiner Smoke-Test, keine Messung.
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
     result = subprocess.run(
         [
             sys.executable,

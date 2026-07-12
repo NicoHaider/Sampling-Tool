@@ -88,7 +88,10 @@ class TestLogExport:
         )
         assert evt.event_type == "export"
         assert evt.sample_id == sample_id
-        assert evt.export_file == "/tmp/out.xlsx"
+        # `log_export` speichert `str(Path)` – also OS-nativ. Der Erwartungswert
+        # muss denselben Weg gehen, sonst schlägt der Vergleich auf Windows fehl
+        # (`\tmp\out.xlsx` != `/tmp/out.xlsx`).
+        assert evt.export_file == str(Path("/tmp/out.xlsx"))
         assert evt.sample_size == 25
 
 
