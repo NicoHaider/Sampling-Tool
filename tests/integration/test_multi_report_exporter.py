@@ -220,6 +220,79 @@ class TestMultiSheetReportExporter:
         assert len(names) == 1
         assert "Übersicht" in names[0]
 
+    def test_formula_injection_neutralized_all_sheets(
+        self,
+        tmp_path: Path,
+        datasets: list[Dataset],
+    ) -> None:
+        """S-001: bösartige Werte in Engagement-/Auditor-/Event-/Dateinamen-
+        und Sample-Feldern dürfen nach Reopen in KEINEM Sheet als Formel
+        gespeichert sein (`data_type == "f"`) – geprüft über ALLE Zellen
+        aller Sheets, nicht nur die gezielt injizierten.
+
+        Echtes End-to-End-Regressionssignal liefert hier nur `formula_payload`
+        (`=1+1`): openpyxl setzt `data_type == "f"` ausschließlich bei einem
+        führenden `=` (verifiziert gegen openpyxl 3.1.5), `plus_payload` wäre
+        schon ohne jede Neutralisierung `data_type == "s"`. Der Mechanismus,
+        der `+`/`-`/`@`/Tab-Präfixe neutralisiert, ist isoliert in
+        `tests/unit/test_xlsx_safe.py::TestSafeRow` regressionsgetestet;
+        `plus_payload` bleibt hier trotzdem drin, um die byte-identische
+        Werterhaltung über den gesamten Multi-Sheet-Export-Pfad zu sichern."""
+        formula_payload = "=1+1"
+        plus_payload = '+HYPERLINK("http://evil")'
+
+        malicious_engagement = Engagement(
+            auditor_name=formula_payload,
+            client_name=plus_payload,
+            auditor_position="Senior",
+            audit_type="ISAE 3402",
+            id=1,
+        )
+        malicious_cfg = SampleConfig(
+            method=SamplingMethod.SIMPLE,
+            size=1,
+            seed=1,
+            filter_field="Konto",
+            filter_value=formula_payload,
+            cluster_field=plus_payload,
+            stratum_field=formula_payload,
+        )
+        malicious_samples = [
+            SampleResult(
+                config=malicious_cfg,
+                selected_row_ids=(1,),
+                population_size=1,
+                drawn_at=datetime(2026, 5, 1, 10, 0, tzinfo=UTC),
+                created_by=plus_payload,
+                id=1,
+            ),
+        ]
+        malicious_events = [
+            AuditEvent(
+                event_type="export",
+                engagement_id=1,
+                user_name=formula_payload,
+                sample_id=1,
+                export_file=f"{plus_payload}.xlsx",
+                timestamp=datetime(2026, 5, 1, 11, 0, tzinfo=UTC),
+                id=1,
+            ),
+        ]
+
+        out = tmp_path / "bericht.xlsx"
+        MultiSheetReportExporter().export(
+            malicious_engagement, datasets, malicious_samples, malicious_events, out
+        )
+
+        wb = load_workbook(out, data_only=False)
+        assert len(wb.worksheets) >= 1
+        for ws in wb.worksheets:
+            for row in ws.iter_rows():
+                for cell in row:
+                    assert cell.data_type != "f", (
+                        f"{ws.title}!{cell.coordinate} wurde als Formel gespeichert: {cell.value!r}"
+                    )
+
     def test_subset_sheets_writes_exact_selection(
         self,
         tmp_path: Path,

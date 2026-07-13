@@ -27,6 +27,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from sampling_tool.config import BDO_RED
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement, SampleResult
+from sampling_tool.io._xlsx_safe import safe_row
 
 if TYPE_CHECKING:
     from sampling_tool.persistence.repositories import DatasetRepo
@@ -146,7 +147,7 @@ class ExcelExporter:
         header_font = Font(bold=True, color="FFFFFFFF")
         header_align = Alignment(vertical="center", horizontal="left")
 
-        ws.append(columns)
+        safe_row(ws, columns)
         for cell in ws[1]:
             cell.fill = header_fill
             cell.font = header_font
@@ -158,8 +159,8 @@ class ExcelExporter:
         total = len(rows_to_write)
         max_widths: list[int] = [len(c) for c in columns]
         for idx, row in enumerate(rows_to_write, start=1):
-            values = [_cell_value(row.values.get(col)) for col in columns]
-            ws.append(values)
+            raw_values = [row.values.get(col) for col in columns]
+            values = safe_row(ws, raw_values)
             for i, val in enumerate(values):
                 length = len(_display_string(val))
                 if length > max_widths[i]:
@@ -208,13 +209,13 @@ class ExcelExporter:
                 ]
             )
 
-        ws.append(["Feld", "Wert"])
+        safe_row(ws, ["Feld", "Wert"])
         bold = Font(bold=True)
         for cell in ws[1]:
             cell.font = bold
 
         for label, value in rows:
-            ws.append([label, _cell_value(value)])
+            safe_row(ws, [label, value])
 
         _autosize(ws, columns=2)
 
@@ -236,15 +237,6 @@ def _to_argb(hex_color: str) -> str:
     if len(s) == 8:
         return s
     raise ValueError(f"Unerwartetes Farbformat: {hex_color}")
-
-
-def _cell_value(value: Any) -> Any:
-    """Stellt sicher, dass openpyxl den Wert akzeptiert (kein dict / list / set)."""
-    if value is None:
-        return None
-    if isinstance(value, datetime | date | bool | int | float | str):
-        return value
-    return str(value)
 
 
 def _display_string(value: Any) -> str:
