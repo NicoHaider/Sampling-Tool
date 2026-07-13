@@ -3633,6 +3633,52 @@ class TestResetSampling:
             controller.handle_close_engagement()
 
 
+class TestAuditTrailRobustness:
+    """Sprint 42 / S1.5a: N-003 (Nachlauf-Log-Fehler crashen nicht mehr),
+    N-004 (breiter Exception-Fang beim Sample-Export), N-012 (Undo der
+    ersten Ziehung erzeugt ein Audit-Event)."""
+
+    def test_export_sample_survives_os_error(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        """N-004: ein roher OS-/DB-Fehler aus dem Export-Task (nicht
+        `ExportError`) darf `handle_export_sample` nicht crashen lassen."""
+        from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialogResult
+
+        export_result = ExportSampleDialogResult(
+            columns=["Konto", "Betrag"],
+            custom_name="testname",
+            custom_id="42",
+            output_dir=tmp_path,
+        )
+        factory = lambda *args, **kw: _StubExportDialog(export_result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            export_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.export_controller.TaskProgressDialog.run_task",
+                    side_effect=PermissionError("Zieldatei ist geöffnet"),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as mock_warning,
+            ):
+                controller.handle_export_sample()  # darf NICHT werfen
+            mock_warning.assert_called_once()
+        finally:
+            controller.handle_close_engagement()
+
+
 @contextlib.contextmanager
 def _real_sampling_dialog_driver(seeds: list[int], size: int = 3) -> Iterator[None]:
     """Treibt den ECHTEN `SamplingDialog` durch den Controller-Pfad.

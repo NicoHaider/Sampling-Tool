@@ -119,6 +119,10 @@ class ExportController:
         except ExportError as exc:
             s.error(f"Export fehlgeschlagen: {exc}")
             return
+        except Exception as exc:  # pragma: no cover – defensiv
+            logger.exception("Sample-Export fehlgeschlagen")
+            s.error(f"Export fehlgeschlagen: {exc}")
+            return
         if output_path is None:
             return  # User-Cancel
 
