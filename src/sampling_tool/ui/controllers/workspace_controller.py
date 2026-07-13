@@ -657,7 +657,7 @@ class WorkspaceController:
         try:
             log_call(AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id))
         except Exception:
-            logger.exception("Audit-Log für %s fehlgeschlagen", action_label)
+            logger.exception("Audit-Log-Fehler bei: %s", action_label)
             s.error(
                 f"{action_label} wurde ausgeführt, konnte aber NICHT im Audit-Trail "
                 "protokolliert werden."
