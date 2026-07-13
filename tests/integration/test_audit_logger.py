@@ -111,6 +111,23 @@ class TestLogUndoRedoReset:
         assert evt.event_type == "reset"
         assert evt.details["dataset_id"] == 99
 
+    def test_log_undo_with_none_sample_id_marks_restored_empty(
+        self, logger: AuditLogger
+    ) -> None:
+        """N-012: Undo der ersten Ziehung (leerer Zielzustand) hat kein Sample."""
+        evt = logger.log_undo(sample_id=None)
+        assert evt.event_type == "undo"
+        assert evt.sample_id is None
+        assert evt.details == {"restored": "empty"}
+
+    def test_log_redo_with_none_sample_id_marks_restored_empty(
+        self, logger: AuditLogger
+    ) -> None:
+        evt = logger.log_redo(sample_id=None)
+        assert evt.event_type == "redo"
+        assert evt.sample_id is None
+        assert evt.details == {"restored": "empty"}
+
 
 class TestLogCorrection:
     def test_correction_links_to_original(self, logger: AuditLogger, sample_id: int) -> None:
