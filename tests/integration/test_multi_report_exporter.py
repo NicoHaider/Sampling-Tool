@@ -12,6 +12,7 @@ from sampling_tool.core.models import (
     AuditEvent,
     Dataset,
     Engagement,
+    FilterOperator,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -317,3 +318,98 @@ class TestMultiSheetReportExporter:
         assert any("Samples" in n for n in names)
         assert not any("Übersicht" in n for n in names)
         assert not any("Statistiken" in n for n in names)
+
+    def test_samples_sheet_zeigt_volle_provenienz(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        datasets: list[Dataset],
+        audit_events: list[AuditEvent],
+    ) -> None:
+        """A-001 Contract-Test: Operator, Parent, Algorithmus-Version,
+        angeforderte UND tatsächliche Größe, Dataset-ID sind sichtbar."""
+        cfg = SampleConfig(
+            method=SamplingMethod.CLUSTER,
+            size=5,
+            seed=99,
+            cluster_field="Land",
+            filter_field="Betrag",
+            filter_value=100,
+            filter_operator=FilterOperator.GTE,
+        )
+        samples = [
+            SampleResult(
+                config=cfg,
+                selected_row_ids=(1, 2, 3, 4, 5, 6, 7),
+                population_size=10,
+                parent_sample_id=17,
+                created_by="anna",
+                id=3,
+            )
+        ]
+        out = tmp_path / "bericht.xlsx"
+        MultiSheetReportExporter().export(
+            engagement,
+            datasets,
+            samples,
+            audit_events,
+            out,
+            dataset_ids_by_sample={3: 1},
+        )
+        wb = load_workbook(out)
+        ws = wb["3. Samples"]
+        rows = list(ws.iter_rows(values_only=True))
+        header = rows[0]
+        row = dict(zip(header, rows[1], strict=True))
+        assert row["ID"] == 3
+        assert row["Methode"] == "cluster"
+        assert row["Angeforderte Größe"] == 5
+        assert row["Tatsächliche Größe"] == 7
+        assert row["Filter-Operator"] == "≥"
+        assert row["Parent-Sample-ID"] == 17
+        assert row["Algorithmus-Version"] == "bdo-v1"
+        assert row["Dataset-ID"] == 1
+
+    def test_audit_trail_details_spalte_zeigt_details_json(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        datasets: list[Dataset],
+        samples: list[SampleResult],
+    ) -> None:
+        events = [
+            AuditEvent(
+                event_type="sampling",
+                engagement_id=1,
+                user_name="anna",
+                sample_id=1,
+                details={"filter_operator": "gte", "algorithm_version": "bdo-v1"},
+                timestamp=datetime(2026, 5, 1, 10, 0, tzinfo=UTC),
+                id=1,
+            )
+        ]
+        out = tmp_path / "bericht.xlsx"
+        MultiSheetReportExporter().export(engagement, datasets, samples, events, out)
+        wb = load_workbook(out)
+        ws = wb["2. AuditTrail"]
+        rows = list(ws.iter_rows(values_only=True))
+        assert rows[0][-1] == "Details"
+        assert "filter_operator" in rows[1][-1]
+        assert "gte" in rows[1][-1]
+
+    def test_audit_trail_details_spalte_zeigt_dash_fuer_leere_details(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        datasets: list[Dataset],
+        samples: list[SampleResult],
+        audit_events: list[AuditEvent],
+    ) -> None:
+        """Alt-Events ohne `details` (alle Nicht-Sampling-Events, sowie jedes
+        Event vor diesem Sprint) zeigen `"—"`, nicht leer/None."""
+        out = tmp_path / "bericht.xlsx"
+        MultiSheetReportExporter().export(engagement, datasets, samples, audit_events, out)
+        wb = load_workbook(out)
+        ws = wb["2. AuditTrail"]
+        rows = list(ws.iter_rows(values_only=True))
+        assert rows[1][-1] == "—"

@@ -4,8 +4,12 @@
 
 1. **Übersicht** – Engagement-Metadaten + Anzahlen (Datasets / Samples /
    Audit-Events / letzte Aktivität).
-2. **AuditTrail** – alle Events chronologisch (älteste oben).
-3. **Samples** – jede Stichprobe mit Methode, Größe, Seed, Filter, Datum.
+2. **AuditTrail** – alle Events chronologisch (älteste oben), inkl. einer
+   `Details`-Spalte (`AuditEvent.details` als kompakte Ein-Zeilen-Darstellung).
+3. **Samples** – jede Stichprobe mit voller Reproduktions-Provenienz
+   (`SamplingProvenance`): Methode, angeforderte/tatsächliche Größe, Seed,
+   Filter (Feld/Operator/Wert), Cluster-/Stratum-Feld, Parent-Sample,
+   Algorithmus-Version, Dataset-ID, Datum.
 4. **Statistiken** – Methoden-Verteilung als Tabelle + eingebettetes
    Bar-Chart-Bild via `io.charts`.
 
@@ -28,13 +32,15 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-from sampling_tool.core.formatting import format_optional_timestamp
+from sampling_tool import __version__
+from sampling_tool.core.formatting import format_audit_details, format_optional_timestamp
 from sampling_tool.core.models import (
     AuditEvent,
     Dataset,
     Engagement,
     SampleResult,
 )
+from sampling_tool.core.provenance import SamplingProvenance
 from sampling_tool.io._xlsx_safe import safe_row
 from sampling_tool.io.charts import render_bar_chart_bytes
 
@@ -64,11 +70,14 @@ class MultiSheetReportExporter:
         audit_events: list[AuditEvent],
         output_path: Path,
         sheets: set[str] | None = None,
+        dataset_ids_by_sample: dict[int, int] | None = None,
     ) -> Path:
         """Schreibt die .xlsx atomar nach `output_path` und gibt den Pfad zurück.
 
         `sheets` filtert die geschriebenen Sheets nach Namen aus
-        `ALL_SHEETS`. `None` oder leeres Set ⇒ alle Sheets.
+        `ALL_SHEETS`. `None` oder leeres Set ⇒ alle Sheets. `dataset_ids_by_
+        sample` (Sprint 43 / A-001) bildet `sample.id -> dataset.id` ab, weil
+        die flache `samples`-Liste diese Zuordnung sonst nicht kennt.
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
         target = (
@@ -89,7 +98,7 @@ class MultiSheetReportExporter:
             if SHEET_AUDIT_TRAIL in active:
                 self._write_audit_trail(wb, audit_events)
             if SHEET_SAMPLES in active:
-                self._write_samples(wb, samples)
+                self._write_samples(wb, samples, dataset_ids_by_sample or {})
             if SHEET_STATISTIKEN in active:
                 self._write_statistiken(wb, samples, audit_events)
 
@@ -171,6 +180,7 @@ class MultiSheetReportExporter:
             "Seed",
             "Datei",
             "Korrektur",
+            "Details",
         ]
         ws.append(header)
         _style_header_row(ws, len(header))
@@ -189,24 +199,36 @@ class MultiSheetReportExporter:
                     evt.seed if evt.seed is not None else "—",
                     Path(evt.export_file or evt.import_file or "").name or "—",
                     f"#{evt.corrects_event_id}" if evt.corrects_event_id is not None else "—",
+                    format_audit_details(evt.details),
                 ],
             )
         _autosize(ws, len(header))
         ws.freeze_panes = "A2"
 
-    def _write_samples(self, wb: Workbook, samples: list[SampleResult]) -> None:
+    def _write_samples(
+        self,
+        wb: Workbook,
+        samples: list[SampleResult],
+        dataset_ids_by_sample: dict[int, int],
+    ) -> None:
         ws = wb.create_sheet("3. Samples")
         header = [
             "ID",
             "Methode",
-            "Größe",
+            "Angeforderte Größe",
+            "Tatsächliche Größe",
             "Population",
             "Anteil %",
             "Seed",
             "Filter-Feld",
+            "Filter-Operator",
             "Filter-Wert",
             "Cluster-Feld",
             "Stratum-Feld",
+            "Stratify-Modus",
+            "Parent-Sample-ID",
+            "Algorithmus-Version",
+            "Dataset-ID",
             "Erstellt am",
             "Erstellt von",
         ]
@@ -215,7 +237,10 @@ class MultiSheetReportExporter:
 
         ordered = sorted(samples, key=lambda s: s.drawn_at)
         for sample in ordered:
-            cfg = sample.config
+            dataset_id = dataset_ids_by_sample.get(sample.id) if sample.id is not None else None
+            provenance = SamplingProvenance.from_sample_result(
+                sample, dataset_id=dataset_id, app_version=__version__
+            )
             percent = (
                 sample.actual_size / sample.population_size * 100.0
                 if sample.population_size
@@ -225,17 +250,23 @@ class MultiSheetReportExporter:
                 ws,
                 [
                     sample.id if sample.id is not None else "—",
-                    cfg.method.value,
-                    sample.actual_size,
-                    sample.population_size,
+                    provenance.method,
+                    provenance.size_requested,
+                    provenance.size_actual,
+                    provenance.population_size,
                     round(percent, 2),
-                    cfg.seed,
-                    cfg.filter_field or "—",
-                    str(cfg.filter_value) if cfg.filter_value is not None else "—",
-                    cfg.cluster_field or "—",
-                    cfg.stratum_field or "—",
+                    provenance.seed,
+                    provenance.filter_field or "—",
+                    provenance.filter_operator_symbol,
+                    str(provenance.filter_value) if provenance.filter_value is not None else "—",
+                    provenance.cluster_field or "—",
+                    provenance.stratum_field or "—",
+                    provenance.stratify_mode,
+                    provenance.parent_sample_id if provenance.parent_sample_id is not None else "—",
+                    provenance.algorithm_version,
+                    provenance.dataset_id if provenance.dataset_id is not None else "—",
                     format_optional_timestamp(sample.drawn_at),
-                    sample.created_by,
+                    provenance.created_by,
                 ],
             )
         _autosize(ws, len(header))
