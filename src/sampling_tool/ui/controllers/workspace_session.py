@@ -204,7 +204,7 @@ class WorkspaceSession:
         if not self.has_engagement():
             self.window.set_dashboard_data(None, [], [], [])
             return
-        datasets, samples, events = self.collect_report_data()
+        datasets, samples, events, _dataset_ids_by_sample = self.collect_report_data()
         self.window.set_dashboard_data(self.engagement, datasets, samples, events)
 
     def refresh_views(self) -> None:
@@ -221,7 +221,7 @@ class WorkspaceSession:
             self.window.set_audit_events([])
             self.window.set_dashboard_data(None, [], [], [])
         else:
-            datasets, samples, events = self.collect_report_data()
+            datasets, samples, events, _dataset_ids_by_sample = self.collect_report_data()
             self.window.set_audit_events(events)
             self.window.set_dashboard_data(self.engagement, datasets, samples, events)
         self.window.set_reports_enabled(self.engagement is not None and self.db is not None)
@@ -241,8 +241,13 @@ class WorkspaceSession:
 
     def collect_report_data(
         self,
-    ) -> tuple[list[Dataset], list[SampleResult], list[AuditEvent]]:
-        """Bündelt Datasets / Samples / Events fürs Report-Rendering."""
+    ) -> tuple[list[Dataset], list[SampleResult], list[AuditEvent], dict[int, int]]:
+        """Bündelt Datasets / Samples / Events fürs Report-Rendering.
+
+        Das vierte Element bildet `sample.id -> dataset.id` ab (Sprint 43 /
+        A-001): die flache `samples`-Liste verliert sonst, aus welchem
+        Dataset jedes Sample stammt – die Projekt-Report-Exporter brauchen
+        das für `SamplingProvenance.dataset_id`."""
         assert self.db is not None
         assert self.engagement is not None
         assert self.engagement.id is not None
@@ -252,12 +257,16 @@ class WorkspaceSession:
         audit_repo = AuditRepo(self.db.connect())
         datasets = ds_repo.list_for_engagement(engagement_id)
         samples: list[SampleResult] = []
+        dataset_ids_by_sample: dict[int, int] = {}
         for ds in datasets:
             if ds.id is None:
                 continue
-            samples.extend(sample_repo.list_for_dataset(ds.id))
+            for sample in sample_repo.list_for_dataset(ds.id):
+                samples.append(sample)
+                if sample.id is not None:
+                    dataset_ids_by_sample[sample.id] = ds.id
         events = audit_repo.list_for_engagement(engagement_id, limit=AUDIT_EVENT_DISPLAY_LIMIT)
-        return datasets, samples, events
+        return datasets, samples, events, dataset_ids_by_sample
 
     # ---- Briefpapier + Export-Pfade -------------------------------------
 

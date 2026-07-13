@@ -12,6 +12,7 @@ import pytest
 from sampling_tool.core.models import (
     AuditEvent,
     Engagement,
+    FilterOperator,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -202,3 +203,64 @@ class TestHtmlReportGenerator:
         assert "&lt;b&gt;" in html
         assert "&amp;" in html
         assert "&#34;Muster" in html
+
+    def test_samples_table_zeigt_volle_provenienz(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        events: list[AuditEvent],
+    ) -> None:
+        """A-001 Contract-Test: Operator, Parent, Algorithmus-Version,
+        angeforderte Größe, Dataset-ID sind sichtbar."""
+        cfg = SampleConfig(
+            method=SamplingMethod.CLUSTER,
+            size=5,
+            seed=99,
+            cluster_field="Land",
+            filter_field="Betrag",
+            filter_value=100,
+            filter_operator=FilterOperator.GTE,
+        )
+        samples = [
+            SampleResult(
+                config=cfg,
+                selected_row_ids=(1, 2, 3, 4, 5, 6, 7),
+                population_size=10,
+                parent_sample_id=17,
+                created_by="anna",
+                id=9,
+                drawn_at=datetime(2026, 5, 1, 10, 0, tzinfo=UTC),
+            )
+        ]
+        out = tmp_path / "report.html"
+        HtmlReportGenerator().render(
+            engagement, [], samples, events, out, dataset_ids_by_sample={9: 4}
+        )
+        html = out.read_text(encoding="utf-8")
+        assert "≥" in html
+        assert "#17" in html
+        assert "bdo-v1" in html
+        assert "#4" in html
+
+    def test_audit_trail_details_spalte_zeigt_details(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        samples: list[SampleResult],
+    ) -> None:
+        events = [
+            AuditEvent(
+                event_type="sampling",
+                engagement_id=1,
+                user_name="anna",
+                sample_id=1,
+                details={"filter_operator": "gte", "algorithm_version": "bdo-v1"},
+                timestamp=datetime(2026, 5, 1, 10, 0, tzinfo=UTC),
+                id=1,
+            )
+        ]
+        out = tmp_path / "report.html"
+        HtmlReportGenerator().render(engagement, [], samples, events, out)
+        html = out.read_text(encoding="utf-8")
+        assert "filter_operator" in html
+        assert "gte" in html

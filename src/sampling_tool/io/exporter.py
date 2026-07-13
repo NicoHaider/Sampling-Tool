@@ -25,8 +25,10 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+from sampling_tool import __version__
 from sampling_tool.config import BDO_RED
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement, SampleResult
+from sampling_tool.core.provenance import SamplingProvenance
 from sampling_tool.io._xlsx_safe import safe_row
 
 if TYPE_CHECKING:
@@ -191,23 +193,20 @@ class ExcelExporter:
         engagement: Engagement | None,
     ) -> None:
         ws = wb.create_sheet(_SHEET_META)
-        cfg = sample.config
+
+        provenance = SamplingProvenance.from_sample_result(
+            sample, dataset_id=dataset.id, app_version=__version__
+        )
 
         rows: list[tuple[str, Any]] = [
             ("Erstellt am", datetime.now()),
             ("Dataset", dataset.name),
             ("Quelldatei", dataset.source_file),
-            ("Population (Zeilen)", sample.population_size),
-            ("Stichprobengröße", sample.actual_size),
-            ("Sampling-Methode", cfg.method.value),
-            ("Seed", cfg.seed),
-            ("Filter-Feld", cfg.filter_field or "—"),
-            ("Filter-Wert", cfg.filter_value if cfg.filter_value is not None else "—"),
-            ("Cluster-Feld", cfg.cluster_field or "—"),
-            ("Stratum-Feld", cfg.stratum_field or "—"),
-            ("Stratify-Mode", cfg.stratify_mode.value),
-            ("Beschreibung", cfg.description or "—"),
         ]
+        rows.extend(provenance.to_ordered_fields())
+        # description bleibt bewusst außerhalb der kanonischen Provenienz – Freitext,
+        # kein Reproduktionsparameter (siehe core/provenance.py-Docstring).
+        rows.append(("Beschreibung", sample.config.description or "—"))
         if engagement is not None:
             rows.extend(
                 [

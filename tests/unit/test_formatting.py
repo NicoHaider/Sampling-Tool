@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 from sampling_tool.core.formatting import (
     ensure_utc,
+    format_audit_details,
     format_event_timestamp,
     format_optional_timestamp,
 )
@@ -72,3 +73,22 @@ class TestEnsureUtc:
         out = ensure_utc(aware)
         assert out.tzinfo == tokyo
         assert out == aware
+
+
+class TestFormatAuditDetails:
+    def test_empty_dict_returns_dash(self) -> None:
+        assert format_audit_details({}) == "—"
+
+    def test_joins_multiple_keys_compactly(self) -> None:
+        result = format_audit_details({"filter_operator": "gte", "parent_sample_id": 17})
+        assert "filter_operator: gte" in result
+        assert "parent_sample_id: 17" in result
+        assert " · " in result
+
+    def test_none_value_renders_dash(self) -> None:
+        result = format_audit_details({"parent_sample_id": None})
+        assert "parent_sample_id: —" in result
+
+    def test_bool_value_renders_german(self) -> None:
+        assert format_audit_details({"flag": True}) == "flag: ja"
+        assert format_audit_details({"flag": False}) == "flag: nein"

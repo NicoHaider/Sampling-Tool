@@ -1673,7 +1673,7 @@ class TestSprint6Reports:
             sample = SampleRepo(db.connect()).get_by_id(sample_id)
             assert sample is not None
             logger_ = AuditLogger(AuditRepo(db.connect()), "tester", 1)
-            evt = logger_.log_sampling(sample, sample_id)
+            evt = logger_.log_sampling(sample, sample_id, ds_id)
             db.close()
 
             controller._refresh_audit_trail()
@@ -1713,6 +1713,47 @@ class TestSprint6Reports:
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.handle_export_excel_report()
             assert target.exists()
+        finally:
+            controller.handle_close_engagement()
+
+    def test_handle_export_excel_report_includes_dataset_id_in_samples_sheet(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Sprint 43 / A-001: die Projekt-XLSX-Samples-Tabelle zeigt die echte
+        Dataset-ID statt "—" – `collect_report_data` reicht sie jetzt pro
+        Sample durch, statt sie beim Abflachen zu verlieren."""
+        from openpyxl import load_workbook
+
+        from sampling_tool.ui.dialogs.export_excel_report_dialog import (
+            ExportExcelReportDialogResult,
+        )
+
+        target = tmp_path / "bericht.xlsx"
+        result = ExportExcelReportDialogResult(
+            output_path=target,
+            sheets={"Übersicht", "AuditTrail", "Samples", "Statistiken"},
+        )
+        factory = lambda *args, **kw: _StubExportDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            excel_report_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.handle_open_engagement(populated_db)
+            ds_id = _first_item_data(window.sidebar().datasets_widget())
+            with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
+                controller.handle_export_excel_report()
+            wb = load_workbook(target)
+            ws = wb["3. Samples"]
+            rows = list(ws.iter_rows(values_only=True))
+            header = rows[0]
+            dataset_id_col = header.index("Dataset-ID")
+            assert rows[1][dataset_id_col] == ds_id
         finally:
             controller.handle_close_engagement()
 
@@ -1786,7 +1827,7 @@ class TestUnifiedExportDialogs:
         sample = sample_repo.list_for_dataset(1)[0]
         assert sample.id is not None
         logger_ = AuditLogger(AuditRepo(db.connect()), "tester", 1)
-        logger_.log_sampling(sample, sample.id)
+        logger_.log_sampling(sample, sample.id, 1)
         logger_.log_export(sample.id, tmp_path / "x.xlsx", 2)
         db.close()
 

@@ -232,7 +232,7 @@ class ExportController:
 
         # Sprint 17: Worker-basiert.
         try:
-            datasets, samples, events = s.collect_report_data()
+            datasets, samples, events, dataset_ids_by_sample = s.collect_report_data()
         except Exception as exc:  # pragma: no cover – defensiv
             logger.exception("Excel-Report: Daten-Sammlung fehlgeschlagen")
             s.error(f"Excel-Report fehlgeschlagen: {exc}")
@@ -244,6 +244,7 @@ class ExportController:
             audit_events=events,
             output_path=result.output_path,
             sheets=result.sheets,
+            dataset_ids_by_sample=dataset_ids_by_sample,
         )
         progress_dialog = TaskProgressDialog("Erstelle Excel-Report…", s.window)
         try:
@@ -278,7 +279,7 @@ class ExportController:
 
         # Sprint 17: Worker-basiert.
         try:
-            datasets, samples, events = s.collect_report_data()
+            datasets, samples, events, dataset_ids_by_sample = s.collect_report_data()
         except Exception as exc:  # pragma: no cover – defensiv
             logger.exception("HTML-Report: Daten-Sammlung fehlgeschlagen")
             s.error(f"HTML-Report fehlgeschlagen: {exc}")
@@ -292,6 +293,7 @@ class ExportController:
             include_charts=result.include_charts,
             include_audit_trail=result.include_audit_trail,
             include_samples_table=result.include_samples_table,
+            dataset_ids_by_sample=dataset_ids_by_sample,
         )
         progress_dialog = TaskProgressDialog("Erstelle HTML-Report…", s.window)
         try:

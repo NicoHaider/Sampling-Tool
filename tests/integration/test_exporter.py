@@ -10,10 +10,12 @@ from unittest.mock import patch
 import pytest
 from openpyxl import load_workbook
 
+from sampling_tool import __version__
 from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
     Engagement,
+    FilterOperator,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -193,13 +195,59 @@ class TestExportSample:
         wb = load_workbook(out)
         ws = wb["Metadaten"]
         meta = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2)}
-        assert meta["Seed"] == 42
-        assert meta["Stichprobengröße"] == 4
-        assert meta["Population (Zeilen)"] == 10
+        assert meta["Seed"] == "42"
+        assert meta["Angeforderte Größe"] == "4"
+        assert meta["Tatsächliche Größe"] == "4"
+        assert meta["Population (Zeilen)"] == "10"
         assert meta["Sampling-Methode"] == "simple"
         assert meta["Auditor"] == "Anna Auditorin"
         assert meta["Mandant"] == "ACME GmbH"
         assert meta["Beschreibung"] == "Test-Stichprobe"
+
+    def test_metadaten_sheet_zeigt_volle_provenienz(
+        self,
+        exporter: ExcelExporter,
+        dataset: Dataset,
+        dataset_repo: DatasetRepo,
+        tmp_path: Path,
+    ) -> None:
+        """A-001 Contract-Test: Operator, Parent, Algorithmus-/App-Version,
+        angeforderte UND tatsächliche Größe sind sichtbar."""
+        cfg = SampleConfig(
+            method=SamplingMethod.CLUSTER,
+            size=5,
+            seed=99,
+            cluster_field="Land",
+            filter_field="Betrag",
+            filter_value=100,
+            filter_operator=FilterOperator.GTE,
+        )
+        sample = SampleResult(
+            config=cfg,
+            selected_row_ids=(1, 2, 3, 4, 5, 6, 7),
+            population_size=10,
+            parent_sample_id=17,
+            created_by="anna",
+        )
+        out = exporter.export_sample(
+            sample=sample,
+            dataset=dataset,
+            dataset_repo=dataset_repo,
+            columns=["Name"],
+            output_dir=tmp_path,
+            custom_name="X",
+            custom_id="1",
+        )
+        wb = load_workbook(out)
+        ws = wb["Metadaten"]
+        meta = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2)}
+        assert meta["Angeforderte Größe"] == "5"
+        assert meta["Tatsächliche Größe"] == "7"
+        assert meta["Filter-Operator"] == "≥"
+        assert meta["Parent-Sample-ID"] == "17"
+        assert meta["Algorithmus-Version"] == "bdo-v1"
+        assert meta["App-Version"] == __version__
+        assert meta["Erstellt von"] == "anna"
 
     def test_atomic_write_kein_halbes_file_bei_exception(
         self,

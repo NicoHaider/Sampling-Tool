@@ -33,7 +33,7 @@ from reportlab.platypus import (
 )
 
 from sampling_tool.config import BDO_RED, DEFAULT_BRIEFPAPIER
-from sampling_tool.core.formatting import format_event_timestamp
+from sampling_tool.core.formatting import format_audit_details, format_event_timestamp
 from sampling_tool.core.models import AuditEvent, Engagement
 from sampling_tool.io.bdo_locations import BdoCompany, BdoLocation
 from sampling_tool.io.briefpapier import BriefpapierConfig, get_default_briefpapier
@@ -369,7 +369,7 @@ def _build_chunk_table(
         data.append(
             [
                 _format_cell(format_event_timestamp(evt.timestamp), cell_style),
-                _format_cell(action_text, cell_style),
+                _format_action_cell(action_text, evt.details, cell_style),
                 _format_cell(evt.user_name, cell_style),
                 size,
                 percent,
@@ -385,6 +385,25 @@ def _build_chunk_table(
     )
     table.setStyle(_build_chunk_style(correction_rows))
     return table
+
+
+def _format_action_cell(
+    action_text: str,
+    details: dict[str, Any],
+    cell_style: ParagraphStyle,
+) -> str | Paragraph:
+    """Wie `_format_cell`, hängt aber additiv/kompakt eine Details-Zeile an
+    (Sprint 43 / A-001) – ohne neue Spalte, ohne Layout-Redesign (die
+    Landscape-Tabelle aus Sprint 33 bleibt unverändert). Events ohne
+    `details` (die meisten Nicht-Sampling-Events, alle Alt-Events) verhalten
+    sich exakt wie vor diesem Sprint."""
+    if not details:
+        return _format_cell(action_text, cell_style)
+    detail_line = format_audit_details(details)
+    return Paragraph(
+        f"{_escape(action_text)}<br/><font color='#7F7F7F' size='7'>{_escape(detail_line)}</font>",
+        cell_style,
+    )
 
 
 def _build_chunk_style(correction_rows: list[int]) -> TableStyle:

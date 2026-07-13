@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -165,6 +166,42 @@ class TestAuditTrailPDF:
         AuditTrailPDF().render(engagement, events, out, include_statistics=False)
         text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
         assert "Statistiken" not in text
+
+    def test_sampling_event_details_erscheinen_kompakt(
+        self, engagement: Engagement, tmp_path: Path
+    ) -> None:
+        """A-001: additiv, kompakte Sampling-Details in der Aktion-Zelle –
+        keine neue Spalte, kein Layout-Redesign (Sprint-33-Tabelle bleibt)."""
+        evt = replace(
+            _evt("sampling", seconds=0, sample_size=7, seed=99, evt_id=1),
+            details={
+                "filter_operator": "gte",
+                "parent_sample_id": 17,
+                "algorithm_version": "bdo-v1",
+            },
+        )
+        out = tmp_path / "details.pdf"
+        AuditTrailPDF().render(engagement, [evt], out)
+        text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
+        assert "filter_operator" in text
+        assert "bdo-v1" in text
+
+    def test_korrektur_und_details_komponieren_korrekt(
+        self, engagement: Engagement, tmp_path: Path
+    ) -> None:
+        """A-001: ein korrigiertes Event mit `details` zeigt BEIDES – den
+        Korrektur-Pfeil UND die kompakte Details-Zeile – keins verdrängt
+        das andere."""
+        evt = replace(
+            _evt("sampling", seconds=0, sample_size=7, seed=99, corrects=2, evt_id=3),
+            details={"filter_operator": "gte", "algorithm_version": "bdo-v1"},
+        )
+        out = tmp_path / "korrektur_details.pdf"
+        AuditTrailPDF().render(engagement, [evt], out)
+        text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
+        assert "#2" in text
+        assert "filter_operator" in text
+        assert "bdo-v1" in text
 
 
 class TestLandscapeLayout:
