@@ -321,12 +321,18 @@ class ExportController:
         bereits erstellte Exportdatei erhalten (Compliance-Entscheidung Nico,
         Sprint 42) – der Nutzer bekommt eine blockierende Warnung mit
         Retry-Option statt eines App-Absturzes ohne Trail-Eintrag.
+
+        Der Loop endet nur bei Erfolg oder explizitem Abort-Klick – bewusst
+        unbegrenzt, kein Bug (ein Retry-Limit würde das Compliance-Ziel
+        unterlaufen).
         """
         assert s.db is not None
         assert s.engagement is not None
         assert s.engagement.id is not None
         while True:
             try:
+                # s.db.connect() liefert die bereits offene Connection (kein Reconnect) –
+                # der Retry wiederholt nur das INSERT, sinnvoll bei transienten Locks (WAL).
                 AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_export(
                     sample_id, export_file, row_count
                 )
