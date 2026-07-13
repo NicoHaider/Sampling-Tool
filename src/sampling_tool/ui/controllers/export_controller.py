@@ -12,6 +12,7 @@ import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import replace
 from datetime import date
+from pathlib import Path
 
 from PyQt6.QtWidgets import QMessageBox
 
@@ -117,14 +118,16 @@ class ExportController:
         try:
             output_path = progress_dialog.run_task(task)
         except ExportError as exc:
-            s.error(f"Export fehlgeschlagen: {exc}")
+            s.error(f"Sample-Export fehlgeschlagen: {exc}")
+            return
+        except Exception as exc:
+            logger.exception("Sample-Export fehlgeschlagen")
+            s.error(f"Sample-Export fehlgeschlagen: {exc}")
             return
         if output_path is None:
             return  # User-Cancel
 
-        AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_export(
-            s.sample.id, output_path, s.sample.actual_size
-        )
+        self._log_export_with_retry(s, s.sample.id, output_path, s.sample.actual_size)
         s.refresh_views()
 
         QMessageBox.information(
@@ -306,6 +309,51 @@ class ExportController:
         )
 
     # ---- intern --------------------------------------------------------
+
+    def _log_export_with_retry(
+        self,
+        s: WorkspaceSession,
+        sample_id: int,
+        export_file: Path,
+        row_count: int,
+    ) -> None:
+        """Schreibt das Export-Audit-Event. Schlägt das INSERT fehl, bleibt die
+        bereits erstellte Exportdatei erhalten (Compliance-Entscheidung Nico,
+        Sprint 42) – der Nutzer bekommt eine blockierende Warnung mit
+        Retry-Option statt eines App-Absturzes ohne Trail-Eintrag.
+
+        Der Loop endet nur bei Erfolg oder explizitem Abort-Klick – bewusst
+        unbegrenzt, kein Bug (ein Retry-Limit würde das Compliance-Ziel
+        unterlaufen).
+
+        Reset/Undo/Redo nutzen stattdessen den einfacheren `WorkspaceController.
+        _log_audit_event_safely` (warnen + weiterlaufen, kein Retry) – dort
+        gibt es kein Datei-Artefakt zu erhalten, nur In-Memory-State.
+        """
+        assert s.db is not None
+        assert s.engagement is not None
+        assert s.engagement.id is not None
+        while True:
+            try:
+                # s.db.connect() liefert die bereits offene Connection (kein Reconnect) –
+                # der Retry wiederholt nur das INSERT, sinnvoll bei transienten Locks (WAL).
+                AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_export(
+                    sample_id, export_file, row_count
+                )
+                return
+            except Exception:
+                logger.exception("Audit-Log für Export fehlgeschlagen")
+                answer = QMessageBox.warning(
+                    s.window,
+                    "Audit-Protokollierung fehlgeschlagen",
+                    "Der Export wurde erstellt, konnte aber NICHT im Audit-Trail "
+                    f"protokolliert werden – Datei „{export_file.name}“ ist nicht "
+                    "prüfungssicher.",
+                    QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Abort,
+                    QMessageBox.StandardButton.Retry,
+                )
+                if answer != QMessageBox.StandardButton.Retry:
+                    return
 
     def _next_sample_id_for_export(self, dataset_id: int) -> int:
         """Fortlaufende Sample-Nummer für den Filename-Token (ID-Spalte)."""

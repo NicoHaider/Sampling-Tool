@@ -227,6 +227,37 @@ class TestExportSample:
         leftover = list(tmp_path.iterdir())
         assert leftover == [], f"Es sollten keine Dateien übrig bleiben, gefunden: {leftover}"
 
+    def test_exporter_wraps_os_replace_error(
+        self,
+        exporter: ExcelExporter,
+        sample: SampleResult,
+        dataset: Dataset,
+        dataset_repo: DatasetRepo,
+        tmp_path: Path,
+    ) -> None:
+        """N-004: schlägt der finale `os.replace` fehl (z. B. Zieldatei in
+        Excel geöffnet, Windows-`PermissionError`), muss das ein deutscher,
+        fachlicher `ExportError` sein statt eines rohen `OSError` – und die
+        Tmp-Datei darf nicht liegen bleiben."""
+        with (
+            patch(
+                "sampling_tool.io.exporter.os.replace",
+                side_effect=PermissionError("target locked"),
+            ),
+            pytest.raises(ExportError, match="Excel geöffnet"),
+        ):
+            exporter.export_sample(
+                sample=sample,
+                dataset=dataset,
+                dataset_repo=dataset_repo,
+                columns=["Name"],
+                output_dir=tmp_path,
+                custom_name="X",
+                custom_id="1",
+            )
+        leftover = list(tmp_path.iterdir())
+        assert leftover == [], f"Tmp-Datei sollte aufgeräumt sein, gefunden: {leftover}"
+
     def test_spaltenbreiten_sind_gesetzt(
         self,
         exporter: ExcelExporter,

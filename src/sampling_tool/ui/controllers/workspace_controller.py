@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import QDialog, QFileDialog, QMessageBox
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.config import SUPPORTED_CSV_SUFFIXES, SUPPORTED_EXCEL_SUFFIXES
 from sampling_tool.core.models import (
+    AuditEvent,
     Dataset,
     DatasetRow,
     FilterOperator,
@@ -397,9 +398,8 @@ class WorkspaceController:
         assert s.engagement is not None
         assert s.engagement.id is not None
         if s.dataset is not None and s.dataset.id is not None:
-            AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_reset(
-                s.dataset.id
-            )
+            dataset_id = s.dataset.id
+            self._log_audit_event_safely("Der Reset", lambda al: al.log_reset(dataset_id))
 
         s.sample = None
         s.active_sample_id = None
@@ -448,9 +448,8 @@ class WorkspaceController:
         assert s.engagement is not None
         assert s.engagement.id is not None
         if s.dataset is not None and s.dataset.id is not None:
-            AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_reset(
-                s.dataset.id
-            )
+            dataset_id = s.dataset.id
+            self._log_audit_event_safely("Der Reset", lambda al: al.log_reset(dataset_id))
 
         if not s.reset_sampling():
             return
@@ -482,10 +481,8 @@ class WorkspaceController:
         s.undo_manager.undo()
         previous = s.undo_manager.peek_undo()
         self._apply_snapshot(previous)
-        if s.sample is not None and s.sample.id is not None:
-            AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_undo(
-                s.sample.id
-            )
+        sample_id = s.sample.id if s.sample is not None else None
+        self._log_audit_event_safely("Das Undo", lambda al: al.log_undo(sample_id))
         s.update_undo_redo_state()
         s.refresh_views()
         s.persist_state()
@@ -505,10 +502,8 @@ class WorkspaceController:
         if snapshot is None:
             return
         self._apply_snapshot(snapshot)
-        if s.sample is not None and s.sample.id is not None:
-            AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_redo(
-                s.sample.id
-            )
+        sample_id = s.sample.id if s.sample is not None else None
+        self._log_audit_event_safely("Das Redo", lambda al: al.log_redo(sample_id))
         s.update_undo_redo_state()
         s.refresh_views()
         s.persist_state()
@@ -643,6 +638,36 @@ class WorkspaceController:
         # ausgeschlossenen Rows, damit die population_size-Mathe (row_count -
         # len(exclude)) stimmt.
         return filtered, dataset.row_count - len(exclude_set)
+
+    def _log_audit_event_safely(
+        self, action_label: str, log_call: Callable[[AuditLogger], AuditEvent]
+    ) -> None:
+        """Schreibt ein Audit-Event ab, ohne bei einem DB-Fehler zu crashen.
+
+        Die Aktion selbst (Reset/Undo/Redo) ist bereits ausgeführt – der
+        In-Memory-State ist schon geändert – bei einem Log-Fehler wird nur
+        gewarnt, nicht zurückgerollt. `action_label` ist bereits die volle
+        deutsche Subjekt-Phrase inkl. Artikel (z. B. "Der Reset", "Das
+        Undo"), damit die Warnung grammatikalisch korrekt bleibt.
+
+        Der Sample-Export hat eine eigene Variante (`ExportController.
+        _log_export_with_retry`) statt diesem Helper: dort existiert bereits
+        eine Datei auf der Platte, die bei einem Log-Fehler NICHT gelöscht
+        werden darf (Compliance-Entscheidung) – deshalb Retry/Abort statt
+        einfachem Warnen.
+        """
+        s = self.session
+        assert s.db is not None
+        assert s.engagement is not None
+        assert s.engagement.id is not None
+        try:
+            log_call(AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id))
+        except Exception:
+            logger.exception("Audit-Log-Fehler bei: %s", action_label)
+            s.error(
+                f"{action_label} wurde ausgeführt, konnte aber NICHT im Audit-Trail "
+                "protokolliert werden."
+            )
 
     def _push_undo_snapshot(self) -> None:
         """Aktuellen Sample/Filter-State auf den Undo-Stack legen."""

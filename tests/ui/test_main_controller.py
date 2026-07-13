@@ -3633,6 +3633,446 @@ class TestResetSampling:
             controller.handle_close_engagement()
 
 
+class TestAuditTrailRobustness:
+    """Sprint 42 / S1.5a: N-003 (Nachlauf-Log-Fehler crashen nicht mehr),
+    N-004 (breiter Exception-Fang beim Sample-Export), N-012 (Undo der
+    ersten Ziehung erzeugt ein Audit-Event)."""
+
+    def test_export_sample_survives_os_error(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        """N-004: ein roher OS-/DB-Fehler aus dem Export-Task (nicht
+        `ExportError`) darf `handle_export_sample` nicht crashen lassen."""
+        from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialogResult
+
+        export_result = ExportSampleDialogResult(
+            columns=["Konto", "Betrag"],
+            custom_name="testname",
+            custom_id="42",
+            output_dir=tmp_path,
+        )
+        factory = lambda *args, **kw: _StubExportDialog(export_result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            export_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.export_controller.TaskProgressDialog.run_task",
+                    side_effect=PermissionError("Zieldatei ist geöffnet"),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as mock_warning,
+            ):
+                controller.handle_export_sample()  # darf NICHT werfen
+            mock_warning.assert_called_once()
+        finally:
+            controller.handle_close_engagement()
+
+    def test_export_kept_and_warns_when_audit_log_fails(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        """N-003 (Nicos Compliance-Entscheidung): schlägt das Audit-Log-INSERT
+        nach einem erfolgreichen Export fehl, bleibt die Datei erhalten – kein
+        stiller Datenverlust, sondern eine blockierende Warnung statt Crash."""
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialogResult
+
+        export_result = ExportSampleDialogResult(
+            columns=["Konto", "Betrag"],
+            custom_name="testname",
+            custom_id="42",
+            output_dir=tmp_path,
+        )
+        factory = lambda *args, **kw: _StubExportDialog(export_result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            export_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            from PyQt6.QtWidgets import QMessageBox
+
+            with (
+                patch.object(
+                    AuditRepo, "log", side_effect=sqlite3.OperationalError("database is locked")
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.export_controller.QMessageBox.warning",
+                    return_value=QMessageBox.StandardButton.Abort,
+                ) as mock_warning,
+                patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"),
+            ):
+                controller.handle_export_sample()  # darf NICHT werfen
+            mock_warning.assert_called_once()
+            files = list(tmp_path.glob("testname_ID42_BDO_sampling_*.xlsx"))
+            assert len(files) == 1, "Exportdatei muss trotz Audit-Log-Fehler erhalten bleiben"
+        finally:
+            controller.handle_close_engagement()
+
+    def test_export_audit_log_retry_succeeds_on_second_attempt(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Retry-Option: klickt der Nutzer „Erneut versuchen" und das zweite
+        INSERT klappt, landet trotzdem genau ein `export`-Event im Trail."""
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialogResult
+
+        export_result = ExportSampleDialogResult(
+            columns=["Konto", "Betrag"],
+            custom_name="testname",
+            custom_id="42",
+            output_dir=tmp_path,
+        )
+        factory = lambda *args, **kw: _StubExportDialog(export_result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            export_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            from PyQt6.QtWidgets import QMessageBox
+
+            original_log = AuditRepo.log
+            call_count = {"n": 0}
+
+            def _fail_once(self: AuditRepo, event: object) -> object:
+                call_count["n"] += 1
+                if call_count["n"] == 1:
+                    raise sqlite3.OperationalError("database is locked")
+                return original_log(self, event)  # type: ignore[arg-type]
+
+            with (
+                patch.object(AuditRepo, "log", _fail_once),
+                patch(
+                    "sampling_tool.ui.controllers.export_controller.QMessageBox.warning",
+                    return_value=QMessageBox.StandardButton.Retry,
+                ) as mock_warning,
+                patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"),
+            ):
+                controller.handle_export_sample()
+            mock_warning.assert_called_once()
+
+            assert controller.session.db is not None
+            assert controller.session.engagement is not None
+            assert controller.session.engagement.id is not None
+            events = AuditRepo(controller.session.db.connect()).list_for_engagement(
+                controller.session.engagement.id
+            )
+            export_events = [e for e in events if e.event_type == "export"]
+            assert len(export_events) == 1
+        finally:
+            controller.handle_close_engagement()
+
+    def test_reset_survives_audit_log_failure(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        """N-003: schlägt `log_reset` fehl, muss der Reset trotzdem
+        durchlaufen (State bereits geändert) – kein App-Crash."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        from sampling_tool.persistence.repositories import AuditRepo
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
+                    return_value=QMessageBox.StandardButton.Yes,
+                ),
+                patch.object(
+                    AuditRepo, "log", side_effect=sqlite3.OperationalError("database is locked")
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as mock_warning,
+            ):
+                controller.handle_reset()  # darf NICHT werfen
+            mock_warning.assert_called_once()
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+        finally:
+            controller.handle_close_engagement()
+
+    def test_reset_sampling_survives_audit_log_failure(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        """N-003: symmetric to test_reset_survives_audit_log_failure, but for
+        the toolbar 'Sampling zurücksetzen' path (handle_reset_sampling)."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        from sampling_tool.persistence.repositories import AuditRepo
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
+                    return_value=QMessageBox.StandardButton.Yes,
+                ),
+                patch.object(
+                    AuditRepo, "log", side_effect=sqlite3.OperationalError("database is locked")
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as mock_warning,
+            ):
+                controller.handle_reset_sampling()  # darf NICHT werfen
+            mock_warning.assert_called_once()
+            assert controller.session.sample is None
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+        finally:
+            controller.handle_close_engagement()
+
+    def test_undo_of_first_draw_logs_event(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        """N-012: das Undo der ERSTEN Ziehung (Zielzustand leer) erzeugt jetzt
+        ein `undo`-Event mit `sample_id IS NULL` statt gar keins."""
+        from sampling_tool.core.models import SampleConfig, SamplingMethod
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()  # genau eine Ziehung
+
+            controller.handle_undo()
+
+            assert controller.session.db is not None
+            assert controller.session.engagement is not None
+            assert controller.session.engagement.id is not None
+            events = AuditRepo(controller.session.db.connect()).list_for_engagement(
+                controller.session.engagement.id
+            )
+            undo_events = [e for e in events if e.event_type == "undo"]
+            assert len(undo_events) == 1
+            assert undo_events[0].sample_id is None
+            assert undo_events[0].details == {"restored": "empty"}
+        finally:
+            controller.handle_close_engagement()
+
+    def test_undo_survives_audit_log_failure(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.core.models import SampleConfig, SamplingMethod
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            with (
+                patch.object(
+                    AuditRepo, "log", side_effect=sqlite3.OperationalError("database is locked")
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as mock_warning,
+            ):
+                controller.handle_undo()  # darf NICHT werfen
+            mock_warning.assert_called_once()
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+        finally:
+            controller.handle_close_engagement()
+
+    def test_undo_logs_real_sample_id_when_restoring_prior_draw(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        """Gegenstück zu test_undo_of_first_draw_logs_event: ein Undo, das zu
+        einer ECHTEN vorherigen Stichprobe zurückkehrt (nicht zum leeren
+        Zustand), muss deren `sample_id` loggen – kein hartkodiertes None.
+
+        Mechanik: `_push_undo_snapshot` legt nach jeder Ziehung den NEUEN
+        Zustand oben auf den Undo-Stack (push löscht nur den Redo-Stack).
+        Nach zwei Ziehungen liegt also [snap(sample1), snap(sample2)] auf dem
+        Stack. `handle_undo` verschiebt snap(sample2) auf den Redo-Stack und
+        stellt den darunterliegenden Zustand snap(sample1) wieder her – der
+        Undo-Event muss also `sample1.id` loggen, nicht None.
+        """
+        from sampling_tool.core.models import SampleConfig, SamplingMethod
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        first_result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=5),
+            from_sample_only=False,
+        )
+        second_result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
+            from_sample_only=False,
+        )
+        results = [first_result, second_result]
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(  # noqa: E731
+            results.pop(0)
+        )
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()  # erste Ziehung
+            first_sample_id = controller.session.sample.id  # type: ignore[union-attr]
+            controller.handle_new_sampling()  # zweite Ziehung (normale Ziehung)
+
+            controller.handle_undo()  # zurück zur ersten Ziehung
+
+            assert controller.session.sample is not None
+            assert controller.session.sample.id == first_sample_id
+
+            assert controller.session.db is not None
+            assert controller.session.engagement is not None
+            assert controller.session.engagement.id is not None
+            events = AuditRepo(controller.session.db.connect()).list_for_engagement(
+                controller.session.engagement.id
+            )
+            undo_events = [e for e in events if e.event_type == "undo"]
+            assert len(undo_events) == 1
+            assert undo_events[0].sample_id == first_sample_id
+        finally:
+            controller.handle_close_engagement()
+
+    def test_redo_logs_event(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        """N-012 analog: Redo protokolliert immer, auch direkt nach einem
+        Undo, dessen Zielzustand `sample_id IS NULL` war."""
+        from sampling_tool.core.models import SampleConfig, SamplingMethod
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            controller.handle_undo()
+
+            controller.handle_redo()
+
+            assert controller.session.db is not None
+            assert controller.session.engagement is not None
+            assert controller.session.engagement.id is not None
+            events = AuditRepo(controller.session.db.connect()).list_for_engagement(
+                controller.session.engagement.id
+            )
+            redo_events = [e for e in events if e.event_type == "redo"]
+            assert len(redo_events) == 1
+            assert redo_events[0].sample_id is not None
+        finally:
+            controller.handle_close_engagement()
+
+    def test_redo_survives_audit_log_failure(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.core.models import SampleConfig, SamplingMethod
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            controller.handle_undo()
+            with (
+                patch.object(
+                    AuditRepo, "log", side_effect=sqlite3.OperationalError("database is locked")
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as mock_warning,
+            ):
+                controller.handle_redo()  # darf NICHT werfen
+            mock_warning.assert_called_once()
+            assert len(window.data_table().table_model().highlighted_row_ids()) == 3
+        finally:
+            controller.handle_close_engagement()
+
+
 @contextlib.contextmanager
 def _real_sampling_dialog_driver(seeds: list[int], size: int = 3) -> Iterator[None]:
     """Treibt den ECHTEN `SamplingDialog` durch den Controller-Pfad.

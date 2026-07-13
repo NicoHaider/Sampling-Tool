@@ -93,23 +93,27 @@ class AuditLogger:
 
     # ---- Undo / Redo / Reset -------------------------------------------
 
-    def log_undo(self, sample_id: int) -> AuditEvent:
-        """Undo einer Stichproben-Aktion."""
+    def log_undo(self, sample_id: int | None) -> AuditEvent:
+        """Undo einer Stichproben-Aktion. `sample_id=None` beim Undo auf den
+        leeren Zielzustand (z. B. die allererste Ziehung) – der Event wird
+        trotzdem geschrieben (ISAE-3402: jede Undo-Aktion ist trailpflichtig)."""
         event = AuditEvent(
             event_type="undo",
             engagement_id=self.engagement_id,
             user_name=self.user_name,
             sample_id=sample_id,
+            details={"restored": "empty"} if sample_id is None else {},
         )
         return self.repo.log(event)
 
-    def log_redo(self, sample_id: int) -> AuditEvent:
-        """Redo einer rückgängig gemachten Aktion."""
+    def log_redo(self, sample_id: int | None) -> AuditEvent:
+        """Redo einer rückgängig gemachten Aktion. `sample_id=None` analog `log_undo`."""
         event = AuditEvent(
             event_type="redo",
             engagement_id=self.engagement_id,
             user_name=self.user_name,
             sample_id=sample_id,
+            details={"restored": "empty"} if sample_id is None else {},
         )
         return self.repo.log(event)
 

@@ -95,15 +95,24 @@ class ExcelExporter:
             self._write_sample_sheet(wb, sample_rows, columns)
             self._write_metadata_sheet(wb, sample, dataset, engagement)
             wb.save(tmp)
+            try:
+                os.replace(tmp, target)
+            except OSError as exc:
+                raise ExportError(
+                    f"Die Zieldatei „{target.name}“ konnte nicht geschrieben werden: "
+                    f"{exc}. Sie ist möglicherweise in Excel geöffnet oder es fehlen "
+                    "Schreibrechte."
+                ) from exc
         except Exception:
-            # Tmp-Datei wegräumen, damit kein halbes File übrig bleibt.
+            # Tmp-Datei wegräumen, damit kein halbes File übrig bleibt. Deckt
+            # sowohl `wb.save`-Fehler (roh weitergeworfen) als auch den oben
+            # gewrappten `ExportError` aus dem `os.replace`-Fehlerpfad ab.
             if tmp.exists():
                 tmp.unlink(missing_ok=True)
             raise
         finally:
             wb.close()
 
-        os.replace(tmp, target)
         return target
 
     # ---- Helpers --------------------------------------------------------
