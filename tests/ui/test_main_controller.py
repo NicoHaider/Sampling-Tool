@@ -3932,6 +3932,67 @@ class TestAuditTrailRobustness:
         finally:
             controller.handle_close_engagement()
 
+    def test_undo_logs_real_sample_id_when_restoring_prior_draw(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        """Gegenstück zu test_undo_of_first_draw_logs_event: ein Undo, das zu
+        einer ECHTEN vorherigen Stichprobe zurückkehrt (nicht zum leeren
+        Zustand), muss deren `sample_id` loggen – kein hartkodiertes None.
+
+        Mechanik: `_push_undo_snapshot` legt nach jeder Ziehung den NEUEN
+        Zustand oben auf den Undo-Stack (push löscht nur den Redo-Stack).
+        Nach zwei Ziehungen liegt also [snap(sample1), snap(sample2)] auf dem
+        Stack. `handle_undo` verschiebt snap(sample2) auf den Redo-Stack und
+        stellt den darunterliegenden Zustand snap(sample1) wieder her – der
+        Undo-Event muss also `sample1.id` loggen, nicht None.
+        """
+        from sampling_tool.core.models import SampleConfig, SamplingMethod
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        first_result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=5),
+            from_sample_only=False,
+        )
+        second_result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
+            from_sample_only=False,
+        )
+        results = [first_result, second_result]
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(  # noqa: E731
+            results.pop(0)
+        )
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()  # erste Ziehung
+            first_sample_id = controller.session.sample.id  # type: ignore[union-attr]
+            controller.handle_new_sampling()  # zweite Ziehung (normale Ziehung)
+
+            controller.handle_undo()  # zurück zur ersten Ziehung
+
+            assert controller.session.sample is not None
+            assert controller.session.sample.id == first_sample_id
+
+            assert controller.session.db is not None
+            assert controller.session.engagement is not None
+            assert controller.session.engagement.id is not None
+            events = AuditRepo(controller.session.db.connect()).list_for_engagement(
+                controller.session.engagement.id
+            )
+            undo_events = [e for e in events if e.event_type == "undo"]
+            assert len(undo_events) == 1
+            assert undo_events[0].sample_id == first_sample_id
+        finally:
+            controller.handle_close_engagement()
+
 
 @contextlib.contextmanager
 def _real_sampling_dialog_driver(seeds: list[int], size: int = 3) -> Iterator[None]:
