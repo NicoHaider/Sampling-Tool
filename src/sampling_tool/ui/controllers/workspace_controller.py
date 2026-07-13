@@ -348,7 +348,7 @@ class WorkspaceController:
                 )
                 stored = replace(sample_result, id=sample_id)
                 AuditLogger(AuditRepo(conn), s.user_name(), s.engagement.id).log_sampling(
-                    stored, sample_id
+                    stored, sample_id, dataset_id
                 )
         except Exception as exc:  # pragma: no cover – defensiv
             logger.exception("Sample persistieren fehlgeschlagen")

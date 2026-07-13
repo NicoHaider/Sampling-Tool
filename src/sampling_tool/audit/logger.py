@@ -10,7 +10,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from sampling_tool import __version__
 from sampling_tool.core.models import AuditEvent, Dataset, SampleResult
+from sampling_tool.core.provenance import SamplingProvenance
 from sampling_tool.persistence.repositories import AuditRepo
 
 
@@ -29,19 +31,16 @@ class AuditLogger:
 
     # ---- Sampling -------------------------------------------------------
 
-    def log_sampling(self, sample: SampleResult, sample_id: int) -> AuditEvent:
-        """Stichprobe gezogen – inkl. Größe, Population, Anteil, Seed, Methode."""
+    def log_sampling(self, sample: SampleResult, sample_id: int, dataset_id: int) -> AuditEvent:
+        """Stichprobe gezogen – inkl. Größe, Population, Anteil, Seed, Methode
+        sowie der vollen Reproduktions-Provenienz (Sprint 43 / A-001: Operator,
+        Parent-Sample, Algorithmus-/App-Version, angeforderte Größe, Ersteller)."""
         percent = (
             sample.actual_size / sample.population_size * 100.0 if sample.population_size else 0.0
         )
-        details: dict[str, Any] = {
-            "method": sample.config.method.value,
-            "filter_field": sample.config.filter_field,
-            "filter_value": sample.config.filter_value,
-            "cluster_field": sample.config.cluster_field,
-            "stratum_field": sample.config.stratum_field,
-            "stratify_mode": sample.config.stratify_mode.value,
-        }
+        provenance = SamplingProvenance.from_sample_result(
+            sample, dataset_id=dataset_id, app_version=__version__
+        )
         event = AuditEvent(
             event_type="sampling",
             engagement_id=self.engagement_id,
@@ -51,7 +50,7 @@ class AuditLogger:
             sample_percent=percent,
             total_count=sample.population_size,
             seed=sample.config.seed,
-            details=details,
+            details=provenance.to_audit_details(),
         )
         return self.repo.log(event)
 

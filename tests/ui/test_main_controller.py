@@ -1673,7 +1673,7 @@ class TestSprint6Reports:
             sample = SampleRepo(db.connect()).get_by_id(sample_id)
             assert sample is not None
             logger_ = AuditLogger(AuditRepo(db.connect()), "tester", 1)
-            evt = logger_.log_sampling(sample, sample_id)
+            evt = logger_.log_sampling(sample, sample_id, ds_id)
             db.close()
 
             controller._refresh_audit_trail()
@@ -1786,7 +1786,7 @@ class TestUnifiedExportDialogs:
         sample = sample_repo.list_for_dataset(1)[0]
         assert sample.id is not None
         logger_ = AuditLogger(AuditRepo(db.connect()), "tester", 1)
-        logger_.log_sampling(sample, sample.id)
+        logger_.log_sampling(sample, sample.id, 1)
         logger_.log_export(sample.id, tmp_path / "x.xlsx", 2)
         db.close()
 

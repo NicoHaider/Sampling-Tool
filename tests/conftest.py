@@ -62,19 +62,25 @@ def engagement_id(db: Database) -> int:
 
 
 @pytest.fixture
-def sample_id(db: Database, engagement_id: int) -> int:
-    """Persistiert ein Dummy-Dataset + Stichprobe und liefert die `samples.id`.
-
-    Wird von Audit- und Undo-Tests genutzt, deren FKs auf `samples(id)` greifen.
-    """
+def dataset_id(db: Database, engagement_id: int) -> int:
+    """DB-id des Dummy-Datasets, das `sample_id` zugrunde liegt (Sprint 43:
+    `log_sampling` braucht jetzt eine Dataset-Zuordnung)."""
     ds = DatasetRepo(db.connect()).create(
         Dataset(name="dummy", columns=("a",), engagement_id=engagement_id),
         (DatasetRow(row_id=1, values={"a": 1}),),
     )
     assert ds.id is not None
+    return ds.id
+
+
+@pytest.fixture
+def sample_id(db: Database, dataset_id: int) -> int:
+    """Persistiert eine Dummy-Stichprobe auf `dataset_id` und liefert die
+    `samples.id`. Wird von Audit- und Undo-Tests genutzt, deren FKs auf
+    `samples(id)` greifen."""
     cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=1)
     result = SampleResult(config=cfg, selected_row_ids=(1,), population_size=1)
-    return SampleRepo(db.connect()).create_from_result(result, ds.id, "test")
+    return SampleRepo(db.connect()).create_from_result(result, dataset_id, "test")
 
 
 # ---------------------------------------------------------------------------

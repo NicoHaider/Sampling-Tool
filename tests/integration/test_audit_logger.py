@@ -6,13 +6,16 @@ from pathlib import Path
 
 import pytest
 
+from sampling_tool import __version__
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.core.models import (
     Dataset,
+    FilterOperator,
     SampleConfig,
     SampleResult,
     SamplingMethod,
 )
+from sampling_tool.core.rng import SAMPLING_ALGORITHM_VERSION
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import AuditRepo
 
@@ -37,10 +40,10 @@ def _make_sample_result(size: int = 5, population: int = 100) -> SampleResult:
 
 class TestLogSampling:
     def test_writes_event_with_size_seed_percent(
-        self, engagement_id: int, logger: AuditLogger, sample_id: int
+        self, engagement_id: int, logger: AuditLogger, sample_id: int, dataset_id: int
     ) -> None:
         sample = _make_sample_result(size=10, population=100)
-        evt = logger.log_sampling(sample, sample_id=sample_id)
+        evt = logger.log_sampling(sample, sample_id=sample_id, dataset_id=dataset_id)
 
         assert evt.event_type == "sampling"
         assert evt.sample_id == sample_id
@@ -52,11 +55,44 @@ class TestLogSampling:
         assert evt.user_name == "anna"
         assert evt.engagement_id == engagement_id
 
-    def test_handles_empty_population_gracefully(self, logger: AuditLogger, sample_id: int) -> None:
+    def test_handles_empty_population_gracefully(
+        self, logger: AuditLogger, sample_id: int, dataset_id: int
+    ) -> None:
         cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=1)
         empty = SampleResult(config=cfg, selected_row_ids=(), population_size=0)
-        evt = logger.log_sampling(empty, sample_id=sample_id)
+        evt = logger.log_sampling(empty, sample_id=sample_id, dataset_id=dataset_id)
         assert evt.sample_percent == 0.0
+
+    def test_log_sampling_records_full_provenance(
+        self, logger: AuditLogger, sample_id: int, dataset_id: int
+    ) -> None:
+        """A-001: `details_json` enthält jetzt Operator, Parent,
+        Algorithmus-Version, App-Version, angeforderte Größe, Ersteller."""
+        cfg = SampleConfig(
+            method=SamplingMethod.CLUSTER,
+            size=10,
+            seed=42,
+            cluster_field="Land",
+            filter_field="Betrag",
+            filter_value=100,
+            filter_operator=FilterOperator.NE,
+        )
+        sample = SampleResult(
+            config=cfg,
+            selected_row_ids=tuple(range(1, 9)),
+            population_size=100,
+            parent_sample_id=77,
+            created_by="anna",
+        )
+        evt = logger.log_sampling(sample, sample_id=sample_id, dataset_id=dataset_id)
+        details = evt.details
+        assert details["filter_operator"] == "ne"
+        assert details["parent_sample_id"] == 77
+        assert details["algorithm_version"] == SAMPLING_ALGORITHM_VERSION
+        assert details["app_version"] == __version__
+        assert details["size_requested"] == 10
+        assert details["created_by"] == "anna"
+        assert details["dataset_id"] == dataset_id
 
 
 class TestLogImport:
@@ -126,8 +162,12 @@ class TestLogUndoRedoReset:
 
 
 class TestLogCorrection:
-    def test_correction_links_to_original(self, logger: AuditLogger, sample_id: int) -> None:
-        original = logger.log_sampling(_make_sample_result(), sample_id=sample_id)
+    def test_correction_links_to_original(
+        self, logger: AuditLogger, sample_id: int, dataset_id: int
+    ) -> None:
+        original = logger.log_sampling(
+            _make_sample_result(), sample_id=sample_id, dataset_id=dataset_id
+        )
         assert original.id is not None
 
         correction = logger.log_correction(original.id, reason="Falscher Seed")
