@@ -397,9 +397,16 @@ class WorkspaceController:
         assert s.engagement is not None
         assert s.engagement.id is not None
         if s.dataset is not None and s.dataset.id is not None:
-            AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_reset(
-                s.dataset.id
-            )
+            try:
+                AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_reset(
+                    s.dataset.id
+                )
+            except Exception:
+                logger.exception("Audit-Log für Reset fehlgeschlagen")
+                s.error(
+                    "Der Reset wurde ausgeführt, konnte aber NICHT im Audit-Trail "
+                    "protokolliert werden."
+                )
 
         s.sample = None
         s.active_sample_id = None
@@ -448,9 +455,16 @@ class WorkspaceController:
         assert s.engagement is not None
         assert s.engagement.id is not None
         if s.dataset is not None and s.dataset.id is not None:
-            AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_reset(
-                s.dataset.id
-            )
+            try:
+                AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_reset(
+                    s.dataset.id
+                )
+            except Exception:
+                logger.exception("Audit-Log für Reset fehlgeschlagen")
+                s.error(
+                    "Der Reset wurde ausgeführt, konnte aber NICHT im Audit-Trail "
+                    "protokolliert werden."
+                )
 
         if not s.reset_sampling():
             return
