@@ -13,7 +13,7 @@ erlaubt parallele Reader (Main-Thread) + 1 Writer (Worker).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -200,6 +200,7 @@ class ExcelReportTask:
     audit_events: list[AuditEvent]
     output_path: Path
     sheets: set[str]
+    dataset_ids_by_sample: dict[int, int] = field(default_factory=dict)
 
     def run(self, progress: ProgressReporter, cancellation: CancellationToken) -> Path:
         cancellation.raise_if_cancelled()
@@ -211,6 +212,7 @@ class ExcelReportTask:
             self.audit_events,
             self.output_path,
             sheets=self.sheets,
+            dataset_ids_by_sample=self.dataset_ids_by_sample,
         )
         cancellation.raise_if_cancelled()
         progress.report(1, 1)
@@ -229,6 +231,7 @@ class HtmlReportTask:
     include_charts: bool
     include_audit_trail: bool
     include_samples_table: bool
+    dataset_ids_by_sample: dict[int, int] = field(default_factory=dict)
 
     def run(self, progress: ProgressReporter, cancellation: CancellationToken) -> Path:
         cancellation.raise_if_cancelled()
@@ -242,6 +245,7 @@ class HtmlReportTask:
             include_charts=self.include_charts,
             include_audit_trail=self.include_audit_trail,
             include_samples_table=self.include_samples_table,
+            dataset_ids_by_sample=self.dataset_ids_by_sample,
         )
         cancellation.raise_if_cancelled()
         progress.report(1, 1)
