@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from sampling_tool.persistence.database import Database
+from sampling_tool.persistence.database import (
+    APPLICATION_ID,
+    CURRENT_SCHEMA_VERSION,
+    Database,
+)
 
 
 def _migration_sql(name: str) -> str:
@@ -30,12 +34,52 @@ class TestSchemaVersion:
 
     def test_latest_after_migration(self, db: Database) -> None:
         # Fixture migriert bereits.
-        assert db.schema_version() == 4
+        assert db.schema_version() == CURRENT_SCHEMA_VERSION
 
     def test_migration_is_idempotent(self, db: Database) -> None:
         db.migrate()  # erneut – darf nichts ändern
         db.migrate()
-        assert db.schema_version() == 4
+        assert db.schema_version() == CURRENT_SCHEMA_VERSION
+
+
+class TestApplicationId:
+    """Sprint 41 / S1.4 (S-002): PRAGMA application_id stempelt Sampling-Tool-DBs,
+    damit ein künftiger read-only Preflight sie ohne Schreibzugriff erkennen kann."""
+
+    def test_fresh_db_has_application_id_after_migration(self, db: Database) -> None:
+        row = db.connect().execute("PRAGMA application_id").fetchone()
+        assert row[0] == APPLICATION_ID
+
+    def test_legacy_db_has_no_application_id_before_migration_005(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "legacy_v4.db"
+
+        # Schritt 1: Sprint-39-Stand simulieren – Migrationen 001-004 anwenden.
+        legacy = Database(db_path)
+        try:
+            conn = legacy.connect()
+            conn.executescript(_migration_sql("001_initial.sql"))
+            conn.executescript(_migration_sql("002_engagement_state.sql"))
+            conn.executescript(_migration_sql("003_filter_operator.sql"))
+            conn.executescript(_migration_sql("004_algorithm_version.sql"))
+            assert legacy.schema_version() == 4
+
+            # SQLite-Default: application_id ist 0, solange niemand es setzt.
+            row = legacy.connect().execute("PRAGMA application_id").fetchone()
+            assert row[0] == 0
+        finally:
+            legacy.close()
+
+        # Schritt 2: dieselbe DB-Datei normal öffnen (wie der Controller) –
+        # Bestands-Engagements werden beim nächsten Öffnen gestempelt.
+        upgraded = Database(db_path)
+        try:
+            upgraded.migrate()
+            assert upgraded.schema_version() == CURRENT_SCHEMA_VERSION
+
+            row = upgraded.connect().execute("PRAGMA application_id").fetchone()
+            assert row[0] == APPLICATION_ID
+        finally:
+            upgraded.close()
 
 
 class TestMigrationsApply:
@@ -126,7 +170,7 @@ class TestMigrationV1ToV2:
         try:
             upgraded.migrate()
             # `migrate()` zieht bis zur LATEST-Version durch (nicht nur +1).
-            assert upgraded.schema_version() == 4
+            assert upgraded.schema_version() == CURRENT_SCHEMA_VERSION
 
             # Bestehende Daten überleben.
             row = (
@@ -186,7 +230,7 @@ class TestMigrationV2ToV3:
         upgraded = Database(db_path)
         try:
             upgraded.migrate()
-            assert upgraded.schema_version() == 4
+            assert upgraded.schema_version() == CURRENT_SCHEMA_VERSION
 
             row = (
                 upgraded.connect()
@@ -254,7 +298,7 @@ class TestMigrationV3ToV4:
         upgraded = Database(db_path)
         try:
             upgraded.migrate()
-            assert upgraded.schema_version() == 4
+            assert upgraded.schema_version() == CURRENT_SCHEMA_VERSION
 
             row = (
                 upgraded.connect()

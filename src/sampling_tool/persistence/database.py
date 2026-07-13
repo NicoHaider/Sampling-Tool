@@ -22,6 +22,10 @@ from typing import Final
 from sampling_tool.resources import package_resource
 
 SCHEMA_VERSION_TABLE: Final = "schema_version"
+APPLICATION_ID: Final = 0x42444F53  # "BDOS" – BDO Sampling; SQLite PRAGMA application_id
+CURRENT_SCHEMA_VERSION: Final = (
+    5  # muss mit jeder neuen migrations/NNN_*.sql-Datei mit hochgezogen werden
+)
 
 
 # ---------------------------------------------------------------------------
