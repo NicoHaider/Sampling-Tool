@@ -496,9 +496,15 @@ class WorkspaceController:
         s.undo_manager.undo()
         previous = s.undo_manager.peek_undo()
         self._apply_snapshot(previous)
-        if s.sample is not None and s.sample.id is not None:
+        sample_id = s.sample.id if s.sample is not None else None
+        try:
             AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_undo(
-                s.sample.id
+                sample_id
+            )
+        except Exception:
+            logger.exception("Audit-Log für Undo fehlgeschlagen")
+            s.error(
+                "Das Undo wurde ausgeführt, konnte aber NICHT im Audit-Trail protokolliert werden."
             )
         s.update_undo_redo_state()
         s.refresh_views()

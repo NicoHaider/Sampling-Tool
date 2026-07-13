@@ -3854,6 +3854,84 @@ class TestAuditTrailRobustness:
         finally:
             controller.handle_close_engagement()
 
+    def test_undo_of_first_draw_logs_event(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        """N-012: das Undo der ERSTEN Ziehung (Zielzustand leer) erzeugt jetzt
+        ein `undo`-Event mit `sample_id IS NULL` statt gar keins."""
+        from sampling_tool.core.models import SampleConfig, SamplingMethod
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()  # genau eine Ziehung
+
+            controller.handle_undo()
+
+            assert controller.session.db is not None
+            assert controller.session.engagement is not None
+            assert controller.session.engagement.id is not None
+            events = AuditRepo(controller.session.db.connect()).list_for_engagement(
+                controller.session.engagement.id
+            )
+            undo_events = [e for e in events if e.event_type == "undo"]
+            assert len(undo_events) == 1
+            assert undo_events[0].sample_id is None
+            assert undo_events[0].details == {"restored": "empty"}
+        finally:
+            controller.handle_close_engagement()
+
+    def test_undo_survives_audit_log_failure(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.core.models import SampleConfig, SamplingMethod
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
+            from_sample_only=False,
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_new_sampling()
+            with (
+                patch.object(
+                    AuditRepo, "log", side_effect=sqlite3.OperationalError("database is locked")
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as mock_warning,
+            ):
+                controller.handle_undo()  # darf NICHT werfen
+            mock_warning.assert_called_once()
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+        finally:
+            controller.handle_close_engagement()
+
 
 @contextlib.contextmanager
 def _real_sampling_dialog_driver(seeds: list[int], size: int = 3) -> Iterator[None]:
