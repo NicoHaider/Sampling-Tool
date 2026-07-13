@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import QMessageBox
 from sampling_tool.core.models import Engagement
 from sampling_tool.core.undo import UndoManager
 from sampling_tool.persistence.database import Database
+from sampling_tool.persistence.db_preflight import PreflightRejected, preflight_check
 from sampling_tool.persistence.repositories import (
     DatasetRepo,
     EngagementRepo,
@@ -81,12 +82,13 @@ class EngagementController:
                 # CANCEL → komplettes Abbrechen
                 return
 
+            db = Database(db_path)
             try:
-                db = Database(db_path)
                 db.migrate()
                 created = EngagementRepo(db.connect()).get_or_create(engagement)
-            except Exception as exc:  # pragma: no cover – defensiv
+            except Exception as exc:
                 logger.exception("Engagement-Anlage fehlgeschlagen")
+                db.close()
                 s.error(f"Projekt konnte nicht angelegt werden: {exc}")
                 return
 
@@ -129,11 +131,18 @@ class EngagementController:
         #    entfernen und ein frisches, leeres Projekt anlegen.
         try:
             _remove_db_files(db_path)
-            db = Database(db_path)
-            db.migrate()
-            created = EngagementRepo(db.connect()).get_or_create(engagement)
         except Exception as exc:  # pragma: no cover – defensiv
             logger.exception("Frisches Projekt nach Überschreiben fehlgeschlagen")
+            s.error(f"Projekt konnte nicht angelegt werden: {exc}")
+            return
+
+        db = Database(db_path)
+        try:
+            db.migrate()
+            created = EngagementRepo(db.connect()).get_or_create(engagement)
+        except Exception as exc:
+            logger.exception("Frisches Projekt nach Überschreiben fehlgeschlagen")
+            db.close()
             s.error(f"Projekt konnte nicht angelegt werden: {exc}")
             return
 
@@ -159,6 +168,14 @@ class EngagementController:
             self.refresh_recent()
             return
 
+        # Read-only Preflight VOR jedem Schreibzugriff (Sprint 41 / S1.4,
+        # S-002): eine fremde/beschädigte/zu-neue Datei darf weder
+        # gesnapshottet noch migriert werden.
+        result = preflight_check(db_path)
+        if isinstance(result, PreflightRejected):
+            s.error(result.message)
+            return
+
         # Compliance-Snapshot BEVOR die Session anfängt – ein Fehler dabei
         # soll das Öffnen nicht blockieren (Defense-in-Depth, nicht kritisch).
         try:
@@ -166,16 +183,18 @@ class EngagementController:
         except Exception:
             logger.exception("Snapshot beim Öffnen fehlgeschlagen (nicht-kritisch)")
 
+        db = Database(db_path)
         try:
-            db = Database(db_path)
             db.migrate()
             engagement = EngagementRepo(db.connect()).get()
         except Exception as exc:
             logger.exception("Engagement öffnen fehlgeschlagen")
+            db.close()
             s.error(f"Datenbank '{db_path.name}' kann nicht geöffnet werden: {exc}")
             return
 
         if engagement is None:
+            db.close()
             s.error("Die ausgewählte Datei enthält kein Projekt.")
             return
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
@@ -181,6 +182,24 @@ def _record_duplicate(
     return _make_stub_duplicate_dialog(parent, db_path, choice)
 
 
+@contextlib.contextmanager
+def _spy_database_close() -> Iterator[list[Database]]:
+    """Sprint 41 / S1.4: zählt `Database.close()`-Aufrufe, ruft aber die echte
+    Methode weiterhin auf (im Gegensatz zu einem reinen Mock) – damit bleibt
+    keine SQLite-Connection offen (Windows-Filelock-Risiko beim `tmp_path`-
+    Cleanup), während sich trotzdem beweisen lässt, dass jeder Exit-Pfad
+    tatsächlich schließt."""
+    calls: list[Database] = []
+    original_close = Database.close
+
+    def _spy(self: Database) -> None:
+        calls.append(self)
+        original_close(self)
+
+    with patch.object(Database, "close", _spy):
+        yield calls
+
+
 class TestMainController:
     def test_open_engagement_loads_into_workspace(
         self,
@@ -311,6 +330,39 @@ class TestMainController:
             assert target_db.exists()
             assert duplicate_calls == [], "DuplicateDialog darf nicht erscheinen"
             assert window.is_workspace_visible() is True
+        finally:
+            controller.handle_close_engagement()
+
+    def test_new_engagement_migrate_failure_closes_connection(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        """Sprint 41 / S1.4: schlägt `migrate()` bei der Anlage eines frischen
+        Projekts (Ziel-Pfad existiert noch nicht) fehl, muss die bereits
+        konstruierte `Database`-Connection trotzdem geschlossen werden –
+        strukturell identisch zum Exception-Zweig in `_overwrite_with_backup`."""
+        target_db = tmp_path / "fresh.db"
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _make_stub_new_dialog(parent, target_db, "ACME"),
+        )
+        try:
+            with (
+                _spy_database_close() as close_calls,
+                patch.object(Database, "migrate", side_effect=RuntimeError("boom")),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as warning,
+            ):
+                controller.handle_new_engagement()
+
+            assert warning.called
+            assert window.is_workspace_visible() is False
+            assert len(close_calls) == 1
         finally:
             controller.handle_close_engagement()
 
@@ -564,6 +616,45 @@ class TestOverwriteWithBackup:
             assert title == "Projekt überschrieben"
             assert "gesichert" in body
             assert str(backups[0]) in body
+        finally:
+            controller.handle_close_engagement()
+
+    def test_overwrite_migrate_failure_after_backup_closes_connection(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        """Sprint 41 / S1.4: schlägt `migrate()` NACH erfolgreichem Backup +
+        `_remove_db_files` fehl, muss die bereits konstruierte `Database`-
+        Connection trotzdem geschlossen werden."""
+        target = tmp_path / "ACME" / "ACME_ISAE.db"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"OLD-MARKER-CONTENT")
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _make_stub_new_dialog(parent, target, "ACME"),
+            duplicate_dialog_factory=lambda parent, db_path: _make_stub_duplicate_dialog(
+                parent, db_path, DuplicateEngagementChoice.OVERWRITE
+            ),
+        )
+        try:
+            with (
+                _spy_database_close() as close_calls,
+                patch.object(Database, "migrate", side_effect=RuntimeError("boom")),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as warning,
+            ):
+                controller.handle_new_engagement()
+
+            assert warning.called
+            assert window.is_workspace_visible() is False
+            assert len(close_calls) == 1
+            # Backup ist trotzdem passiert – nur die Neuanlage danach scheiterte.
+            assert len(_archive_db_files(target.parent)) == 1
         finally:
             controller.handle_close_engagement()
 
@@ -1244,6 +1335,102 @@ class TestDatasetClickPreservesHighlight:
             archive = db_path.parent / ARCHIVE_DIR_NAME
             snaps = list(archive.glob("*.db"))
             assert len(snaps) == 1
+        finally:
+            controller.handle_close_engagement()
+
+    def test_open_foreign_db_shows_error_and_creates_no_snapshot(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        """Sprint 41 / S1.4 (S-002): eine fremde SQLite-Datei darf weder
+        gesnapshottet noch migriert werden – Preflight muss VOR dem Snapshot
+        greifen."""
+        from sampling_tool.config import ARCHIVE_DIR_NAME
+
+        foreign_path = tmp_path / "foreign.db"
+        conn = sqlite3.connect(str(foreign_path))
+        try:
+            conn.execute("CREATE TABLE unrelated (x INTEGER)")
+            conn.execute("INSERT INTO unrelated (x) VALUES (1)")
+            conn.commit()
+        finally:
+            conn.close()
+        bytes_before = foreign_path.read_bytes()
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            with patch(
+                "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+            ) as warning:
+                controller.handle_open_engagement(foreign_path)
+
+            assert warning.called
+            assert window.is_workspace_visible() is False
+            assert foreign_path.read_bytes() == bytes_before
+            assert not foreign_path.with_name(foreign_path.name + "-wal").exists()
+            assert not foreign_path.with_name(foreign_path.name + "-shm").exists()
+            assert not (foreign_path.parent / ARCHIVE_DIR_NAME).exists()
+        finally:
+            controller.handle_close_engagement()
+
+
+class TestOpenEngagementConnectionCleanup:
+    """Sprint 41 / S1.4: `handle_open_engagement` darf die Kandidaten-
+    `Database`-Connection in KEINEM Exit-Pfad offen lassen – weder wenn die
+    Datei zwar valide ist aber kein Projekt enthält, noch wenn Migration/
+    Repo-Zugriff eine Exception wirft."""
+
+    def test_open_engagement_without_project_closes_connection(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path = tmp_path / "empty.db"
+        db = Database(db_path)
+        db.migrate()
+        db.close()
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            with (
+                _spy_database_close() as close_calls,
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as warning,
+            ):
+                controller.handle_open_engagement(db_path)
+
+            assert warning.called
+            assert window.is_workspace_visible() is False
+            assert len(close_calls) == 1
+        finally:
+            controller.handle_close_engagement()
+
+    def test_open_engagement_migrate_failure_closes_connection(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, _ds1, _ds2, _s = _two_dataset_db(tmp_path)
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            with (
+                _spy_database_close() as close_calls,
+                patch.object(Database, "migrate", side_effect=RuntimeError("boom")),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as warning,
+            ):
+                controller.handle_open_engagement(db_path)
+
+            assert warning.called
+            assert window.is_workspace_visible() is False
+            assert len(close_calls) == 1
         finally:
             controller.handle_close_engagement()
 
