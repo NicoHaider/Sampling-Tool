@@ -27,8 +27,10 @@ from jinja2 import (
     TemplateNotFound,
 )
 
-from sampling_tool.core.formatting import format_optional_timestamp
+from sampling_tool import __version__
+from sampling_tool.core.formatting import format_audit_details, format_optional_timestamp
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
+from sampling_tool.core.provenance import SamplingProvenance
 from sampling_tool.io.charts import (
     render_bar_chart_bytes,
     render_line_chart_bytes,
@@ -50,6 +52,11 @@ class _SampleView:
     population_size: int
     percent_str: str
     drawn_at_str: str
+    size_requested: int
+    filter_operator_symbol: str
+    parent_sample_id: int | None
+    algorithm_version: str
+    dataset_id: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +72,7 @@ class _EventView:
     seed: int | None
     filename: str
     corrects_event_id: int | None
+    details_str: str
 
 
 class HtmlReportGenerator:
@@ -96,11 +104,13 @@ class HtmlReportGenerator:
         include_charts: bool = True,
         include_audit_trail: bool = True,
         include_samples_table: bool = True,
+        dataset_ids_by_sample: dict[int, int] | None = None,
     ) -> Path:
         """Erzeugt den Report und schreibt ihn als .html nach `output_path`.
 
         Die `include_*`-Flags schalten optionale Blöcke ab. Standard ist „alles
-        an" – damit bleiben bestehende Aufrufer unverändert.
+        an" – damit bleiben bestehende Aufrufer unverändert. `dataset_ids_by_
+        sample` (Sprint 43 / A-001) bildet `sample.id -> dataset.id` ab.
         """
         target = (
             output_path
@@ -116,12 +126,13 @@ class HtmlReportGenerator:
 
         method_chart = _method_chart_base64(samples) if include_charts else None
         history_chart = _history_chart_base64(samples) if include_charts else None
+        resolved_dataset_ids = dataset_ids_by_sample or {}
 
         ctx = {
             "title": f"Audit-Bericht – {engagement.client_name}",
             "engagement": engagement,
             "datasets": datasets,
-            "samples": [_to_sample_view(s) for s in samples],
+            "samples": [_to_sample_view(s, resolved_dataset_ids) for s in samples],
             "events": [_to_event_view(e) for e in audit_events],
             "stats": {
                 "datasets": len(datasets),
@@ -145,8 +156,12 @@ class HtmlReportGenerator:
 # ---------------------------------------------------------------------------
 
 
-def _to_sample_view(sample: SampleResult) -> _SampleView:
+def _to_sample_view(sample: SampleResult, dataset_ids_by_sample: dict[int, int]) -> _SampleView:
     percent = sample.actual_size / sample.population_size * 100.0 if sample.population_size else 0.0
+    dataset_id = dataset_ids_by_sample.get(sample.id) if sample.id is not None else None
+    provenance = SamplingProvenance.from_sample_result(
+        sample, dataset_id=dataset_id, app_version=__version__
+    )
     return _SampleView(
         id=sample.id,
         config=sample.config,
@@ -154,6 +169,11 @@ def _to_sample_view(sample: SampleResult) -> _SampleView:
         population_size=sample.population_size,
         percent_str=f"{percent:.2f} %",
         drawn_at_str=format_optional_timestamp(sample.drawn_at),
+        size_requested=provenance.size_requested,
+        filter_operator_symbol=provenance.filter_operator_symbol,
+        parent_sample_id=provenance.parent_sample_id,
+        algorithm_version=provenance.algorithm_version,
+        dataset_id=provenance.dataset_id,
     )
 
 
@@ -170,6 +190,7 @@ def _to_event_view(event: AuditEvent) -> _EventView:
         seed=event.seed,
         filename=filename,
         corrects_event_id=event.corrects_event_id,
+        details_str=format_audit_details(event.details),
     )
 
 
