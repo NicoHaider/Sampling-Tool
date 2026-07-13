@@ -3819,6 +3819,41 @@ class TestAuditTrailRobustness:
         finally:
             controller.handle_close_engagement()
 
+    def test_reset_sampling_survives_audit_log_failure(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        """N-003: symmetric to test_reset_survives_audit_log_failure, but for
+        the toolbar 'Sampling zurücksetzen' path (handle_reset_sampling)."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        from sampling_tool.persistence.repositories import AuditRepo
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
+                    return_value=QMessageBox.StandardButton.Yes,
+                ),
+                patch.object(
+                    AuditRepo, "log", side_effect=sqlite3.OperationalError("database is locked")
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as mock_warning,
+            ):
+                controller.handle_reset_sampling()  # darf NICHT werfen
+            mock_warning.assert_called_once()
+            assert controller.session.sample is None
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+        finally:
+            controller.handle_close_engagement()
+
 
 @contextlib.contextmanager
 def _real_sampling_dialog_driver(seeds: list[int], size: int = 3) -> Iterator[None]:
