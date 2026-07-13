@@ -15,6 +15,7 @@ DB-Speicherung bleibt unverändert (UTC-aware ISO-8601, siehe
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 # 19-Zeichen-Format: konsistent zwischen UI, PDF, Excel-Report, HTML-Report.
 _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -51,3 +52,25 @@ def format_optional_timestamp(ts: datetime | None) -> str:
     if ts is None:
         return "—"
     return format_event_timestamp(ts)
+
+
+def format_audit_details(details: dict[str, Any]) -> str:
+    """Kompakte Ein-Zeilen-Darstellung eines `AuditEvent.details`-Dicts.
+
+    Einheitlicher Renderer für alle AuditTrail-„Details"-Anzeigen (Projekt-
+    XLSX-AuditTrail-Spalte, PDF-/HTML-AuditTrail additiv) – Sprint 43 / A-001.
+    Leere Dicts (die meisten Nicht-Sampling-Events sowie alle Alt-Events vor
+    diesem Sprint) liefern `"—"`, keine geschätzten Werte.
+    """
+    if not details:
+        return "—"
+    return " · ".join(f"{key}: {_format_detail_value(value)}" for key, value in details.items())
+
+
+def _format_detail_value(value: Any) -> str:
+    """Rendert einen einzelnen Detail-Wert; `None` → "—", `bool` → "ja"/"nein"."""
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "ja" if value else "nein"
+    return str(value)
