@@ -35,6 +35,7 @@ from sampling_tool.core.models import (
     Engagement,
     SampleResult,
 )
+from sampling_tool.io._xlsx_safe import safe_row
 from sampling_tool.io.charts import render_bar_chart_bytes
 
 _HEADER_FILL: Final = PatternFill(start_color="FFE81A3B", end_color="FFE81A3B", fill_type="solid")
@@ -137,7 +138,7 @@ class MultiSheetReportExporter:
             ("Bericht erstellt", _format_now()),
         ]
         for label, value in meta_rows:
-            ws.append([label, _ensure_cell_value(value)])
+            safe_row(ws, [label, value])
 
         ws.append([])
         ws.append(["Statistiken"])
@@ -176,7 +177,8 @@ class MultiSheetReportExporter:
 
         chronological = sorted(events, key=lambda e: (e.timestamp, e.id or 0))
         for evt in chronological:
-            ws.append(
+            safe_row(
+                ws,
                 [
                     format_optional_timestamp(evt.timestamp),
                     evt.event_type,
@@ -187,7 +189,7 @@ class MultiSheetReportExporter:
                     evt.seed if evt.seed is not None else "—",
                     Path(evt.export_file or evt.import_file or "").name or "—",
                     f"#{evt.corrects_event_id}" if evt.corrects_event_id is not None else "—",
-                ]
+                ],
             )
         _autosize(ws, len(header))
         ws.freeze_panes = "A2"
@@ -219,7 +221,8 @@ class MultiSheetReportExporter:
                 if sample.population_size
                 else 0.0
             )
-            ws.append(
+            safe_row(
+                ws,
                 [
                     sample.id if sample.id is not None else "—",
                     cfg.method.value,
@@ -233,7 +236,7 @@ class MultiSheetReportExporter:
                     cfg.stratum_field or "—",
                     format_optional_timestamp(sample.drawn_at),
                     sample.created_by,
-                ]
+                ],
             )
         _autosize(ws, len(header))
         ws.freeze_panes = "A2"
@@ -302,14 +305,6 @@ def _autosize(ws: Worksheet, columns: int) -> None:
                 widths[i] = min(length, _MAX_COL_WIDTH)
     for i, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = max(12, width + 2)
-
-
-def _ensure_cell_value(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, datetime | int | float | bool | str):
-        return value
-    return str(value)
 
 
 def _format_now() -> str:

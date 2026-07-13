@@ -340,6 +340,105 @@ class TestExportSample:
                 custom_id="1",
             )
 
+    @pytest.mark.parametrize(
+        "payload",
+        ["=1+1", "+1+1", "-1+1", "@SUM(A1)", "\t=1+1", "=cmd|' /C calc'!A0"],
+    )
+    def test_formula_injection_neutralized(
+        self,
+        db: Database,
+        tmp_path: Path,
+        payload: str,
+    ) -> None:
+        """S-001: ein bösartiger Wert gleichzeitig als Datenwert, Spaltenname,
+        Beschreibung UND Auditor-/Mandantenname darf nach Reopen NIRGENDS als
+        Formel gespeichert sein (`data_type == "f"`), und der Wert muss exakt
+        erhalten bleiben (keine stille Mutation, z. B. kein Apostroph-Prefix).
+
+        Echtes End-to-End-Regressionssignal für den `data_type`-Assert liefern
+        NUR die beiden `=`-Payloads: openpyxls `Cell._bind_value` setzt
+        `data_type == "f"` ausschließlich bei einem führenden `=` (verifiziert
+        gegen openpyxl 3.1.5) – für `+`/`-`/`@`/Tab-Präfixe ist `data_type`
+        bereits ohne jede Neutralisierung `"s"`, der Assert wäre für diese
+        Payloads auch ohne den Fix grün. Der Mechanismus, der diese
+        defense-in-depth-Präfixe neutralisiert (`is_dangerous`-Gate in
+        `safe_row`), ist stattdessen isoliert in
+        `tests/unit/test_xlsx_safe.py::TestSafeRow` regressionsgetestet. Hier
+        bleiben alle Payloads trotzdem im Battery: sie sichern zusätzlich die
+        byte-identische Werterhaltung über den vollen Export-Pfad ab (Spalten-
+        name, Datenwert, Auditor/Mandant, Beschreibung – `payload_cells_seen`)."""
+        malicious_column = payload
+        eng = EngagementRepo(db.connect()).get_or_create(
+            Engagement(
+                auditor_name=payload,
+                client_name=payload,
+                auditor_position="Senior Auditor",
+                audit_type="ISAE 3402 Typ II",
+            )
+        )
+        assert eng.id is not None
+        repo = DatasetRepo(db.connect())
+        rows = (
+            DatasetRow(row_id=1, values={"Name": "Posten 1", malicious_column: payload}),
+            DatasetRow(row_id=2, values={"Name": "Posten 2", malicious_column: "harmlos"}),
+        )
+        dataset = repo.create(
+            Dataset(
+                name="MaliciousData",
+                columns=("Name", malicious_column),
+                row_count=len(rows),
+                source_file="/tmp/source.xlsx",
+                engagement_id=eng.id,
+            ),
+            rows,
+        )
+        cfg = SampleConfig(
+            method=SamplingMethod.SIMPLE,
+            size=2,
+            seed=42,
+            description=payload,
+        )
+        sample = SampleResult(
+            config=cfg,
+            selected_row_ids=(1, 2),
+            population_size=len(dataset),
+        )
+        engagement = Engagement(
+            auditor_name=payload,
+            client_name=payload,
+            auditor_position="Senior Auditor",
+            audit_type="ISAE 3402 Typ II",
+            id=eng.id,
+        )
+        exporter = ExcelExporter()
+        out = exporter.export_sample(
+            sample=sample,
+            dataset=dataset,
+            dataset_repo=repo,
+            columns=["Name", malicious_column],
+            output_dir=tmp_path,
+            custom_name="X",
+            custom_id="1",
+            engagement=engagement,
+        )
+
+        wb = load_workbook(out, data_only=False)
+        payload_cells_seen = 0
+        for sheet_name in ("Sample", "Metadaten"):
+            ws = wb[sheet_name]
+            for row in ws.iter_rows():
+                for cell in row:
+                    if cell.value == payload:
+                        payload_cells_seen += 1
+                        assert cell.data_type != "f", (
+                            f"{sheet_name}!{cell.coordinate} wurde als Formel gespeichert: "
+                            f"{cell.value!r}"
+                        )
+
+        # Payload muss an mehreren Stellen (Spaltenname, Datenwert, Auditor,
+        # Mandant, Beschreibung) exakt und byte-identisch wiedergefunden werden.
+        assert payload_cells_seen >= 5
+
     def test_leere_spaltenliste_wirft_export_error(
         self,
         exporter: ExcelExporter,
