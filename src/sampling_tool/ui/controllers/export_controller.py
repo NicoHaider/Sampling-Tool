@@ -12,6 +12,7 @@ import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import replace
 from datetime import date
+from pathlib import Path
 
 from PyQt6.QtWidgets import QMessageBox
 
@@ -126,9 +127,7 @@ class ExportController:
         if output_path is None:
             return  # User-Cancel
 
-        AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_export(
-            s.sample.id, output_path, s.sample.actual_size
-        )
+        self._log_export_with_retry(s, s.sample.id, output_path, s.sample.actual_size)
         s.refresh_views()
 
         QMessageBox.information(
@@ -310,6 +309,41 @@ class ExportController:
         )
 
     # ---- intern --------------------------------------------------------
+
+    def _log_export_with_retry(
+        self,
+        s: WorkspaceSession,
+        sample_id: int,
+        export_file: Path,
+        row_count: int,
+    ) -> None:
+        """Schreibt das Export-Audit-Event. Schlägt das INSERT fehl, bleibt die
+        bereits erstellte Exportdatei erhalten (Compliance-Entscheidung Nico,
+        Sprint 42) – der Nutzer bekommt eine blockierende Warnung mit
+        Retry-Option statt eines App-Absturzes ohne Trail-Eintrag.
+        """
+        assert s.db is not None
+        assert s.engagement is not None
+        assert s.engagement.id is not None
+        while True:
+            try:
+                AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_export(
+                    sample_id, export_file, row_count
+                )
+                return
+            except Exception:
+                logger.exception("Audit-Log für Export fehlgeschlagen")
+                answer = QMessageBox.warning(
+                    s.window,
+                    "Audit-Protokollierung fehlgeschlagen",
+                    "Der Export wurde erstellt, konnte aber NICHT im Audit-Trail "
+                    f"protokolliert werden – Datei „{export_file.name}“ ist nicht "
+                    "prüfungssicher.",
+                    QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Abort,
+                    QMessageBox.StandardButton.Retry,
+                )
+                if answer != QMessageBox.StandardButton.Retry:
+                    return
 
     def _next_sample_id_for_export(self, dataset_id: int) -> int:
         """Fortlaufende Sample-Nummer für den Filename-Token (ID-Spalte)."""

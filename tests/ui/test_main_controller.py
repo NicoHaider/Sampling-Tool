@@ -3678,6 +3678,113 @@ class TestAuditTrailRobustness:
         finally:
             controller.handle_close_engagement()
 
+    def test_export_kept_and_warns_when_audit_log_fails(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        """N-003 (Nicos Compliance-Entscheidung): schlägt das Audit-Log-INSERT
+        nach einem erfolgreichen Export fehl, bleibt die Datei erhalten – kein
+        stiller Datenverlust, sondern eine blockierende Warnung statt Crash."""
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialogResult
+
+        export_result = ExportSampleDialogResult(
+            columns=["Konto", "Betrag"],
+            custom_name="testname",
+            custom_id="42",
+            output_dir=tmp_path,
+        )
+        factory = lambda *args, **kw: _StubExportDialog(export_result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            export_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            from PyQt6.QtWidgets import QMessageBox
+
+            with (
+                patch.object(
+                    AuditRepo, "log", side_effect=sqlite3.OperationalError("database is locked")
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.export_controller.QMessageBox.warning",
+                    return_value=QMessageBox.StandardButton.Abort,
+                ) as mock_warning,
+                patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"),
+            ):
+                controller.handle_export_sample()  # darf NICHT werfen
+            mock_warning.assert_called_once()
+            files = list(tmp_path.glob("testname_ID42_BDO_sampling_*.xlsx"))
+            assert len(files) == 1, "Exportdatei muss trotz Audit-Log-Fehler erhalten bleiben"
+        finally:
+            controller.handle_close_engagement()
+
+    def test_export_audit_log_retry_succeeds_on_second_attempt(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Retry-Option: klickt der Nutzer „Erneut versuchen" und das zweite
+        INSERT klappt, landet trotzdem genau ein `export`-Event im Trail."""
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialogResult
+
+        export_result = ExportSampleDialogResult(
+            columns=["Konto", "Betrag"],
+            custom_name="testname",
+            custom_id="42",
+            output_dir=tmp_path,
+        )
+        factory = lambda *args, **kw: _StubExportDialog(export_result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            export_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            from PyQt6.QtWidgets import QMessageBox
+
+            original_log = AuditRepo.log
+            call_count = {"n": 0}
+
+            def _fail_once(self: AuditRepo, event: object) -> object:
+                call_count["n"] += 1
+                if call_count["n"] == 1:
+                    raise sqlite3.OperationalError("database is locked")
+                return original_log(self, event)  # type: ignore[arg-type]
+
+            with (
+                patch.object(AuditRepo, "log", _fail_once),
+                patch(
+                    "sampling_tool.ui.controllers.export_controller.QMessageBox.warning",
+                    return_value=QMessageBox.StandardButton.Retry,
+                ) as mock_warning,
+                patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"),
+            ):
+                controller.handle_export_sample()
+            mock_warning.assert_called_once()
+
+            assert controller.session.db is not None
+            assert controller.session.engagement is not None
+            assert controller.session.engagement.id is not None
+            events = AuditRepo(controller.session.db.connect()).list_for_engagement(
+                controller.session.engagement.id
+            )
+            export_events = [e for e in events if e.event_type == "export"]
+            assert len(export_events) == 1
+        finally:
+            controller.handle_close_engagement()
+
 
 @contextlib.contextmanager
 def _real_sampling_dialog_driver(seeds: list[int], size: int = 3) -> Iterator[None]:
