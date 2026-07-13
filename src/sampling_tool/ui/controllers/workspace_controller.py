@@ -644,11 +644,17 @@ class WorkspaceController:
     ) -> None:
         """Schreibt ein Audit-Event ab, ohne bei einem DB-Fehler zu crashen.
 
-        Die Aktion selbst ist bereits ausgeführt (State bereits geändert,
-        Datei ggf. schon geschrieben) – bei einem Log-Fehler wird nur
+        Die Aktion selbst (Reset/Undo/Redo) ist bereits ausgeführt – der
+        In-Memory-State ist schon geändert – bei einem Log-Fehler wird nur
         gewarnt, nicht zurückgerollt. `action_label` ist bereits die volle
         deutsche Subjekt-Phrase inkl. Artikel (z. B. "Der Reset", "Das
         Undo"), damit die Warnung grammatikalisch korrekt bleibt.
+
+        Der Sample-Export hat eine eigene Variante (`ExportController.
+        _log_export_with_retry`) statt diesem Helper: dort existiert bereits
+        eine Datei auf der Platte, die bei einem Log-Fehler NICHT gelöscht
+        werden darf (Compliance-Entscheidung) – deshalb Retry/Abort statt
+        einfachem Warnen.
         """
         s = self.session
         assert s.db is not None

@@ -118,7 +118,7 @@ class ExportController:
         try:
             output_path = progress_dialog.run_task(task)
         except ExportError as exc:
-            s.error(f"Export fehlgeschlagen: {exc}")
+            s.error(f"Sample-Export fehlgeschlagen: {exc}")
             return
         except Exception as exc:
             logger.exception("Sample-Export fehlgeschlagen")
@@ -325,6 +325,10 @@ class ExportController:
         Der Loop endet nur bei Erfolg oder explizitem Abort-Klick – bewusst
         unbegrenzt, kein Bug (ein Retry-Limit würde das Compliance-Ziel
         unterlaufen).
+
+        Reset/Undo/Redo nutzen stattdessen den einfacheren `WorkspaceController.
+        _log_audit_event_safely` (warnen + weiterlaufen, kein Retry) – dort
+        gibt es kein Datei-Artefakt zu erhalten, nur In-Memory-State.
         """
         assert s.db is not None
         assert s.engagement is not None
