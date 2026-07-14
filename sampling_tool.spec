@@ -75,8 +75,13 @@ hiddenimports = [
     "pdfrw",
     "pdfrw.buildxobj",
     "pdfrw.toreportlab",
-    # platformdirs (Recent-Engagements-Store)
+    # platformdirs (Recent-Engagements-Store + Sprint-44-Logging)
     "platformdirs",
+    # Sprint 44: RotatingFileHandler-Submodul defensiv explizit (stdlib,
+    # wird zwar bereits via direktem `import logging.handlers` in
+    # logging_setup.py automatisch erkannt, aber PyInstaller-Analysis
+    # bei stdlib-Submodulen ist gelegentlich lückenhaft).
+    "logging.handlers",
 ]
 
 excludes = [
