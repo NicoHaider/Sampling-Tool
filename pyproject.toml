@@ -46,6 +46,10 @@ dependencies = [
     "matplotlib>=3.8",
     "reportlab>=4.2",
     "pdfrw>=0.4",
+    # Sprint 47 / N-010: `briefpapier.validate_briefpapier` decodiert
+    # Bild-Briefpapiere direkt zur Fail-Fast-Prüfung – bisher nur transitiv
+    # über matplotlib/reportlab vorhanden, jetzt ein echter Laufzeit-Import.
+    "pillow>=10.0",
     "jinja2>=3.1",
     "platformdirs>=4.0",
     # pywin32 nur auf Windows (für Outlook-Bug-Mail, COM-Integration)
@@ -63,7 +67,6 @@ dev = [
 ]
 build = [
     "pyinstaller>=6.10",
-    "pillow>=10.0",
 ]
 
 [project.scripts]

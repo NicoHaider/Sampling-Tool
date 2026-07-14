@@ -507,3 +507,65 @@ class TestPdfrwFallback:
         assert any("pdfrw" in r.message.lower() for r in warnings), (
             f"Erwartete WARNING mit 'pdfrw' im Text, gefangen: {[r.message for r in warnings]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 47 / N-010: Briefpapier-Parsefehler dürfen den Export nicht crashen
+# ---------------------------------------------------------------------------
+
+
+class TestBriefpapierRobustness:
+    """N-010: ein korruptes Briefpapier lässt den Export weiterlaufen –
+    WARN-Log + Report ohne Briefpapier-Layer statt ungefangener Exception."""
+
+    def test_corrupt_briefpapier_pdf_does_not_crash_export(
+        self,
+        engagement: Engagement,
+        events: list[AuditEvent],
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from sampling_tool.io.briefpapier import BriefpapierConfig
+
+        corrupt_pdf = tmp_path / "corrupt.pdf"
+        corrupt_pdf.write_bytes(b"%PDF-1.4\nnot a real xref table, just garbage\n")
+
+        out = tmp_path / "export.pdf"
+        with caplog.at_level("WARNING", logger="sampling_tool.io.pdf_report"):
+            result = AuditTrailPDF(
+                briefpapier=BriefpapierConfig(background_image=corrupt_pdf)
+            ).render(engagement, events, out)
+
+        assert result == out
+        assert out.exists()
+        assert out.stat().st_size > 0
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert any("konnte nicht eingebettet werden" in r.message for r in warnings), (
+            f"Erwartete WARNING zum Briefpapier, gefangen: {[r.message for r in warnings]}"
+        )
+
+    def test_corrupt_image_briefpapier_does_not_crash_export(
+        self,
+        engagement: Engagement,
+        events: list[AuditEvent],
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from sampling_tool.io.briefpapier import BriefpapierConfig
+
+        corrupt_png = tmp_path / "corrupt.png"
+        corrupt_png.write_bytes(b"this is not a real png file at all")
+
+        out = tmp_path / "export.pdf"
+        with caplog.at_level("WARNING", logger="sampling_tool.io.pdf_report"):
+            result = AuditTrailPDF(
+                briefpapier=BriefpapierConfig(background_image=corrupt_png)
+            ).render(engagement, events, out)
+
+        assert result == out
+        assert out.exists()
+        assert out.stat().st_size > 0
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert any("konnte nicht eingebettet werden" in r.message for r in warnings), (
+            f"Erwartete WARNING zum Briefpapier, gefangen: {[r.message for r in warnings]}"
+        )
