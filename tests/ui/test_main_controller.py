@@ -28,6 +28,10 @@ from sampling_tool.persistence.repositories import (
     EngagementRepo,
     SampleRepo,
 )
+from sampling_tool.persistence.version_manager import EngagementVersionManager
+from sampling_tool.ui.controllers.engagement_controller import (
+    _remove_db_files as _real_remove_db_files,
+)
 from sampling_tool.ui.controllers.main_controller import MainController
 from sampling_tool.ui.dialogs.duplicate_engagement_dialog import (
     DuplicateEngagementChoice,
@@ -504,6 +508,38 @@ def _archive_db_files(parent_dir: Path) -> list[Path]:
     return sorted(p for p in archive.iterdir() if p.is_file() and p.suffix == ".db")
 
 
+def _create_probe_project(db_path: Path, marker: str) -> None:
+    """Legt ein echtes, migriertes Projekt mit leicht prüfbarem Marker an."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db = Database(db_path)
+    try:
+        db.migrate()
+        EngagementRepo(db.connect()).get_or_create(
+            Engagement(
+                auditor_name="Anna",
+                client_name="ACME",
+                auditor_position="Senior",
+                audit_type="ISAE 3402",
+            )
+        )
+        conn = db.connect()
+        conn.execute("CREATE TABLE overwrite_probe (marker TEXT NOT NULL)")
+        conn.execute("INSERT INTO overwrite_probe (marker) VALUES (?)", (marker,))
+    finally:
+        db.close()
+
+
+def _probe_markers(db_path: Path) -> list[str]:
+    """Liest Marker read-only, damit ein Snapshot nicht verändert wird."""
+    uri = f"{db_path.absolute().as_uri()}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        rows = conn.execute("SELECT marker FROM overwrite_probe ORDER BY rowid").fetchall()
+        return [str(row[0]) for row in rows]
+    finally:
+        conn.close()
+
+
 class TestOverwriteWithBackup:
     """Sprint 30: Wahl „Überschreiben" sichert zuerst ins archiv/ und legt
     dann ein frisches, leeres Projekt am selben Pfad an."""
@@ -515,8 +551,7 @@ class TestOverwriteWithBackup:
         tmp_path: Path,
     ) -> None:
         target = tmp_path / "ACME" / "ACME_ISAE.db"
-        target.parent.mkdir(parents=True)
-        target.write_bytes(b"OLD-MARKER-CONTENT")
+        _create_probe_project(target, "old-marker")
 
         controller = MainController(
             window,
@@ -535,11 +570,10 @@ class TestOverwriteWithBackup:
             # (1) Backup mit altem Inhalt im archiv/.
             backups = _archive_db_files(target.parent)
             assert len(backups) == 1
-            assert backups[0].read_bytes() == b"OLD-MARKER-CONTENT"
+            assert _probe_markers(backups[0]) == ["old-marker"]
 
             # (2) Frisches, leeres Projekt am Zielpfad.
             assert target.exists()
-            assert target.read_bytes() != b"OLD-MARKER-CONTENT"
             assert window.is_workspace_visible() is True
             assert window.sidebar().datasets_widget().count() == 0
         finally:
@@ -552,8 +586,7 @@ class TestOverwriteWithBackup:
         tmp_path: Path,
     ) -> None:
         target = tmp_path / "ACME" / "ACME_ISAE.db"
-        target.parent.mkdir(parents=True)
-        target.write_bytes(b"SENTINEL")
+        _create_probe_project(target, "preserve-me")
 
         controller = MainController(
             window,
@@ -564,22 +597,38 @@ class TestOverwriteWithBackup:
             ),
         )
         try:
+            controller.handle_open_engagement(target)
+            old_db = controller.session.db
+            assert old_db is not None
+            old_connection = old_db.connect()
+            snapshots_before_failure = set(_archive_db_files(target.parent))
+
             with (
                 patch(
-                    "sampling_tool.persistence.version_manager.shutil.copy2",
+                    "sampling_tool.ui.controllers.engagement_controller."
+                    "EngagementVersionManager.create_snapshot",
                     side_effect=OSError("archiv nicht beschreibbar"),
                 ),
+                patch(
+                    "sampling_tool.ui.controllers.engagement_controller._remove_db_files"
+                ) as remove_db_files,
                 patch(
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as warning,
             ):
                 controller.handle_new_engagement()
 
-            # Alte DB unangetastet, kein frisches Projekt, Fehlermeldung gezeigt.
-            assert target.read_bytes() == b"SENTINEL"
-            assert _archive_db_files(target.parent) == []
-            assert warning.called
-            assert window.is_workspace_visible() is False
+            # Aktive alte DB/Session unangetastet, keine Löschung, harte Fehlermeldung.
+            assert _probe_markers(target) == ["preserve-me"]
+            assert set(_archive_db_files(target.parent)) == snapshots_before_failure
+            remove_db_files.assert_not_called()
+            assert controller.session.db is old_db
+            assert old_connection.execute("SELECT 1").fetchone() is not None
+            assert window.is_workspace_visible() is True
+            warning.assert_called_once()
+            warning_body = warning.call_args.args[2]
+            assert "wurde nichts überschrieben" in warning_body
+            assert "archiv nicht beschreibbar" in warning_body
         finally:
             controller.handle_close_engagement()
 
@@ -590,8 +639,7 @@ class TestOverwriteWithBackup:
         tmp_path: Path,
     ) -> None:
         target = tmp_path / "ACME" / "ACME_ISAE.db"
-        target.parent.mkdir(parents=True)
-        target.write_bytes(b"OLD-MARKER-CONTENT")
+        _create_probe_project(target, "old-marker")
 
         controller = MainController(
             window,
@@ -619,18 +667,16 @@ class TestOverwriteWithBackup:
         finally:
             controller.handle_close_engagement()
 
-    def test_overwrite_migrate_failure_after_backup_closes_connection(
+    def test_overwrite_migrate_failure_after_same_path_detach_resets_to_welcome(
         self,
         window: MainWindow,
         recent_store: RecentEngagementsStore,
         tmp_path: Path,
     ) -> None:
-        """Sprint 41 / S1.4: schlägt `migrate()` NACH erfolgreichem Backup +
-        `_remove_db_files` fehl, muss die bereits konstruierte `Database`-
-        Connection trotzdem geschlossen werden."""
+        """Nach dem Detach darf ein Fehler der frischen DB keinen halboffenen
+        Workspace mit altem Engagement-State zurücklassen."""
         target = tmp_path / "ACME" / "ACME_ISAE.db"
-        target.parent.mkdir(parents=True)
-        target.write_bytes(b"OLD-MARKER-CONTENT")
+        _create_probe_project(target, "old-marker")
 
         controller = MainController(
             window,
@@ -641,6 +687,11 @@ class TestOverwriteWithBackup:
             ),
         )
         try:
+            controller.handle_open_engagement(target)
+            old_db = controller.session.db
+            assert old_db is not None
+            snapshots_before_overwrite = set(_archive_db_files(target.parent))
+
             with (
                 _spy_database_close() as close_calls,
                 patch.object(Database, "migrate", side_effect=RuntimeError("boom")),
@@ -650,11 +701,342 @@ class TestOverwriteWithBackup:
             ):
                 controller.handle_new_engagement()
 
-            assert warning.called
+            warning.assert_called_once()
             assert window.is_workspace_visible() is False
-            assert len(close_calls) == 1
+            assert controller.session.db is None
+            assert controller.session.engagement is None
+            assert controller.session.dataset is None
+            assert controller.session.sample is None
+            assert controller.session.undo_manager is None
+            assert controller.session.state_repo is None
+            assert close_calls[0] is old_db
+            assert len(close_calls) == 2
             # Backup ist trotzdem passiert – nur die Neuanlage danach scheiterte.
-            assert len(_archive_db_files(target.parent)) == 1
+            assert len(set(_archive_db_files(target.parent)) - snapshots_before_overwrite) == 1
+        finally:
+            controller.handle_close_engagement()
+
+    def test_overwrite_remove_failure_after_same_path_detach_resets_to_welcome(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        target = tmp_path / "ACME" / "ACME_ISAE.db"
+        _create_probe_project(target, "old-marker")
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _make_stub_new_dialog(parent, target, "ACME"),
+            duplicate_dialog_factory=lambda parent, db_path: _make_stub_duplicate_dialog(
+                parent, db_path, DuplicateEngagementChoice.OVERWRITE
+            ),
+        )
+        try:
+            controller.handle_open_engagement(target)
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.engagement_controller._remove_db_files",
+                    side_effect=OSError("Datei gesperrt"),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as warning,
+            ):
+                controller.handle_new_engagement()
+
+            warning.assert_called_once()
+            assert window.is_workspace_visible() is False
+            assert controller.session.db is None
+            assert controller.session.engagement is None
+            assert controller.session.dataset is None
+            assert controller.session.sample is None
+            assert controller.session.undo_manager is None
+            assert controller.session.state_repo is None
+        finally:
+            controller.handle_close_engagement()
+
+    def test_overwrite_closes_open_connection_and_backup_is_complete(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        target = tmp_path / "ACME" / "ACME_ISAE.db"
+        _create_probe_project(target, "before-open")
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _make_stub_new_dialog(parent, target, "ACME"),
+            duplicate_dialog_factory=lambda parent, db_path: _make_stub_duplicate_dialog(
+                parent, db_path, DuplicateEngagementChoice.OVERWRITE
+            ),
+        )
+        try:
+            controller.handle_open_engagement(target)
+            old_db = controller.session.db
+            assert old_db is not None
+            old_connection = old_db.connect()
+            old_connection.execute("PRAGMA wal_autocheckpoint = 0")
+            old_connection.execute(
+                "INSERT INTO overwrite_probe (marker) VALUES (?)",
+                ("committed-in-wal",),
+            )
+            assert target.with_name(target.name + "-wal").exists()
+
+            snapshots_before_overwrite = set(_archive_db_files(target.parent))
+            order: list[str] = []
+            real_create_snapshot = EngagementVersionManager.create_snapshot
+            real_clear_dataset = window.data_table().clear_dataset
+            real_old_db_close = old_db.close
+
+            def _record_snapshot(
+                manager: EngagementVersionManager,
+                auditor_name: str,
+            ) -> Path:
+                assert order == []
+                assert controller.session.db is old_db
+                assert old_connection.execute("SELECT 1").fetchone() is not None
+                order.append("snapshot")
+                return real_create_snapshot(manager, auditor_name)
+
+            def _record_clear_dataset() -> None:
+                if order == ["snapshot"]:
+                    order.append("clear")
+                else:
+                    # `_adopt_database` clears the freshly adopted model again;
+                    # that later call must not weaken the destructive-step order.
+                    assert order == ["snapshot", "clear", "close", "remove"]
+                real_clear_dataset()
+
+            def _record_old_db_close() -> None:
+                assert order == ["snapshot", "clear"]
+                order.append("close")
+                real_old_db_close()
+
+            def _record_remove(path: Path) -> None:
+                assert order == ["snapshot", "clear", "close"]
+                assert controller.session.db is None
+                assert controller.session.undo_manager is None
+                assert controller.session.state_repo is None
+                with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                    old_connection.execute("SELECT 1")
+                order.append("remove")
+                _real_remove_db_files(path)
+
+            with (
+                patch.object(
+                    EngagementVersionManager,
+                    "create_snapshot",
+                    _record_snapshot,
+                ),
+                patch.object(
+                    window.data_table(),
+                    "clear_dataset",
+                    side_effect=_record_clear_dataset,
+                ),
+                patch.object(old_db, "close", side_effect=_record_old_db_close),
+                patch(
+                    "sampling_tool.ui.controllers.engagement_controller._remove_db_files",
+                    side_effect=_record_remove,
+                ),
+                patch("sampling_tool.ui.controllers.engagement_controller.QMessageBox.information"),
+            ):
+                controller.handle_new_engagement()
+
+            overwrite_snapshots = set(_archive_db_files(target.parent)) - snapshots_before_overwrite
+            assert len(overwrite_snapshots) == 1
+            assert _probe_markers(overwrite_snapshots.pop()) == [
+                "before-open",
+                "committed-in-wal",
+            ]
+            assert order == ["snapshot", "clear", "close", "remove"]
+            assert controller.session.db is not None
+            assert controller.session.db is not old_db
+            assert controller.session.db.db_path == target
+            assert window.is_workspace_visible() is True
+        finally:
+            controller.handle_close_engagement()
+
+    def test_overwrite_detaches_same_open_file_reached_through_symlink_alias(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        target = tmp_path / "ACME" / "ACME_ISAE.db"
+        _create_probe_project(target, "old-marker")
+        alias = tmp_path / "ACME-alias.db"
+        try:
+            alias.symlink_to(target)
+        except (NotImplementedError, OSError) as exc:
+            pytest.skip(f"Datei-Symlinks sind auf diesem System nicht verfügbar: {exc}")
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _make_stub_new_dialog(parent, target, "ACME"),
+            duplicate_dialog_factory=lambda parent, db_path: _make_stub_duplicate_dialog(
+                parent, db_path, DuplicateEngagementChoice.OVERWRITE
+            ),
+        )
+        try:
+            controller.handle_open_engagement(alias)
+            old_db = controller.session.db
+            assert old_db is not None
+            assert old_db.db_path == alias
+            old_connection = old_db.connect()
+            removal_observations: list[tuple[bool, bool, bool, bool]] = []
+
+            def _record_remove(path: Path) -> None:
+                try:
+                    old_connection.execute("SELECT 1")
+                except sqlite3.ProgrammingError:
+                    connection_closed = True
+                else:
+                    connection_closed = False
+                removal_observations.append(
+                    (
+                        controller.session.db is None,
+                        controller.session.undo_manager is None,
+                        controller.session.state_repo is None,
+                        connection_closed,
+                    )
+                )
+                _real_remove_db_files(path)
+
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.engagement_controller._remove_db_files",
+                    side_effect=_record_remove,
+                ),
+                patch("sampling_tool.ui.controllers.engagement_controller.QMessageBox.information"),
+            ):
+                controller.handle_new_engagement()
+
+            assert removal_observations == [(True, True, True, True)]
+            assert controller.session.db is not None
+            assert controller.session.db is not old_db
+            assert controller.session.db.db_path == target
+            assert window.is_workspace_visible() is True
+        finally:
+            controller.handle_close_engagement()
+
+    def test_overwrite_other_target_keeps_active_project_until_adoption(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        active_path = tmp_path / "Active" / "active.db"
+        target = tmp_path / "Target" / "target.db"
+        _create_probe_project(active_path, "active-a")
+        _create_probe_project(target, "target-b")
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _make_stub_new_dialog(parent, target, "Target"),
+            duplicate_dialog_factory=lambda parent, db_path: _make_stub_duplicate_dialog(
+                parent, db_path, DuplicateEngagementChoice.OVERWRITE
+            ),
+        )
+        try:
+            controller.handle_open_engagement(active_path)
+            active_db = controller.session.db
+            assert active_db is not None
+            active_connection = active_db.connect()
+            deletion_observations: list[tuple[bool, list[str]]] = []
+            adoption_observations: list[tuple[bool, list[str]]] = []
+            real_adopt_database = controller.engagement._adopt_database
+
+            def _remove_target_while_active_stays_open(path: Path) -> None:
+                rows = active_connection.execute(
+                    "SELECT marker FROM overwrite_probe ORDER BY rowid"
+                ).fetchall()
+                deletion_observations.append(
+                    (controller.session.db is active_db, [str(row[0]) for row in rows])
+                )
+                _real_remove_db_files(path)
+
+            def _adopt_target_after_active_stays_open(
+                db: Database,
+                adopted_path: Path,
+                engagement: Engagement,
+            ) -> None:
+                rows = active_connection.execute(
+                    "SELECT marker FROM overwrite_probe ORDER BY rowid"
+                ).fetchall()
+                adoption_observations.append(
+                    (controller.session.db is active_db, [str(row[0]) for row in rows])
+                )
+                real_adopt_database(db, adopted_path, engagement)
+
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.engagement_controller._remove_db_files",
+                    side_effect=_remove_target_while_active_stays_open,
+                ),
+                patch.object(
+                    controller.engagement,
+                    "_adopt_database",
+                    side_effect=_adopt_target_after_active_stays_open,
+                ),
+                patch("sampling_tool.ui.controllers.engagement_controller.QMessageBox.information"),
+            ):
+                controller.handle_new_engagement()
+
+            assert deletion_observations == [(True, ["active-a"])]
+            assert adoption_observations == [(True, ["active-a"])]
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                active_connection.execute("SELECT 1")
+            assert controller.session.db is not None
+            assert controller.session.db is not active_db
+            assert controller.session.db.db_path == target
+            assert window.is_workspace_visible() is True
+        finally:
+            controller.handle_close_engagement()
+
+    def test_overwrite_other_target_failure_keeps_active_project_open(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        active_path = tmp_path / "Active" / "active.db"
+        target = tmp_path / "Target" / "target.db"
+        _create_probe_project(active_path, "active-a")
+        _create_probe_project(target, "target-b")
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _make_stub_new_dialog(parent, target, "Target"),
+            duplicate_dialog_factory=lambda parent, db_path: _make_stub_duplicate_dialog(
+                parent, db_path, DuplicateEngagementChoice.OVERWRITE
+            ),
+        )
+        try:
+            controller.handle_open_engagement(active_path)
+            active_db = controller.session.db
+            assert active_db is not None
+            active_connection = active_db.connect()
+
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.engagement_controller._remove_db_files",
+                    side_effect=OSError("Ziel gesperrt"),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as warning,
+            ):
+                controller.handle_new_engagement()
+
+            warning.assert_called_once()
+            assert controller.session.db is active_db
+            assert active_connection.execute("SELECT 1").fetchone() is not None
+            assert _probe_markers(target) == ["target-b"]
+            assert window.is_workspace_visible() is True
         finally:
             controller.handle_close_engagement()
 
@@ -1335,6 +1717,64 @@ class TestDatasetClickPreservesHighlight:
             archive = db_path.parent / ARCHIVE_DIR_NAME
             snaps = list(archive.glob("*.db"))
             assert len(snaps) == 1
+        finally:
+            controller.handle_close_engagement()
+
+    def test_open_snapshot_failure_shows_visible_warning(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, _ds1, _ds2, _sample = _two_dataset_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            status = window.statusBar()
+            assert status is not None
+            order: list[str] = []
+            warning_observations: list[tuple[bool, bool]] = []
+            real_adopt_database = controller.engagement._adopt_database
+            real_show_message = status.showMessage
+
+            def _record_adopt_database(
+                db: Database,
+                adopted_path: Path,
+                engagement: Engagement,
+            ) -> None:
+                order.append("adopt")
+                real_adopt_database(db, adopted_path, engagement)
+
+            def _record_show_message(message: str, timeout: int = 0) -> None:
+                order.append("warning")
+                warning_observations.append(
+                    (window.is_workspace_visible(), controller.session.db is not None)
+                )
+                real_show_message(message, timeout)
+
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.engagement_controller."
+                    "EngagementVersionManager.create_snapshot",
+                    side_effect=OSError("Datenträger voll"),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as warning,
+                patch.object(
+                    controller.engagement,
+                    "_adopt_database",
+                    side_effect=_record_adopt_database,
+                ),
+                patch.object(status, "showMessage", side_effect=_record_show_message),
+            ):
+                controller.handle_open_engagement(db_path)
+
+            assert window.is_workspace_visible() is True
+            assert order == ["adopt", "warning"]
+            assert warning_observations == [(True, True)]
+            assert "Compliance-Snapshot konnte nicht erstellt werden" in status.currentMessage()
+            assert "Datenträger voll" in status.currentMessage()
+            warning.assert_not_called()
         finally:
             controller.handle_close_engagement()
 
