@@ -13,7 +13,7 @@ Standardmäßig liegt alles unter:
 └── <MandantSanitized>/
     ├── <MandantSanitized>.db        # Hauptdatenbank (SQLite WAL)
     ├── archiv/                      # Auto-Snapshots beim Öffnen
-    │   └── <stem>_YYYY-MM-DD_HH-MM-SS_<Auditor>.db
+    │   └── <stem>_YYYY-MM-DD_HH-MM-SS-ffffff_<Auditor>[~<counter>].db
     └── exports/                     # generierte Reports (xlsx/pdf/html)
 ```
 
@@ -32,24 +32,38 @@ Zusätzlich legt die App folgende Daten ab:
 Es reicht, den Engagement-Ordner vollständig zu sichern. Empfohlene
 Frequenz: täglich (Volumen-Backup), wöchentlich (Cold-Storage).
 
-`.db-wal` und `.db-shm` sind nur temporäre SQLite-Hilfsdateien und
-müssen **nicht** gesichert werden, solange die App geschlossen ist.
+Eine live verwendete `.db-wal` kann bereits committete Daten enthalten. Sie
+darf deshalb nicht verworfen werden, bevor die App sauber geschlossen oder
+über die SQLite-Backup-API ein konsistenter Snapshot erstellt wurde. Die
+`.db-shm` enthält Koordinationszustand für SQLite. Nach dem sauberen Schließen
+der App müssen die Sidecar-Dateien nicht separat gesichert werden.
 
 ## Snapshot-System
 
 Beim Öffnen einer Engagement-`.db` legt der `EngagementVersionManager`
-automatisch eine Kopie im `archiv/`-Unterordner an (Compliance-Pfad
-für ISAE-3402-Versionsnachweis). Snapshots erhalten nach dem Erstellen
-das Read-Only-Flag (`chmod 0o444`), damit sie nicht versehentlich
-überschrieben werden – Windows mappt das auf das Read-Only-Attribut.
+über die SQLite-Backup-API automatisch eine einzelne, konsistente
+SQLite-`.db` im `archiv/`-Unterordner an (Compliance-Pfad für den
+ISAE-3402-Versionsnachweis). Sie enthält auch alle committeten Daten aus
+einem vorhandenen WAL; die `-wal`-/`-shm`-Sidecars selbst werden nicht
+kopiert. Snapshots erhalten nach dem Erstellen bestmöglich das Read-Only-Flag
+(`chmod 0o444`), damit sie nicht versehentlich überschrieben werden – falls
+das Dateisystem dies unterstützt, mappt Windows das auf das Read-Only-Attribut.
 
 Dateiname-Schema:
 
 ```
-<stem>_<YYYY-MM-DD>_<HH-MM-SS>_<AuditorSanitized>.db
+<stem>_<YYYY-MM-DD>_<HH-MM-SS-ffffff>_<AuditorSanitized>[~<counter>].db
 ```
 
-Sekundengenau, kollisionsfrei bei mehreren Snapshots pro Minute.
+Der Zeitanteil enthält Mikrosekunden. Falls der reservierte Zielname dennoch
+bereits existiert, steht ein Zähler ab `2` mit dem Marker `~` am Ende des
+Basenamens, zum Beispiel `<stem>_2026-05-11_10-30-15-123456_Anna~2.db`.
+Datum und Zeit folgen unmittelbar auf den exakten DB-Stem; dadurch bleiben
+Snapshots von beispielsweise `ACME.db` und `ACME_2.db` im selben Archiv
+eindeutig zuordenbar. Der Marker `~` kommt im sanitisierten Auditor-Token
+nicht vor, sodass auch Auditor-Namen mit abschließenden Ziffern oder
+Unterstrichen eindeutig bleiben. Alte Namen mit sekundengenauem Zeitanteil
+werden weiterhin erkannt.
 
 ## Update-Vorgehen
 
@@ -82,7 +96,9 @@ PDFs werden nicht überlagert).
 
 Wenn ein Engagement versehentlich verändert wurde:
 
-1. App schließen (damit `.db-wal`/`.db-shm` weg sind).
+1. App vollständig schließen, damit keine Connection die Ziel-DB oder ein
+   Live-WAL verwendet. Ein Live-WAL kann committete Daten enthalten und darf
+   nicht manuell verworfen werden.
 2. Im `archiv/`-Ordner den gewünschten Snapshot identifizieren
    (Dateiname enthält Datum + Auditor).
 3. Read-Only-Flag entfernen (`chmod 644` bzw. Rechtsklick →
@@ -91,7 +107,10 @@ Wenn ein Engagement versehentlich verändert wurde:
    Ordner zurückkopieren.
 5. App starten und Engagement öffnen.
 
-Alternativ (programmatisch) über `EngagementVersionManager.restore_from_snapshot()`.
+Alternativ (programmatisch) über
+`EngagementVersionManager.restore_from_snapshot()`. Auch dafür muss die aktive
+Connection vorher geschlossen sein; der Helper entfernt vor dem Kopieren
+stale `-wal`-/`-shm`-Sidecars am Ziel.
 
 ## Log-Konfiguration
 

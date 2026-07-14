@@ -114,9 +114,9 @@ class EngagementController:
         """
         s = self.session
 
-        # 1. Backup BEVOR irgendetwas zerstört wird – exakt die
-        #    EngagementVersionManager-Mechanik (archiv/<stem>_<ts>_<auditor>.db,
-        #    ohne .db-wal/.db-shm) wie beim Öffnen. Keine eigene Backup-Logik.
+        # 1. Backup BEVOR irgendetwas zerstört wird: Die SQLite-Backup-API des
+        #    EngagementVersionManager konsolidiert auch committeten WAL-Stand in
+        #    eine einzelne Snapshot-DB; die Sidecars selbst werden nicht kopiert.
         try:
             backup_path = EngagementVersionManager(db_path).create_snapshot(s.user_name())
         except Exception as exc:
@@ -127,12 +127,29 @@ class EngagementController:
             )
             return
 
-        # 2. Erst nach erfolgreichem Backup: alte DB (+ Session-Sidecars)
-        #    entfernen und ein frisches, leeres Projekt anlegen.
+        # Wenn genau dieses Projekt gerade aktiv ist, darf seine Connection
+        # beim Entfernen weder das Ziel sperren (Windows) noch später auf eine
+        # bereits gelöschte Datei zeigen. Das Tabellenmodell zuerst lösen,
+        # weil es sonst beim nächsten paintEvent noch über das Repo auf die
+        # geschlossene Connection zugreifen könnte.
+        detached_active_db = False
+        if s.db is not None and _paths_refer_to_same_file(s.db.db_path, db_path):
+            s.window.data_table().clear_dataset()
+            s.db.close()
+            s.db = None
+            s.undo_manager = None
+            s.state_repo = None
+            detached_active_db = True
+
+        # 2. Erst nachdem die Backup-API den committeten WAL-Stand in der
+        #    Snapshot-DB konsolidiert hat: alte DB und stale Sidecars entfernen
+        #    und ein frisches, leeres Projekt anlegen.
         try:
             _remove_db_files(db_path)
         except Exception as exc:  # pragma: no cover – defensiv
             logger.exception("Frisches Projekt nach Überschreiben fehlgeschlagen")
+            if detached_active_db:
+                self.handle_close_engagement()
             s.error(f"Projekt konnte nicht angelegt werden: {exc}")
             return
 
@@ -143,6 +160,8 @@ class EngagementController:
         except Exception as exc:
             logger.exception("Frisches Projekt nach Überschreiben fehlgeschlagen")
             db.close()
+            if detached_active_db:
+                self.handle_close_engagement()
             s.error(f"Projekt konnte nicht angelegt werden: {exc}")
             return
 
@@ -178,10 +197,12 @@ class EngagementController:
 
         # Compliance-Snapshot BEVOR die Session anfängt – ein Fehler dabei
         # soll das Öffnen nicht blockieren (Defense-in-Depth, nicht kritisch).
+        snapshot_warning: str | None = None
         try:
             EngagementVersionManager(db_path).create_snapshot(s.user_name())
-        except Exception:
+        except Exception as exc:
             logger.exception("Snapshot beim Öffnen fehlgeschlagen (nicht-kritisch)")
+            snapshot_warning = f"Compliance-Snapshot konnte nicht erstellt werden: {exc}"
 
         db = Database(db_path)
         try:
@@ -199,6 +220,11 @@ class EngagementController:
             return
 
         self._adopt_database(db, db_path, engagement)
+
+        if snapshot_warning is not None:
+            status = s.window.statusBar()
+            if status is not None:
+                status.showMessage(snapshot_warning, 5000)
 
     # ---- Close ---------------------------------------------------------
 
@@ -345,13 +371,26 @@ class EngagementController:
 # ---------------------------------------------------------------------------
 
 
+def _paths_refer_to_same_file(first: Path, second: Path) -> bool:
+    """Erkennt dieselbe bestehende Datei auch über alternative Pfade."""
+    if first == second:
+        return True
+    try:
+        return first.samefile(second)
+    except OSError:
+        return False
+
+
 def _remove_db_files(db_path: Path) -> None:
     """Entfernt die `.db` samt SQLite-Session-Sidecars (`-wal`/`-shm`).
 
-    Beim Überschreiben muss ein wirklich *frisches, leeres* Projekt entstehen –
-    stehengebliebene WAL-/SHM-Dateien einer früheren Session würden sonst in
-    die neue DB hineinrecovern. Das Backup hat (wie bei `create_snapshot`) nur
-    die `.db` gesichert; die Sidecars sind reine Session-Hilfsdateien."""
+    Der Aufrufer verwendet den Helper erst, nachdem die SQLite-Backup-API den
+    committeten WAL-Stand in einer konsistenten Snapshot-DB konsolidiert und
+    die aktive Connection geschlossen hat. Ein WAL kann committete Daten
+    enthalten; SHM hält Koordinationszustand. Die danach am Ziel verbliebenen
+    Sidecars sind für die neue DB stale und werden entfernt, damit ein wirklich
+    *frisches, leeres* Projekt entsteht.
+    """
     db_path.unlink(missing_ok=True)
     for sidecar_suffix in ("-wal", "-shm"):
         db_path.with_name(db_path.name + sidecar_suffix).unlink(missing_ok=True)
