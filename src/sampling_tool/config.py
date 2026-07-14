@@ -92,6 +92,22 @@ DEFAULT_BRIEFPAPIER: Final[Path] = shared_resource("briefpapier/bdo_placeholder.
 BRIEFPAPIER_MAX_BYTES: Final[int] = 50 * 1024 * 1024  # 50 MB
 BRIEFPAPIER_MAX_IMAGE_PIXELS: Final[int] = 50_000_000  # ~50 MP
 
+# Import-Ressourcengrenzen (Sprint 48 / S2.3b, S-003): Massendaten sind
+# Kernfunktion – deshalb zwei Stufen statt eines starren Limits. WARN_*
+# zeigt dem Auditor einen Confirm-Dialog (übergehbar für legitime große
+# Prüfungsdaten), MAX_* ist eine harte, nicht übergehbare Sicherheitsgrenze
+# gegen Speicher-/CPU-/Platten-Erschöpfung durch eine sehr große oder
+# präparierte Datei (ZIP-Bombe, endlose CSV, absurde Dimensionen).
+WARN_IMPORT_FILE_SIZE_BYTES: Final[int] = 200 * 1024 * 1024  # 200 MB → Confirm
+MAX_IMPORT_FILE_SIZE_BYTES: Final[int] = 1024 * 1024 * 1024  # 1 GB → Reject
+WARN_IMPORT_ROWS: Final[int] = 1_000_000  # → Confirm (getestete Baseline)
+MAX_IMPORT_ROWS: Final[int] = 10_000_000  # → Hard-Abort
+MAX_IMPORT_COLUMNS: Final[int] = 16_384  # Excel-Max → Reject
+MAX_IMPORT_CELL_LENGTH: Final[int] = 32_767  # Excel-Max → Hard-Abort
+MAX_ZIP_UNCOMPRESSED_BYTES: Final[int] = 2 * 1024 * 1024 * 1024  # 2 GB entpackt → Reject
+MAX_ZIP_MEMBERS: Final[int] = 10_000  # → Reject
+MAX_ZIP_COMPRESSION_RATIO: Final[int] = 100  # entpackt/komprimiert → ZIP-Bombe → Reject
+
 
 # ---------------------------------------------------------------------------
 # Pfad-/Datei-Helfer
