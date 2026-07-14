@@ -392,20 +392,19 @@ class TestShowSampleIdColumnRoundtrip:
 
 class TestLogFileInfoText:
     def test_info_label_shows_central_log_path_not_project_folder(
-        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        from pathlib import Path
-
         from PyQt6.QtWidgets import QLabel
 
+        fake_path = tmp_path / "fake" / "app.log"
         monkeypatch.setattr(
             "sampling_tool.ui.dialogs.settings_dialog.log_file_path",
-            lambda: Path("/tmp/fake/app.log"),
+            lambda: fake_path,
         )
         dialog = SettingsDialog(AppSettings.defaults())
         qtbot.addWidget(dialog)
         all_text = " ".join(
             child.text() for child in dialog.findChildren(QLabel) if hasattr(child, "text")
         )
-        assert "/tmp/fake/app.log" in all_text
+        assert str(fake_path) in all_text
         assert "Projekt-Ordner unter" not in all_text

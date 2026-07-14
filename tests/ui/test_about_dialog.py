@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -42,13 +43,14 @@ class TestAboutDialog:
 
         assert dialog.result() == int(QDialog.DialogCode.Accepted)
 
-    def test_shows_log_path(self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
-        from pathlib import Path
-
+    def test_shows_log_path(
+        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        fake_path = tmp_path / "fake-sampling-tool" / "app.log"
         monkeypatch.setattr(
             "sampling_tool.ui.dialogs.about_dialog.log_file_path",
-            lambda: Path("/tmp/fake-sampling-tool/app.log"),
+            lambda: fake_path,
         )
         dialog = AboutDialog()
         qtbot.addWidget(dialog)
-        assert "/tmp/fake-sampling-tool/app.log" in dialog._log_path_label.text()
+        assert str(fake_path) in dialog._log_path_label.text()
