@@ -42,6 +42,7 @@ from sampling_tool.io.bdo_locations import (
     default_location,
     locations,
 )
+from sampling_tool.io.briefpapier import validate_briefpapier
 from sampling_tool.logging_setup import log_file_path
 from sampling_tool.ui.settings_store import (
     LOG_LEVELS,
@@ -357,9 +358,17 @@ class SettingsDialog(QDialog):
             start,
             "Briefpapier (*.png *.jpg *.jpeg *.pdf);;Alle Dateien (*)",
         )
-        if path_str:
-            self._custom_briefpapier.setText(path_str)
-            self._radio_custom.setChecked(True)
+        if not path_str:
+            return
+        # Sprint 47 / N-010: Fail-Fast – eine unlesbare/zu große Datei wird
+        # gar nicht erst übernommen, statt erst beim Export aufzufallen.
+        try:
+            validate_briefpapier(Path(path_str))
+        except (FileNotFoundError, ValueError) as exc:
+            QMessageBox.warning(self, "Ungültiges Briefpapier", str(exc))
+            return
+        self._custom_briefpapier.setText(path_str)
+        self._radio_custom.setChecked(True)
 
     def _on_preview_briefpapier(self) -> None:
         path = self._active_briefpapier_path()
@@ -410,6 +419,17 @@ class SettingsDialog(QDialog):
             text = self._custom_briefpapier.text().strip()
             if text:
                 custom_path = Path(text)
+
+        if custom_path is not None:
+            # Sprint 47 / N-010: auch ein manuell ins Textfeld getippter/
+            # editierter Pfad (statt über „Auswählen…") muss Fail-Fast
+            # geprüft werden – eine unlesbare Datei darf nie gespeichert
+            # werden.
+            try:
+                validate_briefpapier(custom_path)
+            except (FileNotFoundError, ValueError) as exc:
+                QMessageBox.warning(self, "Ungültiges Briefpapier", str(exc))
+                return
 
         engagements_text = self._engagements_dir.text().strip()
         if not engagements_text:

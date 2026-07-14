@@ -408,3 +408,83 @@ class TestLogFileInfoText:
         )
         assert str(fake_path) in all_text
         assert "Projekt-Ordner unter" not in all_text
+
+
+def _make_png(path: Path) -> Path:
+    """Schreibt ein winziges, gültiges 1×1-PNG für die Tests."""
+    payload = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4"
+        b"\x89\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x03\x05\x00\x01\x01\x00"
+        b"\x18\xdd\x8d\xb0\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    path.write_bytes(payload)
+    return path
+
+
+class TestBrowseBriefpapierValidation:
+    """Sprint 47 / N-010: Fail-Fast-Validierung beim Auswählen im Dialog."""
+
+    def test_rejects_corrupt_pdf_and_does_not_set_path(
+        self, qtbot: QtBot, defaults: AppSettings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        corrupt = tmp_path / "corrupt.pdf"
+        corrupt.write_bytes(b"%PDF-1.4\nnot a real xref table, just garbage\n")
+        monkeypatch.setattr(
+            "sampling_tool.ui.dialogs.settings_dialog.QFileDialog.getOpenFileName",
+            lambda *a, **k: (str(corrupt), ""),
+        )
+        warnings: list[str] = []
+        monkeypatch.setattr(
+            QMessageBox,
+            "warning",
+            lambda _self, _title, text, *a, **k: warnings.append(text),
+        )
+
+        dialog._on_browse_briefpapier()
+
+        assert dialog._custom_briefpapier.text() == ""
+        assert dialog._radio_custom.isChecked() is False
+        assert len(warnings) == 1
+
+    def test_accepts_valid_png_and_sets_path(
+        self, qtbot: QtBot, defaults: AppSettings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        png = _make_png(tmp_path / "letter.png")
+        monkeypatch.setattr(
+            "sampling_tool.ui.dialogs.settings_dialog.QFileDialog.getOpenFileName",
+            lambda *a, **k: (str(png), ""),
+        )
+
+        dialog._on_browse_briefpapier()
+
+        assert dialog._custom_briefpapier.text() == str(png)
+        assert dialog._radio_custom.isChecked() is True
+
+    def test_manually_typed_corrupt_path_is_rejected_on_accept(
+        self, qtbot: QtBot, defaults: AppSettings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Sprint 47 / N-010 hard constraint: eine unlesbare Datei darf NIE
+        gespeichert werden – auch wenn sie manuell ins Textfeld getippt
+        statt über den Datei-Dialog ausgewählt wurde."""
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        corrupt = tmp_path / "corrupt.pdf"
+        corrupt.write_bytes(b"%PDF-1.4\nnot a real xref table, just garbage\n")
+        dialog._custom_briefpapier.setText(str(corrupt))
+        dialog._radio_custom.setChecked(True)
+        warnings: list[str] = []
+        monkeypatch.setattr(
+            QMessageBox,
+            "warning",
+            lambda _self, _title, text, *a, **k: warnings.append(text),
+        )
+
+        dialog._on_accept()
+
+        assert dialog.get_settings() is None
+        assert len(warnings) == 1

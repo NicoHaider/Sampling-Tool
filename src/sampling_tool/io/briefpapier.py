@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Final
 from sampling_tool.config import (
     BRIEFPAPIER_DEFAULT_NAME,
     BRIEFPAPIER_DIR,
+    BRIEFPAPIER_MAX_BYTES,
+    BRIEFPAPIER_MAX_IMAGE_PIXELS,
     DEFAULT_BRIEFPAPIER,
 )
 
@@ -30,6 +32,10 @@ if TYPE_CHECKING:
     from reportlab.pdfgen.canvas import Canvas
 
 _SUFFIX_PRIORITY: Final[tuple[str, ...]] = (".png", ".jpg", ".jpeg", ".pdf")
+
+
+class BriefpapierError(ValueError):
+    """Briefpapier-Datei ist zu groß oder nicht parsebar (Sprint 47 / N-010)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +88,74 @@ def briefpapier_from_path(path: Path) -> BriefpapierConfig:
             f"(erlaubt: {', '.join(_SUFFIX_PRIORITY)})."
         )
     return BriefpapierConfig(background_image=path)
+
+
+def validate_briefpapier(path: Path) -> None:
+    """Fail-Fast-Prüfung für die Briefpapier-Auswahl (Sprint 47 / N-010).
+
+    Prüft Existenz + Format (wie `briefpapier_from_path`), zusätzlich
+    Dateigröße und echte Parsebarkeit (PDF: mind. eine Seite via `pdfrw`;
+    Bild: vollständig decodierbar via Pillow + Pixel-Obergrenze). Rein
+    lesend, keine Seiteneffekte. Wirft `FileNotFoundError`/`ValueError` für
+    Existenz/Format (wie bisher) oder `BriefpapierError` für Größe/Parsefehler.
+    Fehlt `pdfrw`/Pillow, wird die jeweilige Parseprüfung übersprungen
+    (Q-001-Pfad).
+    """
+    briefpapier_from_path(path)
+
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise BriefpapierError(f"Briefpapier-Datei ist nicht lesbar: {path}") from exc
+    if size > BRIEFPAPIER_MAX_BYTES:
+        raise BriefpapierError(
+            f"Briefpapier-Datei ist zu groß ({size / (1024 * 1024):.1f} MB, "
+            f"erlaubt: {BRIEFPAPIER_MAX_BYTES / (1024 * 1024):.0f} MB)."
+        )
+
+    if path.suffix.lower() == ".pdf":
+        _validate_pdf_parseable(path)
+    else:
+        _validate_image_parseable(path)
+
+
+def _validate_pdf_parseable(path: Path) -> None:
+    try:
+        from pdfrw import PdfReader
+    except ImportError:
+        return
+    try:
+        pages = PdfReader(str(path)).pages
+    except Exception as exc:
+        raise BriefpapierError(f"Briefpapier-PDF konnte nicht gelesen werden: {path.name}") from exc
+    if not pages:
+        raise BriefpapierError(f"Briefpapier-PDF hat keine Seiten: {path.name}")
+
+
+def _validate_image_parseable(path: Path) -> None:
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+    try:
+        with Image.open(path) as img:
+            # Größe zuerst aus dem Header lesen (kein Decode nötig) und
+            # gegen den Pixel-Cap prüfen, BEVOR `img.load()` das ganze Bild
+            # in den Speicher dekodiert – sonst schützt der Cap nicht vor
+            # dem teuren Decode selbst.
+            width, height = img.size
+            if width * height > BRIEFPAPIER_MAX_IMAGE_PIXELS:
+                raise BriefpapierError(
+                    f"Briefpapier-Bild ist zu groß ({width}x{height} Pixel, "
+                    f"erlaubt: {BRIEFPAPIER_MAX_IMAGE_PIXELS:,} Pixel)."
+                )
+            img.load()
+    except BriefpapierError:
+        raise
+    except Exception as exc:
+        raise BriefpapierError(
+            f"Briefpapier-Bild konnte nicht gelesen werden: {path.name}"
+        ) from exc
 
 
 def apply_briefpapier_to_pdf(canvas: Canvas, config: BriefpapierConfig) -> None:

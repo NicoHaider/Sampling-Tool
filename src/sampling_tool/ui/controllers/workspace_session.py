@@ -28,8 +28,8 @@ from sampling_tool.core.models import (
 from sampling_tool.core.undo import UndoManager
 from sampling_tool.io.briefpapier import (
     BriefpapierConfig,
-    briefpapier_from_path,
     get_default_briefpapier,
+    validate_briefpapier,
 )
 from sampling_tool.logging_setup import resolve_log_level
 from sampling_tool.persistence.database import Database
@@ -274,16 +274,26 @@ class WorkspaceSession:
     def resolve_briefpapier(self) -> BriefpapierConfig | None:
         """Liefert das aktive Briefpapier: User-Setting > Default-Resolution.
 
-        Setting-Override (`custom_briefpapier_path`) hat Vorrang. Existiert
-        der Pfad nicht, fällt der Controller still auf das Default-System
-        (`get_default_briefpapier`) zurück.
+        Setting-Override (`custom_briefpapier_path`) hat Vorrang. Ist der
+        Pfad ungültig – fehlt, falsches Format, zu groß oder nicht parsebar
+        (Sprint 47 / N-010) – fällt der Controller sichtbar (WARN-Log) auf
+        das Default-System (`get_default_briefpapier`) zurück.
         """
         custom = self.settings.custom_briefpapier_path
-        if custom is not None and custom.exists():
+        if custom is not None:
             try:
-                return briefpapier_from_path(custom)
-            except (FileNotFoundError, ValueError):
-                logger.exception("Custom-Briefpapier ungültig, falle auf Default zurück")
+                validate_briefpapier(custom)
+            except Exception:
+                logger.warning(
+                    "Custom-Briefpapier '%s' ungültig, falle auf Default zurück",
+                    custom.name,
+                    exc_info=True,
+                )
+            else:
+                # `validate_briefpapier` hat Existenz/Format/Größe/Parsebarkeit
+                # bereits geprüft – kein zweiter fehleranfälliger Aufruf hier
+                # nötig (der würde außerhalb des try/except liegen).
+                return BriefpapierConfig(background_image=custom)
         return get_default_briefpapier()
 
     def default_export_dir(self) -> Path:

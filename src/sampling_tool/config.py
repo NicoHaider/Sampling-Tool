@@ -85,6 +85,13 @@ BRIEFPAPIER_DEFAULT_NAME: Final[str] = "bdo_letterhead"
 # verfügbar ist, kann diese Datei ohne Code-Änderung ausgetauscht werden.
 DEFAULT_BRIEFPAPIER: Final[Path] = shared_resource("briefpapier/bdo_placeholder.pdf")
 
+# Briefpapier-Limits (Sprint 47 / N-010, S-003-Teil): Briefpapier bleibt
+# optional, diese Werte sind ein Fail-Fast-Netz gegen kaputte/exotische
+# Dateien bei der Auswahl – bewusst großzügig, damit reale BDO-Briefpapiere
+# nie ausgebremst werden.
+BRIEFPAPIER_MAX_BYTES: Final[int] = 50 * 1024 * 1024  # 50 MB
+BRIEFPAPIER_MAX_IMAGE_PIXELS: Final[int] = 50_000_000  # ~50 MP
+
 
 # ---------------------------------------------------------------------------
 # Pfad-/Datei-Helfer

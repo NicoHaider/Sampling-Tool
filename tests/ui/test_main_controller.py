@@ -2608,17 +2608,86 @@ class TestSettingsIntegration:
         recent_store: RecentEngagementsStore,
         tmp_path: Path,
     ) -> None:
+        from dataclasses import replace
+
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen.canvas import Canvas
+
         from sampling_tool.ui.settings_store import AppSettings
 
+        # Sprint 47 / N-010: echtes, einseitiges PDF statt eines bloßen
+        # Header-Fragments – `resolve_briefpapier` validiert jetzt auch die
+        # Parsebarkeit, ein Fragment würde also fälschlich auf das Default
+        # zurückfallen und dieser Test würde die Override-Auswahl nicht mehr
+        # prüfen.
         custom_pdf = tmp_path / "my_letter.pdf"
-        custom_pdf.write_bytes(b"%PDF-1.4\n%\xc4\xe5\xf2\xe5\xeb\xa7\xf3\xa0\xd0\xc4\xc6\n")
-        from dataclasses import replace
+        canvas = Canvas(str(custom_pdf), pagesize=A4)
+        canvas.drawString(100, 700, "Briefpapier")
+        canvas.save()
 
         settings = replace(AppSettings.defaults(), custom_briefpapier_path=custom_pdf)
         controller = MainController(window, recent_store=recent_store, settings=settings)
         cfg = controller._resolve_briefpapier()
         assert cfg is not None
         assert cfg.background_image == custom_pdf
+
+    def test_resolve_briefpapier_falls_back_on_parse_error(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Sprint 47 / N-010: ein defektes Custom-Briefpapier lässt
+        `resolve_briefpapier` sichtbar auf das Default zurückfallen, statt
+        eine unlesbare Config zurückzugeben, die später beim Export crasht."""
+        from dataclasses import replace
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        corrupt_pdf = tmp_path / "corrupt.pdf"
+        corrupt_pdf.write_bytes(b"%PDF-1.4\nnot a real xref table, just garbage\n")
+
+        settings = replace(AppSettings.defaults(), custom_briefpapier_path=corrupt_pdf)
+        controller = MainController(window, recent_store=recent_store, settings=settings)
+        with caplog.at_level("WARNING", logger="sampling_tool.ui.controllers.workspace_session"):
+            cfg = controller._resolve_briefpapier()
+
+        assert cfg is None or cfg.background_image != corrupt_pdf
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert any("ungültig" in r.message.lower() for r in warnings), (
+            f"Erwartete WARNING zum ungültigen Custom-Briefpapier, gefangen: "
+            f"{[r.message for r in warnings]}"
+        )
+
+    def test_resolve_briefpapier_falls_back_and_warns_when_custom_path_missing(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Sprint 47 / N-010: ein GELÖSCHTER Custom-Briefpapier-Pfad fällt
+        genauso sichtbar (WARN-Log) auf das Default zurück wie ein
+        korruptes Briefpapier – nicht nur still, wie es der Fall wäre, wenn
+        das `custom.exists()`-Kurzschluss-Gate den try/except umgeht."""
+        from dataclasses import replace
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        missing_pdf = tmp_path / "gone.pdf"  # existiert nie
+
+        settings = replace(AppSettings.defaults(), custom_briefpapier_path=missing_pdf)
+        controller = MainController(window, recent_store=recent_store, settings=settings)
+        with caplog.at_level("WARNING", logger="sampling_tool.ui.controllers.workspace_session"):
+            cfg = controller._resolve_briefpapier()
+
+        assert cfg is None or cfg.background_image != missing_pdf
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert any("ungültig" in r.message.lower() for r in warnings), (
+            f"Erwartete WARNING zum fehlenden Custom-Briefpapier, gefangen: "
+            f"{[r.message for r in warnings]}"
+        )
 
 
 class TestEngagementStateRestore:

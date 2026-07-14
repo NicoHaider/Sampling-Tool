@@ -505,47 +505,61 @@ def _make_on_page(briefpapier: Path | None):  # type: ignore[no-untyped-def]
 
 
 def _draw_background(canvas: Canvas, source: Path, pagesize: tuple[float, float]) -> None:
-    """Zeichnet das Briefpapier (PNG oder einseitiges PDF) hinter den Content."""
+    """Zeichnet das Briefpapier (PNG oder einseitiges PDF) hinter den Content.
+
+    Briefpapier ist optional (Sprint 47 / N-010): jeder Parse- oder
+    Zeichenfehler wird geloggt und übersprungen, der Rest des Reports
+    rendert normal weiter – nur der Briefpapier-Layer fehlt dann.
+    """
     width, height = pagesize
     suffix = source.suffix.lower()
     canvas.saveState()
-    if suffix == ".pdf":
-        try:
-            from pdfrw import PdfReader
-            from pdfrw.buildxobj import pagexobj
-            from pdfrw.toreportlab import makerl
-        except ImportError:
-            # Sprint 18 / Q-001: vorher hat dieser Pfad das Briefpapier
-            # silent gedroppt – der Auditor merkt erst beim Compliance-
-            # Audit, dass das Briefpapier fehlt. Jetzt sichtbares WARN-
-            # Log, Report-Build crasht aber NICHT (Briefpapier ist
-            # optional).
-            logger.warning(
-                "pdfrw nicht installiert – PDF-Briefpapier '%s' wird "
-                "ohne Embedding gerendert. Bitte 'pip install pdfrw' "
-                "ergänzen, falls das Briefpapier benötigt wird.",
-                source.name,
+    try:
+        if suffix == ".pdf":
+            try:
+                from pdfrw import PdfReader
+                from pdfrw.buildxobj import pagexobj
+                from pdfrw.toreportlab import makerl
+            except ImportError:
+                # Sprint 18 / Q-001: vorher hat dieser Pfad das Briefpapier
+                # silent gedroppt – der Auditor merkt erst beim Compliance-
+                # Audit, dass das Briefpapier fehlt. Jetzt sichtbares WARN-
+                # Log, Report-Build crasht aber NICHT (Briefpapier ist
+                # optional).
+                logger.warning(
+                    "pdfrw nicht installiert – PDF-Briefpapier '%s' wird "
+                    "ohne Embedding gerendert. Bitte 'pip install pdfrw' "
+                    "ergänzen, falls das Briefpapier benötigt wird.",
+                    source.name,
+                )
+                return
+            pages = PdfReader(str(source)).pages
+            if not pages:
+                return
+            xobj = pagexobj(pages[0])
+            canvas.doForm(makerl(canvas, xobj))
+        else:
+            # Annahme: Bildformat, das reportlab nativ kann (PNG/JPG).
+            canvas.drawImage(
+                str(source),
+                0,
+                0,
+                width=width,
+                height=height,
+                preserveAspectRatio=True,
+                mask="auto",
             )
-            canvas.restoreState()
-            return
-        pages = PdfReader(str(source)).pages
-        if not pages:
-            canvas.restoreState()
-            return
-        xobj = pagexobj(pages[0])
-        canvas.doForm(makerl(canvas, xobj))
-    else:
-        # Annahme: Bildformat, das reportlab nativ kann (PNG/JPG).
-        canvas.drawImage(
-            str(source),
-            0,
-            0,
-            width=width,
-            height=height,
-            preserveAspectRatio=True,
-            mask="auto",
+    except Exception as exc:
+        # Sprint 47 / N-010: ein korruptes/passwortgeschütztes/exotisches
+        # Briefpapier darf den gesamten PDF-Export nicht platzen lassen.
+        logger.warning(
+            "Briefpapier '%s' konnte nicht eingebettet werden (%s) – Report "
+            "wird ohne Briefpapier erzeugt.",
+            source.name,
+            exc,
         )
-    canvas.restoreState()
+    finally:
+        canvas.restoreState()
 
 
 def _draw_footer(canvas: Canvas, doc: Any) -> None:

@@ -11,9 +11,11 @@ from reportlab.pdfgen.canvas import Canvas
 from sampling_tool.io import briefpapier as bp
 from sampling_tool.io.briefpapier import (
     BriefpapierConfig,
+    BriefpapierError,
     apply_briefpapier_to_pdf,
     briefpapier_from_path,
     get_default_briefpapier,
+    validate_briefpapier,
 )
 
 pytestmark = pytest.mark.integration
@@ -118,6 +120,66 @@ class TestBriefpapierFromPath:
         weird.write_text("nope")
         with pytest.raises(ValueError, match="nicht unterstützt"):
             briefpapier_from_path(weird)
+
+
+class TestValidateBriefpapier:
+    """Sprint 47 / N-010: Fail-Fast-Validierung bei der Briefpapier-Auswahl."""
+
+    def test_accepts_valid_png(self, tmp_path: Path) -> None:
+        png = _make_png(tmp_path / "letter.png")
+        validate_briefpapier(png)  # darf nicht werfen
+
+    def test_rejects_missing_file(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError):
+            validate_briefpapier(tmp_path / "ghost.png")
+
+    def test_rejects_unsupported_suffix(self, tmp_path: Path) -> None:
+        weird = tmp_path / "letter.txt"
+        weird.write_text("nope")
+        with pytest.raises(ValueError, match="nicht unterstützt"):
+            validate_briefpapier(weird)
+
+    def test_validate_briefpapier_rejects_corrupt_pdf(self, tmp_path: Path) -> None:
+        corrupt = tmp_path / "corrupt.pdf"
+        corrupt.write_bytes(b"%PDF-1.4\nnot a real xref table, just garbage\n")
+        with pytest.raises(BriefpapierError):
+            validate_briefpapier(corrupt)
+
+    def test_rejects_corrupt_image(self, tmp_path: Path) -> None:
+        corrupt = tmp_path / "corrupt.png"
+        corrupt.write_bytes(b"this is not a real png file at all")
+        with pytest.raises(BriefpapierError):
+            validate_briefpapier(corrupt)
+
+    def test_validate_briefpapier_rejects_oversized_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        png = _make_png(tmp_path / "letter.png")
+        monkeypatch.setattr(bp, "BRIEFPAPIER_MAX_BYTES", 10)
+        with pytest.raises(BriefpapierError, match="zu groß"):
+            validate_briefpapier(png)
+
+    def test_rejects_oversized_image_without_fully_decoding(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Die Pixel-Obergrenze muss VOR dem vollen Decode (`img.load()`)
+        greifen – sonst schützt sie nicht vor dem teuren Decode selbst
+        (Decompression-Bomb-artiges Verhalten)."""
+        pil_image = pytest.importorskip("PIL.Image")
+        from PIL import ImageFile
+
+        big = tmp_path / "huge.png"
+        img = pil_image.new("RGB", (10, 10), color=(1, 2, 3))
+        img.save(big, format="PNG")
+        monkeypatch.setattr(bp, "BRIEFPAPIER_MAX_IMAGE_PIXELS", 50)  # 10x10=100 > 50
+
+        def _boom(self: object, *a: object, **k: object) -> None:
+            raise AssertionError("img.load() darf für ein zu großes Bild nicht laufen")
+
+        monkeypatch.setattr(ImageFile.ImageFile, "load", _boom)
+
+        with pytest.raises(BriefpapierError, match="zu groß"):
+            validate_briefpapier(big)
 
 
 class TestApplyBriefpapierToPdf:
