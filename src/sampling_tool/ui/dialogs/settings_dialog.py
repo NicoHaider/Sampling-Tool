@@ -42,6 +42,7 @@ from sampling_tool.io.bdo_locations import (
     default_location,
     locations,
 )
+from sampling_tool.logging_setup import log_file_path
 from sampling_tool.ui.settings_store import (
     LOG_LEVELS,
     AppSettings,
@@ -326,8 +327,8 @@ class SettingsDialog(QDialog):
         form.addRow("Sampling-Seed", seed_widget)
 
         info = QLabel(
-            "Log-Datei: standardmäßig im Projekt-Ordner unter `app.log`. "
-            "Wird beim nächsten Start angewendet."
+            f"Log-Datei: zentral unter {log_file_path()} (app-weit, nicht im "
+            "Projekt-Ordner). Das Log-Level wirkt sofort, ohne Neustart."
         )
         info.setWordWrap(True)
         info.setStyleSheet("color: #7F7F7F;")

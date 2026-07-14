@@ -388,3 +388,24 @@ class TestShowSampleIdColumnRoundtrip:
     def test_missing_key_falls_back_to_default_true(self) -> None:
         # Leerer Store (kein Key geschrieben) → Default True.
         assert load_settings().show_sample_id_column is True
+
+
+class TestLogFileInfoText:
+    def test_info_label_shows_central_log_path_not_project_folder(
+        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pathlib import Path
+
+        from PyQt6.QtWidgets import QLabel
+
+        monkeypatch.setattr(
+            "sampling_tool.ui.dialogs.settings_dialog.log_file_path",
+            lambda: Path("/tmp/fake/app.log"),
+        )
+        dialog = SettingsDialog(AppSettings.defaults())
+        qtbot.addWidget(dialog)
+        all_text = " ".join(
+            child.text() for child in dialog.findChildren(QLabel) if hasattr(child, "text")
+        )
+        assert "/tmp/fake/app.log" in all_text
+        assert "Projekt-Ordner unter" not in all_text
