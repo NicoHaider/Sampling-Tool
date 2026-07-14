@@ -41,3 +41,14 @@ class TestAboutDialog:
         from PyQt6.QtWidgets import QDialog
 
         assert dialog.result() == int(QDialog.DialogCode.Accepted)
+
+    def test_shows_log_path(self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+        from pathlib import Path
+
+        monkeypatch.setattr(
+            "sampling_tool.ui.dialogs.about_dialog.log_file_path",
+            lambda: Path("/tmp/fake-sampling-tool/app.log"),
+        )
+        dialog = AboutDialog()
+        qtbot.addWidget(dialog)
+        assert "/tmp/fake-sampling-tool/app.log" in dialog._log_path_label.text()
