@@ -31,6 +31,7 @@ from sampling_tool.io.briefpapier import (
     briefpapier_from_path,
     get_default_briefpapier,
 )
+from sampling_tool.logging_setup import resolve_log_level
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import (
     AuditRepo,
@@ -294,8 +295,10 @@ class WorkspaceSession:
     # ---- Settings-Update ------------------------------------------------
 
     def apply_new_settings(self, settings: AppSettings) -> None:
-        """Settings updaten + Engagement-Dir anlegen + Panel-Visibility anwenden."""
+        """Settings updaten + Log-Level live setzen + Engagement-Dir anlegen +
+        Panel-Visibility anwenden."""
         self.settings = settings
+        logging.getLogger().setLevel(resolve_log_level(settings.log_level))
         try:
             settings.engagements_dir.mkdir(parents=True, exist_ok=True)
         except OSError:

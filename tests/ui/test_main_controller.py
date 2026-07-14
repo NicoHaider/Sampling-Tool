@@ -2777,6 +2777,33 @@ class TestPanelVisibilityWiring:
 
 
 # ---------------------------------------------------------------------------
+# Sprint 44: Log-Level wird bei jedem Settings-OK live gesetzt
+# ---------------------------------------------------------------------------
+
+
+class TestLogLevelWiring:
+    def test_apply_new_settings_updates_root_log_level(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+    ) -> None:
+        import logging
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        root = logging.getLogger()
+        original_level = root.level
+        try:
+            defaults = AppSettings.defaults()
+            controller = MainController(window, recent_store=recent_store, settings=defaults)
+            controller.session.apply_new_settings(dc_replace(defaults, log_level="DEBUG"))
+            assert root.level == logging.DEBUG
+        finally:
+            root.setLevel(original_level)
+
+
+# ---------------------------------------------------------------------------
 # Sprint 14 / T-007: Pfad-Auswahl im Sampling-Dispatch
 # ---------------------------------------------------------------------------
 #
