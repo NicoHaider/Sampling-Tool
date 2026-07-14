@@ -166,7 +166,11 @@ def _check_zip_container(resolved: Path) -> str | None:
 def _check_dimensions(resolved: Path, warnings: list[str]) -> str | None:
     try:
         wb = CalamineWorkbook.from_path(str(resolved))
-    except CalamineError as exc:
+    except (CalamineError, OSError) as exc:
+        # `OSError` deckt TOCTOU-Fälle ab: `_check_zip_container` hat sein
+        # eigenes `ZipFile`-Handle schon geschlossen, bevor calamine die
+        # Datei hier erneut öffnet – zwischen beiden Checks kann sie
+        # verschwinden/gesperrt werden (analog `briefpapier.py`).
         return f"Excel-Datei konnte nicht gelesen werden: {resolved.name} ({exc})."
 
     for name in wb.sheet_names:

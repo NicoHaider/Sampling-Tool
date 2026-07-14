@@ -36,6 +36,14 @@ class TestPreflightImport:
         assert result.reject_reason is not None
         assert "reguläre Datei" in result.reject_reason
 
+    def test_import_rejects_missing_file(self, tmp_path: Path) -> None:
+        missing = tmp_path / "does_not_exist.xlsx"
+
+        result = preflight_import(missing)
+
+        assert result.rejected
+        assert result.reject_reason is not None
+
     def test_import_rejects_file_without_zip_signature(self, tmp_path: Path) -> None:
         fake = tmp_path / "fake.xlsx"
         fake.write_text("this is not an excel file", encoding="utf-8")
