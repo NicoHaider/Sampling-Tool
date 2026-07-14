@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 from openpyxl import Workbook
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDialog, QListWidget
+from PyQt6.QtWidgets import QDialog, QListWidget, QMessageBox
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import (
@@ -22,6 +22,7 @@ from sampling_tool.core.models import (
     SampleResult,
     SamplingMethod,
 )
+from sampling_tool.io.import_preflight import ImportPreflight
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import (
     DatasetRepo,
@@ -491,6 +492,130 @@ class TestMainController:
 
             assert window.sidebar().datasets_widget().count() == 2
             assert window.data_table().table_model().rowCount() == 3
+        finally:
+            controller.handle_close_engagement()
+
+    def test_import_rejected_by_preflight_shows_error_and_skips_worker(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        import_xlsx: Path,
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(populated_db)
+            datasets_before = window.sidebar().datasets_widget().count()
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
+                    return_value=(str(import_xlsx), ""),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.preflight_import",
+                    return_value=ImportPreflight(reject_reason="Datei ist zu groß (999 MB)."),
+                ) as mock_preflight,
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QMessageBox.warning"
+                ) as mock_warning,
+            ):
+                controller.handle_import_excel()
+
+            mock_preflight.assert_called_once()
+            mock_warning.assert_called_once()
+            assert window.sidebar().datasets_widget().count() == datasets_before
+        finally:
+            controller.handle_close_engagement()
+
+    def test_import_shows_confirm_dialog_and_proceeds_on_yes(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        import_xlsx: Path,
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(populated_db)
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
+                    return_value=(str(import_xlsx), ""),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.preflight_import",
+                    return_value=ImportPreflight(warnings=("Datei ist groß (250 MB).",)),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
+                    return_value=QMessageBox.StandardButton.Yes,
+                ) as mock_question,
+                patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
+            ):
+                controller.handle_import_excel()
+
+            mock_question.assert_called_once()
+            assert window.sidebar().datasets_widget().count() == 2
+        finally:
+            controller.handle_close_engagement()
+
+    def test_import_aborts_when_confirm_dialog_answered_no(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        import_xlsx: Path,
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(populated_db)
+            datasets_before = window.sidebar().datasets_widget().count()
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
+                    return_value=(str(import_xlsx), ""),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.preflight_import",
+                    return_value=ImportPreflight(warnings=("Datei ist groß (250 MB).",)),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
+                    return_value=QMessageBox.StandardButton.No,
+                ),
+            ):
+                controller.handle_import_excel()
+
+            assert window.sidebar().datasets_widget().count() == datasets_before
+        finally:
+            controller.handle_close_engagement()
+
+    def test_import_without_warnings_does_not_show_confirm_dialog(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        import_xlsx: Path,
+    ) -> None:
+        """Reale Fixture-Datei bleibt unter den Default-Schwellen – kein
+        Confirm-Dialog, lautloser Import wie vor Sprint 48."""
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.handle_open_engagement(populated_db)
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
+                    return_value=(str(import_xlsx), ""),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question"
+                ) as mock_question,
+                patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
+            ):
+                controller.handle_import_excel()
+
+            mock_question.assert_not_called()
+            assert window.sidebar().datasets_widget().count() == 2
         finally:
             controller.handle_close_engagement()
 
