@@ -161,6 +161,14 @@ def _enforce_row_limit(row_count: int) -> None:
     Läuft im Streaming-Generator selbst – ein Backstop zusätzlich zum
     (billigeren, aber überspringbaren) Main-Thread-Preflight in
     `io/import_preflight.py`. Kürzt nichts, bricht nur ab.
+
+    ``row_count`` muss ALLE physisch durchlaufenen Zeilen zählen, auch
+    übersprungene Leerzeilen (``stats.processed_count + stats.skipped_rows``
+    in `_configured_row_generator`/`_excel_row_generator`) – sonst bindet der
+    Cap nicht die Gesamtzahl der gescannten Zeilen, sondern nur die
+    Nicht-Leerzeilen, und eine präparierte Datei mit unbegrenzt vielen
+    Leerzeilen würde den `continue`-Zweig endlos durchlaufen, ohne je diese
+    Prüfung zu erreichen.
     """
     if row_count > MAX_IMPORT_ROWS:
         raise DataImportError(
@@ -560,7 +568,10 @@ class ExcelImporter:
             row = DatasetRow(row_id=next_row_id, values=values)
             next_row_id += 1
             stats.processed_count += 1
-            _enforce_row_limit(stats.processed_count)
+            # Zählt Skipped-Rows mit – sonst wäre eine XLSX mit unbegrenzt
+            # vielen Leerzeilen nie durch die Hard-Grenze gestoppt (der
+            # `continue` oben läuft am Limit-Check vorbei).
+            _enforce_row_limit(stats.processed_count + stats.skipped_rows)
             if stats.processed_count % _PROGRESS_INTERVAL == 0:
                 self._check_cancel()
                 if self.progress is not None:
@@ -637,7 +648,10 @@ class ExcelImporter:
             row = DatasetRow(row_id=next_row_id, values=values)
             next_row_id += 1
             stats.processed_count += 1
-            _enforce_row_limit(stats.processed_count)
+            # Zählt Skipped-Rows mit – sonst wäre eine XLSX mit unbegrenzt
+            # vielen Leerzeilen nie durch die Hard-Grenze gestoppt (der
+            # `continue` oben läuft am Limit-Check vorbei).
+            _enforce_row_limit(stats.processed_count + stats.skipped_rows)
             if stats.processed_count % _PROGRESS_INTERVAL == 0:
                 self._check_cancel()
                 if self.progress is not None:
