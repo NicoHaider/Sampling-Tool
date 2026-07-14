@@ -169,6 +169,17 @@ def _enforce_row_limit(row_count: int) -> None:
     Nicht-Leerzeilen, und eine präparierte Datei mit unbegrenzt vielen
     Leerzeilen würde den `continue`-Zweig endlos durchlaufen, ohne je diese
     Prüfung zu erreichen.
+
+    Für Excel (`_excel_row_generator`/`_configured_row_generator`) ist das
+    ein echter Streaming-Backstop – calamine liest Zeile für Zeile, der Abbruch
+    verhindert also tatsächlich weiteres Lesen. Für CSV (`_csv_row_generator`)
+    ist `data_rows` zu diesem Zeitpunkt bereits vollständig im RAM (siehe
+    `_read_csv_text`/`_parse_csv`) – der Cap greift dort erst NACH der vollen
+    Materialisierung und schützt nur noch vor der (billigeren) Coercion/DB-
+    Persist-Phase. Der primäre CSV-Schutz gegen eine sehr große Datei ist die
+    Dateigrößenprüfung in `io/import_preflight.py`, VOR `read_bytes()`
+    (bewusste Sprint-48-Scope-Entscheidung, siehe SPRINT_48_PROMPT.md
+    §2 – echtes CSV-Streaming ist ein separates Vorhaben).
     """
     if row_count > MAX_IMPORT_ROWS:
         raise DataImportError(
@@ -692,8 +703,10 @@ class ExcelImporter:
         stats: ImportStats,
         total: int,
     ) -> Iterator[DatasetRow]:
-        """CSV-Pfad als Generator. `data_rows` ist bereits geparst (csv.reader
-        liest Zeile für Zeile, aber wir haben den Text einmal voll im RAM)."""
+        """CSV-Pfad als Generator. `data_rows` ist bereits vollständig im RAM
+        (siehe `_enforce_row_limit`-Docstring) – die Hard-Caps hier sind ein
+        Backstop vor Coercion/DB-Persist, kein Streaming-Schutz vor dem Parse
+        selbst. Primärschutz für CSV ist die Dateigrößenprüfung im Preflight."""
         # Sprint 17: Cancel-Check vor dem ersten Read.
         self._check_cancel()
         for idx, raw in enumerate(data_rows, start=1):
