@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import urllib.parse
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -64,6 +65,84 @@ class TestBugReportPayload:
         decoded = urllib.parse.unquote(url)
         assert "A & B" in decoded
         assert "öäü" in decoded
+
+
+class TestBugReportPayloadLogFields:
+    def test_body_with_log_path_includes_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        fake_path = tmp_path / "app.log"
+        monkeypatch.setattr(
+            "sampling_tool.ui.dialogs.bug_report_dialog.log_file_path", lambda: fake_path
+        )
+        payload = BugReportPayload(
+            what_did_you_do="x",
+            what_did_you_expect="y",
+            what_happened_instead="z",
+            include_system_info=False,
+            include_log_path=True,
+        )
+        assert str(fake_path) in payload.body()
+
+    def test_body_without_log_path_omits_it(self) -> None:
+        payload = BugReportPayload(
+            what_did_you_do="x",
+            what_did_you_expect="y",
+            what_happened_instead="z",
+            include_system_info=False,
+        )
+        assert "Log-Datei" not in payload.body()
+
+    def test_body_with_log_tail_includes_last_lines(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        log_path = tmp_path / "app.log"
+        log_path.write_text("\n".join(f"line-{i}" for i in range(1, 101)), encoding="utf-8")
+        monkeypatch.setattr(
+            "sampling_tool.ui.dialogs.bug_report_dialog.log_file_path", lambda: log_path
+        )
+        payload = BugReportPayload(
+            what_did_you_do="x",
+            what_did_you_expect="y",
+            what_happened_instead="z",
+            include_system_info=False,
+            include_log_tail=True,
+        )
+        body = payload.body()
+        assert "line-100" in body
+        assert "line-1\n" not in body
+
+    def test_body_with_log_tail_missing_file_shows_dash(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(
+            "sampling_tool.ui.dialogs.bug_report_dialog.log_file_path",
+            lambda: tmp_path / "does-not-exist.log",
+        )
+        payload = BugReportPayload(
+            what_did_you_do="x",
+            what_did_you_expect="y",
+            what_happened_instead="z",
+            include_system_info=False,
+            include_log_tail=True,
+        )
+        assert "—" in payload.body()
+
+
+class TestBugReportDialogLogCheckboxes:
+    def test_defaults(self, qtbot: QtBot) -> None:
+        dialog = BugReportDialog()
+        qtbot.addWidget(dialog)
+        assert dialog._include_log_path.isChecked() is True
+        assert dialog._include_log_tail.isChecked() is False
+
+    def test_get_payload_reflects_checkbox_state(self, qtbot: QtBot) -> None:
+        dialog = BugReportDialog()
+        qtbot.addWidget(dialog)
+        dialog._include_log_tail.setChecked(True)
+        payload = dialog.get_payload()
+        assert payload.include_log_path is True
+        assert payload.include_log_tail is True
 
 
 class TestBugReportDialog:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import platform
 import urllib.parse
 from dataclasses import dataclass
+from typing import Final
 
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
@@ -26,6 +27,9 @@ from PyQt6.QtWidgets import (
 
 from sampling_tool import __version__
 from sampling_tool.config import APP_NAME, BUG_REPORT_EMAIL, BUG_REPORT_SUBJECT_PREFIX
+from sampling_tool.logging_setup import log_file_path
+
+_LOG_TAIL_LINES: Final[int] = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +40,8 @@ class BugReportPayload:
     what_did_you_expect: str
     what_happened_instead: str
     include_system_info: bool
+    include_log_path: bool = False
+    include_log_tail: bool = False
 
     def subject(self) -> str:
         return f"{BUG_REPORT_SUBJECT_PREFIX} {APP_NAME} v{__version__}"
@@ -53,6 +59,10 @@ class BugReportPayload:
                 f"OS: {platform.system()} {platform.release()}\n"
                 f"Python: {platform.python_version()}"
             )
+        if self.include_log_path:
+            text += f"\n\n---\nLog-Datei: {log_file_path()}"
+        if self.include_log_tail:
+            text += f"\n\nLetzte {_LOG_TAIL_LINES} Log-Zeilen:\n{_read_log_tail()}"
         return text
 
     def mailto_url(self) -> str:
@@ -61,6 +71,18 @@ class BugReportPayload:
             quote_via=urllib.parse.quote,
         )
         return f"mailto:{BUG_REPORT_EMAIL}?{params}"
+
+
+def _read_log_tail(lines: int = _LOG_TAIL_LINES) -> str:
+    """Liefert die letzten `lines` Zeilen der Log-Datei; „—" falls keine da ist."""
+    path = log_file_path()
+    if not path.exists():
+        return "—"
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return "—"
+    return "\n".join(content[-lines:]) if content else "—"
 
 
 class BugReportDialog(QDialog):
@@ -92,6 +114,14 @@ class BugReportDialog(QDialog):
         self._include_system_info.setChecked(True)
         outer.addWidget(self._include_system_info)
 
+        self._include_log_path = QCheckBox("Log-Pfad mitschicken")
+        self._include_log_path.setChecked(True)
+        outer.addWidget(self._include_log_path)
+
+        self._include_log_tail = QCheckBox(f"Letzte {_LOG_TAIL_LINES} Log-Zeilen mitschicken")
+        self._include_log_tail.setChecked(False)
+        outer.addWidget(self._include_log_tail)
+
         self._buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
         self._send_button = self._buttons.addButton(
             "E-Mail vorbereiten", QDialogButtonBox.ButtonRole.AcceptRole
@@ -109,6 +139,8 @@ class BugReportDialog(QDialog):
             what_did_you_expect=self._expected.toPlainText(),
             what_happened_instead=self._actual.toPlainText(),
             include_system_info=self._include_system_info.isChecked(),
+            include_log_path=self._include_log_path.isChecked(),
+            include_log_tail=self._include_log_tail.isChecked(),
         )
 
     # ---- intern --------------------------------------------------------

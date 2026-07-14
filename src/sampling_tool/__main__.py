@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from dataclasses import replace
 from pathlib import Path
 
 from sampling_tool.config import APP_NAME, APP_ORG, APP_ORG_DOMAIN
+from sampling_tool.logging_setup import configure_logging, install_excepthook
 from sampling_tool.resources import package_resource
 from sampling_tool.ui.settings_store import AppSettings, load_settings, save_settings
+
+logger = logging.getLogger(__name__)
 
 
 def main() -> int:
@@ -28,6 +32,10 @@ def main() -> int:
         app.setStyleSheet(qss_path.read_text(encoding="utf-8"))
 
     settings = load_settings()
+    log_path = configure_logging(settings.log_level)
+    install_excepthook()
+    logger.info("Sampling-Tool gestartet (Log-Datei: %s)", log_path)
+
     if not settings.first_run_completed:
         settings = run_first_run_wizard(settings)
         save_settings(settings)

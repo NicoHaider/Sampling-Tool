@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 
 from sampling_tool import __version__
 from sampling_tool.config import APP_NAME
+from sampling_tool.logging_setup import log_file_path
 
 REPO_URL: str = "https://github.com/NicoHaider/Sampling-Tool"
 
@@ -134,6 +135,11 @@ class AboutDialog(QDialog):
         self._repo_label.setOpenExternalLinks(False)
         self._repo_label.linkActivated.connect(self._open_repo)
         outer.addWidget(self._repo_label)
+
+        self._log_path_label = QLabel(f"Log-Datei: {log_file_path()}")
+        self._log_path_label.setWordWrap(True)
+        self._log_path_label.setStyleSheet("color: #7F7F7F; font-size: 11px;")
+        outer.addWidget(self._log_path_label)
 
         # Changelog-Block – Trenner + Liste der letzten Releases.
         divider = QFrame()
