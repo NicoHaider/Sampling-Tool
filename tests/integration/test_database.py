@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from sampling_tool.persistence.database import (
     APPLICATION_ID,
     CURRENT_SCHEMA_VERSION,
     Database,
+    MigrationError,
 )
 
 
@@ -80,6 +82,147 @@ class TestApplicationId:
             assert row[0] == APPLICATION_ID
         finally:
             upgraded.close()
+
+
+class TestMigrationAtomicity:
+    """Sprint 45 / A-002: jede Migration läuft atomar; ein Mid-Migration-
+    Abbruch rollt vollständig zurück (keine Teil-DDL, `schema_version`
+    unverändert), und Lücken/Duplikate/zu-neue Schemas werden VOR jeder
+    Ausführung abgelehnt."""
+
+    @staticmethod
+    def _write(directory: Path, name: str, sql: str) -> None:
+        (directory / name).write_text(sql, encoding="utf-8")
+
+    def test_migration_rolls_back_on_failure(self, tmp_path: Path) -> None:
+        migrations_dir = tmp_path / "migrations"
+        migrations_dir.mkdir()
+        db = Database(tmp_path / "crash.db")
+        try:
+            self._write(
+                migrations_dir,
+                "001_base.sql",
+                "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, "
+                "applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);\n"
+                "CREATE TABLE marker (id INTEGER);\n"
+                "INSERT INTO schema_version (version, applied_at) "
+                "VALUES (1, CURRENT_TIMESTAMP);\n",
+            )
+            db.migrate(migrations_root=migrations_dir)
+            assert db.schema_version() == 1
+
+            # Migration 002 erst JETZT hinzufügen (nicht von Anfang an), damit
+            # dieser zweite migrate()-Aufruf NUR sie als pending sieht und
+            # mittendrin crasht statt beide Dateien in einem Rutsch zu ziehen.
+            self._write(
+                migrations_dir,
+                "002_broken.sql",
+                "CREATE TABLE crash_marker (id INTEGER);\n"
+                "INSERT INTO does_not_exist (id) VALUES (1);\n"
+                "INSERT INTO schema_version (version, applied_at) "
+                "VALUES (2, CURRENT_TIMESTAMP);\n",
+            )
+            with pytest.raises(sqlite3.OperationalError, match="does_not_exist"):
+                db.migrate(migrations_root=migrations_dir)
+
+            assert db.schema_version() == 1  # unverändert – Rollback erfolgreich
+            tables = {
+                row["name"]
+                for row in db.connect()
+                .execute("SELECT name FROM sqlite_master WHERE type='table'")
+                .fetchall()
+            }
+            assert "crash_marker" not in tables  # Teil-DDL wurde zurückgerollt
+        finally:
+            db.close()
+
+    def test_migration_retry_succeeds_after_rollback(self, tmp_path: Path) -> None:
+        migrations_dir = tmp_path / "migrations"
+        migrations_dir.mkdir()
+        db = Database(tmp_path / "retry.db")
+        try:
+            self._write(
+                migrations_dir,
+                "001_base.sql",
+                "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, "
+                "applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);\n"
+                "INSERT INTO schema_version (version, applied_at) "
+                "VALUES (1, CURRENT_TIMESTAMP);\n",
+            )
+            db.migrate(migrations_root=migrations_dir)
+
+            self._write(
+                migrations_dir,
+                "002_broken.sql",
+                "CREATE TABLE crash_marker (id INTEGER);\n"
+                "INSERT INTO does_not_exist (id) VALUES (1);\n"
+                "INSERT INTO schema_version (version, applied_at) "
+                "VALUES (2, CURRENT_TIMESTAMP);\n",
+            )
+            with pytest.raises(sqlite3.OperationalError):
+                db.migrate(migrations_root=migrations_dir)
+            assert db.schema_version() == 1
+
+            # Bugfix-Release simulieren: dieselbe Versionsnummer, korrigierter Inhalt.
+            self._write(
+                migrations_dir,
+                "002_broken.sql",
+                "CREATE TABLE crash_marker (id INTEGER);\n"
+                "INSERT INTO schema_version (version, applied_at) "
+                "VALUES (2, CURRENT_TIMESTAMP);\n",
+            )
+            db.migrate(migrations_root=migrations_dir)  # jetzt grün
+            assert db.schema_version() == 2
+
+            tables = {
+                row["name"]
+                for row in db.connect()
+                .execute("SELECT name FROM sqlite_master WHERE type='table'")
+                .fetchall()
+            }
+            assert "crash_marker" in tables
+        finally:
+            db.close()
+
+    def test_migration_rejects_version_gap_or_duplicate(self, tmp_path: Path) -> None:
+        # Lücke: 001 und 003 vorhanden, 002 fehlt.
+        gap_dir = tmp_path / "gap"
+        gap_dir.mkdir()
+        self._write(gap_dir, "001_a.sql", "SELECT 1;")
+        self._write(gap_dir, "003_c.sql", "SELECT 1;")
+        db = Database(tmp_path / "gap.db")
+        try:
+            with pytest.raises(MigrationError, match="Lücke"):
+                db.migrate(migrations_root=gap_dir)
+        finally:
+            db.close()
+
+        # Duplikat: zwei Dateien mit derselben Versions-Nummer.
+        dup_dir = tmp_path / "dup"
+        dup_dir.mkdir()
+        self._write(dup_dir, "001_a.sql", "SELECT 1;")
+        self._write(dup_dir, "001_b.sql", "SELECT 1;")
+        db2 = Database(tmp_path / "dup.db")
+        try:
+            with pytest.raises(MigrationError, match="doppelte"):
+                db2.migrate(migrations_root=dup_dir)
+        finally:
+            db2.close()
+
+    def test_migration_rejects_too_new_schema(self, tmp_path: Path) -> None:
+        db = Database(tmp_path / "toonew.db")
+        try:
+            db.connect().executescript(
+                "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, "
+                "applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);\n"
+                "INSERT INTO schema_version (version, applied_at) "
+                "VALUES (999, CURRENT_TIMESTAMP);\n"
+            )
+            with pytest.raises(MigrationError, match="neuer"):
+                db.migrate()  # reale Migrations-Dateien: alle Versionen <= 999
+            assert db.schema_version() == 999  # unverändert
+        finally:
+            db.close()
 
 
 class TestMigrationsApply:

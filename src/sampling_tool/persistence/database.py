@@ -13,7 +13,7 @@ hinterlegte aus.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -63,6 +63,54 @@ sqlite3.register_converter("TIMESTAMP", _convert_timestamp)
 # ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
+
+
+class MigrationError(ValueError):
+    """Schema-Zustand ist inkonsistent – `migrate()` bricht bewusst ab statt zu raten."""
+
+
+def _validate_migration_sequence(applied: Sequence[int], pending: Sequence[int]) -> None:
+    """Prüft Bestands- und Pending-Versionen auf Lücken/Duplikate (Sprint 45 / A-002).
+
+    Reine, DB-/Dateisystem-freie Funktion (nur `int`-Listen) – dadurch ohne
+    Fixture-Aufwand isoliert testbar. `migrate()` ruft sie mit den echten
+    Werten auf, BEVOR irgendeine Migration ausgeführt wird.
+    """
+    applied_sorted = sorted(applied)
+    if len(set(applied_sorted)) != len(applied_sorted):
+        raise MigrationError(f"schema_version enthält doppelte Versionen: {applied_sorted}")
+
+    current = applied_sorted[-1] if applied_sorted else 0
+
+    # Zu-neu-Check VOR dem Lücken-Check (Sprint 45 / A-002, Abweichung von der
+    # ursprünglich skizzierten Reihenfolge): ein Schema, dessen einzige
+    # Bestandsversion weit über CURRENT_SCHEMA_VERSION liegt, ist per
+    # Definition kein gapless 1..N-Verlauf – der Lücken-Check würde sonst
+    # fälschlich zuerst feuern und die eigentliche Ursache ("App zu alt für
+    # dieses Schema") hinter einer irreführenden Lücken-Meldung verstecken.
+    if current > CURRENT_SCHEMA_VERSION:
+        raise MigrationError(
+            f"Schema-Version {current} ist neuer als die von dieser App unterstützte "
+            f"Version {CURRENT_SCHEMA_VERSION}. Bitte die App aktualisieren."
+        )
+
+    expected_applied = list(range(1, current + 1))
+    if applied_sorted != expected_applied:
+        raise MigrationError(
+            f"schema_version hat Lücken: erwartet {expected_applied}, gefunden {applied_sorted}"
+        )
+
+    pending_sorted = sorted(pending)
+    if len(set(pending_sorted)) != len(pending_sorted):
+        raise MigrationError(f"Migrations-Dateien enthalten doppelte Versionen: {pending_sorted}")
+
+    if pending_sorted:
+        expected_pending = list(range(current + 1, pending_sorted[-1] + 1))
+        if pending_sorted != expected_pending:
+            raise MigrationError(
+                f"Migrations-Dateien haben Lücken: erwartet {expected_pending}, "
+                f"gefunden {pending_sorted}"
+            )
 
 
 class Database:
@@ -123,19 +171,42 @@ class Database:
             return 0
         return int(row["v"]) if row["v"] is not None else 0
 
-    def migrate(self) -> None:
+    def _applied_versions(self) -> list[int]:
+        """Alle in `schema_version` eingetragenen Versionen (Reihenfolge egal)."""
+        conn = self.connect()
+        try:
+            rows = conn.execute(f"SELECT version FROM {SCHEMA_VERSION_TABLE}").fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [int(row["version"]) for row in rows]
+
+    def migrate(self, migrations_root: Path | None = None) -> None:
         """Wendet alle ausstehenden `NNN_*.sql`-Dateien aus `migrations/` an.
 
-        Idempotent: bereits angewandte Versionen werden übersprungen.
-        Jedes Migrations-Skript ist selbst dafür verantwortlich, einen Eintrag
-        in `schema_version` zu setzen.
+        Idempotent: bereits angewandte Versionen werden übersprungen. Jede
+        Migration läuft in ihrer eigenen Transaktion (Sprint 45 / A-002) –
+        schlägt eine fehl, wird NUR sie zurückgerollt (`schema_version`
+        bleibt auf dem letzten erfolgreichen Stand), und die Exception
+        propagiert unverändert (kein stilles Weiterlaufen zur nächsten
+        Migration). Jedes Migrations-Skript ist selbst dafür verantwortlich,
+        seinen Eintrag in `schema_version` zu setzen – der liegt jetzt
+        innerhalb derselben Transaktion wie die DDL und ist damit atomar
+        mit ihr.
+
+        `migrations_root` ist nur für Tests gedacht (Default: das echte
+        `persistence/migrations`-Verzeichnis im Paket).
         """
         conn = self.connect()
-        current = self.schema_version()
+        applied = self._applied_versions()
+        current = max(applied) if applied else 0
 
-        migrations_root = package_resource("persistence/migrations")
+        root = (
+            migrations_root
+            if migrations_root is not None
+            else package_resource("persistence/migrations")
+        )
         pending: list[tuple[int, str]] = []
-        for entry in migrations_root.iterdir():
+        for entry in root.iterdir():
             if not entry.name.endswith(".sql"):
                 continue
             try:
@@ -145,10 +216,21 @@ class Database:
             if version > current:
                 pending.append((version, entry.read_text(encoding="utf-8")))
 
-        for _version, sql in sorted(pending, key=lambda v: v[0]):
-            # executescript committet implizit – darf nicht innerhalb einer
-            # offenen Transaktion laufen. Mit isolation_level=None ist das ok.
-            conn.executescript(sql)
+        pending.sort(key=lambda item: item[0])
+        _validate_migration_sequence(applied, [version for version, _ in pending])
+
+        for _version, sql in pending:
+            # `executescript` committet implizit und darf daher nicht in einer
+            # bereits offenen Transaktion laufen (mit isolation_level=None ist
+            # das ok) – die Transaktionsklammer kommt hier stattdessen explizit
+            # aus dem Skript-Text selbst, damit DDL + der `schema_version`-
+            # Insert atomar sind (Sprint 45 / A-002).
+            wrapped_sql = f"BEGIN;\n{sql}\nCOMMIT;"
+            try:
+                conn.executescript(wrapped_sql)
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
 
     # ---- Lifecycle ------------------------------------------------------
 
