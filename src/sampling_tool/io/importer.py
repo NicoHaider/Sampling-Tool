@@ -41,7 +41,12 @@ from typing import Any, Final, Literal
 
 from python_calamine import CalamineSheet, CalamineWorkbook
 
-from sampling_tool.config import SUPPORTED_CSV_SUFFIXES, SUPPORTED_EXCEL_SUFFIXES
+from sampling_tool.config import (
+    MAX_IMPORT_CELL_LENGTH,
+    MAX_IMPORT_ROWS,
+    SUPPORTED_CSV_SUFFIXES,
+    SUPPORTED_EXCEL_SUFFIXES,
+)
 from sampling_tool.core.cancellation import CancellationToken
 from sampling_tool.core.models import Dataset, DatasetRow
 
@@ -143,6 +148,57 @@ class ImportResult:
 # Domain-Präfix.
 class DataImportError(ValueError):
     """Fachlicher Importfehler (deutsche Endnutzer-Message)."""
+
+
+# ---------------------------------------------------------------------------
+# Ressourcengrenzen (Sprint 48 / S2.3b, S-003)
+# ---------------------------------------------------------------------------
+
+
+def _enforce_row_limit(row_count: int) -> None:
+    """Bricht den Import ab, sobald die Hard-Zeilengrenze überschritten ist.
+
+    Läuft im Streaming-Generator selbst – ein Backstop zusätzlich zum
+    (billigeren, aber überspringbaren) Main-Thread-Preflight in
+    `io/import_preflight.py`. Kürzt nichts, bricht nur ab.
+
+    ``row_count`` muss ALLE physisch durchlaufenen Zeilen zählen, auch
+    übersprungene Leerzeilen (``stats.processed_count + stats.skipped_rows``
+    in `_configured_row_generator`/`_excel_row_generator`) – sonst bindet der
+    Cap nicht die Gesamtzahl der gescannten Zeilen, sondern nur die
+    Nicht-Leerzeilen, und eine präparierte Datei mit unbegrenzt vielen
+    Leerzeilen würde den `continue`-Zweig endlos durchlaufen, ohne je diese
+    Prüfung zu erreichen.
+
+    Für Excel (`_excel_row_generator`/`_configured_row_generator`) ist das
+    ein echter Streaming-Backstop – calamine liest Zeile für Zeile, der Abbruch
+    verhindert also tatsächlich weiteres Lesen. Für CSV (`_csv_row_generator`)
+    ist `data_rows` zu diesem Zeitpunkt bereits vollständig im RAM (siehe
+    `_read_csv_text`/`_parse_csv`) – der Cap greift dort erst NACH der vollen
+    Materialisierung und schützt nur noch vor der (billigeren) Coercion/DB-
+    Persist-Phase. Der primäre CSV-Schutz gegen eine sehr große Datei ist die
+    Dateigrößenprüfung in `io/import_preflight.py`, VOR `read_bytes()`
+    (bewusste Sprint-48-Scope-Entscheidung, siehe SPRINT_48_PROMPT.md
+    §2 – echtes CSV-Streaming ist ein separates Vorhaben).
+    """
+    if row_count > MAX_IMPORT_ROWS:
+        raise DataImportError(
+            f"Import-Sicherheitslimit erreicht: mehr als {MAX_IMPORT_ROWS:,} Zeilen."
+        )
+
+
+def _enforce_cell_length_limit(raw: list[Any] | tuple[Any, ...]) -> None:
+    """Bricht ab, wenn ein roher Zellwert die Hard-Längengrenze überschreitet.
+
+    Prüft den Rohwert VOR `_coerce_value` – reine Zeichenlänge, keine
+    Interpretation. Nur `str`-Zellen können diese Grenze reißen.
+    """
+    for value in raw:
+        if isinstance(value, str) and len(value) > MAX_IMPORT_CELL_LENGTH:
+            raise DataImportError(
+                f"Import-Sicherheitslimit erreicht: Zellwert länger als "
+                f"{MAX_IMPORT_CELL_LENGTH:,} Zeichen."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +571,7 @@ class ExcelImporter:
             if _is_blank(raw):
                 stats.skipped_rows += 1
                 continue
+            _enforce_cell_length_limit(raw)
             values = {
                 col: _coerce_value(raw[i] if i < len(raw) else None)
                 for i, col in enumerate(columns)
@@ -522,6 +579,10 @@ class ExcelImporter:
             row = DatasetRow(row_id=next_row_id, values=values)
             next_row_id += 1
             stats.processed_count += 1
+            # Zählt Skipped-Rows mit – sonst wäre eine XLSX mit unbegrenzt
+            # vielen Leerzeilen nie durch die Hard-Grenze gestoppt (der
+            # `continue` oben läuft am Limit-Check vorbei).
+            _enforce_row_limit(stats.processed_count + stats.skipped_rows)
             if stats.processed_count % _PROGRESS_INTERVAL == 0:
                 self._check_cancel()
                 if self.progress is not None:
@@ -590,6 +651,7 @@ class ExcelImporter:
             if _is_blank(raw):
                 stats.skipped_rows += 1
                 continue
+            _enforce_cell_length_limit(raw)
             values = {
                 col: _coerce_value(raw[i] if i < len(raw) else None)
                 for i, col in enumerate(columns)
@@ -597,6 +659,10 @@ class ExcelImporter:
             row = DatasetRow(row_id=next_row_id, values=values)
             next_row_id += 1
             stats.processed_count += 1
+            # Zählt Skipped-Rows mit – sonst wäre eine XLSX mit unbegrenzt
+            # vielen Leerzeilen nie durch die Hard-Grenze gestoppt (der
+            # `continue` oben läuft am Limit-Check vorbei).
+            _enforce_row_limit(stats.processed_count + stats.skipped_rows)
             if stats.processed_count % _PROGRESS_INTERVAL == 0:
                 self._check_cancel()
                 if self.progress is not None:
@@ -637,16 +703,20 @@ class ExcelImporter:
         stats: ImportStats,
         total: int,
     ) -> Iterator[DatasetRow]:
-        """CSV-Pfad als Generator. `data_rows` ist bereits geparst (csv.reader
-        liest Zeile für Zeile, aber wir haben den Text einmal voll im RAM)."""
+        """CSV-Pfad als Generator. `data_rows` ist bereits vollständig im RAM
+        (siehe `_enforce_row_limit`-Docstring) – die Hard-Caps hier sind ein
+        Backstop vor Coercion/DB-Persist, kein Streaming-Schutz vor dem Parse
+        selbst. Primärschutz für CSV ist die Dateigrößenprüfung im Preflight."""
         # Sprint 17: Cancel-Check vor dem ersten Read.
         self._check_cancel()
         for idx, raw in enumerate(data_rows, start=1):
+            _enforce_cell_length_limit(raw)
             values = {
                 col: _coerce_value(raw[i] if i < len(raw) else None)
                 for i, col in enumerate(columns)
             }
             stats.processed_count += 1
+            _enforce_row_limit(stats.processed_count)
             if stats.processed_count % _PROGRESS_INTERVAL == 0:
                 self._check_cancel()
                 if self.progress is not None:

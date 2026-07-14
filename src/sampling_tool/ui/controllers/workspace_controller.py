@@ -40,6 +40,7 @@ from sampling_tool.core.sampling import (
     create_sampler,
     matches_filter,
 )
+from sampling_tool.io.import_preflight import preflight_import
 from sampling_tool.io.importer import (
     DataImportError,
     ExcelImporter,
@@ -107,6 +108,9 @@ class WorkspaceController:
         if path is None:
             return
 
+        if not self._run_import_preflight(path):
+            return
+
         # Sprint 16/29: prüfen, ob ein Sheet-/Header-Auswahl-Dialog erscheinen
         # muss. Excel: Multi-Sheet ODER Header-Auto-Detection unsicher. CSV
         # (Sprint 29): Header-Auto-Detection unsicher. Sonst lautloser
@@ -138,6 +142,33 @@ class WorkspaceController:
             self._ask_id_column(task_result.dataset)
         s.refresh_views()
         self._show_import_summary(task_result.stats)
+
+    def _run_import_preflight(self, path: Path) -> bool:
+        """Sprint 48 / S2.3b: billiger Preflight-Check auf dem Main-Thread,
+        BEVOR der Import-Worker startet.
+
+        Reject (Hard-Cap überschritten) → Error-Dialog, Import bricht ab
+        (`False`). Warnings (Soft-Cap überschritten) → Confirm-Dialog, „Nein"
+        bricht ab. Ohne Warnungen (Default für saubere Dateien) → `True`,
+        lautloser Import wie vor Sprint 48.
+        """
+        s = self.session
+        preflight = preflight_import(path)
+        if preflight.rejected:
+            s.error(f"Import abgelehnt: {preflight.reject_reason}")
+            return False
+        if not preflight.warnings:
+            return True
+        answer = QMessageBox.question(
+            s.window,
+            "Große Datei",
+            "Die gewählte Datei ist ungewöhnlich groß oder umfangreich:\n\n"
+            + "\n".join(preflight.warnings)
+            + "\n\nImport trotzdem fortsetzen?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _ask_import_path(self) -> Path | None:
         """File-Dialog für die Datei-Auswahl. None bei Cancel."""

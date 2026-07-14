@@ -668,3 +668,103 @@ class TestImporterCancellation:
         result = importer.import_file(utf8_csv)
         with pytest.raises(OperationCancelled):
             list(result.rows)
+
+
+class TestImportHardCaps:
+    """Sprint 48 / S2.3b: In-Parse-Hard-Caps in den drei Row-Generatoren.
+
+    Läuft zusätzlich zum (überspringbaren) Preflight – ein Backstop, der
+    NICHT kürzt, sondern klar mit `DataImportError` abbricht.
+    """
+
+    def test_import_hard_caps_abort_on_row_and_cell_limits(
+        self, simple_xlsx: Path, utf8_csv: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sampling_tool.io.importer as importer_module
+
+        # `utf8_csv` hat nur 2 Datenzeilen (siehe conftest.py) – das Limit muss
+        # niedriger als die kleinste Fixture liegen, damit alle drei Pfade
+        # tatsächlich abbrechen.
+        monkeypatch.setattr(importer_module, "MAX_IMPORT_ROWS", 1)
+        importer = ExcelImporter()
+
+        excel_result = importer.import_file(simple_xlsx)
+        with pytest.raises(DataImportError, match="Sicherheitslimit"):
+            list(excel_result.rows)
+
+        csv_result = importer.import_file(utf8_csv)
+        with pytest.raises(DataImportError, match="Sicherheitslimit"):
+            list(csv_result.rows)
+
+        configured_result = importer.import_file_configured(
+            simple_xlsx, sheet_name=None, header_row=0
+        )
+        with pytest.raises(DataImportError, match="Sicherheitslimit"):
+            list(configured_result.rows)
+
+    def test_import_hard_caps_abort_on_cell_length_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sampling_tool.io.importer as importer_module
+
+        path = tmp_path / "long_cell.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.append(["Name"])
+        ws.append(["x" * 50])
+        wb.save(path)
+
+        monkeypatch.setattr(importer_module, "MAX_IMPORT_CELL_LENGTH", 10)
+        importer = ExcelImporter()
+
+        result = importer.import_file(path)
+        with pytest.raises(DataImportError, match="Sicherheitslimit"):
+            list(result.rows)
+
+    def test_import_hard_caps_abort_on_cell_length_limit_csv(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: `_csv_row_generator` muss `_enforce_cell_length_limit`
+        genauso wie die beiden Excel-Generatoren aufrufen."""
+        import sampling_tool.io.importer as importer_module
+
+        path = tmp_path / "long_cell.csv"
+        path.write_text("Name\n" + ("x" * 50) + "\n", encoding="utf-8")
+
+        monkeypatch.setattr(importer_module, "MAX_IMPORT_CELL_LENGTH", 10)
+        importer = ExcelImporter()
+
+        result = importer.import_file(path)
+        with pytest.raises(DataImportError, match="Sicherheitslimit"):
+            list(result.rows)
+
+    def test_import_hard_caps_abort_on_cell_length_limit_configured(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: `_configured_row_generator` (import_file_configured)
+        muss `_enforce_cell_length_limit` genauso wie `_excel_row_generator`
+        aufrufen."""
+        import sampling_tool.io.importer as importer_module
+
+        path = tmp_path / "long_cell_configured.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.append(["Name"])
+        ws.append(["x" * 50])
+        wb.save(path)
+
+        monkeypatch.setattr(importer_module, "MAX_IMPORT_CELL_LENGTH", 10)
+        importer = ExcelImporter()
+
+        result = importer.import_file_configured(path, sheet_name=None, header_row=0)
+        with pytest.raises(DataImportError, match="Sicherheitslimit"):
+            list(result.rows)
+
+    def test_import_hard_caps_do_not_affect_legit_small_files(self, simple_xlsx: Path) -> None:
+        """Reale Defaults: 10 Zeilen bleiben 10 Zeilen, kein Kürzen."""
+        importer = ExcelImporter()
+        result = importer.import_file(simple_xlsx)
+        rows = list(result.rows)
+        assert len(rows) == 10
