@@ -31,6 +31,17 @@ def _clean_root_logger() -> Iterator[None]:
     root.setLevel(original_level)
 
 
+@pytest.fixture(autouse=True)
+def _restore_excepthook() -> Iterator[None]:
+    """`install_excepthook` mutiert `sys.excepthook` prozessweit – ohne Restore
+    würde er nach diesem Modul für den Rest der Session auf
+    `_handle_uncaught_exception` (und dessen inzwischen ungültigen
+    tmp_path-Log-Pfad) zeigen bleiben."""
+    original = sys.excepthook
+    yield
+    sys.excepthook = original
+
+
 @pytest.fixture
 def log_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(logging_setup, "user_log_dir", lambda **_kwargs: str(tmp_path))
@@ -71,6 +82,22 @@ class TestConfigureLogging:
         for handler in logging.getLogger().handlers:
             handler.flush()
         assert "Marker-Zeile" in path.read_text(encoding="utf-8")
+
+    def test_creates_missing_nested_log_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`user_log_dir` liefert unter macOS/Windows i. d. R. ein noch nicht
+        existierendes Verzeichnis (erster App-Start) – im Gegensatz zur
+        `log_dir`-Fixture, die auf `tmp_path` zeigt und das Verzeichnis somit
+        immer schon existieren lässt."""
+        missing = tmp_path / "not" / "yet" / "created"
+        monkeypatch.setattr(logging_setup, "user_log_dir", lambda **_kwargs: str(missing))
+        assert not missing.exists()
+
+        path = logging_setup.configure_logging("INFO")
+
+        assert path == missing / "app.log"
+        assert missing.is_dir()
 
 
 class TestInstallExcepthook:

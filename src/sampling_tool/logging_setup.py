@@ -26,7 +26,7 @@ _MAX_BYTES: Final[int] = 1_000_000
 _BACKUP_COUNT: Final[int] = 3
 _LOG_FORMAT: Final[str] = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
-_logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def log_file_path() -> Path:
@@ -97,7 +97,7 @@ def _handle_uncaught_exception(
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
 
-    _logger.critical("Unbehandelte Ausnahme", exc_info=(exc_type, exc_value, exc_traceback))
+    logger.critical("Unbehandelte Ausnahme", exc_info=(exc_type, exc_value, exc_traceback))
 
     app = QApplication.instance()
     if app is not None:
