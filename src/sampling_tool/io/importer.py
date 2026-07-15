@@ -12,7 +12,7 @@ Architektur-Anker:
   NICHT mehr verwendet – bleibt aber für alle Exporter (Writes).
 - **Header-Detection**: erste „dichte" Zeile (überwiegend Strings) gilt als
   Header, Inhalts-Zeilen folgen. Fallback: erste nicht-leere Zeile.
-- **Encoding-Detection** für CSV: utf-8 → utf-8-sig → latin-1 → cp1252.
+- **Encoding-Detection** für CSV: utf-8 → utf-8-sig → cp1252 → latin-1.
 - **Native Python-Typen** im Output – kein numpy/pandas-Typ verlässt diese
   Datei.
 - **Progress-Callback**: `progress(current, total)` wird in regelmäßigen
@@ -33,6 +33,7 @@ Zahl korrigiert.
 from __future__ import annotations
 
 import csv
+import math
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
@@ -54,11 +55,20 @@ HeaderConfidence = Literal["high", "low", "ambiguous"]
 
 ProgressCallback = Callable[[int, int], None]
 
-# Alle Encodings, die wir bei CSV der Reihe nach probieren.
-_CSV_ENCODINGS: Final[tuple[str, ...]] = ("utf-8", "utf-8-sig", "latin-1", "cp1252")
+# Alle Encodings, die wir bei CSV der Reihe nach probieren. Sprint 49 / A-005:
+# cp1252 VOR latin-1 – latin-1 dekodiert jedes Byte (auch die, die cp1252
+# als Sonderzeichen wie „€" definiert), wäre also sonst immer gewählt und
+# cp1252 nie erreichbar.
+_CSV_ENCODINGS: Final[tuple[str, ...]] = ("utf-8", "utf-8-sig", "cp1252", "latin-1")
 
 # Schwellwert für Header-Detection: ≥ Anteil String-Zellen einer Zeile.
 _HEADER_STRING_RATIO: Final[float] = 0.5
+
+# Sprint 49 / N-006: signed-64-Bit-Grenzen für die Ganzzahl-Coercion – orjson
+# wirft `TypeError` bei Ints außerhalb dieses Bereichs, und zwar VOR dem
+# `default`-Callback (der Wert ist ja ein "unterstützter" Typ, nur zu groß).
+_INT64_MIN: Final[int] = -(2**63)
+_INT64_MAX: Final[int] = 2**63 - 1
 
 # Progress-Frequenz beim Streaming-Read.
 _PROGRESS_INTERVAL: Final[int] = 1000
@@ -275,7 +285,7 @@ class ExcelImporter:
         suffix = path.suffix.lower()
         if suffix in SUPPORTED_CSV_SUFFIXES:
             text, _enc = _read_csv_text(path)
-            columns, rows_iter, _skipped, _warns = _parse_csv(text)
+            columns, rows_iter, _skipped, _warns = _parse_csv(text, suffix=suffix)
             preview_rows = [dict(zip(columns, r, strict=False)) for r in rows_iter[:n_rows]]
             return list(columns), preview_rows
 
@@ -367,9 +377,8 @@ class ExcelImporter:
             raise DataImportError("preview_csv(): max_rows muss >= 0 sein.")
 
         text, _enc = _read_csv_text(path)
-        raw_rows = [
-            tuple(_coerce_value(c) for c in row) for row in _csv_reader_rows(text)[:max_rows]
-        ]
+        rows, _delim_warning = _csv_reader_rows(text, suffix=suffix)
+        raw_rows = [tuple(_coerce_value(c) for c in row) for row in rows[:max_rows]]
         detected, confidence = _detect_header_with_confidence(raw_rows)
         return SheetPreview(
             sheet_name=path.name,
@@ -493,7 +502,7 @@ class ExcelImporter:
         Coercion) – nur die Auswahl der Rohzeilen unterscheidet sich.
         """
         text, encoding = _read_csv_text(path)
-        raw_rows = _csv_reader_rows(text)
+        raw_rows, delimiter_warning = _csv_reader_rows(text, suffix=path.suffix.lower())
 
         warnings: list[str] = []
         if header_row is None:
@@ -530,6 +539,8 @@ class ExcelImporter:
                 continue
             data_rows.append(list(raw))
 
+        if delimiter_warning is not None:
+            warnings = [*warnings, delimiter_warning]
         if encoding != "utf-8":
             warnings = [*warnings, f"CSV-Encoding erkannt als '{encoding}'."]
 
@@ -677,7 +688,7 @@ class ExcelImporter:
 
     def _import_csv(self, path: Path) -> ImportResult:
         text, encoding = _read_csv_text(path)
-        columns, data_rows, skipped, warnings = _parse_csv(text)
+        columns, data_rows, skipped, warnings = _parse_csv(text, suffix=path.suffix.lower())
 
         if not columns:
             raise DataImportError(f"CSV-Datei '{path.name}' enthält keine Daten.")
@@ -945,24 +956,37 @@ def _read_csv_text(path: Path) -> tuple[str, str]:
     )
 
 
-def _csv_reader_rows(text: str) -> list[list[Any]]:
+def _csv_reader_rows(text: str, *, suffix: str = "") -> tuple[list[list[Any]], str | None]:
     """Liest CSV-Text in rohe Zeilen-Listen. Delimiter wird geschnüffelt.
 
     Gemeinsame Basis für `_parse_csv` (Auto-Pfad) und `_import_csv_configured`
     / `preview_csv` (Sprint-29-Override-Pfad) – damit beide Pfade denselben
     Dialekt und dieselbe Zeilenaufteilung sehen.
+
+    Sprint 49 / A-005: `suffix` (z. B. ``.tsv``) ist nur für den Fallback
+    relevant, wenn `csv.Sniffer` scheitert – eine erfolgreich geschnüffelte
+    Datei wird nicht überstimmt. Rückgabe zusätzlich eine Warnung (oder
+    ``None``), wenn der Fallback gegriffen hat – analog zur Encoding-Warnung
+    nur bei Abweichung vom stillen Default.
     """
     sample = text[:8192] or text
     try:
         dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+        fallback_warning: str | None = None
     except csv.Error:
-        dialect = csv.excel  # Default: Komma
-    return [list(row) for row in csv.reader(text.splitlines(), dialect=dialect)]
+        if suffix == ".tsv":
+            dialect = csv.excel_tab
+            fallback_warning = "Trennzeichen: Tab (aus Dateiendung '.tsv')."
+        else:
+            dialect = csv.excel  # Default: Komma
+            fallback_warning = "Trennzeichen: Komma (Standard, Erkennung nicht eindeutig)."
+    rows = [list(row) for row in csv.reader(text.splitlines(), dialect=dialect)]
+    return rows, fallback_warning
 
 
-def _parse_csv(text: str) -> tuple[list[str], list[list[Any]], int, list[str]]:
+def _parse_csv(text: str, *, suffix: str = "") -> tuple[list[str], list[list[Any]], int, list[str]]:
     """Splittet CSV-Text in Header + Datenzeilen. Delimiter wird geschnüffelt."""
-    all_rows = _csv_reader_rows(text)
+    all_rows, delimiter_warning = _csv_reader_rows(text, suffix=suffix)
 
     # Leere Zeilen am Anfang strippen, davon zählen wir die ersten als
     # "leading blanks" für die skipped-Bilanz.
@@ -980,6 +1004,8 @@ def _parse_csv(text: str) -> tuple[list[str], list[list[Any]], int, list[str]]:
 
     header_row = list(all_rows[0])
     columns, warnings = _normalize_columns(header_row)
+    if delimiter_warning is not None:
+        warnings = [*warnings, delimiter_warning]
 
     data_rows: list[list[Any]] = []
     skipped = leading
@@ -1037,26 +1063,40 @@ def _coerce_value(value: Any) -> Any:
     return str(value)
 
 
+# Sprint 49 / N-006: `_try_int`s drei möglichen Ausgänge – ob eine Ganzzahl
+# in-range/out-of-range ist, entscheidet `_coerce_string`s Folge-Verzweigung
+# (out-of-range darf NICHT an `_try_float` weitergereicht werden).
+_IntCoercionKind = Literal["in_range", "out_of_range", "not_int"]
+
+
 def _coerce_string(value: str) -> Any:
     """Stringwert auf Native-Typ (int/float/str/None) abbilden."""
     text = value.strip()
     if text == "":
         return None
-    as_int = _try_int(text)
-    if as_int is not None:
+    int_kind, as_int = _try_int(text)
+    if int_kind == "in_range":
         return as_int
+    if int_kind == "out_of_range":
+        # Sprint 49 / N-006: ganzzahlig, aber außerhalb des signed-64-Bit-
+        # Bereichs → Originalstring bewahren. NICHT an `_try_float`
+        # weiterreichen, das würde die Zahl per Float-Rundung verfälschen.
+        return text
     as_float = _try_float(text)
     if as_float is not None:
         return as_float
     return text
 
 
-def _try_int(text: str) -> int | None:
+def _try_int(text: str) -> tuple[_IntCoercionKind, int | None]:
     try:
         # int("1.0") wirft – das ist Absicht, das wäre ein Float.
-        return int(text)
+        value = int(text)
     except ValueError:
-        return None
+        return "not_int", None
+    if _INT64_MIN <= value <= _INT64_MAX:
+        return "in_range", value
+    return "out_of_range", None
 
 
 def _try_float(text: str) -> float | None:
@@ -1064,6 +1104,12 @@ def _try_float(text: str) -> float | None:
     # eindeutig (kein zusätzlicher Punkt im String).
     candidate = text.replace(",", ".") if "." not in text and text.count(",") == 1 else text
     try:
-        return float(candidate)
+        result = float(candidate)
     except ValueError:
         return None
+    # Sprint 49 / N-007: non-finite (inf/nan/Float-Overflow wie "1e999")
+    # verwerfen – orjson kodiert das sonst still als `null` (Datenverlust).
+    # `_coerce_string` fällt dadurch auf den String-Zweig zurück.
+    if not math.isfinite(result):
+        return None
+    return result
