@@ -144,6 +144,34 @@ class TestImportCsv:
         assert rows[0].values["Name"] == "Müller"
         assert any("Encoding" in w for w in result.stats.warnings)
 
+    def test_cp1252_byte_0x80_is_euro(self, importer: ExcelImporter, tmp_path: Path) -> None:
+        """Sprint 49 / A-005: cp1252 muss VOR latin-1 probiert werden – 0x80
+        ist in cp1252 das Euro-Zeichen, in latin-1 ein C1-Steuerzeichen
+        (U+0080). latin-1 dekodiert jedes Byte, würde also cp1252 sonst nie
+        erreichen lassen."""
+        path = tmp_path / "euro.csv"
+        path.write_bytes(b"Name,Wert\nX," + bytes([0x80]) + b"\n")
+        result = importer.import_file(path)
+        rows = list(result.rows)
+        assert rows[0].values["Wert"] == "€"
+        assert any("cp1252" in w for w in result.stats.warnings)
+
+    def test_tsv_fallback_uses_tab(self, importer: ExcelImporter, tmp_path: Path) -> None:
+        """Sprint 49 / A-005: ungleiche Zeilenbreiten lassen csv.Sniffer
+        scheitern (empirisch verifiziert) – der Endungs-Fallback muss
+        trotzdem Tab wählen, nicht den Komma-Default (der hier mangels
+        Komma die ganze Zeile als eine Spalte lesen würde)."""
+        path = tmp_path / "messy.tsv"
+        path.write_text(
+            "Konto\tBetrag\tKommentar\n1000\t500\n2000\t750\t825\t900\n",
+            encoding="utf-8",
+        )
+        result = importer.import_file(path)
+        rows = list(result.rows)
+        assert result.dataset.columns == ("Konto", "Betrag", "Kommentar")
+        assert rows[0].values == {"Konto": 1000, "Betrag": 500, "Kommentar": None}
+        assert any("Trennzeichen" in w for w in result.stats.warnings)
+
     def test_csv_mit_semikolon_separator(self, importer: ExcelImporter, tmp_path: Path) -> None:
         path = tmp_path / "semi.csv"
         path.write_text("a;b;c\n1;2;3\n4;5;6\n", encoding="utf-8")
@@ -768,3 +796,49 @@ class TestImportHardCaps:
         result = importer.import_file(simple_xlsx)
         rows = list(result.rows)
         assert len(rows) == 10
+
+
+class TestPersistsPathologicalValues:
+    """Sprint 49 / N-006 + N-007: Ints außerhalb des signed-64-Bit-Bereichs und
+    non-finite Floats (inf/nan/Overflow) dürfen den Import nicht crashen
+    (orjson TypeError) oder Daten stillschweigend zu `null` machen (orjson
+    OPT_PASSTHROUGH_DATETIME kodiert non-finite floats sonst als `null`)."""
+
+    def test_import_persists_huge_int_and_nonfinite_as_string(
+        self, importer: ExcelImporter, tmp_path: Path
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.core.models import Engagement
+        from sampling_tool.persistence.database import Database
+        from sampling_tool.persistence.repositories import DatasetRepo, EngagementRepo
+
+        path = tmp_path / "pathological.csv"
+        path.write_text(
+            "Konto,Betrag,Hinweis\n1000,99999999999999999999,inf\n2000,500,1e999\n",
+            encoding="utf-8",
+        )
+
+        result = importer.import_file(path)
+
+        db = Database(tmp_path / "pathological.db")
+        db.migrate()
+        eng = EngagementRepo(db.connect()).get_or_create(
+            Engagement(
+                auditor_name="A", client_name="C", auditor_position="S", audit_type="ISAE 3402"
+            )
+        )
+        assert eng.id is not None
+        dataset = dc_replace(result.dataset, engagement_id=eng.id)
+
+        # Die eigentliche Regression: früher `TypeError: Integer exceeds
+        # 64-bit range` aus orjson, VOR jedem `default`-Callback.
+        stored = DatasetRepo(db.connect()).create(dataset, result.rows)
+        assert stored.id is not None
+
+        rows = DatasetRepo(db.connect()).get_all_rows(stored.id)
+        assert len(rows) == 2
+        by_id = {r.row_id: r.values for r in rows}
+        assert by_id[1] == {"Konto": 1000, "Betrag": "99999999999999999999", "Hinweis": "inf"}
+        assert by_id[2] == {"Konto": 2000, "Betrag": 500, "Hinweis": "1e999"}
+        db.close()

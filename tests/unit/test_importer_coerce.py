@@ -9,6 +9,7 @@ Direkt-Test). Die dritte Stolperfalle (pywin32-macOS-Schutz) liegt in
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime, time
 
 from sampling_tool.io.importer import _coerce_value
@@ -99,11 +100,14 @@ class TestNoneUndBool:
 
 
 def _reference_coerce_string(value: str) -> object:
-    """Eingefrorene Kopie der Pre-Sprint-35-`_coerce_string`-Implementierung.
+    """Eingefrorene Referenz-Implementierung der Coercion-Semantik.
 
-    Bewusst NICHT aus dem Importer importiert – das Oracle vergleicht jede
-    spätere Implementierungs-Optimierung gegen die historische Semantik
-    (Byte-Identität der importierten Werte ist die rote Linie).
+    Sprint 49 / N-006 + N-007: bewusst neu gepinnt (rote Linie im Backlog
+    vorgesehen) – Ganzzahlen außerhalb des signed-64-Bit-Bereichs und
+    non-finite Floats (inf/nan/Overflow) bleiben jetzt der Originalstring
+    statt orjson-Crash bzw. stillem `null`-Datenverlust bei der Persistenz.
+    Bewusst NICHT aus dem Importer importiert – unabhängige Zweit-
+    Implementierung, damit das Oracle weiterhin Wert hat.
     """
     text = value.strip()
     if text == "":
@@ -113,13 +117,15 @@ def _reference_coerce_string(value: str) -> object:
     except ValueError:
         as_int = None
     if as_int is not None:
-        return as_int
+        if -(2**63) <= as_int <= 2**63 - 1:
+            return as_int
+        return text
     candidate = text.replace(",", ".") if "." not in text and text.count(",") == 1 else text
     try:
         as_float: float | None = float(candidate)
     except ValueError:
         as_float = None
-    if as_float is not None:
+    if as_float is not None and math.isfinite(as_float):
         return as_float
     return text
 
@@ -161,6 +167,9 @@ _NASTY_CORPUS = [
     "nan",
     "+nan",
     "++inf",
+    "99999999999999999999",  # 20-stellig, > int64-max — Sprint 49 / N-006
+    "1e999",  # Float-Overflow → inf — Sprint 49 / N-007
+    "-1e999",
     "--1",
     "0x10",
     "0b101",
@@ -236,3 +245,81 @@ class TestCoerceStringEquivalenceOracle:
         assert _coerce_value(7) == 7
         assert _coerce_value(None) is None
         assert _coerce_value([1, 2]) == "[1, 2]"  # Letztes Mittel: str()
+
+
+class TestCoerceSourceFidelity:
+    """Sprint 49 / N-006 + N-007: explizite Vektor-Tests (nicht Oracle-
+    basiert) für die pathologischen Fälle, deren Coercion-Ergebnis sich
+    bewusst ändert — plus Belege, dass normale Werte byte-identisch
+    bleiben (die rote Linie gilt nur für pathologische Eingaben)."""
+
+    def test_huge_int_bleibt_string(self) -> None:
+        from sampling_tool.io.importer import _coerce_string
+
+        result = _coerce_string("99999999999999999999")
+        assert result == "99999999999999999999"
+        assert type(result) is str
+
+    def test_float_overflow_bleibt_string(self) -> None:
+        from sampling_tool.io.importer import _coerce_string
+
+        for text in ("1e999", "-1e999"):
+            result = _coerce_string(text)
+            assert result == text
+            assert type(result) is str
+
+    def test_inf_und_nan_bleiben_string(self) -> None:
+        from sampling_tool.io.importer import _coerce_string
+
+        for text in ("inf", "-inf", "+inf", "Infinity", "nan", "NaN"):
+            result = _coerce_string(text)
+            assert result == text
+            assert type(result) is str
+
+    def test_int64_max_grenze_bleibt_int(self) -> None:
+        from sampling_tool.io.importer import _coerce_string
+
+        boundary = 2**63 - 1
+        result = _coerce_string(str(boundary))
+        assert result == boundary
+        assert type(result) is int
+
+    def test_int64_max_plus_eins_wird_string(self) -> None:
+        from sampling_tool.io.importer import _coerce_string
+
+        boundary_plus_one = 2**63
+        result = _coerce_string(str(boundary_plus_one))
+        assert result == str(boundary_plus_one)
+        assert type(result) is str
+
+    def test_int64_min_grenze_bleibt_int(self) -> None:
+        from sampling_tool.io.importer import _coerce_string
+
+        boundary = -(2**63)
+        result = _coerce_string(str(boundary))
+        assert result == boundary
+        assert type(result) is int
+
+    def test_int64_min_minus_eins_wird_string(self) -> None:
+        from sampling_tool.io.importer import _coerce_string
+
+        boundary_minus_one = -(2**63) - 1
+        result = _coerce_string(str(boundary_minus_one))
+        assert result == str(boundary_minus_one)
+        assert type(result) is str
+
+    def test_in_range_int_unveraendert(self) -> None:
+        """Normale Werte bleiben byte-identisch — die rote Linie."""
+        from sampling_tool.io.importer import _coerce_string
+
+        result = _coerce_string("42")
+        assert result == 42
+        assert type(result) is int
+
+    def test_deutsches_komma_dezimal_unveraendert(self) -> None:
+        """Normale Werte bleiben byte-identisch — die rote Linie."""
+        from sampling_tool.io.importer import _coerce_string
+
+        result = _coerce_string("3,5")
+        assert result == 3.5
+        assert type(result) is float
