@@ -126,17 +126,51 @@ _UMLAUT_MAP: Final[dict[str, str]] = {
     "Ü": "Ue",
 }
 
+# Reservierte Windows-Gerätenamen (Sprint 51 / N-009): case-insensitive, ein
+# `mkdir`/`open` auf einen dieser Namen schlägt auf Windows mit `OSError` fehl,
+# unabhängig vom Suffix (auch `CON.db` ist reserviert).
+_RESERVED_DEVICE_NAMES: Final[frozenset[str]] = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
+
+# Dateisystem-Grenzen (Sprint 51 / N-009): großzügig genug für reale Mandanten-
+# /Prüfungstyp-Namen, klein genug um mit Suffixen/Zeitstempeln nie an
+# Pfadlängen-Limits (v. a. Windows) zu stoßen.
+_SANITIZED_MAX_LENGTH: Final[int] = 100
+
 
 def sanitize_for_path(name: str) -> str:
     """Macht aus einem Mandanten-/Auditor-Namen einen filesystem-tauglichen Token.
 
     - Umlaute werden transliteriert (ä → ae, ß → ss, …).
     - Leerzeichen werden zu Underscores.
-    - Alles außer `A-Za-z0-9_-` wird entfernt (Case bleibt erhalten).
+    - Erhalten bleibt Unicode-Alphanumerik (kyrillisch, CJK, akzentuierte
+      Buchstaben, …) sowie `_`/`-`; alles andere wird entfernt (Case bleibt
+      erhalten) – `str.isalnum()` ist NICHT auf ASCII beschränkt.
+    - Wird auf ~100 Zeichen gekappt.
+    - Reservierte Windows-Gerätenamen (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`,
+      `LPT1`–`LPT9`; case-insensitive, auch als Stem vor einem Suffix wie
+      `.db` – z. B. `CON.db`) bekommen einen Unterstrich angehängt (z. B.
+      `CON` → `CON_`), damit nie ein reservierter Name als Pfadbestandteil
+      entsteht. Der Stem wird VOR dem Zeichen-Filter geprüft, weil der Filter
+      `.` entfernt und einen eingebetteten Suffix sonst unerkennbar mit dem
+      Rest verschmelzen würde (`CON.db` → `CONdb`).
     - Leerer Output fällt auf `"engagement"` zurück, damit nie ein leerer
       Pfadbestandteil entsteht.
     """
     translated = "".join(_UMLAUT_MAP.get(c, c) for c in name)
     translated = translated.replace(" ", "_")
+    # Stem vor einem etwaigen Suffix, VOR dem Zeichen-Filter berechnet (der
+    # `.` entfernen würde) – reines String-Split statt `Path(...).stem`, damit
+    # ein `/`/`\` im Namen nicht als Verzeichnis-Trenner fehlinterpretiert wird.
+    pre_filter_stem = translated.rsplit(".", 1)[0] if "." in translated else translated
     cleaned = "".join(c for c in translated if c.isalnum() or c in ("_", "-"))
+    cleaned = cleaned[:_SANITIZED_MAX_LENGTH]
+    if (
+        cleaned.upper() in _RESERVED_DEVICE_NAMES
+        or pre_filter_stem.upper() in _RESERVED_DEVICE_NAMES
+    ):
+        cleaned = f"{cleaned}_"
     return cleaned or "engagement"

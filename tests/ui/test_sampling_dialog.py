@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
@@ -377,6 +378,50 @@ class TestSamplingDialogDistinctProvider:
         qtbot.addWidget(dialog)
         dialog._filter_field.setCurrentText("Land")
         assert dialog._filter_value.count() == 0
+
+    def test_filter_dropdown_survives_quote_column(self, qtbot: QtBot) -> None:
+        """N-008: eine Spalte mit `"`/`\\` im Header kann den echten
+        distinct-values-Provider (DatasetRepo.distinct_values) zum Werfen
+        bringen. Der Dialog-Slot darf so eine Exception nie ungefangen aus
+        dem Qt-Slot propagieren lassen – sonst App-Abbruch beim Filter-
+        Spaltenwechsel."""
+        dataset, _ = _make_dataset()
+
+        def raising_provider(field: str) -> list[Any]:
+            raise sqlite3.OperationalError("malformed JSON")
+
+        dialog = SamplingDialog(dataset, raising_provider, features=_ALL)
+        qtbot.addWidget(dialog)
+        dialog._filter_field.setCurrentText("Land")
+        assert dialog._filter_value.count() == 0
+
+    def test_transient_provider_failure_is_not_cached_permanently(self, qtbot: QtBot) -> None:
+        """Ein Provider-Fehler darf nicht als (falsches) leeres Ergebnis in
+        `_distinct_cache` einfrieren – z. B. bei einem transienten
+        `sqlite3.OperationalError: database is locked` durch eine gleichzeitig
+        laufende Snapshot-Erstellung. Nach dem Fehlversuch muss ein erneuter
+        Wechsel auf dasselbe Feld den Provider wieder aufrufen (Retry), statt
+        das Dropdown für die restliche Dialog-Lebensdauer leer zu lassen."""
+        dataset, real_provider = _make_dataset()
+        calls: list[str] = []
+
+        def flaky_provider(field: str) -> list[Any]:
+            calls.append(field)
+            if len(calls) == 1:
+                raise sqlite3.OperationalError("database is locked")
+            return real_provider(field)
+
+        dialog = SamplingDialog(dataset, flaky_provider, features=_ALL)
+        qtbot.addWidget(dialog)
+
+        dialog._filter_field.setCurrentText("Land")
+        assert dialog._filter_value.count() == 0  # erster Versuch schlägt fehl
+
+        dialog._filter_field.setCurrentText("Konto")  # weg vom Feld …
+        dialog._filter_field.setCurrentText("Land")  # … und zurück: Retry fällig
+
+        assert calls == ["Land", "Konto", "Land"]  # Provider wurde erneut gefragt
+        assert dialog._filter_value.count() == 3  # {"AUT", "CHE", "DEU"}
 
 
 class TestSamplingDialogGranularFeatures:

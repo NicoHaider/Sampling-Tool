@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QVBoxLayout,
     QWidget,
 )
@@ -199,7 +200,15 @@ class NewEngagementDialog(QDialog):
 
         sanitized = sanitize_for_path(self._client_name.text().strip())
         default_dir = self._engagements_dir / sanitized
-        default_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            default_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "Ordner konnte nicht angelegt werden",
+                f'Der Projekt-Ordner „{default_dir}" konnte nicht angelegt werden:\n{exc}',
+            )
+            return
         default_target = default_dir / self._default_target_name(sanitized)
         path_str, _filter = QFileDialog.getSaveFileName(
             self,

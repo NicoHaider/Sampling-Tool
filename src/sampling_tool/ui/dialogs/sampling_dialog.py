@@ -11,6 +11,7 @@ UI-Anweisung an den Controller, das Dataset vor der Ziehung zu filtern.
 
 from __future__ import annotations
 
+import logging
 import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -55,6 +56,8 @@ from sampling_tool.core.models import (
 from sampling_tool.core.presets import SamplingPreset
 from sampling_tool.ui.preset_store import PresetStore
 from sampling_tool.ui.settings_store import SamplingFeatures
+
+logger = logging.getLogger(__name__)
 
 NO_FILTER_LABEL: str = "(kein Filter)"
 
@@ -553,8 +556,19 @@ class SamplingDialog(QDialog):
             self._filter_value.setEnabled(True)
             values = self._distinct_cache.get(field)
             if values is None:
-                values = tuple(self._distinct_values_provider(field))
-                self._distinct_cache[field] = values
+                try:
+                    values = tuple(self._distinct_values_provider(field))
+                except Exception:
+                    # Nicht cachen: ein transienter Fehler (z. B. "database is
+                    # locked" durch eine parallele Snapshot-Erstellung) soll
+                    # beim nächsten Wechsel auf dieses Feld erneut versucht
+                    # werden, statt das Dropdown dauerhaft leer einzufrieren.
+                    logger.warning(
+                        "distinct-values provider failed for filter field %r", field, exc_info=True
+                    )
+                    values = ()
+                else:
+                    self._distinct_cache[field] = values
             for value in values:
                 self._filter_value.addItem(_display(value), userData=value)
         self._filter_value.blockSignals(False)
