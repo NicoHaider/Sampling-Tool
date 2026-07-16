@@ -35,6 +35,7 @@ from reportlab.platypus import (
 from sampling_tool.config import BDO_RED, DEFAULT_BRIEFPAPIER
 from sampling_tool.core.formatting import format_audit_details, format_event_timestamp
 from sampling_tool.core.models import AuditEvent, Engagement
+from sampling_tool.io._atomic import atomic_output
 from sampling_tool.io.bdo_locations import BdoCompany, BdoLocation
 from sampling_tool.io.briefpapier import BriefpapierConfig, get_default_briefpapier
 
@@ -158,19 +159,6 @@ class AuditTrailPDF:
         `include_statistics=False` lässt den abschließenden Statistik-Block
         weg – nützlich für minimale Trail-Exports.
         """
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        doc = SimpleDocTemplate(
-            str(output_path),
-            pagesize=landscape(A4),
-            leftMargin=20 * mm,
-            rightMargin=20 * mm,
-            topMargin=22 * mm,
-            bottomMargin=22 * mm,
-            title=f"AuditTrail – {engagement.client_name}",
-            author=engagement.auditor_name,
-        )
-
         draws_address = self._draws_address_block()
         story: list[Any] = []
         story.extend(
@@ -186,7 +174,19 @@ class AuditTrailPDF:
             story.extend(_build_statistics(events))
 
         on_page = _make_on_page(self._resolve_background())
-        doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
+
+        with atomic_output(output_path) as tmp:
+            doc = SimpleDocTemplate(
+                str(tmp),
+                pagesize=landscape(A4),
+                leftMargin=20 * mm,
+                rightMargin=20 * mm,
+                topMargin=22 * mm,
+                bottomMargin=22 * mm,
+                title=f"AuditTrail – {engagement.client_name}",
+                author=engagement.auditor_name,
+            )
+            doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
         return output_path
 
 

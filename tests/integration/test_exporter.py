@@ -289,7 +289,7 @@ class TestExportSample:
         Tmp-Datei darf nicht liegen bleiben."""
         with (
             patch(
-                "sampling_tool.io.exporter.os.replace",
+                "sampling_tool.io._atomic.os.replace",
                 side_effect=PermissionError("target locked"),
             ),
             pytest.raises(ExportError, match="Excel geöffnet"),

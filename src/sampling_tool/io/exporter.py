@@ -7,14 +7,14 @@ Erzeugt eine .xlsx mit zwei Sheets:
 - **Metadaten**: Engagement-Info, Sampling-Methode, Seed, Population,
   Sample-Size, Datum.
 
-Schreibt **atomar**: Output geht zuerst in `<datei>.tmp`, danach
-`os.replace()` auf den Ziel-Pfad. Damit bleibt bei einem Crash mitten im
-Schreiben kein halbes File zurück.
+Schreibt **atomar** über `sampling_tool.io._atomic.atomic_output` (S2.5 /
+A-004): Output geht zuerst in eine exklusiv erzeugte Tempdatei im Zielordner,
+danach `os.replace()` auf den Ziel-Pfad. Damit bleibt bei einem Crash mitten
+im Schreiben kein halbes File zurück.
 """
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
@@ -29,6 +29,7 @@ from sampling_tool import __version__
 from sampling_tool.config import BDO_RED
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement, SampleResult
 from sampling_tool.core.provenance import SamplingProvenance
+from sampling_tool.io._atomic import AtomicReplaceError, atomic_output
 from sampling_tool.io._xlsx_safe import safe_row
 
 if TYPE_CHECKING:
@@ -87,31 +88,22 @@ class ExcelExporter:
             else []
         )
 
-        output_dir.mkdir(parents=True, exist_ok=True)
         filename = self._build_filename(custom_name, custom_id)
         target = output_dir / filename
-        tmp = target.with_suffix(target.suffix + ".tmp")
 
         wb = Workbook()
         try:
             self._write_sample_sheet(wb, sample_rows, columns)
             self._write_metadata_sheet(wb, sample, dataset, engagement)
-            wb.save(tmp)
             try:
-                os.replace(tmp, target)
-            except OSError as exc:
+                with atomic_output(target) as tmp:
+                    wb.save(tmp)
+            except AtomicReplaceError as exc:
                 raise ExportError(
                     f"Die Zieldatei „{target.name}“ konnte nicht geschrieben werden: "
                     f"{exc}. Sie ist möglicherweise in Excel geöffnet oder es fehlen "
                     "Schreibrechte."
                 ) from exc
-        except Exception:
-            # Tmp-Datei wegräumen, damit kein halbes File übrig bleibt. Deckt
-            # sowohl `wb.save`-Fehler (roh weitergeworfen) als auch den oben
-            # gewrappten `ExportError` aus dem `os.replace`-Fehlerpfad ab.
-            if tmp.exists():
-                tmp.unlink(missing_ok=True)
-            raise
         finally:
             wb.close()
 
