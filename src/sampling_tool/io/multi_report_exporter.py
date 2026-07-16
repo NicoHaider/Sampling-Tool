@@ -13,13 +13,14 @@
 4. **Statistiken** – Methoden-Verteilung als Tabelle + eingebettetes
    Bar-Chart-Bild via `io.charts`.
 
-Schreibt atomar (.tmp → `os.replace`), damit ein Absturz beim Speichern
-keine halbe Datei hinterlässt – das gleiche Muster wie in `exporter.py`.
+Schreibt **atomar** über `sampling_tool.io._atomic.atomic_output` (S2.5 /
+A-004): Output geht zuerst in eine exklusiv erzeugte Tempdatei im Zielordner,
+danach `os.replace()` auf den Ziel-Pfad. Damit bleibt bei einem Crash mitten
+im Schreiben kein halbes File zurück – das gleiche Muster wie in `exporter.py`.
 """
 
 from __future__ import annotations
 
-import os
 from collections import Counter
 from datetime import datetime
 from io import BytesIO
@@ -41,8 +42,10 @@ from sampling_tool.core.models import (
     SampleResult,
 )
 from sampling_tool.core.provenance import SamplingProvenance
+from sampling_tool.io._atomic import AtomicReplaceError, atomic_output
 from sampling_tool.io._xlsx_safe import safe_row
 from sampling_tool.io.charts import render_bar_chart_bytes
+from sampling_tool.io.exporter import ExportError
 
 _HEADER_FILL: Final = PatternFill(start_color="FFE81A3B", end_color="FFE81A3B", fill_type="solid")
 _HEADER_FONT: Final = Font(bold=True, color="FFFFFFFF")
@@ -79,13 +82,11 @@ class MultiSheetReportExporter:
         sample` (Sprint 43 / A-001) bildet `sample.id -> dataset.id` ab, weil
         die flache `samples`-Liste diese Zuordnung sonst nicht kennt.
         """
-        output_path.parent.mkdir(parents=True, exist_ok=True)
         target = (
             output_path
             if output_path.suffix.lower() == ".xlsx"
             else output_path.with_suffix(".xlsx")
         )
-        tmp = target.with_suffix(target.suffix + ".tmp")
 
         active = ALL_SHEETS if not sheets else (sheets & ALL_SHEETS)
         if not active:
@@ -109,15 +110,19 @@ class MultiSheetReportExporter:
             for ws in list(wb.worksheets):
                 if ws.title == "Sheet":
                     wb.remove(ws)
-            wb.save(tmp)
-        except Exception:
-            if tmp.exists():
-                tmp.unlink(missing_ok=True)
-            raise
+
+            try:
+                with atomic_output(target) as tmp:
+                    wb.save(tmp)
+            except AtomicReplaceError as exc:
+                raise ExportError(
+                    f"Die Zieldatei „{target.name}“ konnte nicht geschrieben werden: "
+                    f"{exc}. Sie ist möglicherweise in Excel geöffnet oder es fehlen "
+                    "Schreibrechte."
+                ) from exc
         finally:
             wb.close()
 
-        os.replace(tmp, target)
         return target
 
     # ---- Sheets ---------------------------------------------------------

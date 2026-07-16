@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from openpyxl import load_workbook
@@ -17,6 +18,7 @@ from sampling_tool.core.models import (
     SampleResult,
     SamplingMethod,
 )
+from sampling_tool.io.exporter import ExportError
 from sampling_tool.io.multi_report_exporter import MultiSheetReportExporter
 
 pytestmark = pytest.mark.integration
@@ -198,6 +200,31 @@ class TestMultiSheetReportExporter:
         leftovers = list(tmp_path.glob("*.tmp"))
         assert leftovers == []
         assert out.exists()
+
+    def test_multi_report_atomic_no_partial_on_replace_error(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        datasets: list[Dataset],
+        samples: list[SampleResult],
+        audit_events: list[AuditEvent],
+    ) -> None:
+        """Schließt die A-004-Lücke: vorher lag `os.replace` außerhalb jedes
+        try/except/finally – ein Fehlschlag (z. B. Ziel in Excel geöffnet)
+        ließ die Tmp-Datei liegen und warf einen rohen `OSError`. Jetzt:
+        aufgeräumt + als `ExportError` (Parität zu exporter.py)."""
+        out = tmp_path / "bericht.xlsx"
+        with (
+            patch(
+                "sampling_tool.io._atomic.os.replace",
+                side_effect=PermissionError("target locked"),
+            ),
+            pytest.raises(ExportError, match="Excel geöffnet"),
+        ):
+            MultiSheetReportExporter().export(engagement, datasets, samples, audit_events, out)
+        assert not out.exists()
+        leftovers = list(tmp_path.glob("*.tmp"))
+        assert leftovers == [], f"Kein .tmp-Rest erwartet, gefunden: {leftovers}"
 
     def test_only_uebersicht_when_sheets_filtered(
         self,
