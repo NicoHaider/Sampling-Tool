@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from reportlab.platypus import SimpleDocTemplate
 
 from sampling_tool.core.models import AuditEvent, Engagement
 from sampling_tool.io.bdo_locations import company_by_key, location_by_key
@@ -80,6 +82,44 @@ class TestAuditTrailPDF:
         assert result == out
         assert out.exists()
         assert out.stat().st_size > 1000  # plausible Mindestgröße
+
+    def test_pdf_report_atomic_no_partial_on_build_error(
+        self, engagement: Engagement, events: list[AuditEvent], tmp_path: Path
+    ) -> None:
+        """N-010-PDF-Write: `SimpleDocTemplate`/`doc.build` schrieben bisher
+        direkt auf `output_path` – ein Fehler mittendrin im Rendering (z. B.
+        ein defektes Briefpapier, das trotz Sprint-47-Robustheit eine andere
+        Exception auslöst, oder schlicht ein reportlab-interner Fehler)
+        hinterließ eine halbe/korrupte PDF am Ziel. Jetzt: atomar.
+
+        reportlab puffert den kompletten Inhalt im Speicher und schreibt erst
+        ganz am Ende (`canvas.save()` → `PDFDocument.SaveToFile`) – ein Mock,
+        der `.build()` sofort mit einer Exception abbricht, würde nie echte
+        Bytes aufs Ziel schreiben und den Bug damit nicht reproduzieren.
+        Der Side-Effect hier schreibt deshalb erst selbst ein paar Bytes an
+        den tatsächlich von `SimpleDocTemplate` verwendeten Pfad (`self.
+        filename` – vor der Migration `output_path`, danach der atomare
+        Tmp-Pfad), bevor er abstürzt – das simuliert einen echten
+        Mitten-im-Schreiben-Crash.
+        """
+
+        def _boom(doc: SimpleDocTemplate, *args: object, **kwargs: object) -> None:
+            Path(doc.filename).write_bytes(b"%PDF-1.4\n% truncated by reportlab boom")
+            raise RuntimeError("reportlab boom")
+
+        out = tmp_path / "audit.pdf"
+        with (
+            patch(
+                "sampling_tool.io.pdf_report.SimpleDocTemplate.build",
+                autospec=True,
+                side_effect=_boom,
+            ),
+            pytest.raises(RuntimeError, match="reportlab boom"),
+        ):
+            AuditTrailPDF().render(engagement, events, out)
+        assert not out.exists()
+        leftovers = list(tmp_path.glob("*.tmp"))
+        assert leftovers == [], f"Kein .tmp-Rest erwartet, gefunden: {leftovers}"
 
     def test_pdf_enthaelt_engagement_info(
         self, engagement: Engagement, events: list[AuditEvent], tmp_path: Path
