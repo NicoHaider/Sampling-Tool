@@ -31,6 +31,7 @@ from sampling_tool import __version__
 from sampling_tool.core.formatting import format_audit_details, format_optional_timestamp
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.core.provenance import SamplingProvenance
+from sampling_tool.io._atomic import atomic_output
 from sampling_tool.io.charts import (
     render_bar_chart_bytes,
     render_line_chart_bytes,
@@ -117,7 +118,6 @@ class HtmlReportGenerator:
             if output_path.suffix.lower() == ".html"
             else output_path.with_suffix(".html")
         )
-        target.parent.mkdir(parents=True, exist_ok=True)
 
         try:
             template = self._env.get_template(self._template_name)
@@ -147,7 +147,9 @@ class HtmlReportGenerator:
             "include_samples_table": include_samples_table,
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
-        target.write_text(template.render(**ctx), encoding="utf-8")
+        rendered = template.render(**ctx)
+        with atomic_output(target) as tmp:
+            tmp.write_text(rendered, encoding="utf-8")
         return target
 
 

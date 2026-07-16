@@ -6,6 +6,7 @@ import re
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -77,6 +78,27 @@ class TestHtmlReportGenerator:
         assert result.exists()
         content = result.read_text(encoding="utf-8")
         assert "<!doctype html>" in content.lower()
+
+    def test_html_report_atomic_no_partial_on_write_error(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        samples: list[SampleResult],
+        events: list[AuditEvent],
+    ) -> None:
+        """`html_report.py` schrieb bisher direkt via `target.write_text(...)`
+        aufs Ziel – ein Fehler mittendrin (Disk voll, Berechtigung) hinterließ
+        eine halbe HTML-Datei. Jetzt: atomar über `atomic_output`, kein
+        Teil-Ergebnis am Ziel."""
+        out = tmp_path / "report.html"
+        with (
+            patch("pathlib.Path.write_text", side_effect=OSError("disk full")),
+            pytest.raises(OSError, match="disk full"),
+        ):
+            HtmlReportGenerator().render(engagement, [], samples, events, out)
+        assert not out.exists()
+        leftovers = list(tmp_path.glob("*.tmp"))
+        assert leftovers == [], f"Kein .tmp-Rest erwartet, gefunden: {leftovers}"
 
     def test_html_contains_engagement_info(
         self,
