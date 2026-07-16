@@ -134,6 +134,38 @@ class TestDistinctValues:
         ds_id = _persist(db, eng, rows, ("Land",))
         assert DatasetRepo(db.connect()).distinct_values(ds_id, "GibtsNicht") == []
 
+    def test_distinct_values_with_quote_in_column_returns_empty(self, db: Database) -> None:
+        """N-008: '"'/'\\' im Spaltennamen brechen den JSON-Path (SQL-Identifier-
+        statt JSON-Path-Escaping) – statt eines ungefangenen
+        sqlite3.OperationalError muss die dokumentierte leere Liste zurückkommen
+        (analog zum Negativtest der Schwester iter_row_field_pairs)."""
+        eng = _engagement_id(db)
+        rows = [DatasetRow(row_id=1, values={'Betrag "netto"': 1, "Soll\\Haben": "S"})]
+        ds_id = _persist(db, eng, rows, ('Betrag "netto"', "Soll\\Haben"))
+        repo = DatasetRepo(db.connect())
+        assert repo.distinct_values(ds_id, 'Betrag "netto"') == []
+        assert repo.distinct_values(ds_id, "Soll\\Haben") == []
+
+    def test_distinct_values_unsupported_column_never_queries_db(self, db: Database) -> None:
+        """Der Guard muss VOR dem Pfadbau greifen (spiegelt supports_field_pairs) –
+        für eine nicht unterstützte Spalte darf gar keine SQL-Query laufen. Diese
+        SQLite-Version liefert für den malformten Pfad zufällig NULL statt eines
+        OperationalError; ohne diesen Test würde die Guard-Regression unbemerkt
+        durchrutschen, obwohl `test_distinct_values_with_quote_in_column_returns_empty`
+        weiterhin grün bliebe."""
+        eng = _engagement_id(db)
+        column = 'Betrag "netto"'
+        rows = [DatasetRow(row_id=1, values={column: 1})]
+        ds_id = _persist(db, eng, rows, (column,))
+        repo = DatasetRepo(db.connect())
+        traced: list[str] = []
+        repo.conn.set_trace_callback(traced.append)
+        try:
+            assert repo.distinct_values(ds_id, column) == []
+        finally:
+            repo.conn.set_trace_callback(None)
+        assert traced == []
+
 
 class TestDistinctValuesReproducibility:
     """KERN-Test: SQL-Pfad muss bit-identisch zum alten RAM-Pfad sein –

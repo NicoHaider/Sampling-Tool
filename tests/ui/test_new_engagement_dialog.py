@@ -85,6 +85,28 @@ class TestNewEngagementDialog:
         with pytest.raises(RuntimeError):
             dialog.get_db_path()
 
+    def test_new_engagement_mkdir_error_shows_warning(self, qtbot: QtBot, tmp_path: Path) -> None:
+        """N-009: schlägt `default_dir.mkdir()` fehl (z. B. reservierter Name
+        auf Windows, Berechtigungsproblem), darf das nicht als ungefangene
+        Qt-Slot-Exception den Prozess beenden – stattdessen eine Warnung."""
+        # Eine bestehende DATEI mit dem Zielnamen lässt `mkdir(exist_ok=True)`
+        # mit `FileExistsError` (Unterklasse von `OSError`) fehlschlagen.
+        (tmp_path / "ACME").write_text("not a directory")
+        dialog = NewEngagementDialog(engagements_dir=tmp_path)
+        qtbot.addWidget(dialog)
+        dialog._auditor_name.setText("Anna")
+        dialog._auditor_position.setText("Senior")
+        dialog._client_name.setText("ACME")
+        dialog._audit_type_combo.setCurrentText("ISAE 3402 Typ 2")
+
+        with patch("sampling_tool.ui.dialogs.new_engagement_dialog.QMessageBox.warning") as warning:
+            dialog._on_accept()
+
+        warning.assert_called_once()
+        assert dialog._db_path is None
+        with pytest.raises(RuntimeError):
+            dialog.get_db_path()
+
 
 class TestDefaultFilenameWithAuditType:
     """Sprint 30: der vorgeschlagene Default-Dateiname enthält die Prüfungsart,

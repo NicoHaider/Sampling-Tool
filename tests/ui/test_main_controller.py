@@ -2182,6 +2182,44 @@ class TestSanitizeForPath:
 
         assert sanitize_for_path("?!") == "engagement"
 
+    def test_sanitize_blocks_reserved_device_names(self) -> None:
+        """N-009: reservierte Windows-Gerätenamen dürfen nie unverändert
+        durchgereicht werden – sonst crasht `mkdir` auf Windows (App-Abbruch).
+
+        Exakte erwartete Werte (statt nur "nicht reserviert") – `CON.db` deckt
+        den Stem-vor-Suffix-Fall EXPLIZIT auf: der `.`-Filter würde `CON.db`
+        sonst zufällig zu `CONdb` entschärfen, ohne dass die Reserved-Name-
+        Erkennung selbst je greift. Der exakte Erwartungswert `CONdb_` beweist,
+        dass der Stem-Check (auf dem noch ungefilterten Namen) tatsächlich
+        feuert, statt nur zufällig durch das Dot-Stripping verdeckt zu werden.
+        """
+        from sampling_tool.config import sanitize_for_path
+
+        assert sanitize_for_path("CON") == "CON_"
+        assert sanitize_for_path("con") == "con_"
+        assert sanitize_for_path("NUL") == "NUL_"
+        assert sanitize_for_path("COM1") == "COM1_"
+        assert sanitize_for_path("LPT9") == "LPT9_"
+        assert sanitize_for_path("CON.db") == "CONdb_"
+        # Traversal bleibt wie bisher abgewehrt.
+        assert ".." not in sanitize_for_path("../../etc")
+        assert "/" not in sanitize_for_path("a/b")
+        assert "\\" not in sanitize_for_path("a\\b")
+
+    def test_sanitize_caps_length(self) -> None:
+        from sampling_tool.config import sanitize_for_path
+
+        result = sanitize_for_path("A" * 300)
+        assert len(result) <= 100
+
+    def test_sanitize_preserves_unicode(self) -> None:
+        """Dokumentiertes Verhalten (Sprint 51 / N-009 Docstring-Korrektur):
+        `str.isalnum()` ist nicht auf ASCII beschränkt – kyrillische/CJK/
+        akzentuierte Zeichen bleiben erhalten."""
+        from sampling_tool.config import sanitize_for_path
+
+        assert sanitize_for_path("Мандант北京é") == "Мандант北京é"
+
 
 # ---------------------------------------------------------------------------
 # Sprint-6: Reports + Refresh-Logik

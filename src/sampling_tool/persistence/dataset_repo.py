@@ -347,32 +347,39 @@ class DatasetRepo:
         repliziert die Stable-Sort-First-Occurrence-Ordnung des alten
         RAM-Pfads.
 
-        Limitierung: Spaltennamen mit eingebettetem `"` sind nicht abgedeckt
-        (pathologisch bei Excel-Headern) – ein solcher Filter liefert eine
-        leere Liste statt eines Crashs. Der JSON-Pfad wird als gebundener
-        Parameter übergeben; SQL-Injection ist ausgeschlossen.
+        Spaltennamen mit `"` oder `\\` (siehe `supports_field_pairs`) liefern
+        eine leere Liste statt eines Crashs (Sprint 51 / N-008) – der JSON-Pfad
+        kann für solche Namen nicht sicher gebaut werden, genau wie bei der
+        Schwester `iter_row_field_pairs`. `sqlite3.OperationalError` wird
+        zusätzlich als Belt-and-Suspenders abgefangen. Der JSON-Pfad wird als
+        gebundener Parameter übergeben; SQL-Injection ist ausgeschlossen.
         """
-        json_path = '$."' + column.replace('"', '""') + '"'
-        cur = self.conn.execute(
-            "SELECT json_extract(values_json, ?) AS raw, "
-            "       json_type(values_json, ?) AS jtype, "
-            "       MIN(row_index) AS first_idx "
-            "FROM dataset_rows WHERE dataset_id = ? "
-            "GROUP BY raw, jtype",
-            (json_path, json_path, dataset_id),
-        )
+        if not self.supports_field_pairs(column):
+            return []
+        json_path = '$."' + column + '"'
         decoded: list[tuple[Any, int]] = []
         seen: set[str] = set()
-        for row in cur:
-            jtype = row["jtype"]
-            if jtype is None or jtype == "null":
-                continue
-            value = _distinct_decode(row["raw"], jtype)
-            key = repr(value)
-            if key in seen:
-                continue
-            seen.add(key)
-            decoded.append((value, int(row["first_idx"])))
+        try:
+            cur = self.conn.execute(
+                "SELECT json_extract(values_json, ?) AS raw, "
+                "       json_type(values_json, ?) AS jtype, "
+                "       MIN(row_index) AS first_idx "
+                "FROM dataset_rows WHERE dataset_id = ? "
+                "GROUP BY raw, jtype",
+                (json_path, json_path, dataset_id),
+            )
+            for row in cur:
+                jtype = row["jtype"]
+                if jtype is None or jtype == "null":
+                    continue
+                value = _distinct_decode(row["raw"], jtype)
+                key = repr(value)
+                if key in seen:
+                    continue
+                seen.add(key)
+                decoded.append((value, int(row["first_idx"])))
+        except sqlite3.OperationalError:
+            return []
         decoded.sort(key=lambda item: (str(item[0]), item[1]))
         return [value for value, _ in decoded]
 
