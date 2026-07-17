@@ -45,12 +45,24 @@ dependencies = [
     "numpy>=2.0,<3",
     "matplotlib>=3.8",
     "reportlab>=4.2",
-    "pdfrw>=0.4",
+    # Sprint 53 / N-011: pdfrw (letztes Release 0.4/2017, unmaintained) ist
+    # raus. pypdf übernimmt sowohl den Briefpapier-Probeparse
+    # (briefpapier.validate_briefpapier) als auch das PDF-Briefpapier-
+    # Post-Merge (pdf_report._merge_briefpapier_pdf) – beides parst
+    # user-beschafftes, untrusted PDF-Material, deshalb hart auf die
+    # GHSA-jm82-fx9c-mx94-Fix-Version gepinnt.
+    "pypdf>=6.13.3",
     # Sprint 47 / N-010: `briefpapier.validate_briefpapier` decodiert
     # Bild-Briefpapiere direkt zur Fail-Fast-Prüfung – bisher nur transitiv
     # über matplotlib/reportlab vorhanden, jetzt ein echter Laufzeit-Import.
-    "pillow>=10.0",
-    "jinja2>=3.1",
+    # Sprint 53: Floor auf die aktuelle Security-Fix-Version gehoben
+    # (mehrere CVEs zwischen 10.0 und 12.3, u. a. CVE-2026-42309/-25990/
+    # -40192/-42311/-54060/-55380) – gleiches Bedrohungsmodell wie N-011:
+    # Pillow decodiert ebenfalls user-beschafftes, untrusted Bildmaterial.
+    "pillow>=12.3",
+    # Sprint 53 / N-014: 3.1.0–3.1.5 schließen mehrere CVEs ein
+    # (u. a. Sandbox-Escape) – Floor auf die Fix-Version gehoben.
+    "jinja2>=3.1.6",
     "platformdirs>=4.0",
     # pywin32 nur auf Windows (für Outlook-Bug-Mail, COM-Integration)
     "pywin32>=306; sys_platform == 'win32'",
@@ -63,7 +75,6 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6",
     "mypy>=1.11",
-    "pypdf>=5.0",  # nur Tests: Inhalts-Verifikation für AuditTrail-PDF
 ]
 build = [
     "pyinstaller>=6.10",
@@ -154,7 +165,6 @@ module = [
     "matplotlib.*",
     "win32com.*",
     "pythoncom.*",
-    "pdfrw.*",
 ]
 ignore_missing_imports = true
 
