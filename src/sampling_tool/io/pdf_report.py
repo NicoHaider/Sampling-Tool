@@ -571,13 +571,13 @@ def _draw_background(canvas: Canvas, source: Path, pagesize: tuple[float, float]
 def _merge_briefpapier_pdf(report_bytes: bytes, source: Path, pagesize: tuple[float, float]) -> bytes:
     """Legt die erste Seite von `source` als vollflächigen, auf `pagesize`
     skalierten Hintergrund unter jede Seite von `report_bytes` (S3.2a:
-    pypdf-Post-Merge statt pdfrw-Canvas-XObject).
+    pypdf-Post-Merge statt der vorherigen Canvas-XObject-Bridge).
 
     Briefpapier ist optional (Sprint 47 / N-010): jeder Parse-/Merge-Fehler
     wird geloggt und übersprungen – `report_bytes` kommt dann unverändert
     zurück, nur der Briefpapier-Layer fehlt. Eine leere Briefpapier-PDF (0
     Seiten) wird ebenfalls übersprungen, aber bewusst OHNE WARN-Log (matcht
-    das bisherige pdfrw-Verhalten für diesen Fall).
+    das bisherige Verhalten für diesen Fall).
     """
     try:
         bp_reader = PdfReader(str(source))

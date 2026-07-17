@@ -71,10 +71,10 @@ hiddenimports = [
     "reportlab.pdfbase._fontdata_widths_courierboldoblique",
     "reportlab.pdfbase._fontdata_widths_symbol",
     "reportlab.pdfbase._fontdata_widths_zapfdingbats",
-    # pdfrw + Reportlab-Bridge für Briefpapier-Overlay
-    "pdfrw",
-    "pdfrw.buildxobj",
-    "pdfrw.toreportlab",
+    # pypdf: PDF-Briefpapier-Post-Merge (pdf_report._merge_briefpapier_pdf)
+    # + Probeparse (briefpapier.validate_briefpapier). Seit Sprint 53
+    # Runtime-Dependency (die vorherige PDF-Library ist komplett entfernt).
+    "pypdf",
     # platformdirs (Recent-Engagements-Store + Sprint-44-Logging)
     "platformdirs",
     # Sprint 44: RotatingFileHandler-Submodul defensiv explizit (stdlib,

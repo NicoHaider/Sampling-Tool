@@ -45,8 +45,8 @@ dependencies = [
     "numpy>=2.0,<3",
     "matplotlib>=3.8",
     "reportlab>=4.2",
-    # Sprint 53 / N-011: pdfrw (letztes Release 0.4/2017, unmaintained) ist
-    # raus. pypdf übernimmt sowohl den Briefpapier-Probeparse
+    # Sprint 53 / N-011: die vorherige PDF-Library (letztes Release 0.4/2017,
+    # unmaintained) ist raus. pypdf übernimmt sowohl den Briefpapier-Probeparse
     # (briefpapier.validate_briefpapier) als auch das PDF-Briefpapier-
     # Post-Merge (pdf_report._merge_briefpapier_pdf) – beides parst
     # user-beschafftes, untrusted PDF-Material, deshalb hart auf die
