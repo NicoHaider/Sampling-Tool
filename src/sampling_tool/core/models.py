@@ -180,7 +180,8 @@ class SampleResult:
 
 @dataclass(frozen=True, slots=True)
 class AuditEvent:
-    """Ein Eintrag im append-only Audit-Log.
+    """Ein Eintrag im anwendungsseitig append-only Audit-Log (siehe
+    `persistence/audit_repo.py`).
 
     Die expliziten Felder (`sample_size`, `seed`, `import_file`, …) decken die
     häufigsten Audit-Operationen und vermeiden Frei-JSON wo möglich.

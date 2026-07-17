@@ -27,6 +27,40 @@ CURRENT_SCHEMA_VERSION: Final = (
     5  # muss mit jeder neuen migrations/NNN_*.sql-Datei mit hochgezogen werden
 )
 
+# ---------------------------------------------------------------------------
+# Append-only-Trigger auf `audit_events` – kanonische Definition (SSOT)
+#
+# Der Schutz ist NUR anwendungsseitig: die beiden BEFORE-Trigger blockieren
+# UPDATE/DELETE über jede sqlite3-Connection, die diese App öffnet. Die
+# Projekt-`.db` liegt aber im normalen Benutzerdateisystem – ein externer
+# SQLite-Editor mit Dateizugriff kann die Trigger jederzeit entfernen,
+# `audit_events` ändern und die Trigger (oder entkernte No-Ops) neu anlegen
+# (Sprint 52 / S2.7, S-004). `db_preflight.py` erkennt genau das anhand
+# dieser Konstante (Tamper-**Erkennung**); es gibt bewusst KEINEN
+# kryptografischen Manipulationsnachweis (signierte Checkpoints/Hash-Ketten
+# wären dafür nötig – eigenes, hier nicht adressiertes Thema).
+#
+# Identisch zu migrations/001_initial.sql (dort erstmalig angelegt, seither
+# von 002-005 nicht angefasst) – `TestAuditAppendOnlyTriggerCanonical` sperrt
+# zu, dass diese Konstante nicht von der echten Migration abdriftet.
+# ---------------------------------------------------------------------------
+AUDIT_APPEND_ONLY_TRIGGERS: Final[dict[str, str]] = {
+    "audit_events_no_update": (
+        "CREATE TRIGGER audit_events_no_update\n"
+        "BEFORE UPDATE ON audit_events\n"
+        "BEGIN\n"
+        "    SELECT RAISE(ABORT, 'audit_events is append-only');\n"
+        "END"
+    ),
+    "audit_events_no_delete": (
+        "CREATE TRIGGER audit_events_no_delete\n"
+        "BEFORE DELETE ON audit_events\n"
+        "BEGIN\n"
+        "    SELECT RAISE(ABORT, 'audit_events is append-only');\n"
+        "END"
+    ),
+}
+
 
 # ---------------------------------------------------------------------------
 # Datetime-Adapter / -Konverter
@@ -262,6 +296,35 @@ def savepoint(conn: sqlite3.Connection, name: str = "sp") -> Iterator[None]:
         raise
     else:
         conn.execute(f"RELEASE SAVEPOINT {name}")
+
+
+# ---------------------------------------------------------------------------
+# Append-only-Trigger-Wiederherstellung (Sprint 52 / S2.7, S-004)
+# ---------------------------------------------------------------------------
+
+
+def restore_audit_append_only_triggers(conn: sqlite3.Connection) -> None:
+    """Legt die kanonischen Append-only-Trigger neu an (DROP + CREATE, atomar).
+
+    Wird vom Öffnen-Flow gerufen, wenn der Preflight eine entfernte oder
+    entkernte Trigger-Definition erkannt hat (Abweichung von
+    `AUDIT_APPEND_ONLY_TRIGGERS`) – stellt NUR den Schutzmechanismus wieder
+    her, `audit_events`-Zeilen werden dabei nicht angefasst. Bereits vor der
+    Wiederherstellung vorgenommene Änderungen lassen sich ohne
+    kryptografischen Nachweis nicht rekonstruieren; ab hier greift der
+    Append-only-Schutz für die weitere Arbeit wieder.
+
+    Läuft über `savepoint()` (nicht `executescript` + eigenem BEGIN/COMMIT wie
+    `migrate()`) – `executescript` committet vor seinem eigenen Skript implizit
+    jede bereits offene Transaktion des Aufrufers, was hier nicht sein darf:
+    diese Funktion soll ausschließlich den Trigger-Schutz reparieren, nie
+    nebenbei ausstehende, vom Aufrufer noch nicht bestätigte Schreibvorgänge
+    committen.
+    """
+    with savepoint(conn, name="restore_audit_triggers"):
+        for name, create_sql in AUDIT_APPEND_ONLY_TRIGGERS.items():
+            conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+            conn.execute(create_sql)
 
 
 # ---------------------------------------------------------------------------

@@ -2,8 +2,12 @@
 -- Sprint 2 – Initial Schema
 --
 -- Eine SQLite-Datei pro Engagement (Mandanten-Trennung, DSGVO, Archivierung).
--- Append-only Audit-Log via Triggern – UPDATE/DELETE auf audit_events
--- werden hart blockiert.
+-- Anwendungsseitig append-only Audit-Log via Triggern – UPDATE/DELETE auf
+-- audit_events werden über jede sqlite3-Connection hart blockiert. Das ist
+-- KEIN Schutz gegen einen externen SQLite-Editor mit Dateizugriff (der kann
+-- die Trigger entfernen/entkernen) – siehe `persistence/database.py::
+-- AUDIT_APPEND_ONLY_TRIGGERS` + `persistence/db_preflight.py` für die
+-- Tamper-Erkennung + Wiederherstellung (Sprint 52 / S2.7, S-004).
 -- ===========================================================================
 
 -- ---------------------------------------------------------------------------
@@ -98,8 +102,9 @@ CREATE TABLE audit_events (
 CREATE INDEX idx_audit_events_engagement_timestamp
     ON audit_events(engagement_id, timestamp);
 
--- Append-only Schutz: jede UPDATE/DELETE-Operation auf audit_events
--- wird mit klarer Fehlermeldung abgebrochen.
+-- Anwendungsseitiger Append-only-Schutz: jede UPDATE/DELETE-Operation auf
+-- audit_events wird mit klarer Fehlermeldung abgebrochen. Kanonische
+-- Definition/Tamper-Erkennung: persistence/database.py::AUDIT_APPEND_ONLY_TRIGGERS.
 CREATE TRIGGER audit_events_no_update
 BEFORE UPDATE ON audit_events
 BEGIN

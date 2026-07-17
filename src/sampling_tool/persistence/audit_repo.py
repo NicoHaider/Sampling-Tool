@@ -1,4 +1,10 @@
-"""AuditRepo – append-only Audit-Log (Sprint 19 / F-007-Split)."""
+"""AuditRepo – anwendungsseitig append-only Audit-Log (Sprint 19 / F-007-Split).
+
+Der Schutz gilt nur für Zugriffe über diese Connection/App-Trigger – siehe
+`persistence/database.py::AUDIT_APPEND_ONLY_TRIGGERS` und `db_preflight.py`
+für die Tamper-Erkennung eines extern manipulierten Triggers (Sprint 52 /
+S2.7, S-004). Kein kryptografischer Manipulationsnachweis.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +17,9 @@ from sampling_tool.persistence._json import _json_dumps, _json_loads
 
 
 class AuditRepo:
-    """Append-only Audit-Log. UPDATE/DELETE werden vom DB-Trigger geblockt."""
+    """Anwendungsseitig append-only Audit-Log. UPDATE/DELETE werden vom
+    DB-Trigger geblockt – nur solange dieser Trigger intakt ist (Tamper-
+    Erkennung + Wiederherstellung siehe `db_preflight.py`)."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
