@@ -101,7 +101,14 @@ class TestAuditTrailPDF:
         filename` – vor der Migration `output_path`, danach der atomare
         Tmp-Pfad), bevor er abstürzt – das simuliert einen echten
         Mitten-im-Schreiben-Crash.
+
+        S3.2a: dieser Zweig (Bild-/kein-Briefpapier) baut weiterhin direkt in
+        den atomaren Tmp-Pfad – daher briefpapier explizit auf `None`, um
+        NICHT über den PDF-Merge-Zweig zu laufen (dessen eigene Atomicity
+        `test_pdf_report_atomic_no_partial_on_build_error_pdf_briefpapier`
+        prüft).
         """
+        from sampling_tool.io.briefpapier import BriefpapierConfig
 
         def _boom(doc: SimpleDocTemplate, *args: object, **kwargs: object) -> None:
             Path(doc.filename).write_bytes(b"%PDF-1.4\n% truncated by reportlab boom")
@@ -116,6 +123,35 @@ class TestAuditTrailPDF:
             ),
             pytest.raises(RuntimeError, match="reportlab boom"),
         ):
+            AuditTrailPDF(briefpapier=BriefpapierConfig(background_image=None)).render(
+                engagement, events, out
+            )
+        assert not out.exists()
+        leftovers = list(tmp_path.glob("*.tmp"))
+        assert leftovers == [], f"Kein .tmp-Rest erwartet, gefunden: {leftovers}"
+
+    def test_pdf_report_atomic_no_partial_on_build_error_pdf_briefpapier(
+        self, engagement: Engagement, events: list[AuditEvent], tmp_path: Path
+    ) -> None:
+        """S3.2a: der PDF-Briefpapier-Zweig baut den Report zuerst in einen
+        `BytesIO`-Puffer, bevor `atomic_output` überhaupt betreten wird – ein
+        Build-Fehler hinterlässt daher weder eine Zieldatei noch einen
+        `.tmp`-Rest (es wurde nie eine Datei angelegt)."""
+
+        def _boom(doc: SimpleDocTemplate, *args: object, **kwargs: object) -> None:
+            raise RuntimeError("reportlab boom")
+
+        out = tmp_path / "audit.pdf"
+        with (
+            patch(
+                "sampling_tool.io.pdf_report.SimpleDocTemplate.build",
+                autospec=True,
+                side_effect=_boom,
+            ),
+            pytest.raises(RuntimeError, match="reportlab boom"),
+        ):
+            # Default-Briefpapier ist das mitgelieferte PDF-Platzhalter →
+            # PDF-Merge-Zweig.
             AuditTrailPDF().render(engagement, events, out)
         assert not out.exists()
         leftovers = list(tmp_path.glob("*.tmp"))
@@ -500,53 +536,47 @@ class TestPdfPerformanceSmoke:
 
 
 # ---------------------------------------------------------------------------
-# Sprint 18 / Q-001: pdfrw-ImportError-Logging
+# Sprint 53 / S3.2a: PDF-Briefpapier via pypdf-Post-Merge
 # ---------------------------------------------------------------------------
 
 
-class TestPdfrwFallback:
-    """Q-001: fehlende pdfrw-Dependency muss eine sichtbare Log-Warnung
-    produzieren statt das PDF-Briefpapier silent zu droppen."""
+class TestPdfBriefpapierMerge:
+    """S3.2a: PDF-Briefpapier wird nicht mehr über pdfrw/`canvas.doForm` im
+    `onPage`-Hook gezeichnet, sondern nach dem Bauen des Reports per pypdf
+    als vollflächiger, skalierter Hintergrund unter jede Seite gemerged.
+    Bisher ungetesteter Erfolgspfad – der Default ist ein PDF-Platzhalter
+    (`config.DEFAULT_BRIEFPAPIER`), also der Normalfall, kein Edge-Case."""
 
-    def test_pdf_renders_without_pdfrw_logs_warning(
-        self,
-        engagement: Engagement,
-        events: list[AuditEvent],
-        tmp_path: Path,
-        caplog: pytest.LogCaptureFixture,
-        monkeypatch: pytest.MonkeyPatch,
+    def test_pdf_briefpapier_pdf_is_merged(
+        self, engagement: Engagement, events: list[AuditEvent], tmp_path: Path
     ) -> None:
-        """Wenn pdfrw beim PDF-Briefpapier-Embedding fehlt, soll WARN
-        geloggt werden (mit dem Substring 'pdfrw'), aber der Report wird
-        trotzdem erzeugt – ohne Briefpapier-Layer."""
-        import sys
+        out = tmp_path / "mit_pdf_briefpapier.pdf"
+        # Kein company/location gesetzt → aktives Briefpapier ist das
+        # mitgelieferte PDF-Platzhalter (config.DEFAULT_BRIEFPAPIER).
+        AuditTrailPDF().render(engagement, events, out)
 
-        from sampling_tool.io.briefpapier import BriefpapierConfig
-
-        # PDF-Briefpapier vorbereiten (nicht PNG – nur PDF triggert pdfrw).
-        bp_pdf = tmp_path / "letterhead.pdf"
-        # Minimales PDF erzeugen, damit Path.exists() True ist.
-        AuditTrailPDF(briefpapier=BriefpapierConfig(background_image=None)).render(
-            engagement, events[:1], bp_pdf
-        )
-
-        # pdfrw aus sys.modules entfernen und Re-Imports blockieren.
-        for mod in ("pdfrw", "pdfrw.buildxobj", "pdfrw.toreportlab"):
-            monkeypatch.setitem(sys.modules, mod, None)
-
-        out = tmp_path / "ohne_pdfrw.pdf"
-        with caplog.at_level("WARNING", logger="sampling_tool.io.pdf_report"):
-            AuditTrailPDF(briefpapier=BriefpapierConfig(background_image=bp_pdf)).render(
-                engagement, events, out
+        reader = PdfReader(str(out))
+        for page in reader.pages:
+            page_text = page.extract_text()
+            assert "Platzhalter-Briefpapier" in page_text, (
+                "Briefpapier-Marker fehlt auf mindestens einer Seite"
             )
+        full_text = "\n".join(p.extract_text() for p in reader.pages)
+        assert "ACME GmbH" in full_text  # Report-Inhalt bleibt erhalten
 
-        # PDF wurde erzeugt.
-        assert out.exists()
-        # WARNING-Log mit Substring "pdfrw".
-        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
-        assert any("pdfrw" in r.message.lower() for r in warnings), (
-            f"Erwartete WARNING mit 'pdfrw' im Text, gefangen: {[r.message for r in warnings]}"
-        )
+    def test_pdf_briefpapier_merged_on_every_page_of_multipage_report(
+        self, engagement: Engagement, tmp_path: Path
+    ) -> None:
+        many = [
+            _evt("sampling", seconds=i, sample_size=i + 1, seed=i, evt_id=i) for i in range(120)
+        ]
+        out = tmp_path / "mehrseitig_mit_briefpapier.pdf"
+        AuditTrailPDF().render(engagement, many, out)
+
+        reader = PdfReader(str(out))
+        assert len(reader.pages) >= 2
+        for page in reader.pages:
+            assert "Platzhalter-Briefpapier" in page.extract_text()
 
 
 # ---------------------------------------------------------------------------

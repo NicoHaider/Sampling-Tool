@@ -6,8 +6,11 @@
   Seitenzahl und Erstellungszeit.
 - Korrektur-Events (`event_type='correction'`) erhalten einen Verweis
   („korrigiert #N") in der Aktion-Spalte.
-- Optional liegt ein **Briefpapier-Layer** (PNG oder einseitige PDF) hinter
-  jeder Seite – dafür wird der `onPage`-Hook des `SimpleDocTemplate` genutzt.
+- Optional liegt ein **Briefpapier-Layer** hinter jeder Seite: Bild-
+  Briefpapier (PNG/JPG) wird im `onPage`-Hook des `SimpleDocTemplate`
+  gezeichnet; PDF-Briefpapier wird nach dem Bauen per `pypdf` als
+  vollflächiger, skalierter Hintergrund unter jede Seite gemerged
+  (S3.2a, siehe `_merge_briefpapier_pdf`).
 """
 
 from __future__ import annotations
@@ -15,9 +18,11 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Final
 
+from pypdf import PdfReader, PdfWriter, Transformation
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
@@ -173,21 +178,44 @@ class AuditTrailPDF:
         if include_statistics:
             story.extend(_build_statistics(events))
 
-        on_page = _make_on_page(self._resolve_background())
+        background = self._resolve_background()
+        is_pdf_background = background is not None and background.suffix.lower() == ".pdf"
+        pagesize = landscape(A4)
+        on_page = _make_on_page(None if is_pdf_background else background)
 
-        with atomic_output(output_path) as tmp:
-            doc = SimpleDocTemplate(
-                str(tmp),
-                pagesize=landscape(A4),
-                leftMargin=20 * mm,
-                rightMargin=20 * mm,
-                topMargin=22 * mm,
-                bottomMargin=22 * mm,
-                title=f"AuditTrail – {engagement.client_name}",
-                author=engagement.auditor_name,
+        if is_pdf_background:
+            assert background is not None  # narrows for mypy; is_pdf_background implies this
+            buffer = BytesIO()
+            _new_doc(buffer, engagement, pagesize).build(
+                story, onFirstPage=on_page, onLaterPages=on_page
             )
-            doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
+            merged = _merge_briefpapier_pdf(buffer.getvalue(), background, pagesize)
+            with atomic_output(output_path) as tmp:
+                tmp.write_bytes(merged)
+        else:
+            with atomic_output(output_path) as tmp:
+                _new_doc(str(tmp), engagement, pagesize).build(
+                    story, onFirstPage=on_page, onLaterPages=on_page
+                )
         return output_path
+
+
+def _new_doc(
+    target: str | BytesIO, engagement: Engagement, pagesize: tuple[float, float]
+) -> SimpleDocTemplate:
+    """Gemeinsame `SimpleDocTemplate`-Konstruktion für beide Render-Zweige
+    (direkt in den atomaren Tmp-Pfad ODER in einen `BytesIO`-Puffer vor dem
+    PDF-Briefpapier-Merge, S3.2a)."""
+    return SimpleDocTemplate(
+        target,
+        pagesize=pagesize,
+        leftMargin=20 * mm,
+        rightMargin=20 * mm,
+        topMargin=22 * mm,
+        bottomMargin=22 * mm,
+        title=f"AuditTrail – {engagement.client_name}",
+        author=engagement.auditor_name,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -505,50 +533,28 @@ def _make_on_page(briefpapier: Path | None):  # type: ignore[no-untyped-def]
 
 
 def _draw_background(canvas: Canvas, source: Path, pagesize: tuple[float, float]) -> None:
-    """Zeichnet das Briefpapier (PNG oder einseitiges PDF) hinter den Content.
+    """Zeichnet ein Bild-Briefpapier (PNG/JPG) hinter den Content.
 
-    Briefpapier ist optional (Sprint 47 / N-010): jeder Parse- oder
-    Zeichenfehler wird geloggt und übersprungen, der Rest des Reports
-    rendert normal weiter – nur der Briefpapier-Layer fehlt dann.
+    PDF-Briefpapier wird seit S3.2a nicht mehr hier gezeichnet, sondern nach
+    dem Bauen des Reports per `pypdf`-Post-Merge eingebettet, siehe
+    `_merge_briefpapier_pdf`.
+
+    Briefpapier ist optional (Sprint 47 / N-010): jeder Zeichenfehler wird
+    geloggt und übersprungen, der Rest des Reports rendert normal weiter –
+    nur der Briefpapier-Layer fehlt dann.
     """
     width, height = pagesize
-    suffix = source.suffix.lower()
     canvas.saveState()
     try:
-        if suffix == ".pdf":
-            try:
-                from pdfrw import PdfReader
-                from pdfrw.buildxobj import pagexobj
-                from pdfrw.toreportlab import makerl
-            except ImportError:
-                # Sprint 18 / Q-001: vorher hat dieser Pfad das Briefpapier
-                # silent gedroppt – der Auditor merkt erst beim Compliance-
-                # Audit, dass das Briefpapier fehlt. Jetzt sichtbares WARN-
-                # Log, Report-Build crasht aber NICHT (Briefpapier ist
-                # optional).
-                logger.warning(
-                    "pdfrw nicht installiert – PDF-Briefpapier '%s' wird "
-                    "ohne Embedding gerendert. Bitte 'pip install pdfrw' "
-                    "ergänzen, falls das Briefpapier benötigt wird.",
-                    source.name,
-                )
-                return
-            pages = PdfReader(str(source)).pages
-            if not pages:
-                return
-            xobj = pagexobj(pages[0])
-            canvas.doForm(makerl(canvas, xobj))
-        else:
-            # Annahme: Bildformat, das reportlab nativ kann (PNG/JPG).
-            canvas.drawImage(
-                str(source),
-                0,
-                0,
-                width=width,
-                height=height,
-                preserveAspectRatio=True,
-                mask="auto",
-            )
+        canvas.drawImage(
+            str(source),
+            0,
+            0,
+            width=width,
+            height=height,
+            preserveAspectRatio=True,
+            mask="auto",
+        )
     except Exception as exc:
         # Sprint 47 / N-010: ein korruptes/passwortgeschütztes/exotisches
         # Briefpapier darf den gesamten PDF-Export nicht platzen lassen.
@@ -560,6 +566,50 @@ def _draw_background(canvas: Canvas, source: Path, pagesize: tuple[float, float]
         )
     finally:
         canvas.restoreState()
+
+
+def _merge_briefpapier_pdf(
+    report_bytes: bytes, source: Path, pagesize: tuple[float, float]
+) -> bytes:
+    """Legt die erste Seite von `source` als vollflächigen, auf `pagesize`
+    skalierten Hintergrund unter jede Seite von `report_bytes` (S3.2a:
+    pypdf-Post-Merge statt der vorherigen Canvas-XObject-Bridge).
+
+    Briefpapier ist optional (Sprint 47 / N-010): jeder Parse-/Merge-Fehler
+    wird geloggt und übersprungen – `report_bytes` kommt dann unverändert
+    zurück, nur der Briefpapier-Layer fehlt. Eine leere Briefpapier-PDF (0
+    Seiten) wird ebenfalls übersprungen, aber bewusst OHNE WARN-Log (matcht
+    das bisherige Verhalten für diesen Fall).
+    """
+    try:
+        bp_reader = PdfReader(str(source))
+        bp_pages = bp_reader.pages
+        if not bp_pages:
+            return report_bytes
+        bp_page = bp_pages[0]
+        bp_width = float(bp_page.mediabox.width)
+        bp_height = float(bp_page.mediabox.height)
+        page_width, page_height = pagesize
+        transform = Transformation().scale(page_width / bp_width, page_height / bp_height)
+
+        report_reader = PdfReader(BytesIO(report_bytes))
+        writer = PdfWriter()
+        for page in report_reader.pages:
+            merged_page = writer.add_blank_page(width=page_width, height=page_height)
+            merged_page.merge_transformed_page(bp_page, transform)
+            merged_page.merge_page(page)
+        out = BytesIO()
+        writer.write(out)
+        return out.getvalue()
+    except Exception as exc:
+        # Sprint 47 / N-010: gleiche Graceful-Degradation wie _draw_background.
+        logger.warning(
+            "Briefpapier '%s' konnte nicht eingebettet werden (%s) – Report "
+            "wird ohne Briefpapier erzeugt.",
+            source.name,
+            exc,
+        )
+        return report_bytes
 
 
 def _draw_footer(canvas: Canvas, doc: Any) -> None:
