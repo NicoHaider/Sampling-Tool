@@ -568,7 +568,9 @@ def _draw_background(canvas: Canvas, source: Path, pagesize: tuple[float, float]
         canvas.restoreState()
 
 
-def _merge_briefpapier_pdf(report_bytes: bytes, source: Path, pagesize: tuple[float, float]) -> bytes:
+def _merge_briefpapier_pdf(
+    report_bytes: bytes, source: Path, pagesize: tuple[float, float]
+) -> bytes:
     """Legt die erste Seite von `source` als vollflächigen, auf `pagesize`
     skalierten Hintergrund unter jede Seite von `report_bytes` (S3.2a:
     pypdf-Post-Merge statt der vorherigen Canvas-XObject-Bridge).
