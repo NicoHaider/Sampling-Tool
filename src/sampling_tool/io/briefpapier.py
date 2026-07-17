@@ -42,10 +42,11 @@ class BriefpapierError(ValueError):
 class BriefpapierConfig:
     """Konfiguration eines Briefpapier-Layers für PDF-Reports.
 
-    `background_image` kann ein PNG/JPG (drauf gezeichnet) oder ein PDF
-    (per `pdfrw` mit `PageMerge` vorne eingefügt) sein. Die Seitenränder
-    geben dem Report-Builder Hinweise, wieviel Platz an den Rändern für
-    Briefpapier-Elemente reserviert bleiben soll.
+    `background_image` kann ein PNG/JPG (im `onPage`-Hook drauf gezeichnet)
+    oder ein PDF (per `pypdf`-Post-Merge unter jede Seite gelegt, siehe
+    `pdf_report._merge_briefpapier_pdf`) sein. Die Seitenränder geben dem
+    Report-Builder Hinweise, wieviel Platz an den Rändern für Briefpapier-
+    Elemente reserviert bleiben soll.
     """
 
     background_image: Path | None
@@ -94,11 +95,11 @@ def validate_briefpapier(path: Path) -> None:
     """Fail-Fast-Prüfung für die Briefpapier-Auswahl (Sprint 47 / N-010).
 
     Prüft Existenz + Format (wie `briefpapier_from_path`), zusätzlich
-    Dateigröße und echte Parsebarkeit (PDF: mind. eine Seite via `pdfrw`;
+    Dateigröße und echte Parsebarkeit (PDF: mind. eine Seite via `pypdf`;
     Bild: vollständig decodierbar via Pillow + Pixel-Obergrenze). Rein
     lesend, keine Seiteneffekte. Wirft `FileNotFoundError`/`ValueError` für
     Existenz/Format (wie bisher) oder `BriefpapierError` für Größe/Parsefehler.
-    Fehlt `pdfrw`/Pillow, wird die jeweilige Parseprüfung übersprungen
+    Fehlt `pypdf`/Pillow, wird die jeweilige Parseprüfung übersprungen
     (Q-001-Pfad).
     """
     briefpapier_from_path(path)
@@ -121,7 +122,7 @@ def validate_briefpapier(path: Path) -> None:
 
 def _validate_pdf_parseable(path: Path) -> None:
     try:
-        from pdfrw import PdfReader
+        from pypdf import PdfReader
     except ImportError:
         return
     try:
@@ -161,8 +162,9 @@ def _validate_image_parseable(path: Path) -> None:
 def apply_briefpapier_to_pdf(canvas: Canvas, config: BriefpapierConfig) -> None:
     """Zeichnet das Briefpapier (PNG/JPG) als Hintergrund-Layer.
 
-    Diese Funktion behandelt nur Bitmap-Briefpapier. PDF-Briefpapier wird im
-    `pdf_report._draw_background`-Pfad via `pdfrw.PageMerge` integriert.
+    Diese Funktion behandelt nur Bitmap-Briefpapier. PDF-Briefpapier wird
+    erst nach dem Bauen des Reports per pypdf-Post-Merge eingebettet, siehe
+    `pdf_report._merge_briefpapier_pdf` (S3.2a).
     """
     if not config.is_active() or config.background_image is None:
         return
