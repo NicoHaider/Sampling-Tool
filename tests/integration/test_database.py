@@ -9,9 +9,11 @@ import pytest
 
 from sampling_tool.persistence.database import (
     APPLICATION_ID,
+    AUDIT_APPEND_ONLY_TRIGGERS,
     CURRENT_SCHEMA_VERSION,
     Database,
     MigrationError,
+    restore_audit_append_only_triggers,
 )
 
 
@@ -257,6 +259,58 @@ class TestMigrationsApply:
     def test_foreign_keys_pragma_enabled(self, db: Database) -> None:
         result = db.connect().execute("PRAGMA foreign_keys").fetchone()
         assert result[0] == 1
+
+
+class TestAuditAppendOnlyTriggerCanonical:
+    """Sprint 52 / S2.7 (S-004): `AUDIT_APPEND_ONLY_TRIGGERS` ist die SSOT für
+    den Preflight-Integritäts-Check UND die Wiederherstellung – dieser Test
+    sperrt zu, dass die Konstante nicht von Migration 001 abdriftet."""
+
+    def test_canonical_trigger_constant_matches_migrated_db(self, db: Database) -> None:
+        rows = (
+            db.connect()
+            .execute("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name")
+            .fetchall()
+        )
+        actual = {row["name"]: row["sql"] for row in rows}
+        assert actual == AUDIT_APPEND_ONLY_TRIGGERS
+
+
+class TestRestoreAuditAppendOnlyTriggers:
+    """Sprint 52 / S2.7 (S-004), Review-Nachbesserung: `restore_audit_append_only_
+    triggers` darf keine bereits offene, vom Aufrufer noch nicht committete
+    Transaktion vorzeitig committen – sonst würde ein künftiger Aufruf aus
+    einem `session()`-Block heraus nicht validierte Schreibvorgänge
+    irreversibel durchsetzen, bevor der Aufrufer selbst committen konnte."""
+
+    def test_restore_does_not_commit_ambient_transaction(self, db: Database) -> None:
+        conn = db.connect()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "INSERT INTO engagements (auditor_name, client_name) VALUES (?, ?)",
+                ("Anna", "ACME"),
+            )
+            restore_audit_append_only_triggers(conn)
+            assert conn.in_transaction is True
+            conn.execute("ROLLBACK")
+        finally:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+
+        rows = db.connect().execute("SELECT COUNT(*) AS c FROM engagements").fetchall()
+        assert rows[0]["c"] == 0
+
+    def test_restore_recreates_both_triggers(self, db: Database) -> None:
+        conn = db.connect()
+        conn.execute("DROP TRIGGER audit_events_no_update")
+        conn.execute("DROP TRIGGER audit_events_no_delete")
+
+        restore_audit_append_only_triggers(conn)
+
+        rows = conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'").fetchall()
+        actual = {row["name"]: row["sql"] for row in rows}
+        assert actual == AUDIT_APPEND_ONLY_TRIGGERS
 
 
 class TestSession:

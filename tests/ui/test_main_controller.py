@@ -279,6 +279,94 @@ class TestMainController:
         assert window.is_workspace_visible() is False
         assert window.data_table().table_model().rowCount() == 0
 
+    def test_open_tampered_db_warns_and_restores_triggers(
+        self,
+        controller: MainController,
+        window: MainWindow,
+        populated_db: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Sprint 52 / S2.7 (S-004), Variante 1: eine extern (SQLite-Editor)
+        entfernte Append-only-Trigger-Definition blockiert das Öffnen NICHT –
+        es gibt eine prominente Warnung, und der Schutz wird sofort wieder-
+        hergestellt (`audit_events`-Zeilen bleiben dabei unberührt). Das
+        erkannte Tampering wird zusätzlich geloggt (Review-Nachbesserung) –
+        vorher war ein Dialog, den der User wegklicken kann, der einzige Beleg."""
+        tamper_conn = sqlite3.connect(str(populated_db))
+        try:
+            tamper_conn.execute(
+                "INSERT INTO audit_events (engagement_id, event_type) VALUES (1, 'x')"
+            )
+            tamper_conn.execute("DROP TRIGGER audit_events_no_update")
+            tamper_conn.commit()
+        finally:
+            tamper_conn.close()
+
+        with (
+            patch(
+                "sampling_tool.ui.controllers.engagement_controller.QMessageBox.warning"
+            ) as warning,
+            caplog.at_level("WARNING", logger="sampling_tool.ui.controllers.engagement_controller"),
+        ):
+            controller.handle_open_engagement(populated_db)
+
+        assert warning.called
+        assert window.is_workspace_visible() is True
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert any("manipul" in r.message.lower() for r in warnings), (
+            f"Erwartete WARNING-Log zur erkannten Trigger-Manipulation, gefangen: "
+            f"{[r.message for r in warnings]}"
+        )
+
+        assert controller.session.db is not None
+        conn = controller.session.db.connect()
+        rows_before = conn.execute("SELECT event_type FROM audit_events").fetchall()
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute("UPDATE audit_events SET event_type = 'tampered'")
+        rows_after = conn.execute("SELECT event_type FROM audit_events").fetchall()
+        assert rows_after == rows_before
+
+    def test_open_tampered_db_restore_failure_shows_honest_warning(
+        self,
+        controller: MainController,
+        window: MainWindow,
+        populated_db: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Review-Nachbesserung (Sprint 52 / S2.7): schlägt die Wiederher-
+        stellung selbst fehl (z. B. Datei read-only), darf die Warnung NICHT
+        weiter behaupten, der Schutz sei wiederhergestellt – das wäre eine
+        falsche Sicherheitszusicherung an den Anwender. Öffnen bleibt trotzdem
+        unblockiert (Variante 1)."""
+        tamper_conn = sqlite3.connect(str(populated_db))
+        try:
+            tamper_conn.execute("DROP TRIGGER audit_events_no_update")
+            tamper_conn.commit()
+        finally:
+            tamper_conn.close()
+
+        with (
+            patch(
+                "sampling_tool.ui.controllers.engagement_controller."
+                "restore_audit_append_only_triggers",
+                side_effect=sqlite3.OperationalError("attempt to write a readonly database"),
+            ),
+            patch(
+                "sampling_tool.ui.controllers.engagement_controller.QMessageBox.warning"
+            ) as warning,
+            caplog.at_level("ERROR", logger="sampling_tool.ui.controllers.engagement_controller"),
+        ):
+            controller.handle_open_engagement(populated_db)
+
+        assert window.is_workspace_visible() is True  # Öffnen bleibt unblockiert
+        assert warning.called
+        shown_message = warning.call_args.args[2]
+        assert "wiederhergestellt" not in shown_message.lower()
+        assert "fehlgeschlagen" in shown_message.lower()
+
+        errors = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert any("fehlgeschlagen" in r.message.lower() for r in errors)
+
     def test_new_engagement_creates_db_via_dialog(
         self,
         window: MainWindow,

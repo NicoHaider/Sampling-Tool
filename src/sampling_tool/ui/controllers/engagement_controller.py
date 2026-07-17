@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from sampling_tool.core.models import Engagement
 from sampling_tool.core.undo import UndoManager
-from sampling_tool.persistence.database import Database
+from sampling_tool.persistence.database import Database, restore_audit_append_only_triggers
 from sampling_tool.persistence.db_preflight import PreflightRejected, preflight_check
 from sampling_tool.persistence.repositories import (
     DatasetRepo,
@@ -194,6 +194,7 @@ class EngagementController:
         if isinstance(result, PreflightRejected):
             s.error(result.message)
             return
+        triggers_tampered = result.audit_triggers_tampered
 
         # Compliance-Snapshot BEVOR die Session anfängt – ein Fehler dabei
         # soll das Öffnen nicht blockieren (Defense-in-Depth, nicht kritisch).
@@ -221,10 +222,56 @@ class EngagementController:
 
         self._adopt_database(db, db_path, engagement)
 
+        if triggers_tampered:
+            self._warn_and_restore_tampered_triggers(db, db_path)
+
         if snapshot_warning is not None:
             status = s.window.statusBar()
             if status is not None:
                 status.showMessage(snapshot_warning, 5000)
+
+    def _warn_and_restore_tampered_triggers(self, db: Database, db_path: Path) -> None:
+        """Variante 1 (Sprint 52 / S2.7, S-004): Öffnen NICHT blockieren, aber
+        prominent warnen + den Append-only-Schutz sofort wiederherstellen.
+
+        Berührt keine `audit_events`-Zeilen, nur den Schutzmechanismus. Die
+        Warnung darf NIE eine Wiederherstellung behaupten, die tatsächlich
+        fehlgeschlagen ist (falsche Sicherheitszusicherung) – daher zwei
+        unterschiedliche Meldungen je nach Ausgang, plus ein Log-Eintrag,
+        damit das erkannte Tampering auch dann nachvollziehbar bleibt, wenn
+        der Anwender den Dialog nur wegklickt.
+        """
+        s = self.session
+        logger.warning(
+            "Externe Manipulation der Append-only-Trigger auf audit_events erkannt (Datei: %s).",
+            db_path,
+        )
+        try:
+            restore_audit_append_only_triggers(db.connect())
+        except Exception:
+            logger.exception(
+                "Wiederherstellung der Append-only-Trigger nach externer "
+                "Manipulation fehlgeschlagen (Datei: %s).",
+                db_path,
+            )
+            QMessageBox.warning(
+                s.window,
+                "Audit-Trail verändert",
+                "Der Audit-Trail dieser Projektdatei wurde außerhalb der Anwendung "
+                "verändert. Die Wiederherstellung des Append-only-Schutzes ist "
+                "fehlgeschlagen – audit_events ist für diese Sitzung NICHT "
+                "geschützt. Bitte die Datei erneut öffnen; besteht das Problem "
+                "weiter, den Administrator kontaktieren.",
+            )
+        else:
+            QMessageBox.warning(
+                s.window,
+                "Audit-Trail verändert",
+                "Der Audit-Trail dieser Projektdatei wurde außerhalb der Anwendung "
+                "verändert. Bereits erfolgte Änderungen lassen sich ohne "
+                "kryptografischen Nachweis nicht rekonstruieren; der Append-only-"
+                "Schutz wird für die weitere Arbeit wiederhergestellt.",
+            )
 
     # ---- Close ---------------------------------------------------------
 

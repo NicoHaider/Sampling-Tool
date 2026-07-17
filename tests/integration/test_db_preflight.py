@@ -122,6 +122,101 @@ class TestValidCurrentDbAccepted:
         assert result == PreflightAccepted(schema_version=CURRENT_SCHEMA_VERSION)
 
 
+class TestAuditTriggerTamperDetection:
+    """Sprint 52 / S2.7 (S-004): der Preflight bestätigte eine DB bisher nur
+    über `application_id`/Trigger-NAMEN – ein entfernter oder entkernter
+    Append-only-Trigger auf `audit_events` wurde akzeptiert, weil niemand
+    `sqlite_master.sql` (die tatsächliche Trigger-Definition) gelesen hat.
+    Der neue strukturelle Check läuft unbedingt, auch wenn `application_id`
+    bereits matcht."""
+
+    def test_preflight_detects_dropped_audit_trigger(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "dropped_trigger.db"
+        db = Database(db_path)
+        db.migrate()
+        db.connect().execute("DROP TRIGGER audit_events_no_update")
+        db.close()
+
+        result = preflight_check(db_path)
+
+        assert isinstance(result, PreflightAccepted)
+        assert result.audit_triggers_tampered is True
+
+    def test_preflight_detects_neutered_audit_trigger(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "neutered_trigger.db"
+        db = Database(db_path)
+        db.migrate()
+        conn = db.connect()
+        conn.execute("DROP TRIGGER audit_events_no_delete")
+        conn.executescript(
+            "CREATE TRIGGER audit_events_no_delete "
+            "BEFORE DELETE ON audit_events "
+            "BEGIN SELECT 1; END;"
+        )
+        db.close()
+
+        result = preflight_check(db_path)
+
+        assert isinstance(result, PreflightAccepted)
+        assert result.audit_triggers_tampered is True
+
+    def test_preflight_accepts_pristine_triggers(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "pristine.db"
+        db = Database(db_path)
+        db.migrate()
+        db.close()
+
+        result = preflight_check(db_path)
+
+        assert isinstance(result, PreflightAccepted)
+        assert result.audit_triggers_tampered is False
+
+    def test_preflight_detects_when_clause_neutered_trigger(self, tmp_path: Path) -> None:
+        """Review-Nachbesserung: ein `WHEN 0`-Guard lässt den RAISE(ABORT-Body
+        nie feuern, enthält aber weiterhin alle drei geprüften Substrings
+        ('before update on audit_events', 'raise(abort', die Append-only-
+        Meldung) – ein reiner Substring-Check würde das fälschlich als intakt
+        durchwinken."""
+        db_path = tmp_path / "when_clause_trigger.db"
+        db = Database(db_path)
+        db.migrate()
+        conn = db.connect()
+        conn.execute("DROP TRIGGER audit_events_no_update")
+        conn.executescript(
+            "CREATE TRIGGER audit_events_no_update "
+            "BEFORE UPDATE ON audit_events "
+            "WHEN 0 "
+            "BEGIN SELECT RAISE(ABORT, 'audit_events is append-only'); END;"
+        )
+        db.close()
+
+        result = preflight_check(db_path)
+
+        assert isinstance(result, PreflightAccepted)
+        assert result.audit_triggers_tampered is True
+
+    def test_preflight_accepts_whitespace_variant_of_raise_abort(self, tmp_path: Path) -> None:
+        """Brüchigkeits-Gate für die WHEN-Fix-Gegenprobe: ein intakter Trigger
+        mit harmlos abweichender Formatierung ('RAISE (ABORT' statt
+        'RAISE(ABORT') muss weiterhin als NICHT getampert gelten."""
+        db_path = tmp_path / "whitespace_variant.db"
+        db = Database(db_path)
+        db.migrate()
+        conn = db.connect()
+        conn.execute("DROP TRIGGER audit_events_no_delete")
+        conn.executescript(
+            "CREATE TRIGGER audit_events_no_delete "
+            "BEFORE DELETE ON audit_events "
+            "BEGIN SELECT RAISE (ABORT, 'audit_events is append-only'); END;"
+        )
+        db.close()
+
+        result = preflight_check(db_path)
+
+        assert isinstance(result, PreflightAccepted)
+        assert result.audit_triggers_tampered is False
+
+
 class TestLegacyDbWithoutApplicationIdAcceptedViaSignature:
     def test_legacy_db_without_application_id_accepted_via_signature(self, tmp_path: Path) -> None:
         db_path = tmp_path / "legacy_v1.db"

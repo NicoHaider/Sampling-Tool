@@ -1273,11 +1273,20 @@ Drei Kerndogmen, die sich durch die ganze DB-Schicht ziehen:
    (vgl. `config.ENGAGEMENTS_DIR` + `config.sanitize_for_path`). Beim Öffnen
    landet jeweils eine Sicherheitskopie unter `archiv/` (siehe
    `persistence/version_manager.py`).
-2. **Append-only Audit-Log.** `audit_events` darf ausschließlich per `INSERT`
-   befüllt werden. Zwei BEFORE-Trigger (`audit_events_no_update`,
-   `audit_events_no_delete`) blockieren UPDATE/DELETE hart mit
-   `RAISE(ABORT, 'audit_events is append-only')`. Korrekturen sind neue Events
-   mit `event_type='correction'` und `corrects_event_id`-FK aufs Original.
+2. **Anwendungsseitig append-only Audit-Log.** `audit_events` darf
+   ausschließlich per `INSERT` befüllt werden. Zwei BEFORE-Trigger
+   (`audit_events_no_update`, `audit_events_no_delete`) blockieren UPDATE/
+   DELETE hart mit `RAISE(ABORT, 'audit_events is append-only')`. Korrekturen
+   sind neue Events mit `event_type='correction'` und `corrects_event_id`-FK
+   aufs Original. Der Schutz greift nur über die App-Trigger – die `.db` liegt
+   im normalen Benutzerdateisystem, ein externer SQLite-Editor kann die
+   Trigger entfernen/entkernen. Seit Sprint 52 (S2.7 / S-004) erkennt der
+   Preflight das unbedingt (`persistence/db_preflight.py`, strukturelle
+   Prüfung der Trigger-Definition, nicht nur des Namens) und stellt die
+   kanonischen Trigger beim Öffnen automatisch wieder her (Variante 1: warnen
+   + reparieren, Öffnen wird nicht blockiert). Das ist Tamper-**Erkennung**,
+   kein kryptografischer Manipulationsnachweis (signierte Checkpoints wären
+   dafür nötig – bewusst nicht Teil dieses Sprints).
 3. **WAL-Mode + Foreign Keys an.** `connect()` setzt `journal_mode=WAL`,
    `foreign_keys=ON`, `synchronous=NORMAL`. Autocommit (`isolation_level=None`),
    Transaktionen werden via `session()` und `savepoint()` explizit gesteuert.
