@@ -116,6 +116,7 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
 | 34     | Performance-Pass (profiling-first): Such-Debounce im AuditTrail-Widget (150-ms-QTimer, Proxy bleibt synchron, Treffer-Semantik unverändert), Startup-Import-Budget gemessen (0,3 s – WP2-Lazy-Imports bewusst verworfen, Gate <300 ms/Lib), Snapshot-Messung (200 MB = 0,035 s – bleibt synchron), 1M-Re-Baseline (P-001/P-002-Fixes bestätigt: Tabelle 0,27 s, Simple 4,5 s/46 MB; P-004 geklärt: PDF 4,4 s reproduzierbar, kein Drift, < Target) + WP5-Mikro-Pass (refresh_views-Event-Doppel-Load, distinct-Memo im Sampling-Dialog, Export-Dialog-Bulk-Guard – je Zähler-Beleg); alles in PERFORMANCE.md | done |
 | 35     | Advanced-Sampling-Streaming (P-003) + Import-Pipeline (profiling-first): Cluster/Stratified ohne Filter laufen über `sample_pairs(iter_row_field_pairs)` – (row_id, feldwert)-Stream via `json_extract` + `_distinct_decode` statt vollem DatasetRow-Pool; bit-identische Ziehung (58 Unit-Oracles + E2E-Controller-Oracle + 1M-Benchmark-Assert), 1M: Cluster 4,74→1,52 s / Stratified 5,35→2,30 s, RAM 1,12 GB→~155 MB (−86 %); u64-Decode-Fallback + `supports_field_pairs`-Guard (Review-Findings); `sample`/`_select`/`_collect_pool` wörtlich unverändert, Filter/Resampling weiter klassisch. Import-Pipeline: Baseline + cProfile → Coercion-Hebel gemessen (Digit-Guard −4 %) und nach 20-%-Gate bewusst revertiert; bleibend: `TestCoerceStringEquivalenceOracle` (Semantik-Pin mit Fuzz), Doppel-Pass-Hypothese widerlegt, tracemalloc-Einordnung der probe-Zahlen | done |
 | 36     | Filter-Operatoren + Match-Preview (WP-A) & Ergänzungs-Ziehung ohne Dubletten (WP-B): Der Spaltenfilter bekommt Operatoren (`=`/`≠` über das Distinct-Dropdown, `>`/`≥`/`<`/`≤` über ein Schwellenwert-Textfeld) via neuem `FilterOperator`-Enum + `SampleConfig.filter_operator`. Eine gemeinsame `matches_filter()`-Funktion (core/sampling.py) ist die EINZIGE Operator-Semantik-Quelle – genutzt von `_collect_pool` (Ziehung) UND dem neuen `_count_filter_matches`-Preview-Provider (workspace_controller.py), sodass Vorschau-Zahl == Zieh-Pool ist (Konsistenz-Oracle in `test_filter_match_count.py`). Filter ab Werk sichtbar (`show_filter_feature=True`, ODER-Logik/Einzel-Toggle unverändert); der Größen-Hint zeigt die tatsächliche Filter-Trefferzahl (Streaming via `iter_row_field_pairs`/`iter_rows`-Fallback, pro Dialog memoisiert, refresh an `editingFinished`/Combo-Change statt pro Tastenanschlag). Persistenz: Migration `003` (`filter_operator TEXT NOT NULL DEFAULT 'eq'`, Bestands-Backfill = altes Gleichheits-Verhalten) + `SampleRepo` (14 Spalten) + `SamplingPreset` (backward-compat: altes JSON ohne Key → `EQ`, analog `stratify_mode`). Reproduzierbarkeit: Default `EQ` bit-identisch zum alten `==`-Pfad (Regressions-Oracle über mehrere Seeds). Eigener Schwellenwert-Parser `_parse_filter_threshold` (`int→float→datetime→Rohstring`; reines Datum → `datetime`-Mitternacht, damit ein Datums-Schwellenwert gegen die datetime-Spalten des Imports matcht statt per `TypeError` nichts zu treffen) – strikt getrennt von `_coerce_value`/`_coerce_string`. WP-B: neue Checkbox „Ergänzen – bereits gezogene Datensätze ausschließen (Nachstichprobe)" (mutual exclusive zur umbenannten „…(einschränken)"-Checkbox, disabled wenn Population komplett gezogen), `SamplingDialogResult.exclude_sample_ids` (reine UI-Anweisung, nicht persistiert) → Controller-`_build_supplement_iterator` zieht aus der Basis MINUS aktiver Stichprobe (dublettenfrei, `population_size = row_count − len(exclude)`), immer über den klassischen `sample()`-Pfad (P-002/P-003-Fastpath für Ergänzung gegated: `unfiltered_full_population and not exclude_sample_ids`), `parent_sample_id` gesetzt; Filter+Ergänzung komponieren (Ausschluss zuerst, Filter danach); kein core/rng- oder Schema-Change über die eine Spalte hinaus. Task 0 verifiziert: die Resample-Checkbox war nie kaputt (nach erster Ziehung korrekt aktiviert – der Guard greift nur ohne aktive Stichprobe). Details: `SPRINT_36_PROMPT.md` | done |
+| 53     | pdfrw → pypdf-Konsolidierung (S3.2a / N-011, N-014): PDF-Briefpapier via pypdf-Post-Merge statt pdfrw-Canvas-XObject, `validate_briefpapier` auf pypdf umgestellt, pdfrw restlos entfernt (Code/pyproject/spec/mypy); pypdf dev→runtime (`>=6.13.3`), jinja2 (`>=3.1.6`) und pillow (`>=12.3`) auf Security-Fix-Floors gehoben | done |
 
 ## AuditTrail-PDF: Querformat + BDO-Gesellschaft/Standort-Adressblock (Sprint 33)
 
@@ -815,9 +816,13 @@ ui ──▶ controllers ──▶ core ◀── io
     Wenn beides fehlt, läuft der Report ohne Briefpapier-Layer.
     Der Controller hängt zusätzlich `settings.custom_briefpapier_path`
     (aus dem Settings-Dialog) als höchste Priorität vor (siehe
-    `MainController._resolve_briefpapier`). PDF-Briefpapier wird via
-    `pdfrw` (`pagexobj` + `makerl`) auf den Reportlab-Canvas gelegt;
-    PNG/JPG direkt mit `canvas.drawImage`.
+    `MainController._resolve_briefpapier`). **Sprint 53 / S3.2a:**
+    PDF-Briefpapier wird nicht mehr im `onPage`-Hook gezeichnet, sondern
+    nach dem Bauen des Reports per `pypdf` (`merge_transformed_page`) als
+    vollflächiger, auf `landscape(A4)` skalierter Hintergrund unter jede
+    Seite gemerged (`pdf_report._merge_briefpapier_pdf`) – `pdfrw` ist
+    komplett raus. PNG/JPG bleibt unverändert im `onPage`-Hook via
+    `canvas.drawImage`.
 - **`persistence/`** – SQLite über sqlite3 (kein ORM-Overhead).
   - `database.py` – `Database`-Wrapper mit WAL+FK-PRAGMAs, `session()`-Transaktionen,
     `savepoint()`-Helper für nestbare Repo-Transaktionen, automatische Migrations.
@@ -1217,8 +1222,9 @@ Workaround).
   gebundelt, damit `Path(__file__).parent / ...`-Lookups (Briefpapier,
   QSS, HTML-Templates) im Frozen-Bundle weiterhin funktionieren.
 - **Hidden Imports:** matplotlib-Backends, openpyxl-Writer, reportlab-Font-
-  Tabellen, `pdfrw`, `platformdirs`. PyInstaller findet diese nicht
-  automatisch – im Spec explizit aufgeführt.
+  Tabellen, `pypdf` (seit Sprint 53 Runtime-Dependency, ersetzt `pdfrw`),
+  `platformdirs`. PyInstaller findet diese nicht automatisch – im Spec
+  explizit aufgeführt.
 - **Icons:** `resources/icons/app.icns` (Mac) + `app.ico` (Windows). Werden
   vom Build-Script bei Bedarf via `scripts/generate_app_icon.py`
   regeneriert (Platzhalter BDO-Rot + Schrift "BDO"). Austauschbar ohne
