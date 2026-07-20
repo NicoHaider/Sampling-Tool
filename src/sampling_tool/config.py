@@ -52,7 +52,7 @@ SEED_MIN: Final[int] = 0
 SEED_MAX: Final[int] = 2**32 - 1  # numpy default_rng-Range
 
 # ---------------------------------------------------------------------------
-# Bug-Reporting (Sprint 7 – Outlook-Integration via pywin32)
+# Bug-Reporting (plattformübergreifend via QDesktopServices/mailto)
 # ---------------------------------------------------------------------------
 BUG_REPORT_EMAIL: Final[str] = "nico.haider@bdo.at"
 BUG_REPORT_SUBJECT_PREFIX: Final[str] = "[Sampling-Tool Bug]"

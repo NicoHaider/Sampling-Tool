@@ -1,8 +1,7 @@
 """Bug-Report-Dialog – konstruiert eine `mailto:`-URL.
 
-Auf Windows wird das in Sprint 7 via `pywin32` durch Outlook-COM ersetzt.
-Für Sprint 5 reicht der plattformübergreifende `mailto:`-Pfad: das System
-öffnet die Default-Mail-App mit vorbefüllten Feldern.
+Plattformübergreifend über `QDesktopServices.openUrl`: das System öffnet
+die Default-Mail-App mit vorbefüllten Feldern.
 """
 
 from __future__ import annotations
