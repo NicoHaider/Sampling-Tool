@@ -75,6 +75,10 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6",
     "mypy>=1.11",
+    # Sprint 55 / S3.2b2: Vulnerability-Scan gegen die gelockte Umgebung
+    # (CI + Release-Test-Gate), ersetzt das vorherige Ad-hoc-`pip install
+    # pip-audit` in ci.yml.
+    "pip-audit>=2.7",
 ]
 build = [
     "pyinstaller>=6.10",

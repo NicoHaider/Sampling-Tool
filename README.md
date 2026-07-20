@@ -230,11 +230,22 @@ doppelklicken, fertig.
 
 ## Installation für Entwickler
 
+Empfohlen: [uv](https://docs.astral.sh/uv/) installieren, dann hash-geprüft
+exakt aus `uv.lock` synchen – das ist derselbe Weg, den CI und der
+Release-Build seit Sprint 55 nutzen:
+
 ```bash
-# Editable install inkl. Dev-Tools
-pip install -e ".[dev]"
+uv sync --locked --extra dev
 
 # Start
+uv run python -m sampling_tool
+```
+
+Alternativ klassisch mit `pip` (nutzt die offenen Ranges aus
+`pyproject.toml`, nicht die gepinnten Hashes aus `uv.lock`):
+
+```bash
+pip install -e ".[dev]"
 python -m sampling_tool
 ```
 
@@ -243,9 +254,9 @@ python -m sampling_tool
 Lokal eine `.app` (Mac) bzw. einen `.exe`-Ordner (Windows) bauen:
 
 ```bash
-pip install -e ".[build]"
-python scripts/build_app.py            # Output: dist/
-python scripts/build_app.py --dmg      # Mac: zusätzlich .dmg (brew install create-dmg)
+uv sync --locked --extra build
+uv run python scripts/build_app.py            # Output: dist/
+uv run python scripts/build_app.py --dmg      # Mac: zusätzlich .dmg (brew install create-dmg)
 ```
 
 Offiziellen Release auslösen – baut Mac + Windows parallel via GitHub
