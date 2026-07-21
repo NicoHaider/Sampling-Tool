@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import fields, replace
 from pathlib import Path
 
 import pytest
@@ -124,9 +124,7 @@ class TestSnapshotRetentionRemoved:
     """Sprint 57 / L-002: totes UI-Feld ohne Produktpfad-Wirkung entfernt."""
 
     def test_snapshot_retention_removed(self) -> None:
-        import dataclasses
-
-        field_names = {f.name for f in dataclasses.fields(AppSettings)}
+        field_names = {f.name for f in fields(AppSettings)}
         assert "snapshot_retention_days" not in field_names
 
 
