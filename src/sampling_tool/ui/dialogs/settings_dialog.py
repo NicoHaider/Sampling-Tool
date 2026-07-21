@@ -290,12 +290,6 @@ class SettingsDialog(QDialog):
         self._undo_depth.setValue(current.undo_depth)
         form.addRow("Undo-Tiefe (max. Aktionen)", self._undo_depth)
 
-        self._snapshot_retention = QSpinBox()
-        self._snapshot_retention.setRange(0, 3650)
-        self._snapshot_retention.setValue(current.snapshot_retention_days)
-        self._snapshot_retention.setToolTip("0 = unbegrenzt")
-        form.addRow("Snapshots aufbewahren (Tage)", self._snapshot_retention)
-
         self._log_level = QComboBox()
         self._log_level.addItems(LOG_LEVELS)
         idx = self._log_level.findText(current.log_level)
@@ -407,7 +401,6 @@ class SettingsDialog(QDialog):
         self._chk_show_sample_id_column.setChecked(defaults.show_sample_id_column)
         self._chk_advanced_mode.setChecked(defaults.advanced_mode)
         self._undo_depth.setValue(defaults.undo_depth)
-        self._snapshot_retention.setValue(defaults.snapshot_retention_days)
         self._seed_spin.setValue(defaults.seed if defaults.seed is not None else 0)
         idx = self._log_level.findText(defaults.log_level)
         if idx >= 0:
@@ -453,7 +446,6 @@ class SettingsDialog(QDialog):
             show_sample_id_column=self._chk_show_sample_id_column.isChecked(),
             advanced_mode=self._chk_advanced_mode.isChecked(),
             undo_depth=self._undo_depth.value(),
-            snapshot_retention_days=self._snapshot_retention.value(),
             log_level=self._log_level.currentText(),
             # Sprint 22: Die Einzel-Toggles für Advanced-Funktionen leben im
             # „Ansicht"-Menü, nicht in diesem Dialog. Werte unverändert

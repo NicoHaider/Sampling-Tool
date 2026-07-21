@@ -488,3 +488,12 @@ class TestBrowseBriefpapierValidation:
 
         assert dialog.get_settings() is None
         assert len(warnings) == 1
+
+
+class TestSnapshotRetentionRemoved:
+    """Sprint 57 / L-002: totes UI-Feld ohne Produktpfad-Wirkung entfernt."""
+
+    def test_snapshot_retention_removed(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        assert not hasattr(dialog, "_snapshot_retention")
