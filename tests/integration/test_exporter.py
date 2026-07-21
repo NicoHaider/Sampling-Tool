@@ -427,7 +427,7 @@ class TestExportSample:
         tmp_path: Path,
         payload: str,
     ) -> None:
-        """S-001: ein bösartiger Wert gleichzeitig als Datenwert, Spaltenname,
+        """S-001: ein bösartiger Wert gleichzeitig als Datenwert, Spaltenname
         UND Auditor-/Mandantenname darf nach Reopen NIRGENDS als
         Formel gespeichert sein (`data_type == "f"`), und der Wert muss exakt
         erhalten bleiben (keine stille Mutation, z. B. kein Apostroph-Prefix).

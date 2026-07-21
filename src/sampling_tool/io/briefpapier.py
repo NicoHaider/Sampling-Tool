@@ -1,6 +1,6 @@
 """Briefpapier-Template-System für PDF-Reports.
 
-`BriefpapierConfig` bündelt Hintergrund-Bild + Seitenränder.
+`BriefpapierConfig` bündelt das Hintergrund-Bild eines Briefpapier-Layers.
 `get_default_briefpapier()` löst das aktive Briefpapier in dieser
 Reihenfolge auf:
 
