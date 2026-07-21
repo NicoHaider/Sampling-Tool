@@ -306,7 +306,8 @@ class DatasetRepo:
         Distinkte Spaltenwerte (vorher der einzige Production-Use-Case,
         SamplingDialog-Advanced-Mode) laufen seit Sprint 19 / P-005 über
         `DatasetRepo.distinct_values` – SQL-`json_extract` statt
-        Row-Materialize.
+        Row-Materialize. Bewusst als Test-only-Helfer behalten
+        (Sprint 58 / D.3-Entscheidung, kein Verhaltens-Change).
         """
         return tuple(self.iter_rows(dataset_id))
 
@@ -328,11 +329,6 @@ class DatasetRepo:
             )
             for r in cursor
         ]
-
-    def delete(self, dataset_id: int) -> None:
-        """Löscht Dataset (Rows + Samples kaskadieren via FK ON DELETE CASCADE)."""
-        with savepoint(self.conn, "dataset_delete"):
-            self.conn.execute("DELETE FROM datasets WHERE id = ?", (dataset_id,))
 
     def distinct_values(self, dataset_id: int, column: str) -> list[Any]:
         """Distinkte Nicht-None-Werte einer Dataset-Spalte – via SQL, ohne Row-Materialize.
