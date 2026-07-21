@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 from sampling_tool.config import (
     BRIEFPAPIER_DEFAULT_NAME,
@@ -27,9 +27,6 @@ from sampling_tool.config import (
     BRIEFPAPIER_MAX_IMAGE_PIXELS,
     DEFAULT_BRIEFPAPIER,
 )
-
-if TYPE_CHECKING:
-    from reportlab.pdfgen.canvas import Canvas
 
 _SUFFIX_PRIORITY: Final[tuple[str, ...]] = (".png", ".jpg", ".jpeg", ".pdf")
 
@@ -157,34 +154,6 @@ def _validate_image_parseable(path: Path) -> None:
         raise BriefpapierError(
             f"Briefpapier-Bild konnte nicht gelesen werden: {path.name}"
         ) from exc
-
-
-def apply_briefpapier_to_pdf(canvas: Canvas, config: BriefpapierConfig) -> None:
-    """Zeichnet das Briefpapier (PNG/JPG) als Hintergrund-Layer.
-
-    Diese Funktion behandelt nur Bitmap-Briefpapier. PDF-Briefpapier wird
-    erst nach dem Bauen des Reports per pypdf-Post-Merge eingebettet, siehe
-    `pdf_report._merge_briefpapier_pdf` (S3.2a).
-    """
-    if not config.is_active() or config.background_image is None:
-        return
-    suffix = config.background_image.suffix.lower()
-    if suffix == ".pdf":
-        return
-    page_width, page_height = canvas._pagesize
-    canvas.saveState()
-    try:
-        canvas.drawImage(
-            str(config.background_image),
-            0,
-            0,
-            width=page_width,
-            height=page_height,
-            preserveAspectRatio=True,
-            mask="auto",
-        )
-    finally:
-        canvas.restoreState()
 
 
 # ---------------------------------------------------------------------------

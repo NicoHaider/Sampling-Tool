@@ -1,18 +1,15 @@
-"""Tests für `briefpapier`: Default-Discovery + apply auf reportlab-Canvas."""
+"""Tests für `briefpapier`: Default-Discovery + Validierung."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen.canvas import Canvas
 
 from sampling_tool.io import briefpapier as bp
 from sampling_tool.io.briefpapier import (
     BriefpapierConfig,
     BriefpapierError,
-    apply_briefpapier_to_pdf,
     briefpapier_from_path,
     get_default_briefpapier,
     validate_briefpapier,
@@ -180,27 +177,3 @@ class TestValidateBriefpapier:
 
         with pytest.raises(BriefpapierError, match="zu groß"):
             validate_briefpapier(big)
-
-
-class TestApplyBriefpapierToPdf:
-    def test_apply_on_canvas_does_not_raise(self, tmp_path: Path) -> None:
-        png = _make_png(tmp_path / "letter.png")
-        out = tmp_path / "out.pdf"
-        canvas = Canvas(str(out), pagesize=A4)
-        cfg = BriefpapierConfig(background_image=png)
-
-        apply_briefpapier_to_pdf(canvas, cfg)
-        canvas.showPage()
-        canvas.save()
-
-        assert out.exists()
-        assert out.stat().st_size > 0
-
-    def test_apply_with_inactive_config_is_noop(self, tmp_path: Path) -> None:
-        out = tmp_path / "noop.pdf"
-        canvas = Canvas(str(out), pagesize=A4)
-        cfg = BriefpapierConfig(background_image=None)
-        apply_briefpapier_to_pdf(canvas, cfg)  # darf nicht crashen
-        canvas.showPage()
-        canvas.save()
-        assert out.exists()
