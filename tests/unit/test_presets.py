@@ -10,7 +10,6 @@ wird am Sampler nachgewiesen: ein aus dem Preset rekonstruiertes
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from datetime import date, datetime, time
 
 import pytest
@@ -65,8 +64,7 @@ class TestSamplingPresetModel:
         original = _full_config(seed=4242)
         preset = SamplingPreset.from_config("Standard", original)
         rebuilt = preset.to_config(seed=4242)
-        # Bis auf die ggf. abweichende Beschreibung ist das Config identisch.
-        assert rebuilt == replace(original, description=rebuilt.description)
+        assert rebuilt == original
 
     def test_to_config_uses_given_seed(self) -> None:
         preset = SamplingPreset.from_config("Standard", _full_config(seed=1))

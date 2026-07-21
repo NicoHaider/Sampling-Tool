@@ -196,9 +196,6 @@ class ExcelExporter:
             ("Quelldatei", dataset.source_file),
         ]
         rows.extend(provenance.to_ordered_fields())
-        # description bleibt bewusst außerhalb der kanonischen Provenienz – Freitext,
-        # kein Reproduktionsparameter (siehe core/provenance.py-Docstring).
-        rows.append(("Beschreibung", sample.config.description or "—"))
         if engagement is not None:
             rows.extend(
                 [

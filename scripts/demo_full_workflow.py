@@ -119,7 +119,6 @@ def main() -> None:
         method=SamplingMethod.SIMPLE,
         size=25,
         seed=42,
-        description="Demo: 25 zufällige Buchungen",
     )
     simple_result = create_sampler(simple_cfg).sample(rows)
     assert dataset.id is not None
@@ -134,7 +133,6 @@ def main() -> None:
         seed=99,
         stratum_field="Land",
         stratify_mode=StratifyMode.PROPORTIONAL,
-        description="Demo: 15 Buchungen, proportional pro Land",
     )
     strat_result = create_sampler(strat_cfg).sample(rows)
     strat_id = SampleRepo(db.connect()).create_from_result(strat_result, dataset.id, "anna")
