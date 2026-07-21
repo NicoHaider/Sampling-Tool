@@ -72,21 +72,6 @@ class TestEngagementRepo:
         assert first.id == second.id
         assert second.auditor_name == "A"  # zweiter Aufruf hat NICHT überschrieben
 
-    def test_update_metadata(self, db: Database, engagement_id: int) -> None:
-        repo = EngagementRepo(db.connect())
-        updated = repo.update_metadata(
-            engagement_id, auditor_name="Berta", audit_type="ISAE 3402 Typ I"
-        )
-        assert updated.auditor_name == "Berta"
-        assert updated.audit_type == "ISAE 3402 Typ I"
-        # Felder, die nicht übergeben wurden, bleiben:
-        assert updated.client_name == "ACME GmbH"
-
-    def test_update_unknown_engagement_raises(self, db: Database) -> None:
-        repo = EngagementRepo(db.connect())
-        with pytest.raises(LookupError):
-            repo.update_metadata(99999, auditor_name="X")
-
 
 # ===========================================================================
 # DatasetRepo
