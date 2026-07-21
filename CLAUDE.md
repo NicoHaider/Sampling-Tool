@@ -1349,16 +1349,6 @@ serialisieren.
 `_json_loads` in `persistence/_json.py` konvertieren auf `str`, weil
 SQLite-TEXT-Spalten str erwarten (bytes würde als BLOB landen).
 
-**Bulk-Insert-Pragmas:** `bulk_insert_pragmas(conn)` in
-`database.py` setzt temporär `synchronous=OFF` und ist als Werkzeug
-für isolierte Offline-Bulk-Importe verfügbar. Wird AKTUELL NICHT
-aus dem Production-Pfad aufgerufen: bereits ein einfacher Pragma-
-Wechsel innerhalb der `DatasetRepo.create`-Transaktion hat mit der
-parallel offenen MainController-Repo-Connection (zwei Connections
-auf derselben WAL-DB) deadlockt. Den Speedup auf der DB-Seite holen
-sich orjson + executemany-Generator (siehe PERFORMANCE.md
-Sprint 10.3).
-
 **executemany mit Generator:** `DatasetRepo.create` füttert
 `executemany` mit einem Generator, der pro Row einen JSON-String
 yieldet. Spart bei großen Datasets den vollen Listcomp-Buffer im
@@ -1423,9 +1413,11 @@ wurde explizit gemacht.
   `.decode("utf-8")`. Wer direkt mit `orjson` arbeitet, muss daran
   denken.
 - `journal_mode`-Wechsel auf einer WAL-DB mit parallel offenen
-  Connections kann deadlocken (Tooltest Sprint 10.3). Deshalb setzt
-  `bulk_insert_pragmas` nur `synchronous=OFF`, kein `journal_mode`.
-  Selbst dieser CM ist aktuell nicht aus Production aufgerufen.
+  Connections kann deadlocken (Tooltest Sprint 10.3) – Vorsicht bei
+  jedem Pragma-Wechsel auf einer Connection, während anderswo eine
+  zweite Connection auf derselben WAL-DB offen ist. (Das dafür gebaute
+  `bulk_insert_pragmas`-Werkzeug wurde in Sprint 58 / D.3 entfernt –
+  0 Produktions-Aufrufer, siehe REVIEW/BACKLOG_KONSOLIDIERT_2026-07.md.)
 - Beim Aufruf von `PRAGMA <name>=<value>` IMMER `.fetchall()`
   hinterherschicken – manche Pragmas (z. B. `journal_mode`) geben
   eine Result-Row zurück. Ohne Fetch bleibt das Cursor-Statement
