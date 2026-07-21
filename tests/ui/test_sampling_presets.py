@@ -246,7 +246,7 @@ class TestPresetSamplingNeutrality:
         assert preset_result is not None
         preset_config = preset_result.config
 
-        # Konfiguration identisch (bis auf eine eventuelle Beschreibung) …
+        # Konfiguration identisch …
         assert preset_config == manual_config
         # … und die tatsächliche Ziehung identisch.
         rows = _rows()

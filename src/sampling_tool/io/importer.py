@@ -258,46 +258,6 @@ class ExcelImporter:
             f"Erlaubt: {', '.join(SUPPORTED_EXCEL_SUFFIXES + SUPPORTED_CSV_SUFFIXES)}"
         )
 
-    def detect_sheets(self, path: Path) -> list[str]:
-        """Listet die Sheet-Namen einer Excel-Datei (für UI-Multi-Sheet-Auswahl)."""
-        suffix = path.suffix.lower()
-        if suffix not in SUPPORTED_EXCEL_SUFFIXES:
-            raise DataImportError(
-                f"Sheet-Liste nur für Excel-Dateien verfügbar (Datei: {path.name})."
-            )
-        wb = CalamineWorkbook.from_path(str(path))
-        return list(wb.sheet_names)
-
-    def preview(
-        self,
-        path: Path,
-        sheet_name: str | None = None,
-        n_rows: int = 10,
-    ) -> tuple[list[str], list[dict[str, Any]]]:
-        """Liefert (Spalten, erste n Zeilen) für eine UI-Vorschau – kein vollständiger Import.
-
-        Materialisiert intern eine kleine Liste – nicht für große
-        Dataseträume, sondern explizit für den Dialog.
-        """
-        if n_rows < 0:
-            raise DataImportError("preview(): n_rows muss >= 0 sein.")
-
-        suffix = path.suffix.lower()
-        if suffix in SUPPORTED_CSV_SUFFIXES:
-            text, _enc = _read_csv_text(path)
-            columns, rows_iter, _skipped, _warns = _parse_csv(text, suffix=suffix)
-            preview_rows = [dict(zip(columns, r, strict=False)) for r in rows_iter[:n_rows]]
-            return list(columns), preview_rows
-
-        if suffix in SUPPORTED_EXCEL_SUFFIXES:
-            wb = CalamineWorkbook.from_path(str(path))
-            sheet = _select_sheet(wb, sheet_name)
-            columns, data_rows, _skipped, _warns = _parse_excel_sheet(sheet, limit=n_rows)
-            preview_rows = [dict(zip(columns, r, strict=False)) for r in data_rows]
-            return list(columns), preview_rows
-
-        raise DataImportError(f"Vorschau für Dateityp '{suffix}' nicht unterstützt.")
-
     # ---- Sprint 16: Sheet-/Header-Auswahl-Dialog-API --------------------
 
     def list_sheets(self, path: Path) -> list[SheetInfo]:

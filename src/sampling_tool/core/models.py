@@ -154,8 +154,6 @@ class SampleConfig:
     filter_value: Any = None
     filter_operator: FilterOperator = FilterOperator.EQ
 
-    description: str = ""
-
 
 @dataclass(frozen=True, slots=True)
 class SampleResult:

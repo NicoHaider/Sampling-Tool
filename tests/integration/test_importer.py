@@ -187,36 +187,6 @@ class TestImportCsv:
             importer.import_file(path)
 
 
-class TestPreviewUndDetectSheets:
-    def test_detect_sheets_listet_alle(
-        self, importer: ExcelImporter, multi_sheet_xlsx: Path
-    ) -> None:
-        sheets = importer.detect_sheets(multi_sheet_xlsx)
-        assert sheets == ["Buchungen", "Stammdaten"]
-
-    def test_detect_sheets_nur_excel(self, importer: ExcelImporter, utf8_csv: Path) -> None:
-        with pytest.raises(DataImportError, match="nur für Excel"):
-            importer.detect_sheets(utf8_csv)
-
-    def test_preview_liefert_n_rows_xlsx(self, importer: ExcelImporter, simple_xlsx: Path) -> None:
-        cols, rows = importer.preview(simple_xlsx, n_rows=3)
-        assert cols == ["Name", "Betrag", "Quote", "Buchungsdatum"]
-        assert len(rows) == 3
-        assert rows[0]["Name"] == "Posten 1"
-
-    def test_preview_n_rows_groesser_als_datei(
-        self, importer: ExcelImporter, simple_xlsx: Path
-    ) -> None:
-        _cols, rows = importer.preview(simple_xlsx, n_rows=999)
-        assert len(rows) == 10
-
-    def test_preview_csv(self, importer: ExcelImporter, utf8_csv: Path) -> None:
-        cols, rows = importer.preview(utf8_csv, n_rows=1)
-        assert cols == ["Name", "Stadt"]
-        assert len(rows) == 1
-        assert rows[0] == {"Name": "Müller", "Stadt": "Wien"}
-
-
 class TestCalamineIntegration:
     """Sprint 10.2: ExcelImporter nutzt python-calamine als Excel-Engine."""
 

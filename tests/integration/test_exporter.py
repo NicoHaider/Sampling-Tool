@@ -95,7 +95,6 @@ def sample(dataset: Dataset) -> SampleResult:
         method=SamplingMethod.SIMPLE,
         size=4,
         seed=42,
-        description="Test-Stichprobe",
     )
     return SampleResult(
         config=cfg,
@@ -202,7 +201,6 @@ class TestExportSample:
         assert meta["Sampling-Methode"] == "simple"
         assert meta["Auditor"] == "Anna Auditorin"
         assert meta["Mandant"] == "ACME GmbH"
-        assert meta["Beschreibung"] == "Test-Stichprobe"
 
     def test_metadaten_sheet_zeigt_volle_provenienz(
         self,
@@ -429,8 +427,8 @@ class TestExportSample:
         tmp_path: Path,
         payload: str,
     ) -> None:
-        """S-001: ein bösartiger Wert gleichzeitig als Datenwert, Spaltenname,
-        Beschreibung UND Auditor-/Mandantenname darf nach Reopen NIRGENDS als
+        """S-001: ein bösartiger Wert gleichzeitig als Datenwert, Spaltenname
+        UND Auditor-/Mandantenname darf nach Reopen NIRGENDS als
         Formel gespeichert sein (`data_type == "f"`), und der Wert muss exakt
         erhalten bleiben (keine stille Mutation, z. B. kein Apostroph-Prefix).
 
@@ -445,7 +443,7 @@ class TestExportSample:
         `tests/unit/test_xlsx_safe.py::TestSafeRow` regressionsgetestet. Hier
         bleiben alle Payloads trotzdem im Battery: sie sichern zusätzlich die
         byte-identische Werterhaltung über den vollen Export-Pfad ab (Spalten-
-        name, Datenwert, Auditor/Mandant, Beschreibung – `payload_cells_seen`)."""
+        name, Datenwert, Auditor/Mandant – `payload_cells_seen`)."""
         malicious_column = payload
         eng = EngagementRepo(db.connect()).get_or_create(
             Engagement(
@@ -475,7 +473,6 @@ class TestExportSample:
             method=SamplingMethod.SIMPLE,
             size=2,
             seed=42,
-            description=payload,
         )
         sample = SampleResult(
             config=cfg,
@@ -515,8 +512,8 @@ class TestExportSample:
                         )
 
         # Payload muss an mehreren Stellen (Spaltenname, Datenwert, Auditor,
-        # Mandant, Beschreibung) exakt und byte-identisch wiedergefunden werden.
-        assert payload_cells_seen >= 5
+        # Mandant) exakt und byte-identisch wiedergefunden werden.
+        assert payload_cells_seen >= 4
 
     def test_leere_spaltenliste_wirft_export_error(
         self,

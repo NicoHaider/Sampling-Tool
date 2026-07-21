@@ -23,18 +23,9 @@ APP_ORG_DOMAIN: Final[str] = "bdo.at"
 # Wird in den Stylesheets unter ui/styles/*.qss referenziert.
 # ---------------------------------------------------------------------------
 BDO_RED: Final[str] = "#E81A3B"  # Primärfarbe (Logo-Rot)
-BDO_DARK_RED: Final[str] = "#A41229"  # Hover / aktive Buttons
-BDO_BLACK: Final[str] = "#000000"
 BDO_DARK_GREY: Final[str] = "#333333"  # Haupt-Schriftfarbe
 BDO_GREY: Final[str] = "#7F7F7F"  # sekundärer Text
 BDO_LIGHT_GREY: Final[str] = "#D9D9D9"  # Trennlinien, Borders
-BDO_BACKGROUND: Final[str] = "#F5F5F5"  # Fenster-Hintergrund
-BDO_WHITE: Final[str] = "#FFFFFF"
-
-BDO_SUCCESS: Final[str] = "#2E7D32"  # grün – z. B. Sample erfolgreich
-BDO_WARNING: Final[str] = "#ED6C02"  # orange – Validierungs-Warnung
-BDO_ERROR: Final[str] = "#C62828"  # rot – Fehler-State (UI-Variante,
-#                                           bewusst dezenter als BDO_RED)
 
 # Hintergrund-Farbe für markierte Sample-Zeilen in der Tabelle.
 # Kräftiges Grün mit moderater Deckkraft, damit Text lesbar bleibt.
@@ -46,8 +37,6 @@ SAMPLE_HIGHLIGHT_ALPHA: Final[int] = 90  # 0-255 (≈ 35 % Deckkraft)
 # ---------------------------------------------------------------------------
 DEFAULT_SAMPLE_SIZE: Final[int] = 25  # Branchenüblicher Default
 MIN_SAMPLE_SIZE: Final[int] = 1
-MAX_SAMPLE_SIZE: Final[int] = 10_000  # Hard-Cap (UI + Validierung)
-DEFAULT_SEED: Final[int] = 42  # Doku-Default; Prod erzeugt zufällig
 SEED_MIN: Final[int] = 0
 SEED_MAX: Final[int] = 2**32 - 1  # numpy default_rng-Range
 

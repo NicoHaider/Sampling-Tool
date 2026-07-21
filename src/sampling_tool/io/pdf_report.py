@@ -98,7 +98,7 @@ class AuditTrailPDF:
 
     `briefpapier` kann sein:
     - `Path` – nutzt explizit diese Datei als Hintergrund,
-    - `BriefpapierConfig` – komplette Konfiguration inkl. Rändern,
+    - `BriefpapierConfig` – komplette Konfiguration,
     - `None` – das System sucht nach einem Default (User-Ordner +
       Resource-Ordner). Findet sich nichts, läuft der Report ohne
       Briefpapier-Layer.

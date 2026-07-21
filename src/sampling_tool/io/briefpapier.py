@@ -1,6 +1,6 @@
 """Briefpapier-Template-System für PDF-Reports.
 
-`BriefpapierConfig` bündelt Hintergrund-Bild + Seitenränder.
+`BriefpapierConfig` bündelt das Hintergrund-Bild eines Briefpapier-Layers.
 `get_default_briefpapier()` löst das aktive Briefpapier in dieser
 Reihenfolge auf:
 
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 from sampling_tool.config import (
     BRIEFPAPIER_DEFAULT_NAME,
@@ -27,9 +27,6 @@ from sampling_tool.config import (
     BRIEFPAPIER_MAX_IMAGE_PIXELS,
     DEFAULT_BRIEFPAPIER,
 )
-
-if TYPE_CHECKING:
-    from reportlab.pdfgen.canvas import Canvas
 
 _SUFFIX_PRIORITY: Final[tuple[str, ...]] = (".png", ".jpg", ".jpeg", ".pdf")
 
@@ -44,16 +41,10 @@ class BriefpapierConfig:
 
     `background_image` kann ein PNG/JPG (im `onPage`-Hook drauf gezeichnet)
     oder ein PDF (per `pypdf`-Post-Merge unter jede Seite gelegt, siehe
-    `pdf_report._merge_briefpapier_pdf`) sein. Die Seitenränder geben dem
-    Report-Builder Hinweise, wieviel Platz an den Rändern für Briefpapier-
-    Elemente reserviert bleiben soll.
+    `pdf_report._merge_briefpapier_pdf`) sein.
     """
 
     background_image: Path | None
-    margin_top_mm: float = 25.0
-    margin_bottom_mm: float = 25.0
-    margin_left_mm: float = 20.0
-    margin_right_mm: float = 20.0
 
     def is_active(self) -> bool:
         """`True`, wenn ein konkretes Hintergrund-Bild geladen ist."""
@@ -157,34 +148,6 @@ def _validate_image_parseable(path: Path) -> None:
         raise BriefpapierError(
             f"Briefpapier-Bild konnte nicht gelesen werden: {path.name}"
         ) from exc
-
-
-def apply_briefpapier_to_pdf(canvas: Canvas, config: BriefpapierConfig) -> None:
-    """Zeichnet das Briefpapier (PNG/JPG) als Hintergrund-Layer.
-
-    Diese Funktion behandelt nur Bitmap-Briefpapier. PDF-Briefpapier wird
-    erst nach dem Bauen des Reports per pypdf-Post-Merge eingebettet, siehe
-    `pdf_report._merge_briefpapier_pdf` (S3.2a).
-    """
-    if not config.is_active() or config.background_image is None:
-        return
-    suffix = config.background_image.suffix.lower()
-    if suffix == ".pdf":
-        return
-    page_width, page_height = canvas._pagesize
-    canvas.saveState()
-    try:
-        canvas.drawImage(
-            str(config.background_image),
-            0,
-            0,
-            width=page_width,
-            height=page_height,
-            preserveAspectRatio=True,
-            mask="auto",
-        )
-    finally:
-        canvas.restoreState()
 
 
 # ---------------------------------------------------------------------------
