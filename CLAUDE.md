@@ -1169,8 +1169,12 @@ für Anwender-Präferenzen:
   Key oder Default-Ordner existiert bereits) und das Flag wird in
   dem Fall einmalig auf `True` gesetzt + sofort in QSettings geschrieben,
   damit der Wizard nie auftaucht.
-- `undo_depth` / `snapshot_retention_days` / `log_level` – reserviert
-  für spätere Erweiterungen, aktuell informativ.
+- `undo_depth` – steuert seit Sprint 57 wirksam die `UndoManager`-Stack-Tiefe
+  (Konstruktion + live via `apply_new_settings`). `log_level` ist seit
+  Sprint 18/S1.6 angebunden (Startup + live). `snapshot_retention_days` wurde
+  in Sprint 57 entfernt (totes UI-Feld ohne Produktpfad-Wirkung – eine echte
+  Retention-/Auto-Löschung wäre ein bewusster Compliance-Trade-off für einen
+  eigenen Sprint, nicht Nebenprodukt eines generischen Settings-Felds).
 
 ## Resource-Loading (Sprint 8.1)
 

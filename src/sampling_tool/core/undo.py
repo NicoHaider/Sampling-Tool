@@ -133,3 +133,7 @@ class UndoManager:
     def clear(self) -> None:
         """Beide Stacks komplett leeren."""
         self._repo.clear_all()
+
+    def set_max_depth(self, max_depth: int) -> None:
+        """Setzt die maximale Stack-Tiefe; wirkt ab dem nächsten `push` (lazy)."""
+        self._max_depth = max_depth

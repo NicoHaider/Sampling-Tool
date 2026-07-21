@@ -23,7 +23,6 @@ from sampling_tool.config import APP_NAME, APP_ORG, ENGAGEMENTS_DIR
 
 LOG_LEVELS: Final[tuple[str, ...]] = ("INFO", "DEBUG")
 DEFAULT_UNDO_DEPTH: Final[int] = 20
-DEFAULT_SNAPSHOT_RETENTION_DAYS: Final[int] = 0  # 0 = unbegrenzt
 DEFAULT_LOG_LEVEL: Final[str] = "INFO"
 
 # Sprint 22 – Kennungen der einzeln schaltbaren Advanced-Sampling-Funktionen.
@@ -104,7 +103,6 @@ class AppSettings:
     # Erweitert
     advanced_mode: bool
     undo_depth: int
-    snapshot_retention_days: int
     log_level: str
 
     # Einzel-Toggles für Advanced-Sampling-Funktionen (Sprint 22) – app-weit,
@@ -142,7 +140,6 @@ class AppSettings:
             show_sample_id_column=True,
             advanced_mode=False,
             undo_depth=DEFAULT_UNDO_DEPTH,
-            snapshot_retention_days=DEFAULT_SNAPSHOT_RETENTION_DAYS,
             log_level=DEFAULT_LOG_LEVEL,
             # Sprint 36: Spalten-Filter ist ab Werk sichtbar (unabhängig von
             # Advanced-Mode). Bewusste Verhaltensänderung – auch für
@@ -288,10 +285,6 @@ def load_settings() -> AppSettings:
             s.value("settings/show_stratified_feature", base.show_stratified_feature)
         ),
         undo_depth=_int(s.value("settings/undo_depth", base.undo_depth), base.undo_depth),
-        snapshot_retention_days=_int(
-            s.value("settings/snapshot_retention_days", base.snapshot_retention_days),
-            base.snapshot_retention_days,
-        ),
         log_level=log_level,
         first_run_completed=first_run_completed,
     )
@@ -333,7 +326,6 @@ def save_settings(settings: AppSettings) -> None:
     s.setValue("settings/show_stratified_feature", settings.show_stratified_feature)
     s.setValue("settings/first_run_completed", settings.first_run_completed)
     s.setValue("settings/undo_depth", settings.undo_depth)
-    s.setValue("settings/snapshot_retention_days", settings.snapshot_retention_days)
     s.setValue("settings/log_level", settings.log_level)
     s.sync()
 

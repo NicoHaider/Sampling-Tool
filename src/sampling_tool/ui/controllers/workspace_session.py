@@ -305,10 +305,12 @@ class WorkspaceSession:
     # ---- Settings-Update ------------------------------------------------
 
     def apply_new_settings(self, settings: AppSettings) -> None:
-        """Settings updaten + Log-Level live setzen + Engagement-Dir anlegen +
-        Panel-Visibility anwenden."""
+        """Settings updaten + Log-Level und Undo-Tiefe live setzen +
+        Engagement-Dir anlegen + Panel-Visibility anwenden."""
         self.settings = settings
         logging.getLogger().setLevel(resolve_log_level(settings.log_level))
+        if self.undo_manager is not None:
+            self.undo_manager.set_max_depth(settings.undo_depth)
         try:
             settings.engagements_dir.mkdir(parents=True, exist_ok=True)
         except OSError:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import fields, replace
 from pathlib import Path
 
 import pytest
@@ -70,7 +70,6 @@ class TestRoundtrip:
             reset_keeps_filter=True,
             custom_briefpapier_path=custom_path,
             undo_depth=42,
-            snapshot_retention_days=7,
             log_level="DEBUG",
         )
         save_settings(original)
@@ -81,7 +80,6 @@ class TestRoundtrip:
         assert loaded.reset_keeps_filter is True
         assert loaded.custom_briefpapier_path == custom_path
         assert loaded.undo_depth == 42
-        assert loaded.snapshot_retention_days == 7
         assert loaded.log_level == "DEBUG"
 
     def test_save_none_custom_briefpapier_roundtrips(self) -> None:
@@ -120,6 +118,14 @@ class TestRoundtrip:
         s.sync()
         loaded = load_settings()
         assert loaded.undo_depth == DEFAULT_UNDO_DEPTH
+
+
+class TestSnapshotRetentionRemoved:
+    """Sprint 57 / L-002: totes UI-Feld ohne Produktpfad-Wirkung entfernt."""
+
+    def test_snapshot_retention_removed(self) -> None:
+        field_names = {f.name for f in fields(AppSettings)}
+        assert "snapshot_retention_days" not in field_names
 
 
 class TestAdvancedMode:
