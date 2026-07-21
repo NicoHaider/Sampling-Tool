@@ -3564,6 +3564,67 @@ class TestLogLevelWiring:
 
 
 # ---------------------------------------------------------------------------
+# Sprint 57 / L-002: `undo_depth`-Setting wird auf den UndoManager angewendet
+# (Konstruktion beim Öffnen + live via apply_new_settings)
+# ---------------------------------------------------------------------------
+
+
+class TestUndoDepthWiring:
+    def test_undo_manager_uses_settings_depth(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        depth = 3
+        settings = dc_replace(AppSettings.defaults(), undo_depth=depth)
+        controller = MainController(window, recent_store=recent_store, settings=settings)
+        try:
+            controller.handle_open_engagement(populated_db)
+            undo_manager = controller.session.undo_manager
+            assert undo_manager is not None
+            assert undo_manager._max_depth == depth
+
+            for i in range(depth + 3):
+                undo_manager.push(sample_id=None, visible_rows=[i], highlighted_rows=[])
+            assert sum(1 for _ in iter(undo_manager.undo, None)) == depth
+        finally:
+            controller.handle_close_engagement()
+
+    def test_undo_depth_applied_live(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        settings = AppSettings.defaults()
+        controller = MainController(window, recent_store=recent_store, settings=settings)
+        try:
+            controller.handle_open_engagement(populated_db)
+            undo_manager = controller.session.undo_manager
+            assert undo_manager is not None
+
+            new_depth = 2
+            controller.session.apply_new_settings(
+                dc_replace(controller.session.settings, undo_depth=new_depth)
+            )
+
+            for i in range(new_depth + 3):
+                undo_manager.push(sample_id=None, visible_rows=[i], highlighted_rows=[])
+            assert sum(1 for _ in iter(undo_manager.undo, None)) == new_depth
+        finally:
+            controller.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
 # Sprint 14 / T-007: Pfad-Auswahl im Sampling-Dispatch
 # ---------------------------------------------------------------------------
 #

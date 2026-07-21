@@ -227,3 +227,17 @@ class TestCustomMaxDepth:
         for i in range(depth + 3):
             mgr.push(sample_id=None, visible_rows=[i], highlighted_rows=[])
         assert repo.count(UndoStack.UNDO) == depth
+
+
+class TestSetMaxDepth:
+    def test_set_max_depth_wirkt_beim_naechsten_push(self) -> None:
+        repo = FakeUndoRepo()
+        mgr = UndoManager(repo, max_depth=20)
+        for i in range(5):
+            mgr.push(sample_id=None, visible_rows=[i], highlighted_rows=[])
+        mgr.set_max_depth(2)
+        # Bereits gepushte Einträge werden NICHT sofort getrimmt (lazy).
+        assert repo.count(UndoStack.UNDO) == 5
+        mgr.push(sample_id=None, visible_rows=[99], highlighted_rows=[])
+        # Der nächste push erzwingt die neue Tiefe.
+        assert repo.count(UndoStack.UNDO) == 2

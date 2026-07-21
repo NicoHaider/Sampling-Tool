@@ -324,7 +324,9 @@ class EngagementController:
         s.filter_active_sample_id = None
         s.window.data_table().clear_dataset()
         if engagement.id is not None:
-            s.undo_manager = UndoManager(UndoRepo(db.connect(), engagement.id))
+            s.undo_manager = UndoManager(
+                UndoRepo(db.connect(), engagement.id), max_depth=s.settings.undo_depth
+            )
             s.state_repo = EngagementStateRepo(db.connect())
         else:
             s.undo_manager = None
