@@ -41,16 +41,10 @@ class BriefpapierConfig:
 
     `background_image` kann ein PNG/JPG (im `onPage`-Hook drauf gezeichnet)
     oder ein PDF (per `pypdf`-Post-Merge unter jede Seite gelegt, siehe
-    `pdf_report._merge_briefpapier_pdf`) sein. Die Seitenränder geben dem
-    Report-Builder Hinweise, wieviel Platz an den Rändern für Briefpapier-
-    Elemente reserviert bleiben soll.
+    `pdf_report._merge_briefpapier_pdf`) sein.
     """
 
     background_image: Path | None
-    margin_top_mm: float = 25.0
-    margin_bottom_mm: float = 25.0
-    margin_left_mm: float = 20.0
-    margin_right_mm: float = 20.0
 
     def is_active(self) -> bool:
         """`True`, wenn ein konkretes Hintergrund-Bild geladen ist."""

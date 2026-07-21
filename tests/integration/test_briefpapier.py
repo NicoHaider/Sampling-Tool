@@ -45,11 +45,6 @@ class TestBriefpapierConfig:
         cfg = BriefpapierConfig(background_image=missing)
         assert cfg.is_active() is False
 
-    def test_default_margins(self) -> None:
-        cfg = BriefpapierConfig(background_image=None)
-        assert cfg.margin_top_mm == 25.0
-        assert cfg.margin_left_mm == 20.0
-
 
 class TestGetDefaultBriefpapier:
     def test_returns_none_when_nothing_found(
