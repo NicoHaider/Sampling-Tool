@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -30,6 +31,19 @@ from sampling_tool.persistence.repositories import (
     SampleRepo,
 )
 from sampling_tool.persistence.version_manager import EngagementVersionManager
+from sampling_tool.ui.controllers._factories import (
+    ControllerFactories,
+    default_audit_pdf_factory,
+    default_duplicate_dialog_factory,
+    default_excel_report_factory,
+    default_export_factory,
+    default_html_report_factory,
+    default_id_column_factory,
+    default_import_options_factory,
+    default_new_engagement_factory,
+    default_sampling_factory,
+    default_settings_factory,
+)
 from sampling_tool.ui.controllers.engagement_controller import (
     _remove_db_files as _real_remove_db_files,
 )
@@ -203,6 +217,32 @@ def _spy_database_close() -> Iterator[list[Database]]:
 
     with patch.object(Database, "close", _spy):
         yield calls
+
+
+def test_controller_factories_defaults() -> None:
+    """Sprint 59 / Teil B (L-003): `ControllerFactories.defaults()` muss die
+    10 `default_*_factory`-Modulfunktionen 1:1 auf die gleichnamigen Bundle-
+    Felder mappen – das Override-Verhalten selbst (Kwarg gesetzt -> Kwarg
+    gewinnt) ist bereits durch die ~84 Factory-Injection-Testfälle in
+    `TestMainController` & Co. abgedeckt, hier geht es nur um `defaults()`
+    selbst."""
+    factories = ControllerFactories.defaults()
+
+    assert isinstance(factories, ControllerFactories)
+    assert factories.new_engagement is default_new_engagement_factory
+    assert factories.duplicate is default_duplicate_dialog_factory
+    assert factories.sampling is default_sampling_factory
+    assert factories.export_sample is default_export_factory
+    assert factories.audit_pdf is default_audit_pdf_factory
+    assert factories.excel_report is default_excel_report_factory
+    assert factories.html_report is default_html_report_factory
+    assert factories.settings is default_settings_factory
+    assert factories.import_options is default_import_options_factory
+    assert factories.id_column is default_id_column_factory
+    assert all(
+        callable(getattr(factories, field.name))
+        for field in dataclasses.fields(ControllerFactories)
+    )
 
 
 class TestMainController:
@@ -1760,7 +1800,7 @@ class TestSamplingFlow:
             _open_dataset(controller, window, populated_db)
             controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
-                controller.handle_export_sample()
+                controller.export.handle_export_sample()
             files = list(tmp_path.glob("testname_ID42_BDO_sampling_*.xlsx"))
             assert len(files) == 1
         finally:
@@ -1795,7 +1835,7 @@ class TestSamplingFlow:
         try:
             controller.handle_open_engagement(populated_db)
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
-                controller.handle_export_audit_pdf()
+                controller.export.handle_export_audit_pdf()
             assert target.exists()
             assert target.stat().st_size > 0
         finally:
@@ -2402,7 +2442,7 @@ class TestSprint6Reports:
         try:
             controller.handle_open_engagement(populated_db)
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
-                controller.handle_export_excel_report()
+                controller.export.handle_export_excel_report()
             assert target.exists()
         finally:
             controller.handle_close_engagement()
@@ -2438,7 +2478,7 @@ class TestSprint6Reports:
             controller.handle_open_engagement(populated_db)
             ds_id = _first_item_data(window.sidebar().datasets_widget())
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
-                controller.handle_export_excel_report()
+                controller.export.handle_export_excel_report()
             wb = load_workbook(target)
             ws = wb["3. Samples"]
             rows = list(ws.iter_rows(values_only=True))
@@ -2475,7 +2515,7 @@ class TestSprint6Reports:
         try:
             controller.handle_open_engagement(populated_db)
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
-                controller.handle_export_html_report()
+                controller.export.handle_export_html_report()
             assert target.exists()
             content = target.read_text(encoding="utf-8")
             assert "ACME" in content
@@ -2542,7 +2582,7 @@ class TestUnifiedExportDialogs:
             with patch(
                 "sampling_tool.ui.controllers.export_controller.QMessageBox.information"
             ) as info:
-                controller.handle_export_audit_pdf()
+                controller.export.handle_export_audit_pdf()
             # Info-Text enthält Anzahl der gefilterten Events.
             assert info.called
             args = info.call_args[0]
@@ -2565,7 +2605,7 @@ class TestUnifiedExportDialogs:
         )
         try:
             controller.handle_open_engagement(populated_db)
-            controller.handle_export_audit_pdf()
+            controller.export.handle_export_audit_pdf()
             assert not list(tmp_path.glob("*.pdf"))
         finally:
             controller.handle_close_engagement()
@@ -2597,7 +2637,7 @@ class TestUnifiedExportDialogs:
         try:
             controller.handle_open_engagement(populated_db)
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
-                controller.handle_export_excel_report()
+                controller.export.handle_export_excel_report()
             assert target.exists()
             wb = load_workbook(target)
             assert len(wb.sheetnames) == 1
@@ -2734,7 +2774,7 @@ class TestSettingsIntegration:
         )
         try:
             controller.handle_open_engagement(populated_db)
-            controller.handle_export_audit_pdf()
+            controller.export.handle_export_audit_pdf()
             assert captured["default_use_briefpapier"] is False
             assert captured["default_include_statistics"] is False
         finally:
@@ -2808,7 +2848,7 @@ class TestSettingsIntegration:
         try:
             controller.handle_open_engagement(populated_db)
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
-                controller.handle_export_audit_pdf()
+                controller.export.handle_export_audit_pdf()
             task = captured["task"]
             assert task.company is not None
             assert task.company.key == "consulting_gmbh"
@@ -4562,7 +4602,7 @@ class TestAuditTrailRobustness:
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as mock_warning,
             ):
-                controller.handle_export_sample()  # darf NICHT werfen
+                controller.export.handle_export_sample()  # darf NICHT werfen
             mock_warning.assert_called_once()
         finally:
             controller.handle_close_engagement()
@@ -4607,7 +4647,7 @@ class TestAuditTrailRobustness:
                 ) as mock_warning,
                 patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"),
             ):
-                controller.handle_export_sample()  # darf NICHT werfen
+                controller.export.handle_export_sample()  # darf NICHT werfen
             mock_warning.assert_called_once()
             files = list(tmp_path.glob("testname_ID42_BDO_sampling_*.xlsx"))
             assert len(files) == 1, "Exportdatei muss trotz Audit-Log-Fehler erhalten bleiben"
@@ -4660,7 +4700,7 @@ class TestAuditTrailRobustness:
                 ) as mock_warning,
                 patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"),
             ):
-                controller.handle_export_sample()
+                controller.export.handle_export_sample()
             mock_warning.assert_called_once()
 
             assert controller.session.db is not None

@@ -9,7 +9,6 @@ WorkspaceSession.
 from __future__ import annotations
 
 from sampling_tool.persistence.repositories import AuditRepo, SampleRepo
-from sampling_tool.ui.controllers._factories import ControllerFactories
 from sampling_tool.ui.controllers.workspace_session import (
     AUDIT_EVENT_DISPLAY_LIMIT,
     WorkspaceSession,
@@ -19,9 +18,8 @@ from sampling_tool.ui.controllers.workspace_session import (
 class SelectionController:
     """Bedient Sidebar-/AuditTrail-Auswahl + Sample-Filter."""
 
-    def __init__(self, session: WorkspaceSession, factories: ControllerFactories) -> None:
+    def __init__(self, session: WorkspaceSession) -> None:
         self.session = session
-        self._factories = factories  # nicht aktuell genutzt – Reserve für später
 
     # ---- Dataset --------------------------------------------------------
 

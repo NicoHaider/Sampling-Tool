@@ -6,8 +6,10 @@ hat jetzt nur noch zwei Aufgaben:
 2. UI-Signale an den jeweils zuständigen Sub-Controller weiterleiten.
 
 Externe API (`MainController(window, **factories)`) unverändert. Public
-`handle_*`-Methoden bleiben als Backward-Compat-Fassade erhalten, damit
-bestehende Tests ohne Anpassung weiterlaufen.
+`handle_*`-Methoden bleiben (noch) als Backward-Compat-Fassade erhalten,
+damit bestehende Tests ohne Anpassung weiterlaufen — wird schrittweise pro
+Subcontroller abgebaut (Sprint 59 / Teil C: `export` migriert,
+`self.export.handle_export_*` statt Forward).
 
 Sub-Controller:
 - `EngagementController` – Engagement-Lifecycle (New, Open, Close, Recent)
@@ -29,9 +31,10 @@ Undo/Redo-Konvention (verbindlich, unverändert):
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sampling_tool.ui.controllers._factories import (
     AuditPdfDialogFactory,
@@ -45,16 +48,6 @@ from sampling_tool.ui.controllers._factories import (
     ImportOptionsDialogFactory,
     SamplingDialogFactory,
     SettingsDialogFactory,
-    default_audit_pdf_factory,
-    default_duplicate_dialog_factory,
-    default_excel_report_factory,
-    default_export_factory,
-    default_html_report_factory,
-    default_id_column_factory,
-    default_import_options_factory,
-    default_new_engagement_factory,
-    default_sampling_factory,
-    default_settings_factory,
 )
 from sampling_tool.ui.controllers.engagement_controller import EngagementController
 from sampling_tool.ui.controllers.export_controller import ExportController
@@ -66,10 +59,8 @@ from sampling_tool.ui.recent import RecentEngagementsStore
 from sampling_tool.ui.settings_store import AppSettings, load_settings
 
 if TYPE_CHECKING:
-    from sampling_tool.core.models import Dataset, Engagement, SampleResult
-    from sampling_tool.core.undo import UndoManager
+    from sampling_tool.core.models import Engagement, SampleResult
     from sampling_tool.io.briefpapier import BriefpapierConfig
-    from sampling_tool.persistence.database import Database
     from sampling_tool.persistence.repositories import EngagementStateRepo
     from sampling_tool.ui.main_window import MainWindow
 
@@ -108,43 +99,43 @@ class MainController:
         )
 
         # ---- Factories bündeln -------------------------------------
-        factories = ControllerFactories(
-            new_engagement=dialog_factory
-            if dialog_factory is not None
-            else default_new_engagement_factory,
-            duplicate=duplicate_dialog_factory
-            if duplicate_dialog_factory is not None
-            else default_duplicate_dialog_factory,
-            sampling=sampling_dialog_factory
-            if sampling_dialog_factory is not None
-            else default_sampling_factory,
-            export_sample=export_dialog_factory
-            if export_dialog_factory is not None
-            else default_export_factory,
-            audit_pdf=audit_pdf_dialog_factory
-            if audit_pdf_dialog_factory is not None
-            else default_audit_pdf_factory,
-            excel_report=excel_report_dialog_factory
-            if excel_report_dialog_factory is not None
-            else default_excel_report_factory,
-            html_report=html_report_dialog_factory
-            if html_report_dialog_factory is not None
-            else default_html_report_factory,
-            settings=settings_dialog_factory
-            if settings_dialog_factory is not None
-            else default_settings_factory,
-            import_options=import_options_dialog_factory
-            if import_options_dialog_factory is not None
-            else default_import_options_factory,
-            id_column=id_column_dialog_factory
-            if id_column_dialog_factory is not None
-            else default_id_column_factory,
+        # Sprint 59 / Teil B (L-003): Basis sind die 10 Default-Factories aus
+        # `ControllerFactories.defaults()`; nur tatsächlich übergebene
+        # (nicht-`None`) Konstruktor-Kwargs überschreiben sie per
+        # `dataclasses.replace`. Verhaltensidentisch zur vorherigen
+        # 10-Ternary-Kette: pro Feld gilt "Override falls gesetzt, sonst
+        # Default". (Als Comprehension statt 10 einzelner `if`s, damit die
+        # McCabe-Komplexität von `__init__` nicht über den Ruff-Grenzwert
+        # steigt.)
+        #
+        # `dict[str, Any]`: die Feldnamen sind hier zur Laufzeit erzeugte
+        # Strings, keine Literal-Keywords – kein Typ (auch nicht `TypedDict`
+        # + `cast`) lässt mypy die Feld<->Wert-Zuordnung aus dieser
+        # String-Tuple-Liste ableiten. `dataclasses.replace()`s eigener
+        # Stub ist ohnehin `**changes: Any`, die Korrektheit der Zuordnung
+        # sichert stattdessen die Factory-Injection-Testsuite ab (u. a.
+        # `test_controller_factories_defaults`), nicht der Type-Checker.
+        factory_overrides: tuple[tuple[str, object], ...] = (
+            ("new_engagement", dialog_factory),
+            ("duplicate", duplicate_dialog_factory),
+            ("sampling", sampling_dialog_factory),
+            ("export_sample", export_dialog_factory),
+            ("audit_pdf", audit_pdf_dialog_factory),
+            ("excel_report", excel_report_dialog_factory),
+            ("html_report", html_report_dialog_factory),
+            ("settings", settings_dialog_factory),
+            ("import_options", import_options_dialog_factory),
+            ("id_column", id_column_dialog_factory),
         )
+        overrides: dict[str, Any] = {
+            field: value for field, value in factory_overrides if value is not None
+        }
+        factories = dataclasses.replace(ControllerFactories.defaults(), **overrides)
 
         # ---- Sub-Controller aufbauen -------------------------------
         self.engagement = EngagementController(self.session, factories)
         self.workspace = WorkspaceController(self.session, factories)
-        self.selection = SelectionController(self.session, factories)
+        self.selection = SelectionController(self.session)
         self.export = ExportController(self.session, factories)
         self.help = HelpController(self.session, factories)
 
@@ -170,10 +161,6 @@ class MainController:
     # Tests unverändert weiterlaufen.
 
     @property
-    def recent_store(self) -> RecentEngagementsStore:
-        return self.session.recent_store
-
-    @property
     def window(self) -> MainWindow:
         return self.session.window
 
@@ -186,16 +173,8 @@ class MainController:
         self.session.settings = value
 
     @property
-    def _db(self) -> Database | None:
-        return self.session.db
-
-    @property
     def _engagement(self) -> Engagement | None:
         return self.session.engagement
-
-    @property
-    def _dataset(self) -> Dataset | None:
-        return self.session.dataset
 
     @property
     def _sample(self) -> SampleResult | None:
@@ -210,20 +189,8 @@ class MainController:
         return self.session.filter_active_sample_id
 
     @property
-    def _undo_manager(self) -> UndoManager | None:
-        return self.session.undo_manager
-
-    @property
     def _state_repo(self) -> EngagementStateRepo | None:
         return self.session.state_repo
-
-    @property
-    def _restoring_state(self) -> bool:
-        return self.session.restoring_state
-
-    @property
-    def _datasets(self) -> list[Dataset]:
-        return self.session.datasets
 
     # ---- Public Convenience-Methode -------------------------------------
 
@@ -236,6 +203,9 @@ class MainController:
     # Bestehende Tests rufen diese Methoden direkt auf dem MainController auf.
     # Forwards an den jeweiligen Sub-Controller. Reine Delegation, keine
     # eigene Logik.
+    #
+    # `export` hat hier bewusst keine Forwards mehr: Sprint 59 / Teil C hat
+    # sie entfernt, Aufrufer nutzen jetzt `self.export.handle_export_*`.
 
     def handle_new_engagement(self) -> None:
         self.engagement.handle_new_engagement()
@@ -285,18 +255,6 @@ class MainController:
     def handle_audit_event_double_clicked(self, event_id: int) -> None:
         self.selection.handle_audit_event_double_clicked(event_id)
 
-    def handle_export_sample(self) -> None:
-        self.export.handle_export_sample()
-
-    def handle_export_audit_pdf(self) -> None:
-        self.export.handle_export_audit_pdf()
-
-    def handle_export_excel_report(self) -> None:
-        self.export.handle_export_excel_report()
-
-    def handle_export_html_report(self) -> None:
-        self.export.handle_export_html_report()
-
     def handle_bug_report(self) -> None:
         self.help.handle_bug_report()
 
@@ -320,12 +278,6 @@ class MainController:
 
     def _refresh_audit_trail(self) -> None:
         self.session.refresh_audit_trail()
-
-    def _refresh_dashboard(self) -> None:
-        self.session.refresh_dashboard()
-
-    def _refresh_views(self) -> None:
-        self.session.refresh_views()
 
     def _resolve_briefpapier(self) -> BriefpapierConfig | None:
         return self.session.resolve_briefpapier()

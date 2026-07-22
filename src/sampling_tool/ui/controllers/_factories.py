@@ -101,6 +101,28 @@ class ControllerFactories:
     import_options: ImportOptionsDialogFactory
     id_column: IdColumnDialogFactory
 
+    @classmethod
+    def defaults(cls) -> ControllerFactories:
+        """Bündelt die 10 `default_*_factory`-Funktionen zu einem Bundle.
+
+        Sprint 59 / Teil B (L-003): einziger Ort, an dem die Default-Factories
+        auf die Bundle-Felder gemappt werden – `MainController.__init__`
+        baut Overrides per `dataclasses.replace(cls.defaults(), **overrides)`
+        statt 10 einzelner Ternaries.
+        """
+        return cls(
+            new_engagement=default_new_engagement_factory,
+            duplicate=default_duplicate_dialog_factory,
+            sampling=default_sampling_factory,
+            export_sample=default_export_factory,
+            audit_pdf=default_audit_pdf_factory,
+            excel_report=default_excel_report_factory,
+            html_report=default_html_report_factory,
+            settings=default_settings_factory,
+            import_options=default_import_options_factory,
+            id_column=default_id_column_factory,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Default-Factories
