@@ -66,10 +66,8 @@ from sampling_tool.ui.recent import RecentEngagementsStore
 from sampling_tool.ui.settings_store import AppSettings, load_settings
 
 if TYPE_CHECKING:
-    from sampling_tool.core.models import Dataset, Engagement, SampleResult
-    from sampling_tool.core.undo import UndoManager
+    from sampling_tool.core.models import Engagement, SampleResult
     from sampling_tool.io.briefpapier import BriefpapierConfig
-    from sampling_tool.persistence.database import Database
     from sampling_tool.persistence.repositories import EngagementStateRepo
     from sampling_tool.ui.main_window import MainWindow
 
@@ -144,7 +142,7 @@ class MainController:
         # ---- Sub-Controller aufbauen -------------------------------
         self.engagement = EngagementController(self.session, factories)
         self.workspace = WorkspaceController(self.session, factories)
-        self.selection = SelectionController(self.session, factories)
+        self.selection = SelectionController(self.session)
         self.export = ExportController(self.session, factories)
         self.help = HelpController(self.session, factories)
 
@@ -170,10 +168,6 @@ class MainController:
     # Tests unverändert weiterlaufen.
 
     @property
-    def recent_store(self) -> RecentEngagementsStore:
-        return self.session.recent_store
-
-    @property
     def window(self) -> MainWindow:
         return self.session.window
 
@@ -186,16 +180,8 @@ class MainController:
         self.session.settings = value
 
     @property
-    def _db(self) -> Database | None:
-        return self.session.db
-
-    @property
     def _engagement(self) -> Engagement | None:
         return self.session.engagement
-
-    @property
-    def _dataset(self) -> Dataset | None:
-        return self.session.dataset
 
     @property
     def _sample(self) -> SampleResult | None:
@@ -210,20 +196,8 @@ class MainController:
         return self.session.filter_active_sample_id
 
     @property
-    def _undo_manager(self) -> UndoManager | None:
-        return self.session.undo_manager
-
-    @property
     def _state_repo(self) -> EngagementStateRepo | None:
         return self.session.state_repo
-
-    @property
-    def _restoring_state(self) -> bool:
-        return self.session.restoring_state
-
-    @property
-    def _datasets(self) -> list[Dataset]:
-        return self.session.datasets
 
     # ---- Public Convenience-Methode -------------------------------------
 
@@ -320,12 +294,6 @@ class MainController:
 
     def _refresh_audit_trail(self) -> None:
         self.session.refresh_audit_trail()
-
-    def _refresh_dashboard(self) -> None:
-        self.session.refresh_dashboard()
-
-    def _refresh_views(self) -> None:
-        self.session.refresh_views()
 
     def _resolve_briefpapier(self) -> BriefpapierConfig | None:
         return self.session.resolve_briefpapier()
