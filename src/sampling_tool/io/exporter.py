@@ -26,7 +26,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from sampling_tool import __version__
-from sampling_tool.config import BDO_RED
+from sampling_tool.config import BDO_RED, sanitize_export_filename_token
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement, SampleResult
 from sampling_tool.core.provenance import SamplingProvenance
 from sampling_tool.io._atomic import AtomicReplaceError, atomic_output
@@ -113,8 +113,8 @@ class ExcelExporter:
 
     @staticmethod
     def _build_filename(custom_name: str, custom_id: str) -> str:
-        safe_name = _sanitize_filename_token(custom_name) or "sample"
-        safe_id = _sanitize_filename_token(custom_id) or "0"
+        safe_name = sanitize_export_filename_token(custom_name) or "sample"
+        safe_id = sanitize_export_filename_token(custom_id) or "0"
         return _FILENAME_TEMPLATE.format(
             name=safe_name,
             id=safe_id,
@@ -257,13 +257,3 @@ def _autosize(ws: Worksheet, columns: int) -> None:
                 widths[i] = min(length, _MAX_COLUMN_WIDTH)
     for i, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = max(12, width + 2)
-
-
-def _sanitize_filename_token(token: str) -> str:
-    """Entfernt für Dateisysteme problematische Zeichen ohne Umlaute zu killen."""
-    forbidden = '<>:"/\\|?*\0'
-    cleaned = "".join("_" if c in forbidden else c for c in token).strip()
-    # Mehrfache Underscores zusammenfassen
-    while "__" in cleaned:
-        cleaned = cleaned.replace("__", "_")
-    return cleaned
