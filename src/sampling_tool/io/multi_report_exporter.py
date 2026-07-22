@@ -30,7 +30,6 @@ from typing import Any, Final
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XlImage
 from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from sampling_tool import __version__
@@ -44,13 +43,13 @@ from sampling_tool.core.models import (
 from sampling_tool.core.provenance import SamplingProvenance
 from sampling_tool.io._atomic import AtomicReplaceError, atomic_output
 from sampling_tool.io._xlsx_safe import safe_row
+from sampling_tool.io._xlsx_util import autosize_columns as autosize_columns
 from sampling_tool.io.charts import render_bar_chart_bytes
 from sampling_tool.io.exporter import ExportError
 
 _HEADER_FILL: Final = PatternFill(start_color="FFE81A3B", end_color="FFE81A3B", fill_type="solid")
 _HEADER_FONT: Final = Font(bold=True, color="FFFFFFFF")
 _HEADER_ALIGN: Final = Alignment(vertical="center", horizontal="left")
-_MAX_COL_WIDTH: Final[int] = 50
 
 SHEET_UEBERSICHT: Final[str] = "Übersicht"
 SHEET_AUDIT_TRAIL: Final[str] = "AuditTrail"
@@ -166,7 +165,7 @@ class MultiSheetReportExporter:
         else:
             ws.append(["Letzte Aktivität", "—"])
 
-        _autosize(ws, 2)
+        autosize_columns(ws, 2, min_width=12)
         # Erstes Spalten-Label fett.
         for row_idx in range(3, ws.max_row + 1):
             cell = ws.cell(row=row_idx, column=1)
@@ -207,7 +206,7 @@ class MultiSheetReportExporter:
                     format_audit_details(evt.details),
                 ],
             )
-        _autosize(ws, len(header))
+        autosize_columns(ws, len(header), min_width=12)
         ws.freeze_panes = "A2"
 
     def _write_samples(
@@ -274,7 +273,7 @@ class MultiSheetReportExporter:
                     provenance.created_by,
                 ],
             )
-        _autosize(ws, len(header))
+        autosize_columns(ws, len(header), min_width=12)
         ws.freeze_panes = "A2"
 
     def _write_statistiken(
@@ -305,7 +304,7 @@ class MultiSheetReportExporter:
         for event_type, count in type_counts.most_common():
             ws.append([event_type, count])
 
-        _autosize(ws, 2)
+        autosize_columns(ws, 2, min_width=12)
 
         # Chart als eingebettetes PNG.
         if method_counts:
@@ -332,24 +331,5 @@ def _style_header_row(ws: Worksheet, columns: int) -> None:
         cell.alignment = _HEADER_ALIGN
 
 
-def _autosize(ws: Worksheet, columns: int) -> None:
-    widths = [0] * columns
-    for row in ws.iter_rows(values_only=True):
-        for i, val in enumerate(row[:columns]):
-            length = len(_display(val))
-            if length > widths[i]:
-                widths[i] = min(length, _MAX_COL_WIDTH)
-    for i, width in enumerate(widths, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = max(12, width + 2)
-
-
 def _format_now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _display(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, datetime):
-        return value.strftime("%Y-%m-%d %H:%M:%S")
-    return str(value)

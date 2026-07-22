@@ -580,3 +580,43 @@ class TestExportSample:
         assert get_by_ids_calls == [[2, 4]], (
             "Exporter sollte get_rows_by_ids genau mit den Sample-IDs aufrufen"
         )
+
+
+class TestExportFilenameByteIdentity:
+    """Sprint 60 / D.5 (Q-003/Q-005/N-016) – rote Linie: das Dateinamen-Schema
+    der Ziehungs-Exporte bleibt nach der Sanitizer-/Widget-Konsolidierung
+    byte-identisch. Umlaute bleiben erhalten, keine Transliteration/Kappung
+    (Familie B, strikt getrennt von `config.sanitize_for_path`)."""
+
+    @pytest.mark.parametrize(
+        ("custom_name", "custom_id", "expected_name_id"),
+        [
+            ("Müller & Co", "1", "Müller & Co_ID1"),
+            ("a/b:c*d", "2", "a_b_c_d_ID2"),
+            ("  Rand  ", "3", "Rand_ID3"),
+            ("X" * 150, "4", f"{'X' * 150}_ID4"),
+            ("Ü_2026", "5", "Ü_2026_ID5"),
+        ],
+    )
+    def test_sample_export_filename_byte_identity(
+        self,
+        exporter: ExcelExporter,
+        sample: SampleResult,
+        dataset: Dataset,
+        dataset_repo: DatasetRepo,
+        tmp_path: Path,
+        custom_name: str,
+        custom_id: str,
+        expected_name_id: str,
+    ) -> None:
+        out = exporter.export_sample(
+            sample=sample,
+            dataset=dataset,
+            dataset_repo=dataset_repo,
+            columns=["Name"],
+            output_dir=tmp_path,
+            custom_name=custom_name,
+            custom_id=custom_id,
+        )
+        assert out.name.startswith(f"{expected_name_id}_BDO_sampling_")
+        assert out.name.endswith(".xlsx")

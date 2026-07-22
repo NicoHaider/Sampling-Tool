@@ -163,3 +163,22 @@ def sanitize_for_path(name: str) -> str:
     ):
         cleaned = f"{cleaned}_"
     return cleaned or "engagement"
+
+
+def sanitize_export_filename_token(token: str) -> str:
+    """Filesystem-untaugliche Zeichen in einem Export-Dateinamen-Token ersetzen.
+
+    Gegenstück zu `sanitize_for_path` (Familie A) für **Export-Dateinamen**
+    (Familie B): Blacklist statt Whitelist, erhält Umlaute/Unicode, keine
+    Transliteration, keine Kappung, kein Reserved-Name-Handling – ein
+    Export-Dateiname soll den vom Anwender eingegebenen lesbaren Namen
+    behalten. Wird von `io/exporter.py` (finaler Schreib-Pfad) UND
+    `ui/dialogs/_export_base.py` (Live-Vorschau im `ExportTargetWidget`)
+    genutzt, damit Vorschau und tatsächlicher Dateiname garantiert
+    übereinstimmen.
+    """
+    forbidden = '<>:"/\\|?*\0'
+    cleaned = "".join("_" if c in forbidden else c for c in token).strip()
+    while "__" in cleaned:
+        cleaned = cleaned.replace("__", "_")
+    return cleaned

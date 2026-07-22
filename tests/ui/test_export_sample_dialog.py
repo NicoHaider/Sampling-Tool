@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -11,6 +10,8 @@ from PyQt6.QtWidgets import QDialogButtonBox
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import Dataset
+from sampling_tool.io.exporter import ExcelExporter
+from sampling_tool.ui.dialogs._export_base import ExportTargetWidget
 from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialog
 
 pytestmark = pytest.mark.ui
@@ -57,16 +58,15 @@ class TestExportSampleDialog:
             _dataset(), default_name="Foo", default_id="42", default_output_dir=tmp_path
         )
         qtbot.addWidget(dialog)
-        today = datetime.now().strftime("%Y%m%d")
-        assert f"Foo_ID42_BDO_sampling_{today}.xlsx" in dialog._preview_label.text()
-        dialog._name_field.setText("Bar")
-        dialog._id_field.setText("99")
-        assert f"Bar_ID99_BDO_sampling_{today}.xlsx" in dialog._preview_label.text()
+        assert dialog._target.preview_filename() == ExcelExporter._build_filename("Foo", "42")
+        dialog._target._name_field.setText("Bar")
+        dialog._target._id_field.setText("99")
+        assert dialog._target.preview_filename() == ExcelExporter._build_filename("Bar", "99")
 
     def test_validation_blocks_when_name_empty(self, qtbot: QtBot, tmp_path: Path) -> None:
         dialog = ExportSampleDialog(_dataset(), default_id="1", default_output_dir=tmp_path)
         qtbot.addWidget(dialog)
-        dialog._name_field.setText("")
+        dialog._target._name_field.setText("")
         assert _ok_enabled(dialog) is False
 
     def test_validation_blocks_when_no_output_dir(self, qtbot: QtBot) -> None:
@@ -91,13 +91,47 @@ class TestExportSampleDialog:
         assert result.output_dir == tmp_path
 
 
+class TestExportSampleDialogUsesTargetWidget:
+    """Sprint 60 / D.5 (N-016): die rechte Spalte ist das gemeinsame
+    `ExportTargetWidget` statt einer inline nachgebauten Kopie."""
+
+    def test_dialog_constructs_export_target_widget(self, qtbot: QtBot, tmp_path: Path) -> None:
+        dialog = ExportSampleDialog(_dataset(), default_id="1", default_output_dir=tmp_path)
+        qtbot.addWidget(dialog)
+        assert isinstance(dialog._target, ExportTargetWidget)
+
+    def test_inline_duplicate_helpers_are_gone(self) -> None:
+        import sampling_tool.ui.dialogs.export_sample_dialog as mod
+
+        assert not hasattr(mod, "_build_preview")
+        assert not hasattr(mod, "_sanitize")
+        assert not hasattr(mod, "_FILENAME_PREVIEW")
+        assert not hasattr(ExportSampleDialog, "_choose_dir")
+
+    def test_ok_enable_requires_columns_and_widget_valid(
+        self, qtbot: QtBot, tmp_path: Path
+    ) -> None:
+        dialog = ExportSampleDialog(_dataset(), default_id="1", default_output_dir=tmp_path)
+        qtbot.addWidget(dialog)
+        assert _ok_enabled(dialog) is True
+        dialog._set_all_checked(False)
+        assert _ok_enabled(dialog) is False
+        dialog._set_all_checked(True)
+        assert _ok_enabled(dialog) is True
+        dialog._target.set_output_dir(tmp_path / "ghost")
+        assert _ok_enabled(dialog) is False
+
+
 class TestBulkCheckSingleUpdate:
     """Sprint 34 / WP5: „Alle auswählen/abwählen" aktualisiert genau einmal.
 
     Vorher feuerte `itemChanged` pro Spalten-Item → `_update_state` lief
-    N-mal mit je einem O(N)-CheckState-Scan + Preview-Rebuild (O(N²) pro
-    Klick; Audit-Rohdaten haben oft 50–300 Spalten). Der Endzustand
-    (Auswahl, OK-Button, Vorschau) bleibt identisch.
+    N-mal mit je einem O(N)-CheckState-Scan (Audit-Rohdaten haben oft
+    50–300 Spalten). Der Endzustand (Auswahl, OK-Button) bleibt identisch.
+    Sprint 60: der Preview-Rebuild lebt jetzt komplett im
+    `ExportTargetWidget` und ist von der Spaltenauswahl entkoppelt (das
+    Widget reagiert nur auf sein eigenes `changed`) – gezählt wird deshalb
+    direkt `_update_state` selbst.
     """
 
     def test_set_all_checked_runs_update_state_once(
@@ -109,15 +143,13 @@ class TestBulkCheckSingleUpdate:
         qtbot.addWidget(dialog)
 
         calls: list[str] = []
-        original = dialog._build_preview
+        original = dialog._update_state
 
-        def counting() -> str:
+        def counting() -> None:
             calls.append("x")
-            return original()
+            original()
 
-        # `_update_state` selbst hängt als Bound-Method am Signal – gezählt
-        # wird deshalb der Preview-Rebuild, den jeder echte Lauf ausführt.
-        monkeypatch.setattr(dialog, "_build_preview", counting)
+        monkeypatch.setattr(dialog, "_update_state", counting)
 
         dialog._set_all_checked(False)
         assert len(calls) == 1  # vorher: 40 (einmal pro itemChanged)
