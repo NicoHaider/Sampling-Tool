@@ -16,14 +16,13 @@ im Schreiben kein halbes File zurück.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.worksheet import Worksheet
 
 from sampling_tool import __version__
 from sampling_tool.config import BDO_RED, sanitize_export_filename_token
@@ -31,6 +30,12 @@ from sampling_tool.core.models import Dataset, DatasetRow, Engagement, SampleRes
 from sampling_tool.core.provenance import SamplingProvenance
 from sampling_tool.io._atomic import AtomicReplaceError, atomic_output
 from sampling_tool.io._xlsx_safe import safe_row
+from sampling_tool.io._xlsx_util import (
+    autosize_columns as autosize_columns,
+)
+from sampling_tool.io._xlsx_util import (
+    display_string as display_string,
+)
 
 if TYPE_CHECKING:
     from sampling_tool.persistence.repositories import DatasetRepo
@@ -165,7 +170,7 @@ class ExcelExporter:
             raw_values = [row.values.get(col) for col in columns]
             values = safe_row(ws, raw_values)
             for i, val in enumerate(values):
-                length = len(_display_string(val))
+                length = len(display_string(val))
                 if length > max_widths[i]:
                     max_widths[i] = min(length, _MAX_COLUMN_WIDTH)
             self._tick(idx, total)
@@ -214,7 +219,7 @@ class ExcelExporter:
         for label, value in rows:
             safe_row(ws, [label, value])
 
-        _autosize(ws, columns=2)
+        autosize_columns(ws, columns=2, min_width=12)
 
     def _tick(self, current: int, total: int) -> None:
         if self.progress is not None:
@@ -234,26 +239,3 @@ def _to_argb(hex_color: str) -> str:
     if len(s) == 8:
         return s
     raise ValueError(f"Unerwartetes Farbformat: {hex_color}")
-
-
-def _display_string(value: Any) -> str:
-    """String-Repräsentation für die Spaltenbreiten-Berechnung."""
-    if value is None:
-        return ""
-    if isinstance(value, datetime):
-        return value.strftime("%Y-%m-%d %H:%M:%S")
-    if isinstance(value, date):
-        return value.isoformat()
-    return str(value)
-
-
-def _autosize(ws: Worksheet, columns: int) -> None:
-    """Simple Spaltenbreiten-Heuristik fürs Metadaten-Sheet."""
-    widths = [0] * columns
-    for row in ws.iter_rows(values_only=True):
-        for i, val in enumerate(row[:columns]):
-            length = len(_display_string(val))
-            if length > widths[i]:
-                widths[i] = min(length, _MAX_COLUMN_WIDTH)
-    for i, width in enumerate(widths, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = max(12, width + 2)
