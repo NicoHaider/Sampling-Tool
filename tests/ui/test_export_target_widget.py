@@ -77,3 +77,25 @@ class TestExportTargetWidget:
         # Forbidden chars dürfen nicht im Dateinamen landen.
         for forbidden in '<>:"/\\|?*':
             assert forbidden not in preview
+
+
+class TestExportSanitizerSingleSource:
+    """Sprint 60 / D.5 (Q-005): `_export_base.py` hat keinen eigenen `_sanitize`
+    mehr – Widget-Preview und `ExcelExporter`-Writer teilen sich denselben
+    Helfer (`config.sanitize_export_filename_token`), damit Preview == Datei
+    garantiert ist (nicht nur zufällig)."""
+
+    def test_export_base_module_has_no_local_sanitize(self) -> None:
+        import sampling_tool.ui.dialogs._export_base as export_base
+
+        assert not hasattr(export_base, "_sanitize")
+
+    def test_widget_preview_matches_writer_for_tricky_tokens(self, qtbot: QtBot) -> None:
+        from sampling_tool.io.exporter import ExcelExporter
+
+        for name, id_ in [("Müller & Co", "1"), ("a/b:c*d", "2"), ("X" * 150, "3")]:
+            w = ExportTargetWidget(
+                default_name=name, default_id=id_, file_extension=".xlsx", type_token="sampling"
+            )
+            qtbot.addWidget(w)
+            assert w.preview_filename() == ExcelExporter._build_filename(name, id_)

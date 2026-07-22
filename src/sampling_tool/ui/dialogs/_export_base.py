@@ -25,6 +25,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sampling_tool.config import sanitize_export_filename_token
+
 DEFAULT_FILENAME_PATTERN: str = "{name}_ID{id}_BDO_{type}_{date}"
 
 
@@ -111,8 +113,8 @@ class ExportTargetWidget(QWidget):
 
     def preview_filename(self) -> str:
         """Aktueller Dateiname laut Pattern + Extension."""
-        name = _sanitize(self.get_name() or "export")
-        sid = _sanitize(self.get_id() or "0")
+        name = sanitize_export_filename_token(self.get_name() or "export")
+        sid = sanitize_export_filename_token(self.get_id() or "0")
         body = self._filename_pattern.format(
             name=name,
             id=sid,
@@ -162,12 +164,3 @@ def _caption(text: str) -> QLabel:
     label = QLabel(text)
     label.setStyleSheet("color: #555555; font-weight: 600;")
     return label
-
-
-def _sanitize(token: str) -> str:
-    """Filesystem-untaugliche Zeichen durch Underscore ersetzen."""
-    forbidden = '<>:"/\\|?*\0'
-    cleaned = "".join("_" if c in forbidden else c for c in token).strip() or "x"
-    while "__" in cleaned:
-        cleaned = cleaned.replace("__", "_")
-    return cleaned
