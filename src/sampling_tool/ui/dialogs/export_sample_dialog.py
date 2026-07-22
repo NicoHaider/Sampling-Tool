@@ -4,22 +4,22 @@ Entspricht der alten VBA-`frmSpaltenAuswahl1`. Liefert ein
 `ExportSampleDialogResult` mit allem, was `ExcelExporter.export_sample`
 braucht. Atomare Schreib-Logik passiert nicht hier, sondern im
 `ExcelExporter` selbst.
+
+Die rechte Spalte (Dateiname/ID/Pfad/Vorschau) teilt sich den Code mit
+allen anderen Export-Dialogen via `ExportTargetWidget`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -28,8 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.core.models import Dataset
-
-_FILENAME_PREVIEW: str = "{name}_ID{id}_BDO_sampling_{date}.xlsx"
+from sampling_tool.ui.dialogs._export_base import ExportTargetWidget
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +59,6 @@ class ExportSampleDialog(QDialog):
 
         self._dataset = dataset
         self._result: ExportSampleDialogResult | None = None
-        self._output_dir: Path | None = default_output_dir
         # Sprint 34 / WP5: unterdrückt die per-Item-itemChanged-Updates
         # während „Alle auswählen/abwählen" (sonst O(N²) pro Klick).
         self._bulk_updating = False
@@ -98,40 +96,18 @@ class ExportSampleDialog(QDialog):
 
         body.addLayout(left, stretch=2)
 
-        # ---- rechte Spalte: Felder ----
-        right = QVBoxLayout()
-        right.setSpacing(8)
-
-        right.addWidget(_caption("Dateiname *"))
-        self._name_field = QLineEdit(default_name or dataset.name)
-        right.addWidget(self._name_field)
-
-        right.addWidget(_caption("Sample-ID *"))
-        self._id_field = QLineEdit(default_id)
-        right.addWidget(self._id_field)
-
-        right.addWidget(_caption("Zielordner *"))
-        dir_row = QHBoxLayout()
-        self._dir_label = QLabel(
-            str(self._output_dir) if self._output_dir is not None else "(noch nicht gewählt)"
+        # ---- rechte Spalte: gemeinsames ExportTargetWidget ----
+        self._target = ExportTargetWidget(
+            default_name=default_name or dataset.name,
+            default_id=default_id,
+            file_extension=".xlsx",
+            type_token="sampling",
+            default_output_dir=default_output_dir,
         )
-        self._dir_label.setStyleSheet("color: #555555;")
-        self._dir_label.setWordWrap(True)
-        self._dir_button = QPushButton("Ordner wählen…")
-        self._dir_button.setProperty("secondary", True)
-        dir_row.addWidget(self._dir_label, stretch=1)
-        dir_row.addWidget(self._dir_button)
-        right.addLayout(dir_row)
-
-        right.addSpacing(8)
-        right.addWidget(_caption("Vorschau Dateiname"))
-        self._preview_label = QLabel("")
-        self._preview_label.setStyleSheet("color: #7F7F7F; font-family: monospace;")
-        self._preview_label.setWordWrap(True)
-        right.addWidget(self._preview_label)
-        right.addStretch(1)
-
+        right = QVBoxLayout()
+        right.addWidget(self._target)
         body.addLayout(right, stretch=3)
+
         outer.addLayout(body)
 
         self._buttons = QDialogButtonBox(
@@ -143,9 +119,7 @@ class ExportSampleDialog(QDialog):
         self._select_all_btn.clicked.connect(lambda: self._set_all_checked(True))
         self._select_none_btn.clicked.connect(lambda: self._set_all_checked(False))
         self._column_list.itemChanged.connect(self._update_state)
-        self._name_field.textChanged.connect(self._update_state)
-        self._id_field.textChanged.connect(self._update_state)
-        self._dir_button.clicked.connect(self._choose_dir)
+        self._target.changed.connect(self._update_state)
         self._buttons.accepted.connect(self._on_accept)
         self._buttons.rejected.connect(self.reject)
 
@@ -162,11 +136,10 @@ class ExportSampleDialog(QDialog):
     def _set_all_checked(self, checked: bool) -> None:
         state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
         # Sprint 34 / WP5: jedes setCheckState emittiert itemChanged →
-        # _update_state (O(N)-Scan + Preview-Rebuild). Während des Bulk-Setzens
-        # unterdrücken und danach genau EINMAL aktualisieren – Endzustand
-        # (Auswahl, OK-Button, Vorschau) identisch. Bewusst Guard-Flag statt
-        # blockSignals, damit die Item-Repaints der Views nicht unterdrückt
-        # werden.
+        # _update_state (O(N)-Scan). Während des Bulk-Setzens unterdrücken
+        # und danach genau EINMAL aktualisieren – Endzustand (Auswahl,
+        # OK-Button) identisch. Bewusst Guard-Flag statt blockSignals, damit
+        # die Item-Repaints der Views nicht unterdrückt werden.
         self._bulk_updating = True
         try:
             for i in range(self._column_list.count()):
@@ -185,41 +158,23 @@ class ExportSampleDialog(QDialog):
                 result.append(item.text())
         return result
 
-    def _choose_dir(self) -> None:
-        start = str(self._output_dir) if self._output_dir is not None else ""
-        chosen = QFileDialog.getExistingDirectory(self, "Zielordner wählen", start)
-        if chosen:
-            self._output_dir = Path(chosen)
-            self._dir_label.setText(chosen)
-            self._update_state()
-
-    def _build_preview(self) -> str:
-        name = _sanitize(self._name_field.text() or "sample")
-        sid = _sanitize(self._id_field.text() or "0")
-        return _FILENAME_PREVIEW.format(name=name, id=sid, date=datetime.now().strftime("%Y%m%d"))
-
     def _update_state(self) -> None:
         if self._bulk_updating:
             return
-        self._preview_label.setText(self._build_preview())
         ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
-        valid = (
-            bool(self._selected_columns())
-            and bool(self._name_field.text().strip())
-            and bool(self._id_field.text().strip())
-            and self._output_dir is not None
-        )
+        valid = bool(self._selected_columns()) and self._target.is_valid()
         if ok_btn is not None:
             ok_btn.setEnabled(valid)
 
     def _on_accept(self) -> None:
-        if self._output_dir is None:
+        output_dir = self._target.get_output_dir()
+        if output_dir is None:
             return
         self._result = ExportSampleDialogResult(
             columns=self._selected_columns(),
-            custom_name=self._name_field.text().strip(),
-            custom_id=self._id_field.text().strip(),
-            output_dir=self._output_dir,
+            custom_name=self._target.get_name(),
+            custom_id=self._target.get_id(),
+            output_dir=output_dir,
         )
         self.accept()
 
@@ -233,11 +188,3 @@ def _caption(text: str) -> QLabel:
     label = QLabel(text)
     label.setStyleSheet("color: #555555; font-weight: 600;")
     return label
-
-
-def _sanitize(token: str) -> str:
-    forbidden = '<>:"/\\|?*\0'
-    cleaned = "".join("_" if c in forbidden else c for c in token).strip() or "x"
-    while "__" in cleaned:
-        cleaned = cleaned.replace("__", "_")
-    return cleaned
