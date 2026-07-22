@@ -29,9 +29,10 @@ Undo/Redo-Konvention (verbindlich, unverändert):
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sampling_tool.ui.controllers._factories import (
     AuditPdfDialogFactory,
@@ -45,16 +46,6 @@ from sampling_tool.ui.controllers._factories import (
     ImportOptionsDialogFactory,
     SamplingDialogFactory,
     SettingsDialogFactory,
-    default_audit_pdf_factory,
-    default_duplicate_dialog_factory,
-    default_excel_report_factory,
-    default_export_factory,
-    default_html_report_factory,
-    default_id_column_factory,
-    default_import_options_factory,
-    default_new_engagement_factory,
-    default_sampling_factory,
-    default_settings_factory,
 )
 from sampling_tool.ui.controllers.engagement_controller import EngagementController
 from sampling_tool.ui.controllers.export_controller import ExportController
@@ -106,38 +97,38 @@ class MainController:
         )
 
         # ---- Factories bündeln -------------------------------------
-        factories = ControllerFactories(
-            new_engagement=dialog_factory
-            if dialog_factory is not None
-            else default_new_engagement_factory,
-            duplicate=duplicate_dialog_factory
-            if duplicate_dialog_factory is not None
-            else default_duplicate_dialog_factory,
-            sampling=sampling_dialog_factory
-            if sampling_dialog_factory is not None
-            else default_sampling_factory,
-            export_sample=export_dialog_factory
-            if export_dialog_factory is not None
-            else default_export_factory,
-            audit_pdf=audit_pdf_dialog_factory
-            if audit_pdf_dialog_factory is not None
-            else default_audit_pdf_factory,
-            excel_report=excel_report_dialog_factory
-            if excel_report_dialog_factory is not None
-            else default_excel_report_factory,
-            html_report=html_report_dialog_factory
-            if html_report_dialog_factory is not None
-            else default_html_report_factory,
-            settings=settings_dialog_factory
-            if settings_dialog_factory is not None
-            else default_settings_factory,
-            import_options=import_options_dialog_factory
-            if import_options_dialog_factory is not None
-            else default_import_options_factory,
-            id_column=id_column_dialog_factory
-            if id_column_dialog_factory is not None
-            else default_id_column_factory,
+        # Sprint 59 / Teil B (L-003): Basis sind die 10 Default-Factories aus
+        # `ControllerFactories.defaults()`; nur tatsächlich übergebene
+        # (nicht-`None`) Konstruktor-Kwargs überschreiben sie per
+        # `dataclasses.replace`. Verhaltensidentisch zur vorherigen
+        # 10-Ternary-Kette: pro Feld gilt "Override falls gesetzt, sonst
+        # Default". (Als Comprehension statt 10 einzelner `if`s, damit die
+        # McCabe-Komplexität von `__init__` nicht über den Ruff-Grenzwert
+        # steigt.)
+        #
+        # `dict[str, Any]`: die Feldnamen sind hier zur Laufzeit erzeugte
+        # Strings, keine Literal-Keywords – kein Typ (auch nicht `TypedDict`
+        # + `cast`) lässt mypy die Feld<->Wert-Zuordnung aus dieser
+        # String-Tuple-Liste ableiten. `dataclasses.replace()`s eigener
+        # Stub ist ohnehin `**changes: Any`, die Korrektheit der Zuordnung
+        # sichert stattdessen die Factory-Injection-Testsuite ab (u. a.
+        # `test_controller_factories_defaults`), nicht der Type-Checker.
+        factory_overrides: tuple[tuple[str, object], ...] = (
+            ("new_engagement", dialog_factory),
+            ("duplicate", duplicate_dialog_factory),
+            ("sampling", sampling_dialog_factory),
+            ("export_sample", export_dialog_factory),
+            ("audit_pdf", audit_pdf_dialog_factory),
+            ("excel_report", excel_report_dialog_factory),
+            ("html_report", html_report_dialog_factory),
+            ("settings", settings_dialog_factory),
+            ("import_options", import_options_dialog_factory),
+            ("id_column", id_column_dialog_factory),
         )
+        overrides: dict[str, Any] = {
+            field: value for field, value in factory_overrides if value is not None
+        }
+        factories = dataclasses.replace(ControllerFactories.defaults(), **overrides)
 
         # ---- Sub-Controller aufbauen -------------------------------
         self.engagement = EngagementController(self.session, factories)

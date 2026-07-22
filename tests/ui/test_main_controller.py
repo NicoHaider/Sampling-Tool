@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -30,6 +31,19 @@ from sampling_tool.persistence.repositories import (
     SampleRepo,
 )
 from sampling_tool.persistence.version_manager import EngagementVersionManager
+from sampling_tool.ui.controllers._factories import (
+    ControllerFactories,
+    default_audit_pdf_factory,
+    default_duplicate_dialog_factory,
+    default_excel_report_factory,
+    default_export_factory,
+    default_html_report_factory,
+    default_id_column_factory,
+    default_import_options_factory,
+    default_new_engagement_factory,
+    default_sampling_factory,
+    default_settings_factory,
+)
 from sampling_tool.ui.controllers.engagement_controller import (
     _remove_db_files as _real_remove_db_files,
 )
@@ -203,6 +217,32 @@ def _spy_database_close() -> Iterator[list[Database]]:
 
     with patch.object(Database, "close", _spy):
         yield calls
+
+
+def test_controller_factories_defaults() -> None:
+    """Sprint 59 / Teil B (L-003): `ControllerFactories.defaults()` muss die
+    10 `default_*_factory`-Modulfunktionen 1:1 auf die gleichnamigen Bundle-
+    Felder mappen – das Override-Verhalten selbst (Kwarg gesetzt -> Kwarg
+    gewinnt) ist bereits durch die ~84 Factory-Injection-Testfälle in
+    `TestMainController` & Co. abgedeckt, hier geht es nur um `defaults()`
+    selbst."""
+    factories = ControllerFactories.defaults()
+
+    assert isinstance(factories, ControllerFactories)
+    assert factories.new_engagement is default_new_engagement_factory
+    assert factories.duplicate is default_duplicate_dialog_factory
+    assert factories.sampling is default_sampling_factory
+    assert factories.export_sample is default_export_factory
+    assert factories.audit_pdf is default_audit_pdf_factory
+    assert factories.excel_report is default_excel_report_factory
+    assert factories.html_report is default_html_report_factory
+    assert factories.settings is default_settings_factory
+    assert factories.import_options is default_import_options_factory
+    assert factories.id_column is default_id_column_factory
+    assert all(
+        callable(getattr(factories, field.name))
+        for field in dataclasses.fields(ControllerFactories)
+    )
 
 
 class TestMainController:
