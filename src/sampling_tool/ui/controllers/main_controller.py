@@ -6,8 +6,10 @@ hat jetzt nur noch zwei Aufgaben:
 2. UI-Signale an den jeweils zuständigen Sub-Controller weiterleiten.
 
 Externe API (`MainController(window, **factories)`) unverändert. Public
-`handle_*`-Methoden bleiben als Backward-Compat-Fassade erhalten, damit
-bestehende Tests ohne Anpassung weiterlaufen.
+`handle_*`-Methoden bleiben (noch) als Backward-Compat-Fassade erhalten,
+damit bestehende Tests ohne Anpassung weiterlaufen — wird schrittweise pro
+Subcontroller abgebaut (Sprint 59 / Teil C: `export` migriert,
+`self.export.handle_export_*` statt Forward).
 
 Sub-Controller:
 - `EngagementController` – Engagement-Lifecycle (New, Open, Close, Recent)
@@ -201,6 +203,9 @@ class MainController:
     # Bestehende Tests rufen diese Methoden direkt auf dem MainController auf.
     # Forwards an den jeweiligen Sub-Controller. Reine Delegation, keine
     # eigene Logik.
+    #
+    # `export` hat hier bewusst keine Forwards mehr: Sprint 59 / Teil C hat
+    # sie entfernt, Aufrufer nutzen jetzt `self.export.handle_export_*`.
 
     def handle_new_engagement(self) -> None:
         self.engagement.handle_new_engagement()
@@ -249,18 +254,6 @@ class MainController:
 
     def handle_audit_event_double_clicked(self, event_id: int) -> None:
         self.selection.handle_audit_event_double_clicked(event_id)
-
-    def handle_export_sample(self) -> None:
-        self.export.handle_export_sample()
-
-    def handle_export_audit_pdf(self) -> None:
-        self.export.handle_export_audit_pdf()
-
-    def handle_export_excel_report(self) -> None:
-        self.export.handle_export_excel_report()
-
-    def handle_export_html_report(self) -> None:
-        self.export.handle_export_html_report()
 
     def handle_bug_report(self) -> None:
         self.help.handle_bug_report()
