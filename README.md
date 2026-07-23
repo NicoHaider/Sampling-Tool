@@ -365,4 +365,11 @@ docs/              Anwender-, Installations-, Admin-Doku und ADRs
 
 ## Lizenz
 
-Proprietär. BDO-intern.
+Das Tool selbst ist **proprietär** und wird BDO-intern genutzt.
+
+Die eingebundenen Fremdbibliotheken behalten ihre jeweiligen Lizenzen – die
+vollständige Aufstellung des Laufzeit-Sets steht in
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). PyQt6 ist dabei
+GPL-v3-lizenziert; die lizenzrechtliche Einordnung für den aktuellen
+(BDO-internen) Nutzungs-Scope steht unter BDO-Legal-Vorbehalt in
+[ADR 0004 – PyQt6-Lizenz & Distributions-Scope](docs/adr/0004-pyqt-lizenz-und-distributions-scope.md).

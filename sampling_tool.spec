@@ -44,6 +44,9 @@ datas = [
         str(ROOT / "src" / "sampling_tool" / "ui" / "styles"),
         "sampling_tool/ui/styles",
     ),
+    # Third-Party-Lizenzhinweise (ADR 0004 / S-006) an der Bundle-Wurzel
+    # mitführen, damit verteilte Kopien die Lizenzaufstellung enthalten.
+    (str(ROOT / "THIRD_PARTY_LICENSES.md"), "."),
 ]
 
 hiddenimports = [

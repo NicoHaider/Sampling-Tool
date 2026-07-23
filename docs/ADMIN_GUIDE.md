@@ -121,3 +121,14 @@ gilt erst nach App-Neustart.
 Bei Fehler-Reports relevant: `platform.system()`, `platform.release()`
 und `__version__` werden vom Bug-Report-Dialog automatisch mitgeschickt
 (Checkbox „App-Version und OS mitschicken").
+
+## Lizenzen
+
+Das Tool ist proprietär und BDO-intern. Die mitgelieferten Fremdbibliotheken
+behalten ihre eigenen Lizenzen; die vollständige Aufstellung des Laufzeit-Sets
+liegt in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md) und wird im
+Frozen-Bundle an der Wurzel mitgeführt. PyQt6 steht unter GPL v3; die
+lizenzrechtliche Einordnung für den BDO-internen Nutzungs-Scope – inklusive der
+Auslöser für eine Neubewertung bei externer Weitergabe – steht unter
+BDO-Legal-Vorbehalt in
+[ADR 0004](adr/0004-pyqt-lizenz-und-distributions-scope.md).
