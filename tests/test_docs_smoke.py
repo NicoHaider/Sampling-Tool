@@ -8,6 +8,9 @@ auseinanderlaufen (Backlog D-001):
   ableiten – kein dreifaches Literal.
 * In `docs/*.md` per Backtick referenzierte, repo-relative Dateipfade
   existieren wirklich (fängt u. a. den früher falschen Briefpapier-Pfad).
+* Interne Markdown-Links (`[text](ziel)`) in `README.md`, `CHANGELOG.md` und
+  `docs/adr/*.md` zeigen auf existierende Dateien/Verzeichnisse (Sprint 62 /
+  D.6b) – URLs und reine Anker (`#…`) werden übersprungen.
 """
 
 from __future__ import annotations
@@ -100,6 +103,10 @@ _FILE_SUFFIXES = (
 )
 _FENCED_BLOCK = re.compile(r"```.*?```", re.DOTALL)
 _INLINE_CODE = re.compile(r"`([^`]+)`")
+# Inline-Markdown-Link `[text](ziel)`; das erste `]` beendet den Link-Text,
+# sodass die Bild-Variante `![alt](url)` innerhalb `[![…](…)](…)` sauber greift.
+_MD_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+_URL_SCHEMES = ("http://", "https://", "mailto:")
 
 
 def _referenced_repo_paths(markdown: str) -> list[str]:
@@ -138,3 +145,48 @@ class TestDocsReferencedPaths:
         assert not missing, "Nicht existierende Doku-Pfade: " + "; ".join(missing)
         # Sanity: der Extractor findet überhaupt etwas (sonst wäre der Test blind).
         assert checked, "kein einziger konkreter Dateipfad in docs/*.md geprüft"
+
+
+def _internal_link_targets(markdown: str) -> list[str]:
+    """Repo-interne Link-Ziele aus `[text](ziel)` – ohne URLs/Anker/Code-Blöcke."""
+    text = _FENCED_BLOCK.sub("", markdown)
+    found: list[str] = []
+    for match in _MD_LINK.finditer(text):
+        target = match.group(1).strip()
+        if target.startswith("<") and target.endswith(">"):
+            target = target[1:-1].strip()
+        # Optionalen Link-Titel abtrennen: `[x](pfad "Titel")`.
+        target = target.split()[0] if target.split() else ""
+        # Reinen Anker (`#…`) und URLs überspringen.
+        if not target or target.startswith("#") or target.startswith(_URL_SCHEMES):
+            continue
+        # `datei.md#L10` → `datei.md`.
+        target = target.split("#", 1)[0]
+        if target:
+            found.append(target)
+    return found
+
+
+class TestInternalDocLinks:
+    """Interne Markdown-Links in README/CHANGELOG/ADRs zeigen auf Existierendes."""
+
+    def _files(self) -> list[Path]:
+        candidates = [REPO_ROOT / "README.md", REPO_ROOT / "CHANGELOG.md"]
+        candidates += sorted((REPO_ROOT / "docs" / "adr").glob("*.md"))
+        present = [path for path in candidates if path.exists()]
+        assert present, "keine der zu prüfenden Doku-Dateien gefunden"
+        return present
+
+    def test_internal_links_resolve(self) -> None:
+        checked: list[str] = []
+        missing: list[str] = []
+        for doc in self._files():
+            for target in _internal_link_targets(doc.read_text(encoding="utf-8")):
+                checked.append(target)
+                # Links sind relativ zum Verzeichnis der Datei aufzulösen.
+                if not (doc.parent / target).resolve().exists():
+                    missing.append(f"{doc.relative_to(REPO_ROOT)}: {target}")
+
+        assert not missing, "Tote interne Doku-Links: " + "; ".join(missing)
+        # Sanity: es wurde überhaupt ein interner Link geprüft.
+        assert checked, "kein einziger interner Markdown-Link geprüft"
