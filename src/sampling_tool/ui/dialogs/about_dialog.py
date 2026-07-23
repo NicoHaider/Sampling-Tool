@@ -117,8 +117,8 @@ class AboutDialog(QDialog):
         version = QLabel(f"Version {__version__}")
         version.setStyleSheet("color: #7F7F7F;")
         description = QLabel(
-            "Reproduzierbare Stichproben für Prüfungshandlungen – "
-            "konform mit ISAE 3402.\n\n"
+            "Unterstützt reproduzierbare, dokumentierte Audit-Stichproben "
+            "für ISAE-3402-Prüfungen.\n\n"
             "Entwickelt von Nico Haider mit Claude (Anthropic)."
         )
         description.setWordWrap(True)

@@ -86,8 +86,8 @@ Drei Optionen, in Prioritäts-Reihenfolge:
    `~/Documents/BDO Audit Sampling/briefpapier/bdo_letterhead.{png,jpg,jpeg,pdf}`
    ablegen. Wird automatisch erkannt.
 3. **Paket-Default ersetzen**: die mitgelieferte Datei
-   `src/sampling_tool/resources/briefpapier/bdo_placeholder.pdf` direkt
-   austauschen. Sinnvoll für Roll-Out an alle Auditoren.
+   `resources/briefpapier/bdo_placeholder.pdf` direkt austauschen. Sinnvoll
+   für Roll-Out an alle Auditoren.
 
 Unterstützte Formate: PNG, JPG/JPEG, PDF (PDF nur einseitig; mehrseitige
 PDFs werden nicht überlagert).
