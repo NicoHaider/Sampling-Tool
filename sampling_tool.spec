@@ -11,8 +11,12 @@ from pathlib import Path
 ROOT = Path(SPECPATH).resolve()
 sys.path.insert(0, str(ROOT / "src"))
 
+# Version-SSOT: denselben Wert wie pyproject/Runtime aus `__init__.__version__`
+# lesen – kein zweites Versions-Literal im Build. `sampling_tool/__init__.py`
+# importiert nichts Schweres (nur `__version__`), der Import ist billig.
+from sampling_tool import __version__ as APP_VERSION  # noqa: E402
+
 APP_NAME = "Audit Sampling Tool"
-APP_VERSION = "0.8.0"
 BUNDLE_ID = "at.bdo.audit-sampling-tool"
 
 IS_MAC = sys.platform == "darwin"

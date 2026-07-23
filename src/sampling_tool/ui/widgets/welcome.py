@@ -86,7 +86,7 @@ class WelcomeScreen(QWidget):
         title = QLabel("Audit Sampling Tool")
         title.setObjectName("WelcomeTitle")
         subtitle = QLabel(
-            "Reproduzierbare Stichproben für Prüfungshandlungen – konform mit ISAE 3402."
+            "Unterstützt reproduzierbare, dokumentierte Audit-Stichproben für ISAE-3402-Prüfungen."
         )
         subtitle.setObjectName("WelcomeSubtitle")
         subtitle.setWordWrap(True)

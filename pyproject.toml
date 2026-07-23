@@ -7,7 +7,11 @@ build-backend = "setuptools.build_meta"
 # ---------------------------------------------------------------------------
 [project]
 name = "sampling-tool"
-version = "0.8.0"
+# Version-SSOT: der einzige gepflegte Literal-Wert lebt in
+# `src/sampling_tool/__init__.py` (`__version__`). pyproject leitet ihn hier
+# dynamisch ab (siehe [tool.setuptools.dynamic]); die PyInstaller-`.spec`
+# importiert denselben Wert. So gibt es kein dreifaches Versions-Literal mehr.
+dynamic = ["version"]
 description = "BDO Audit Sampling Tool – Python-Port des VBA-basierten Excel-Tools (ISAE 3402)."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -92,6 +96,9 @@ Homepage = "https://www.bdo.at"
 # ---------------------------------------------------------------------------
 [tool.setuptools]
 package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+version = { attr = "sampling_tool.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
