@@ -190,3 +190,57 @@ class TestInternalDocLinks:
         assert not missing, "Tote interne Doku-Links: " + "; ".join(missing)
         # Sanity: es wurde überhaupt ein interner Link geprüft.
         assert checked, "kein einziger interner Markdown-Link geprüft"
+
+
+_ADR_0004 = "docs/adr/0004-pyqt-lizenz-und-distributions-scope.md"
+
+
+class TestLicensingDocs:
+    """S3.1 / S-006: ADR 0004 + Third-Party-Lizenzliste existieren, sind
+    inhaltlich plausibel und untereinander (ADR ↔ Lizenzliste ↔ README ↔
+    ADMIN) verlinkt. `TestInternalDocLinks` prüft, dass die Links *auflösen*;
+    diese Klasse prüft zusätzlich, dass die Verweise überhaupt *vorhanden* sind
+    und die Lizenzliste die Kernaussagen trägt."""
+
+    def test_adr_0004_exists(self) -> None:
+        assert (REPO_ROOT / _ADR_0004).exists(), f"{_ADR_0004} fehlt"
+
+    def test_third_party_licenses_exists(self) -> None:
+        assert (REPO_ROOT / "THIRD_PARTY_LICENSES.md").exists()
+
+    def test_license_list_flags_pyqt6_gpl_and_permissive_set(self) -> None:
+        text = (REPO_ROOT / "THIRD_PARTY_LICENSES.md").read_text(encoding="utf-8")
+        # PyQt6 als GPL-Abhängigkeit klar hervorgehoben …
+        assert "PyQt6" in text
+        assert "GPL-3.0" in text
+        # … und das permissive Set (Stichprobe) ist ebenfalls aufgeführt.
+        assert "MIT" in text
+        assert "BSD" in text
+        # die weiteren (schwachen) Copyleft-Komponenten sind nicht verschwiegen.
+        assert "LGPL" in text
+        assert "MPL-2.0" in text
+
+    def test_adr_0004_covers_scope_analysis_and_reservation(self) -> None:
+        text = (REPO_ROOT / _ADR_0004).read_text(encoding="utf-8")
+        assert "BDO-Legal" in text  # steht unter Vorbehalt
+        assert "GPL v3" in text or "GPL-3.0" in text
+        assert "conveying" in text  # interne Nutzung ≠ Distribution/conveying
+        assert "PySide6" in text  # einer der Auslöser-Wege für externe Verteilung
+
+    def test_cross_references_present_and_resolvable(self) -> None:
+        adr = REPO_ROOT / _ADR_0004
+        adr_text = adr.read_text(encoding="utf-8")
+        # ADR → Lizenzliste: Verweis im Text vorhanden UND relativer Link löst auf.
+        assert "THIRD_PARTY_LICENSES.md" in adr_text
+        assert (adr.parent / "../../THIRD_PARTY_LICENSES.md").resolve().exists()
+        # README → ADR 0004 + Lizenzliste.
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        assert _ADR_0004 in readme
+        assert "](THIRD_PARTY_LICENSES.md)" in readme
+        # ADMIN-Guide → ADR 0004 + Lizenzliste.
+        admin = (REPO_ROOT / "docs" / "ADMIN_GUIDE.md").read_text(encoding="utf-8")
+        assert "adr/0004-pyqt-lizenz-und-distributions-scope.md" in admin
+        assert "THIRD_PARTY_LICENSES.md" in admin
+        # Lizenzliste → ADR 0004 (Rückverweis).
+        third = (REPO_ROOT / "THIRD_PARTY_LICENSES.md").read_text(encoding="utf-8")
+        assert _ADR_0004 in third
