@@ -59,636 +59,13 @@ und `mypy src tests` grün sein (der Pre-Push-Hook erzwingt das nochmal).
   `qtbot.waitSignal(timeout=…)`, niemals `time.sleep`.
 - Coverage-HTML landet unter `htmlcov/`.
 
-## Sprint-Status
+## Sprint-Historie
 
-| Sprint | Inhalt                                              | Status      |
-|-------:|-----------------------------------------------------|-------------|
-| 1      | Projekt-Skelett, Config, Sampling-Core + Tests      | done        |
-| 2      | SQLite-Persistenz, Audit-Trail, Undo, Migrations    | done        |
-| 3      | I/O: Excel-/CSV-Import, Excel-Export, AuditTrail-PDF| done        |
-| 4      | PyQt6-UI: Hauptfenster, Datentabelle, Sidebar       | done        |
-| 5      | UI: Sampling-Dialog, Export, Undo/Redo, Bug/About   | done        |
-| 5.5    | UX-Bugfixes + Engagement-Auto-Versionierung         | done        |
-| 5.6    | Sample-Filter-Default, grüne Markierung, Engagement-Wechsel | done |
-| 6      | Dashboard, AuditTrail-View, Multi-Sheet-/HTML-Report | done       |
-| 6.1    | Einheitliche Export-Dialoge für alle Reports         | done        |
-| 7      | Settings, Platzhalter-Briefpapier, CI, Windows-Compat | done        |
-| 8      | PyInstaller-Build (Mac `.app` + Windows `.exe`), Release-Workflow | done |
-| 9.1    | Duplikat-Check beim Anlegen neuer Engagements        | done        |
-| 9.2    | Bug-Report als Toolbar-Button                        | done        |
-| 9.3    | Advanced-Mode-Toggle (Simple/Advanced Sampling)      | done        |
-| 9.4    | Dashboard/AuditTrail ein-/ausblendbar               | done        |
-| 9.5    | First-Run-Wizard (Standard-Ordner + Auditor-Name)   | done        |
-| 9.6    | Settings im Menü + Sample-Größe-Hint + Seed in Simple-Mode | done |
-| 9.7    | Einstellungen-Button in Toolbar                     | done        |
-| 10.1   | Performance-Probe (Discovery-Lauf, 10k–1M Zeilen)   | done        |
-| 10.2   | Excel-Import via python-calamine (Performance-Fix)  | done        |
-| 10.3   | DB-Performance: orjson + executemany-Generator      | done        |
-| 10.4   | AuditTrail-PDF Performance (reportlab-Chunking)     | done        |
-| 11.1   | Dataset-API-Cut (rows raus, Repo-Methoden rein)     | done        |
-| 11.2   | Streaming Teil 2: UI-LRU-Cache für TableModel       | done        |
-| 11.3   | Streaming Teil 3: Excel-Import streamt direkt in DB | done        |
-| 11.4   | Streaming Teil 4: Sampler/Exporter auf iter_rows    | done        |
-| 11.5   | Streaming Cleanup + Konsolidierung                  | done        |
-| 12.1   | Perf-Quick-Wins (P-001/P-002/P-007)                 | done        |
-| 12.2   | F-002 Undo-Refactor (core/undo.py SQL-frei) + T-003/T-004/T-006 | done |
-| 13     | F-001 MainController-Split (God-Object zerlegen)    | done        |
-| 14     | Test-Catchup (T-001/T-002/T-005/T-007)              | done        |
-| 15     | F-003/F-004/F-005 IO-Layer-Reinigung (charts.py)    | done        |
-| 16     | VBA-Backlog: Multi-Sheet + Header-Detection-Dialog beim Import | done |
-| 17     | Worker-Architektur (P-008): UI responsiv bei Import/Export | done |
-| 18     | Quality-Polish (Q-001 pdfrw-Logging, Q-005 Timestamp-Drift, T-002) | done |
-| 19     | P-005 SQL-DISTINCT + F-007 repositories-Split + F-006 main_window-Split | done |
-| 20     | Toolbar „Sampling zurücksetzen" (audit-safe In-Memory-Reset) + engeres Toolbar-Spacing | done |
-| 21     | Hotfix: Reproduzierbarkeit nach Reset (Sampling-Dialog merkt den zuletzt genutzten Seed) | done |
-| 22     | Einzel-Toggles für Advanced-Funktionen im „Ansicht"-Menü (ODER-Logik neben Advanced-Mode, app-weit persistiert) | done |
-| 23     | Sampling-Presets (benannte Profile, app-weit via QSettings/JSON, ohne Seed/Daten) | done |
-| 24     | Performance-Polish: P-010 AuditTrail-Haystack-Cache (P-001/P-002 aus Pass 3 v2 waren seit Sprint 12.1 gefixt) | done |
-| 25     | Bugfix: Audit-Volltextsuche matcht Nicht-Wort-/Nicht-ASCII-Zeichen literal (rohe Nadel statt escaptem Pattern) | done |
-| 26     | Import-Performance (Profiling-first): Encode dominiert → orjson-Fast-Path im Tagged-Encoder (`OPT_PASSTHROUGH_DATETIME`), byte-identisch; `scripts/bench_import.py` | done |
-| 27     | UI-Cleanup: Toolbar kompakt + QToolBar-Überlauf, Audit-Export-Datumsfilter gefixt (QDateEdit war disabled) + app-weit toggelbar (Default aus), „Engagement"→„Projekt" (nur sichtbarer Text), Seed schreibgeschützt im Haupt-Dialog + nur in Settings änderbar (RNG unverändert) | done |
-| 28     | UI-Cleanup B: Vorlagen als Chip-Leiste + „+" im Stichproben-Dialog (Combobox/Buttons raus), Verwaltung (Bearbeiten/Umbenennen/Löschen/Duplizieren) in eigenem `TemplateManagerDialog` via Menü „Stichprobe → Vorlagen verwalten…"; Sprint-23-Mechanik unverändert wiederverwendet | done |
-| 29     | Import-Dialoge erweitert (auf Sprint-16-Basis additiv): „keine Kopfzeile" (generische Spalten `Spalte 1, …`) + Header-Detection/Vorschau jetzt auch für CSV; `import_file_configured` akzeptiert `sheet_name=None` (CSV) und `header_row=None` (keine Kopfzeile); saubere Dateien (1 Blatt, Header Zeile 1) bleiben byte-identisch | done |
-| 30     | Projekt-Anlage (UI/Bugfix): Prüfungsart im Default-Dateinamen (`<mandant>_<prüfungstyp>.db` via `sanitize_for_path`) + „Überschreiben (mit Backup)"-Option im `DuplicateEngagementDialog` (`OVERWRITE`), die die alte `.db` per `EngagementVersionManager.create_snapshot` ins `archiv/` sichert, bevor ein frisches Projekt angelegt wird; kein Schema-Change | done |
-| 31     | Import & Sidebar (UI): „Datensätze aus Ansicht entfernen" (audit-safer In-Memory-/Ansichts-Reset, kein DB-Delete) + Header-Zeile per Klick in der Vorschau-Tabelle wählbar (zusätzlich zum Spin) + optionale ID-Spalte je Dataset (QSettings statt Schema-Feld), app-weiter Toggle `show_sample_id_column`, Anzeige in der Sidebar-Stichprobenliste | done |
-| 32     | UI-Umbau: Vorlagen als Dropdown statt Chips im Stichproben-Dialog (Chip-Leiste + „+" raus, `QComboBox` mit Platzhalter „(Vorlage wählen…)" rein; Auswahl ruft `apply_preset`, manuelle Größen-/Methoden-/Filter-Änderung setzt zurück auf den Platzhalter, `_applying_preset`-Guard portiert) + „Neue Vorlage…"-Button im `TemplateManagerDialog` (einziger Anlege-Weg, Default-Preset SIMPLE/`DEFAULT_SAMPLE_SIZE` ohne Filter/Cluster/Schicht); `apply_preset`/`current_settings_as_preset`/`PresetStore`/`SamplingPreset` unverändert → Reproduzierbarkeit/Byte-Identität unberührt | done |
-| 33     | AuditTrail-PDF: A4-Querformat (`landscape(A4)`) + neu verteilte Spaltenbreiten (Summe 257mm, großzügige „Datei"-Spalte, kein Überlauf) + zwei UNABHÄNGIGE Export-Dropdowns „BDO-Gesellschaft" + „Standort" (`io/bdo_locations.py`, frei kombinierbar, filtern sich nicht), die den Platzhalter-Adressblock ersetzen (Gesellschaft fett oben + Standort-Adresse rechts; Platzhalter-Briefpapier wird dabei unterdrückt, echtes Briefpapier behält eigenen Kopf); beide Keys app-weit via QSettings (`bdo_company_key`/`bdo_location_key`) gemerkt + in den Einstellungen als Default setzbar; kein Schema-Change, RNG/Excel/HTML unberührt | done |
-| 34     | Performance-Pass (profiling-first): Such-Debounce im AuditTrail-Widget (150-ms-QTimer, Proxy bleibt synchron, Treffer-Semantik unverändert), Startup-Import-Budget gemessen (0,3 s – WP2-Lazy-Imports bewusst verworfen, Gate <300 ms/Lib), Snapshot-Messung (200 MB = 0,035 s – bleibt synchron), 1M-Re-Baseline (P-001/P-002-Fixes bestätigt: Tabelle 0,27 s, Simple 4,5 s/46 MB; P-004 geklärt: PDF 4,4 s reproduzierbar, kein Drift, < Target) + WP5-Mikro-Pass (refresh_views-Event-Doppel-Load, distinct-Memo im Sampling-Dialog, Export-Dialog-Bulk-Guard – je Zähler-Beleg); alles in PERFORMANCE.md | done |
-| 35     | Advanced-Sampling-Streaming (P-003) + Import-Pipeline (profiling-first): Cluster/Stratified ohne Filter laufen über `sample_pairs(iter_row_field_pairs)` – (row_id, feldwert)-Stream via `json_extract` + `_distinct_decode` statt vollem DatasetRow-Pool; bit-identische Ziehung (58 Unit-Oracles + E2E-Controller-Oracle + 1M-Benchmark-Assert), 1M: Cluster 4,74→1,52 s / Stratified 5,35→2,30 s, RAM 1,12 GB→~155 MB (−86 %); u64-Decode-Fallback + `supports_field_pairs`-Guard (Review-Findings); `sample`/`_select`/`_collect_pool` wörtlich unverändert, Filter/Resampling weiter klassisch. Import-Pipeline: Baseline + cProfile → Coercion-Hebel gemessen (Digit-Guard −4 %) und nach 20-%-Gate bewusst revertiert; bleibend: `TestCoerceStringEquivalenceOracle` (Semantik-Pin mit Fuzz), Doppel-Pass-Hypothese widerlegt, tracemalloc-Einordnung der probe-Zahlen | done |
-| 36     | Filter-Operatoren + Match-Preview (WP-A) & Ergänzungs-Ziehung ohne Dubletten (WP-B): Der Spaltenfilter bekommt Operatoren (`=`/`≠` über das Distinct-Dropdown, `>`/`≥`/`<`/`≤` über ein Schwellenwert-Textfeld) via neuem `FilterOperator`-Enum + `SampleConfig.filter_operator`. Eine gemeinsame `matches_filter()`-Funktion (core/sampling.py) ist die EINZIGE Operator-Semantik-Quelle – genutzt von `_collect_pool` (Ziehung) UND dem neuen `_count_filter_matches`-Preview-Provider (workspace_controller.py), sodass Vorschau-Zahl == Zieh-Pool ist (Konsistenz-Oracle in `test_filter_match_count.py`). Filter ab Werk sichtbar (`show_filter_feature=True`, ODER-Logik/Einzel-Toggle unverändert); der Größen-Hint zeigt die tatsächliche Filter-Trefferzahl (Streaming via `iter_row_field_pairs`/`iter_rows`-Fallback, pro Dialog memoisiert, refresh an `editingFinished`/Combo-Change statt pro Tastenanschlag). Persistenz: Migration `003` (`filter_operator TEXT NOT NULL DEFAULT 'eq'`, Bestands-Backfill = altes Gleichheits-Verhalten) + `SampleRepo` (14 Spalten) + `SamplingPreset` (backward-compat: altes JSON ohne Key → `EQ`, analog `stratify_mode`). Reproduzierbarkeit: Default `EQ` bit-identisch zum alten `==`-Pfad (Regressions-Oracle über mehrere Seeds). Eigener Schwellenwert-Parser `_parse_filter_threshold` (`int→float→datetime→Rohstring`; reines Datum → `datetime`-Mitternacht, damit ein Datums-Schwellenwert gegen die datetime-Spalten des Imports matcht statt per `TypeError` nichts zu treffen) – strikt getrennt von `_coerce_value`/`_coerce_string`. WP-B: neue Checkbox „Ergänzen – bereits gezogene Datensätze ausschließen (Nachstichprobe)" (mutual exclusive zur umbenannten „…(einschränken)"-Checkbox, disabled wenn Population komplett gezogen), `SamplingDialogResult.exclude_sample_ids` (reine UI-Anweisung, nicht persistiert) → Controller-`_build_supplement_iterator` zieht aus der Basis MINUS aktiver Stichprobe (dublettenfrei, `population_size = row_count − len(exclude)`), immer über den klassischen `sample()`-Pfad (P-002/P-003-Fastpath für Ergänzung gegated: `unfiltered_full_population and not exclude_sample_ids`), `parent_sample_id` gesetzt; Filter+Ergänzung komponieren (Ausschluss zuerst, Filter danach); kein core/rng- oder Schema-Change über die eine Spalte hinaus. Task 0 verifiziert: die Resample-Checkbox war nie kaputt (nach erster Ziehung korrekt aktiviert – der Guard greift nur ohne aktive Stichprobe). Details: `SPRINT_36_PROMPT.md` | done |
-| 53     | pdfrw → pypdf-Konsolidierung (S3.2a / N-011, N-014): PDF-Briefpapier via pypdf-Post-Merge statt pdfrw-Canvas-XObject, `validate_briefpapier` auf pypdf umgestellt, pdfrw restlos entfernt (Code/pyproject/spec/mypy); pypdf dev→runtime (`>=6.13.3`), jinja2 (`>=3.1.6`) und pillow (`>=12.3`) auf Security-Fix-Floors gehoben | done |
-
-## AuditTrail-PDF: Querformat + BDO-Gesellschaft/Standort-Adressblock (Sprint 33)
-
-Zwei Änderungen am AuditTrail-PDF, **additiv** und ohne Schema-/DB-/Dependency-
-Eingriff. RNG-/Sampling-/Import-Pfade sowie `html_report.py`/
-`multi_report_exporter.py` (Excel) bleiben unangetastet.
-
-- **A4-Querformat.** `AuditTrailPDF.render` nutzt `pagesize=landscape(A4)`;
-  Ränder unverändert (20/20/22/22mm → nutzbare Breite 257mm). `_EVENT_TABLE_
-  COL_WIDTHS` neu verteilt (`35/45/35/18/20/32/72`mm, Summe **257mm**) mit
-  großzügiger „Datei"-Spalte, damit lange Dateinamen nicht mehr rechts aus der
-  Tabelle laufen. `_format_cell`-Wrap-Logik unverändert.
-- **BDO-Gesellschaft + Standort als zwei UNABHÄNGIGE Dropdowns.** Erfassung
-  **beim Export** (nicht bei Projektanlage), Persistenz **app-weit via QSettings**
-  (analog `default_auditor_name`) – kein Schema-Change. Die beiden Dropdowns
-  filtern sich **nicht** gegenseitig: **jede Gesellschaft ist mit jedem Standort
-  frei kombinierbar** (z. B. „BDO Consulting GmbH" + Linz).
-- **Single Source of Truth `io/bdo_locations.py`** (reine Daten + Lookups, keine
-  Qt-Imports): frozen `BdoLocation` (`key/display_name/bundesland/street/
-  postal_code/city/phone/email`, **kein** `company`-Feld) und frozen
-  `BdoCompany` (`key/name`); zwei getrennte `Final`-Tuples `BDO_LOCATIONS`
-  (alle 9 Bundesländer) + `BDO_COMPANIES`; Lookups `location_by_key`/
-  `company_by_key`/`default_location()` (Wien)/`default_company()`
-  (austria_gmbh)/`locations()`/`companies()`. Keine BDO-Adressen woanders
-  hartkodieren. (Lustenau-Straße und Bruck/Leitha-Adresse lagen nicht
-  verifiziert vor → leere Felder; der Adressblock lässt leere Zeilen aus.)
-- **Adressblock ersetzt den Platzhalter.** `AuditTrailPDF.__init__` bekommt
-  optional `location`/`company` (beide `None` ⇒ **exakt** bisheriges Verhalten,
-  backward-compatible). Bei Auswahl rendert `_build_header` einen rechtsbündigen
-  Adressblock als eigene Spalte neben dem Titel: **Gesellschaftsname fett oben**,
-  darunter Straße, PLZ+Ort, `Tel: <phone>`, optional E-Mail (leere Felder
-  ausgelassen). Der `[BDO Austria GmbH]…`-Platzhalter stammt aus dem
-  Platzhalter-Briefpapier (`config.DEFAULT_BRIEFPAPIER`,
-  `scripts/generate_placeholder_briefpapier.py`). Regel (`_draws_address_block`/
-  `_resolve_background`): Auswahl **und** aktives Briefpapier `== config.
-  DEFAULT_BRIEFPAPIER` → Platzhalter **nicht** als Hintergrund zeichnen (der
-  Block ersetzt ihn, kein doppelter Kopf); **echtes** (User-)Briefpapier aktiv →
-  Adressblock **nicht** zeichnen (eigener Kopf). Vergleich bewusst gegen
-  `config.DEFAULT_BRIEFPAPIER` (nicht „ist Default-Auflösung", da das auch ein
-  User-Override sein kann).
-- **Datenfluss.** `ExportAuditPdfDialog` (zwei `QComboBox`, unabhängig voll
-  befüllt, Vorauswahl über `default_company_key`/`default_location_key`) →
-  `ExportAuditPdfDialogResult.company_key`/`location_key` (Defaults `""`) →
-  `export_controller.handle_export_audit_pdf` löst via `company_by_key`/
-  `location_by_key` auf, gibt `company`/`location` an `AuditPdfExportTask`
-  (neue Konstruktor-Args an `AuditTrailPDF`) und **persistiert beide Keys**
-  (`replace(s.settings, …)` + `save_settings(…)` + `s.settings = …`, das leichte
-  Feature-Toggle-Muster, **nicht** `apply_new_settings`). `_factories.py`
-  (`AuditPdfDialogFactory`-Typ + `default_audit_pdf_factory`) um beide Keys
-  erweitert.
-- **Settings.** `AppSettings.bdo_company_key`/`bdo_location_key` (Default `""` ⇒
-  „kein expliziter Wert", beim Export dann der jeweilige Default) – in
-  dataclass/`defaults()`/`load_settings`/`save_settings` ergänzt. `SettingsDialog`
-  (Reports-Tab) bekommt zwei Standard-Dropdowns (gleiche unabhängige Logik wie
-  der Export-Dialog); `_on_accept`/`_on_reset_defaults` mitgezogen.
-- **Tests.** `tests/unit/test_bdo_locations.py` (Daten/Lookups/Unabhängigkeit),
-  `tests/integration/test_pdf_report.py::TestLandscapeLayout` (Querformat +
-  Breitensumme) + `::TestBdoAddressBlock` (Adressblock-Inhalt, freie Kombination
-  Consulting+Linz, Platzhalter-Unterdrückung, echtes-Briefpapier-Fall,
-  leere-Felder, Determinismus), `tests/ui/test_export_audit_pdf_dialog.py::
-  TestBdoCompanyLocationDropdowns` (beide voll befüllt, **unabhängig**,
-  Vorauswahl, Result-Keys), `tests/ui/test_settings_store.py` (Roundtrip beider
-  Keys), `tests/ui/test_settings_dialog.py::TestBdoDefaultDropdowns`,
-  `tests/ui/test_main_controller.py` (Persistenz beider Keys + aufgelöste
-  company/location am Task).
-
-## Projekt-Anlage: Prüfungsart im Dateinamen + Überschreiben-mit-Backup (Sprint 30)
-
-Zwei UI-/Workflow-Änderungen an der Engagement-Anlage, **kein** Schema-Change
-(die Prüfungsart liegt bereits als `Engagement.audit_type` vor – sie wird nur
-in den Dateinamen-Vorschlag gespiegelt).
-
-- **Prüfungsart im Default-Dateinamen.** `NewEngagementDialog._default_target_name`
-  baut den im `QFileDialog.getSaveFileName` vorgeschlagenen Namen als
-  `<sanitize(mandant)>_<sanitize(prüfungstyp)>.db` (z. B. „ISAE 3402 Typ 2" →
-  `…_ISAE_3402_Typ_2.db`). Es wird **dasselbe** `sanitize_for_path` wie für den
-  Mandanten wiederverwendet (Umlaut-Transliteration, Leerzeichen→`_`, nur
-  `A-Za-z0-9_-`) – keine zweite Sanitisierung. Der Unterordner bleibt
-  `<sanitize(mandant)>/`. Ohne Prüfungstyp (theoretisch – Pflichtfeld) fällt der
-  Name defensiv auf `<mandant>.db` zurück (kein leeres `_`-Anhängsel). Nur der
-  *Vorschlag* ändert sich; der User kann weiterhin frei umbenennen.
-- **„Überschreiben (mit Backup)" im Duplikat-Dialog.** Vierter Enum-Wert
-  `DuplicateEngagementChoice.OVERWRITE` + Button (dezente Warn-Anmutung via
-  bestehendem `secondary`-QSS-Muster). Button-Reihenfolge links→rechts:
-  Abbrechen, Anderen Namen wählen, Überschreiben (mit Backup), Bestehendes
-  öffnen (bleibt Default – sicherster Weg). Der Loop in
-  `EngagementController.handle_new_engagement` verzweigt parallel zu
-  OPEN_EXISTING/RENAME nach `_overwrite_with_backup(db_path, engagement)`.
-- **Backup ist Pflicht, Datenverlust die rote Linie.** `_overwrite_with_backup`
-  sichert die bestehende `.db` **zuerst** über die unveränderte
-  `EngagementVersionManager.create_snapshot`-Mechanik (`archiv/{stem}_{YYYY-MM-DD}_
-  {HH-MM-SS}_{Auditor}.db`, `.db-wal`/`.db-shm` werden **nicht** mitkopiert).
-  Erst **nach** erfolgreichem Backup wird die alte `.db` (samt `-wal`/`-shm`-
-  Sidecars via `_remove_db_files`, damit kein stale WAL hineinrecovert) entfernt
-  und – exakt wie im Normalfall – `Database(db_path).migrate()` +
-  `EngagementRepo.get_or_create(engagement)` + `self._adopt_database(...)`
-  ausgeführt. Danach ein `QMessageBox.information` mit dem Backup-Pfad. Schlägt
-  das Backup fehl, bleibt die alte DB unangetastet: `session.error(...)` +
-  Abbruch, **kein** Überschreiben.
-- **Tests.** `tests/ui/test_new_engagement_dialog.py::TestDefaultFilenameWithAuditType`,
-  `tests/ui/test_duplicate_engagement_dialog.py::TestOverwriteChoice`,
-  `tests/ui/test_main_controller.py::TestOverwriteWithBackup` (Backup-dann-frisch,
-  Abbruch-bei-Backup-Fehler, Info-Dialog mit Pfad). Der bestehende Duplikat-Loop
-  (CANCEL/OPEN_EXISTING/RENAME) bleibt unverändert grün.
-
-## Import & Sidebar: Ansicht leeren, Header-Klick, optionale ID-Spalte (Sprint 31)
-
-Drei unabhängige UI-Features, alle **additiv** und ohne Schema-/DB-Eingriff.
-
-- **Teil A – „Datensätze aus Ansicht entfernen" (`Datei`-Menü).** Bewusst ein
-  reiner *Ansichts*-Reset, **kein** Lösch-Feature. `WorkspaceController.
-  handle_clear_loaded_datasets` (Bestätigungs-`QMessageBox.question` +
-  Statusmeldung) ruft `WorkspaceSession.clear_view()`: leert aktive
-  Dataset-/Sample-Auswahl, Highlight, Sample-Filter, die Datentabelle und die
-  Sidebar-Listen – die Projekt-DB (`datasets`/`dataset_rows`/Audit-Events)
-  bleibt **unangetastet**. Lehnt sich an `EngagementController.
-  handle_close_engagement` an, schaltet aber **nicht** zum Welcome-Screen
-  (Projekt bleibt offen). **Warum kein hartes DB-Delete?** Identisch zur
-  Begründung beim Sampling-Reset (Sprint 20): der Append-only-Audit-Trail
-  (`audit_events`-Trigger, FK `ON DELETE SET NULL`) macht selektives Löschen
-  ohne Schema-Änderung unmöglich und würde den ISAE-3402-Trail verletzen. Nach
-  erneutem Öffnen/Reload sind die Datensätze wieder da (sie wurden nie
-  gelöscht). Neues Window-Signal `clear_loaded_datasets_requested`; die Action
-  hängt an `_set_workspace_actions_enabled` (nur mit offenem Projekt aktiv).
-- **Teil B – Header-Zeile per Klick wählbar.** Zusätzlich zum `_header_spin`
-  setzt jetzt auch ein Klick auf eine Vorschau-Zelle (`cellClicked`) oder den
-  vertikalen Zeilenkopf (`verticalHeader().sectionClicked`) die Kopfzeile.
-  **Single Source of Truth bleibt der Spin** – der Klick ruft nur
-  `_select_header_row`, das den Spin (1-basiert) setzt; der bestehende
-  `_on_header_changed`/`_refresh_visual_state`-Highlight-Pfad wird
-  wiederverwendet, nichts dupliziert. Die Tabelle bleibt auf
-  `SelectionMode.NoSelection` (das `clicked`-Signal feuert trotzdem) – so bleibt
-  das vorhandene Header-Highlight optisch dominant, keine störende
-  Zeilenselektion. Bei aktiver „keine Kopfzeile" ist der Klick wirkungslos
-  (Spin gesperrt) und deaktiviert die Checkbox **nicht**.
-- **Teil C – optionale ID-Spalte je Dataset → Sidebar-Stichprobenliste.** Beim
-  Import wählt der User optional eine Spalte als ID-Spalte (post-Import-Schritt:
-  `ui/dialogs/id_column_dialog.py`, Dropdown + „Keine", Default keine; immer
-  angeboten sobald der Import Spalten hat – unabhängig vom Header-Dialog). Die
-  Wahl wird **app-weit pro Dataset in `QSettings`** gemerkt
-  (`ui/dataset_id_store.py`, Key `dataset_id_columns/<db_stem>/<dataset_id>`),
-  **nicht** in der Projekt-DB.
-  **Warum QSettings statt Schema-Feld (verbindlich, analog `preset_store.py`
-  Sprint 23):** Die ID-Spalte ist ein reines pro-Dataset-*Anzeige*-Metadatum
-  für die Sidebar. Sie berührt weder Reproduzierbarkeit noch den Audit-Trail –
-  eine Ziehung ist von ihr vollkommen unabhängig (Import-Byte-Identität
-  bleibt gewahrt; getestet in `test_sprint29_import_dialogs.py::
-  TestImportUnchangedForCleanFiles`). Ein DB-/Schema-Eingriff wäre dafür
-  unangemessen (Hard Constraint „kein Schema-Change ohne Grund"). `dataset.id`
-  ist die stabile SQLite-Row-ID pro Projekt-DB; der `db_stem` macht den Key
-  projektweit eindeutig. Genutzt wird der gemeinsame
-  `settings_store.open_qsettings()`-Isolationspunkt.
-- **Teil C2 – app-weiter Toggle `AppSettings.show_sample_id_column`** (Default
-  `True`, via QSettings persistiert, Muster wie die übrigen Bool-Settings),
-  schaltbar im Settings-Dialog („Allgemein → Angezeigte Bereiche"). `Workspace
-  Session.apply_new_settings` wendet ihn live an (re-pusht die Sidebar-Samples).
-- **Anzeige (Sidebar).** `NavigationSidebar.set_samples(samples, id_column=None,
-  id_values_by_sample=None, show_sample_id_column=True)` und der Pass-Through
-  `MainWindow.set_samples` sind rückwärtskompatibel via Default-Args erweitert
-  (bestehende Aufrufe unverändert). Ist der Toggle an UND eine ID-Spalte gesetzt
-  UND liegen Werte vor, wird das Label ergänzt (`… · IDs: 1001, 1002, 1003, …`,
-  gekürzt via `format_sample_id_values`, erste `MAX_IDS_IN_LABEL=3`), sonst
-  bleibt es exakt das bisherige Format (Regressions-Referenz). Die ID-Werte holt
-  `WorkspaceSession._resolve_sample_ids` über `get_rows_by_ids` mit nur den
-  ersten N `selected_row_ids` – **kein** `get_all_rows`, Streaming-konform. Alle
-  Sidebar-Sample-Updates laufen jetzt zentral über `WorkspaceSession.
-  push_samples` (Auflösung der ID-Info an genau einer Stelle).
-
-## Import-Dialoge: „keine Kopfzeile" + CSV (Sprint 29)
-
-Zwei Komfort-Features aus dem alten VBA-Tool – **additiv auf der
-Sprint-16-Infrastruktur** (kombinierter `ImportOptionsDialog` +
-`list_sheets`/`preview_sheet`/`import_file_configured`), nicht neu gebaut.
-Multi-Sheet-Auswahl und interaktive Kopfzeilen-Wahl existierten bereits
-seit Sprint 16; Sprint 29 schließt die zwei verbliebenen Lücken:
-
-- **„keine Kopfzeile".** Eine Checkbox im `ImportOptionsDialog` (sperrt den
-  Header-Spin). `ImportOptionsResult.header_row` wird dann `None`;
-  `ExcelImporter.import_file_configured(..., header_row=None)` vergibt
-  generische Spaltennamen `Spalte 1, Spalte 2, …` (`_generic_columns`) und
-  behandelt **alle** (nicht-leeren) Zeilen als Daten (`skip_rows=0`).
-- **CSV-Header-Detection.** `import_file_configured` verzweigt jetzt nach
-  Suffix (Excel/CSV); CSV ignoriert `sheet_name`. Neu: `preview_csv()`
-  (rohe 2D-Zellen + Confidence wie `preview_sheet`) und `_csv_reader_rows`
-  als gemeinsame Roh-Parse-Basis von Auto- (`_parse_csv`) und Override-Pfad
-  (`_import_csv_configured`). Der Dialog erkennt CSV (`self._is_csv`),
-  blendet das Sheet-Dropdown aus (`_sheet_combo is None`) und liefert
-  `sheet_name=None`.
-- **Dialog-Entscheidung zentralisiert.** `ExcelImporter.requires_options_dialog(path)`
-  kapselt „braucht es einen Dialog?" (Excel: >1 Blatt ODER `confidence != "high"`;
-  CSV: `confidence != "high"`). Der `WorkspaceController` ruft das für Excel
-  **und** CSV und reicht das `ImportOptionsResult` an den Worker durch.
-- **Worker explizit.** `ExcelImportTask.configured: bool` schaltet bewusst
-  auf `import_file_configured` um – ein reiner `None`-Check reicht nicht
-  mehr, weil `header_row=None`/`sheet_name=None` gültige Overrides sind.
-- **Verbesserte Auto-Erkennung (nur Vorschau).** `_detect_header_with_confidence`
-  überspringt jetzt *spärliche* Titel-/Metazeilen über der Tabelle
-  (Width-Matching: erste headerlike Zeile, die die volle Tabellenbreite
-  ausfüllt). Betrifft **nur** die Dialog-Vorschau; der byte-identische
-  Auto-Import (`import_file` → `_detect_header`) bleibt unberührt.
-
-**Rote Linie:** Coercion (`_coerce_*`, Sprint 26) unangetastet; Header-/
-Blatt-Wahl ändert nur die Auswahl der Rohzeilen, nicht deren Kodierung. Der
-saubere Default-Pfad (1 Blatt, Kopfzeile Zeile 1 → kein Dialog → `import_file`)
-ist byte-identisch (Oracle: `tests/integration/test_sprint29_import_dialogs.py::
-TestImportUnchangedForCleanFiles` + bestehende `test_import_result_unchanged.py`).
-Cancellation (Sprint 17) bleibt voll funktionsfähig (auch konfigurierter
-Excel-/CSV-Import).
-
-## Einzel-Feature-Toggles + „Ansicht"-Menü (Sprint 22)
-
-Advanced Mode bleibt der Master-Schalter (zeigt im Sampling-Dialog **alle**
-erweiterten Funktionen). Zusätzlich lässt sich seit Sprint 22 jede Funktion
-**einzeln** über das neue Menü **„Ansicht"** schalten – ohne Advanced Mode
-zu aktivieren.
-
-**Welche Funktionen?** Genau die, die bisher hinter Advanced Mode lagen –
-alle im *modalen* `SamplingDialog` (es gibt kein dauerhaftes Panel im
-Hauptfenster): **Filter** (Spaltenfilter), **Cluster-Sampling**
-(Methode + Cluster-Feld), **Geschichtete Stichprobe** (Methode + Schicht-
-Feld + -Verteilung). Die „Methode"-Gruppe erscheint, sobald Cluster ODER
-Geschichtet sichtbar ist, und zeigt nur die freigeschalteten Radios.
-
-**Single Source of Truth (ODER-Logik).** Pro Funktion gilt
-`feature_visible(f) = advanced_mode OR einzel_toggle(f)`. Diese Verodung
-lebt an **genau einer** Stelle: `AppSettings.resolve_feature_visible(feature)`
-(`ui/settings_store.py`). Advanced-Mode und Einzel-Toggle wirken unabhängig
-– keiner überschreibt den anderen, Advanced-Umschalten ändert die
-Einzel-Toggle-Werte nicht. Die app-weiten Toggles sind drei neue
-`AppSettings`-Felder (`show_filter_feature` / `show_cluster_feature` /
-`show_stratified_feature`, Default `False`, via `QSettings` persistiert –
-**nicht** pro Engagement, **nicht** in der SQLite-DB).
-
-**Dialog kennt kein advanced_mode mehr.** Der Controller
-(`WorkspaceController.handle_new_sampling`) löst via
-`settings.resolve_sampling_features()` ein frozen `SamplingFeatures`-Objekt
-(drei aufgelöste Bools) auf und reicht es an die Sampling-Factory →
-`SamplingDialog(features=…)` durch. Der Dialog rendert ausschließlich
-anhand dieser Flags (`_show_filter`/`_show_cluster`/`_show_stratified` +
-abgeleitetes `_show_methods`). Damit gibt es keine zwei konkurrierenden
-Codepfade für dieselbe Komponente. Der frühere `advanced_mode: bool`-
-Parameter des Dialogs/der Factory ist durch `SamplingFeatures` ersetzt.
-Der Provider fürs Filter-Dropdown wird nur erzeugt, wenn der Filter
-sichtbar ist.
-
-**„Ansicht"-Menü** (`ui/_window_menu.py`): drei checkbare Feature-Actions
-(emittieren `feature_toggled(key, checked)`) + zwei checkbare Panel-Actions
-für Dashboard/Audit-Trail (emittieren `panel_toggled(key, checked)`, mappen
-auf die bestehenden `show_dashboard`/`show_audit_trail`-Flags). Handler in
-`HelpController.handle_feature_toggled` / `handle_panel_toggled`
-persistieren app-weit; Panels werden zusätzlich live via
-`apply_panel_visibility` umgeschaltet. Die Häkchen spiegeln die **rohen**
-Einzel-Toggles (nicht die verodertete Sichtbarkeit), damit ein
-Advanced-Umschalten sie nicht verändert. `WorkspaceSession.sync_view_menu()`
-→ `MainWindow.apply_view_menu_state(...)` (mit `blockSignals`, kein
-Schreib-Loop) spiegelt die Settings beim Start und nach jedem
-Settings-Dialog-OK ins Menü (Konsistenz mit den Dashboard/Audit-Checkboxen
-im Settings-Dialog).
-
-**Reproduzierbarkeit.** Das bloße Sichtbar-Schalten ändert die Stichprobe
-nicht – nur ein *tatsächlich gesetzter* Filter schränkt die Population ein.
-Der vereinheitlichte `_build_config` erzeugt für die pure Simple-Ziehung
-bit-identische `SampleConfig`s wie der alte Simple-Pfad (nicht
-freigeschaltete Funktionen tragen ihre Config-Defaults bei). Getestet via
-`tests/ui/test_feature_toggles.py::TestToggleSamplingNeutrality` über den
-echten Controller-/Dialog-Pfad.
-
-## Sampling-Presets (Sprint 23)
-
-Wiederkehrende Sampling-Konfigurationen lassen sich als **benannte Profile**
-speichern und app-weit (über Engagements hinweg) mit einem Klick wieder
-anwenden. Spart das wiederholte Einstellen von Methode/Größe/Filter bei
-Standard-Prüfungen. Baut auf den Einzel-Toggles (Sprint 22) auf.
-
-**Was ein Preset enthält – und was nicht.** Ein `SamplingPreset`
-(`core/presets.py`, frozen Dataclass) bündelt genau die „wie-wird-gesampelt"-
-Felder: **Methode, Größe, Filter (Feld + Wert), Cluster-Feld, Schicht-Feld +
--Verteilung**. Es enthält **NICHT** den **Seed** (ziehungs-spezifisch –
-Reproduzierbarkeit hängt an Seed + Population, nicht am Template), **keine
-Population/Daten** und **keine Ergebnisse**. `SamplingPreset.from_config(name,
-config)` lässt den Seed fallen; `to_config(seed)` reicht ihn von außen wieder
-ein. Ein Preset ist damit ein `SampleConfig` minus Seed (plus Name).
-
-**Layer-Trennung (bewusste Abweichung vom Sprint-Prompt).** Der Prompt schlug
-`PresetStore` in `core/presets.py` vor; CLAUDE.md verbietet aber Qt in `core/`.
-Aufgelöst:
-- `core/presets.py` – reines Domain-Modell `SamplingPreset` + **stdlib-JSON**-
-  Serialisierung (`serialize_presets`/`deserialize_presets`). Qt-frei, SQL-frei,
-  keine Datei-I/O. Filter-Werte werden tagged ISO-codiert (datetime/date/time),
-  analog `persistence/_json.py`, damit Datums-Filter roundtrip-sicher sind.
-- `ui/preset_store.py` – `PresetStore` (die *eine* Verwaltungs-Stelle):
-  `list()`/`names()`/`get()`/`exists()`/`save()`/`rename()`/`delete()`.
-  Persistiert app-weit via `QSettings` unter dem Key `presets/json` – **nicht**
-  in die Engagement-SQLite-DB, **kein** Schema-Change, **keine** Migration,
-  **keine** neue Dependency. Nutzt `settings_store.open_qsettings()` (öffentlicher
-  Wrapper um `_qsettings`), damit Tests an genau einer Stelle isolieren.
-  (Die Methode heißt spec-konform `list()`; Annotationen, die den eingebauten
-  `list`-Typ meinen, nutzen `builtins.list[...]`, weil der Methodenname ihn im
-  Klassen-Scope sonst überschattet.)
-
-**„Settings-Owner" ist der Dialog.** Es gibt kein stehendes Sampling-Settings-
-Objekt – die einzige Stelle, die eine *lebende* Konfiguration hält, ist der
-modale `SamplingDialog`. Deshalb sitzen dort:
-- `current_settings_as_preset(name)` – friert den aktuellen Widget-Stand als
-  Preset ein (`_build_config()` minus Seed).
-- `apply_preset(preset) -> AppliedPresetResult` – spielt das Preset in die
-  Widgets zurück. Setzt **nur Parameter**, **zieht nicht** und **fasst den Seed
-  nicht an** (ISAE-3402). Es werden nur aktuell *sichtbare* Funktionen gesetzt
-  (eine nicht freigeschaltete Methode fällt auf „Einfach" zurück). Ein Filter
-  wird übersprungen und in `AppliedPresetResult.skipped_filters` gemeldet, wenn
-  seine **Spalte** in der aktuell geladenen Population fehlt ODER wenn sein
-  gespeicherter **Wert** dort nicht (mehr) vorkommt – nie ein stilles
-  Zurückfallen auf einen anderen Wert (kein stiller Fehlschlag, kein Crash).
-  Auch die JSON-Deserialisierung ist robust: korrupte QSettings (invalides
-  JSON, kaputte Einzel-Einträge) liefern eine leere bzw. bereinigte Liste statt
-  eines Crashes (analog `ui/recent.py`).
-
-**UI (Sprint 23, mehrfach umgebaut).** Ursprünglich eine Gruppe „Vorlagen"
-mit Combobox + Buttons (Anwenden / Als Vorlage speichern… / Umbenennen /
-Löschen). **Sprint 28** ersetzte das durch eine Chip-Leiste + „+", **Sprint 32**
-durch ein kompaktes `QComboBox`-Dropdown (Chips + „+" raus); Anlegen/Verwaltung
-leben im eigenen Fenster – siehe Block „Vorlagen als Dropdown +
-Verwaltungsfenster (Sprint 28/32)". Der Dialog bekommt weiterhin optional einen
-`preset_store: PresetStore | None` injiziert (Default: echter Store) – Tests
-reichen einen isolierten Store durch.
-
-**Reproduzierbarkeit.** Ein angewendetes Preset zieht bit-identisch zur
-manuellen Einstellung (Preset trägt keinen Seed → Seed kommt unverändert aus
-dem Dialog). Getestet über den Sampler-Pfad
-(`tests/unit/test_presets.py::TestPresetSamplingNeutrality`) und den
-Dialog-Pfad (`tests/ui/test_sampling_presets.py::TestPresetSamplingNeutrality`,
-inkl. `test_apply_preset_does_not_draw`).
-
-## Vorlagen als Dropdown + Verwaltungsfenster (Sprint 28/32)
-
-UI-Neuanordnung der Sprint-23-Vorlagen für eine aufgeräumtere Bedienung
-(Zielgruppe BWL-Studierende). Die **Persistenz/Logik aus Sprint 23 wird
-unverändert wiederverwendet** – `PresetStore`, `apply_preset`,
-`current_settings_as_preset` bleiben die Single Source of Truth; keine neue
-Persistenz, kein Schema-/Migrations-Change, Vorlagen weiterhin app-weit
-(QSettings, **nicht** Projekt-DB).
-
-**Stichproben-Dialog: Dropdown statt Chips/„+" (Sprint 32).** In
-`ui/dialogs/sampling_dialog.py` ist die „Vorlagen"-Gruppe ein kompaktes
-`QComboBox`-Dropdown (`self._preset_combo`): erster, neutraler Eintrag
-`PRESET_PLACEHOLDER` („(Vorlage wählen…)") plus je gespeicherter Vorlage ein
-Eintrag (Name als Text **und** als `userData`). Die Auswahl (Signal `activated`,
-nur Nutzer-Interaktion) ruft das unveränderte `apply_preset(...)` (setzt nur
-Parameter, **zieht nicht**, lässt den Seed in Ruhe; übersprungene Filter werden
-wie in Sprint 23 per `QMessageBox.information` gemeldet). Bei vielen Vorlagen
-scrollt das Dropdown nativ; leere Liste → nur der Platzhalter, Dropdown bleibt
-benutzbar. Die zuletzt angewandte Vorlage bleibt im Dropdown ausgewählt; eine
-manuelle Änderung an Größe/Methode/Filter setzt es zurück auf den Platzhalter
-(`_reset_combo_selection`, `_applying_preset`-Guard verhindert das Wegräumen
-während des Anwendens). `_reload_preset_combo` baut das Dropdown beim Öffnen neu
-aus dem Store. **Sprint 32 hat den `„+"`-Speichern-Flow vollständig entfernt**
-(`_btn_add_preset`/`_on_save_preset`/`_confirm_overwrite` raus); Anlegen passiert
-nur noch im Verwaltungsfenster. (Sprint 28 nutzte zuvor eine horizontal
-scrollende Chip-Leiste aus `QPushButton`s plus ein „+".)
-
-**Eigenes Verwaltungsfenster + Menüpunkt.** Anlegen (Sprint 32)/Bearbeiten/
-Umbenennen/Löschen/Duplizieren leben in `ui/dialogs/template_manager_dialog.py`
-(`TemplateManagerDialog`): Liste links, Bearbeiten-Formular rechts, alle
-Schreibvorgänge über `PresetStore`. **Sprint 32 – „Neue Vorlage…"-Button**
-(`_btn_new`/`_on_new`): da das „+" entfällt, ist dies der **einzige** Weg, eine
-(insb. die erste) Vorlage anzulegen – `QInputDialog`-Namensabfrage (Kollision →
-das vorhandene `_confirm_overwrite`-Muster), dann `PresetStore.save` einer
-Default-Vorlage (`method=SIMPLE`, `size=DEFAULT_SAMPLE_SIZE`, ohne Filter/Cluster/
-Schicht), anschließend selektiert + sofort im Formular editierbar. Der Button
-ist **bewusst nicht** in `_on_selection_changed` deaktiviert (sonst ließe sich
-bei leerer Liste keine erste Vorlage erzeugen). Erreichbar über den Menüeintrag
-**„Vorlagen verwalten…" im Menü „Stichprobe"** (`_window_menu.py`,
-`window._action_manage_templates`, Signal `manage_templates_requested`). Die
-Action ist **immer aktiv** (app-weit, auch ohne offenes Projekt – bewusst
-NICHT in `_set_workspace_actions_enabled`).
-
-**Einstiegspunkt / Passwort später.** Das Fenster wird über **genau einen**
-Einstiegspunkt geöffnet: `HelpController.handle_manage_templates`
-(`MainController.handle_manage_templates`-Fassade leitet weiter). Es
-implementiert **kein** Passwort – das Gate kann später vor diesem Handler (oder
-der Menü-Action) ergänzt werden, ohne weitere Umbauten.
-
-**Bearbeiten ohne geladene Population (bewusste Einschränkung).** Das Fenster
-ist app-weit erreichbar und kennt daher keine Population. Editierbar sind die
-populations-unabhängigen Felder (**Methode, Größe, Cluster-/Schicht-Feldname als
-Text, Schicht-Verteilung**). Der konkrete **Filter-Wert** lässt sich ohne
-Population nicht typ-sicher wählen (er kann ein `datetime`/`date`/`time` sein) –
-er wird im Verwaltungsfenster nur angezeigt und beim Speichern unverändert
-mitgereicht. Seit Sprint 32 (kein „+" mehr) sind Filter über die UI **nicht**
-mehr neu setzbar; bestehende Filter-Definitionen bleiben aber roundtrip-sicher
-erhalten.
-
-**Tests.** `tests/ui/test_template_dropdown.py` (Dropdown listet Platzhalter +
-Vorlagen, Auswahl wendet ohne Ziehung an, manuelle Änderung setzt zurück,
-Skip-Filter-Meldung, kein „+"-Button mehr, Reproduzierbarkeits-Neutralität,
-App-weit-Persistenz),
-`tests/ui/test_template_manager_dialog.py` (Liste, Neue Vorlage/Umbenennen/
-Löschen/Duplizieren/Bearbeiten via Store, Spiegelung im Dropdown),
-`tests/ui/test_manage_templates.py` (Menü-Action, App-weit-Enabled, einziger
-Einstiegspunkt). Die Sprint-23-Mechanik-Tests in
-`tests/ui/test_sampling_presets.py` bleiben (die alte
-`TestPresetControls`-Combobox-Klasse ist entfernt).
-
-## Seed-Memory / Reproduzierbarkeit nach Reset (Sprint 21, Hotfix)
-
-**Symptom:** Stichprobe ziehen → „Sampling zurücksetzen" → erneut ziehen
-→ andere Stichprobe, obwohl der Anwender Seed + Größe nicht verändert
-hatte (ISAE-3402-Verletzung).
-
-**Root Cause (nicht der RNG):** Der Sampling-Core ist deterministisch –
-`make_rng(seed)` wird pro Ziehung frisch erzeugt, Pools werden nach
-`row_id` sortiert, die DB liefert Rows `ORDER BY row_index`. Der Fehler
-saß im UI: `SamplingDialog._build_ui` würfelt bei **jedem** Öffnen via
-`_generate_random_seed()` einen neuen Zufalls-Seed und nichts merkte
-sich den zuletzt genutzten. Nach jedem Reset (oder schon beim zweiten
-Öffnen) zeigte das Seed-Feld einen anderen Wert; der Anwender zog „mit
-denselben Einstellungen" und bekam trotzdem eine andere Stichprobe.
-
-**Warum der Sprint-20-Test (`TestResetReproducibility`) grün war,
-obwohl die GUI fehlschlug:** Er injizierte ein `_StubSamplingDialog`
-mit hartkodiertem `seed=123` und gab denselben Stub bei beiden
-Ziehungen zurück – die reale Seed-Quelle wurde nie ausgeführt.
-
-**Fix (minimal, additiv):** `WorkspaceSession.last_seed` merkt den
-zuletzt gezogenen Seed; `WorkspaceController.handle_new_sampling` reicht
-ihn via `SamplingDialog.set_initial_seed(...)` als Default in den nächsten
-Dialog (Würfel + manuelles Editieren bleiben möglich). `last_seed`
-überlebt `reset_sampling()` bewusst (Seed = Parameter, bleibt) und wird
-nur beim Engagement-Wechsel (`reset_to_welcome`) geleert. Getestet über
-den **echten** Controller-/Dialog-Pfad in
-`tests/ui/test_main_controller.py::TestReproducibilityViaController`.
-
-## Sampling-Reset (Sprint 20)
-
-Zwei Reset-Pfade mit bewusst unterschiedlicher Semantik (beide
-audit-safe – kein DB-Delete, Append-only-Trail bleibt intakt):
-
-- **Menü „Stichprobe → Auswahl zurücksetzen"** (`reset_sample_requested`
-  → `WorkspaceController.handle_reset`): respektiert `settings.
-  reset_keeps_filter`, leert Highlight (+ ggf. Filter).
-- **Toolbar „Sampling zurücksetzen"** (`reset_sampling_requested` →
-  `WorkspaceController.handle_reset_sampling`, Sprint 20): vollständiger
-  In-Memory-Reset der gezogenen Stichprobe via zentraler
-  `WorkspaceSession.reset_sampling()` – leert ausschließlich aktive
-  Stichprobe, Highlight und Sample-Filter; Population (Dataset) und
-  Parameter (Settings) bleiben. Mit Bestätigungsdialog + Statusmeldung;
-  Button neben „Neue Stichprobe", enabled-State an `set_reset_enabled`
-  gekoppelt (teilt den State mit dem Menü-Twin).
-
-**Warum kein hartes DB-Delete der Stichprobe?** `audit_events.sample_id`
-ist `REFERENCES samples(id) ON DELETE SET NULL`; mit `foreign_keys=ON`
-feuert diese SET-NULL-Aktion den `audit_events_no_update`-Trigger
-(append-only) und bricht den Delete mit `IntegrityError` ab. Jede
-gezogene Stichprobe hat ein `log_sampling`-Event → ein selektives
-Löschen wäre ohne Schema-/Migrationsänderung unmöglich und würde den
-ISAE-3402-Audit-Trail verletzen. Daher In-Memory-Reset; eine identische
-Re-Ziehung mit gleichem Seed rekonstruiert die Stichprobe bit-genau
-(getestet via `TestResetReproducibility`).
-
-## Worker-Architektur (Sprint 17 / P-008)
-
-Long-Running-Operations (Excel-Import, DB-Persist, AuditTrail-PDF,
-Multi-Sheet-Excel-Report, HTML-Report) laufen seit Sprint 17 in einem
-Hintergrund-Thread. Die UI bleibt während der Operation responsiv und
-der "Abbrechen"-Button ist funktional.
-
-**Bausteine:**
-- `core/cancellation.py` (Qt-frei) – `CancellationToken` (thread-safe
-  Flag) + `OperationCancelled` (Kontroll-Fluss-Exception, kein Fehler).
-- `ui/workers/task_worker.py` – `WorkerTask`-Protocol +
-  `ProgressReporter` (thread-safe Adapter Worker→Qt-Signal) +
-  `TaskWorker(QThread)` mit Signals `progress`/`finished_with_result`/
-  `failed`/`cancelled`. `OperationCancelled` im Task → ``cancelled``-
-  Signal, alle anderen Exceptions → ``failed``-Signal.
-- `ui/workers/tasks.py` – 5 konkrete Tasks: `ExcelImportTask` (Read +
-  DB-Persist + AuditLog in einem Worker, eigene DB-Connection),
-  `SampleExportTask`, `AuditPdfExportTask`, `ExcelReportTask`,
-  `HtmlReportTask`.
-- `ui/dialogs/progress_dialog.py` – `TaskProgressDialog` ist seit
-  Sprint 17 der Worker-Coordinator: `run_task(task)` startet den
-  Worker, blockt per `exec()` bis fertig (Event-Loop läuft weiter →
-  Maus/Fenster/Cancel reagieren), liefert das Resultat oder `None` bei
-  Cancel. `autoClose`/`autoReset` sind bewusst aus – Schließen passiert
-  kontrolliert via `accept()`/`reject()` in den Worker-Signal-Slots.
-
-**Connection-Thread-Safety:** Tasks, die in die SQLite-DB schreiben,
-öffnen eine eigene `Database(db_path)`-Instanz im Worker-Thread. Kein
-Shared-Connection-State zwischen Threads. WAL-Mode erlaubt parallele
-Reader im Main-Thread, `BEGIN IMMEDIATE` serialisiert Writer.
-
-**Cancellation-Granularität:**
-- `ExcelImporter` checkt das Token alle `_PROGRESS_INTERVAL=1000` Rows
-  + vor dem ersten Read.
-- `DatasetRepo.create` checkt alle `_PERSIST_PROGRESS_INTERVAL=500`
-  Rows + vor dem Insert. SAVEPOINT rollt zurück → kein partielles
-  Dataset in der DB.
-- PDF/Excel-Report/HTML-Report: Cancel-Check vor + nach dem Render
-  (reportlab/openpyxl/Jinja2 sind monolithisch, kein Mid-Render-Cancel).
-
-**Reproducibility:** Bit-getestet via
-`tests/ui/test_tasks.py::TestReproducibility::
-test_worker_yields_same_rows_as_sync_import`. Sampler bleiben im
-Main-Thread und sind unverändert.
-
-**Sprint 11.x abgeschlossen** – Streaming-Architektur komplett (siehe
-nächster Abschnitt). Dataset lebt in SQLite, Code-Pfade arbeiten mit
-Generatoren / Range-Queries / Bulk-ID-Lookups. RAM-Footprint ist nicht
-mehr proportional zur Dataset-Größe.
-
-Bei Sprint-Wechsel: diese Tabelle hier UND im README.md aktualisieren.
-
-## Streaming-Architektur (Sprint 11.x)
-
-Zentraler Designgrundsatz nach Sprint 11.x: **das Tool hält Dataset-Rows
-nicht im RAM**, sondern in SQLite. Alle Code-Pfade arbeiten mit
-Generatoren / Range-Queries / Bulk-ID-Lookups, nicht mit
-voll-materialisierten Listen.
-
-**Was lebt wo:**
-- `Dataset` (frozen Dataclass): Metadaten + `row_count`, KEINE rows.
-- Rows: in `dataset_rows`-Tabelle, abgerufen via `DatasetRepo`.
-- `DatasetTableModel` (UI): FIFO-Cache mit 1000 Rows, Bulk-Load 250
-  pro Cache-Miss (Window davor + dahinter). RAM konstant ~3 MB.
-- `ExcelImporter`: liefert `ImportResult.rows` als einmal-konsumierbaren
-  `Iterator[DatasetRow]`; `DatasetRepo.create` zieht ihn einmal durch
-  und korrigiert `row_count` auf die tatsächliche Anzahl.
-- `BaseSampler.sample(rows, population_size)`: Single-Pass-Filter über
-  Iterator, `population_size` dokumentiert die Universumsgröße (auch
-  bei Sub-Sampling).
-- `ExcelExporter.export_sample(sample, dataset, dataset_repo, ...)`:
-  holt nur die Sample-Rows on-demand via `get_rows_by_ids`.
-
-**Repo-API für Row-Zugriffe:**
-- `create(dataset, rows: Iterable[DatasetRow])` – Generator akzeptiert,
-  `row_count` wird nach echter Persistierung korrigiert.
-- `get_by_id(dataset_id)` – nur Metadaten, keine Rows.
-- `get_row(dataset_id, row_id)` – einzelne Row.
-- `get_rows_in_range(dataset_id, start, end)` – half-open Range, für
-  UI-Pagination / TableModel-Cache.
-- `iter_rows(dataset_id)` – Streaming-Generator (sortiert).
-- `iter_row_ids(dataset_id)` – Light-Streaming nur über `row_index`,
-  ohne JSON-Parsing.
-- `iter_row_field_pairs(dataset_id, column)` – Streaming über
-  `(row_index, decodierter Spaltenwert)` via SQL `json_extract` +
-  `_distinct_decode` (Sprint 35 / P-003), bit-identisch zu
-  `DatasetRow.get(column)` (Decode-Oracle). Speist die
-  `sample_pairs`-Pfade von Cluster-/StratifiedSampler – RAM ~ ein
-  2-Tupel pro Row statt des 15-Spalten-Dicts (1M: 1,12 GB → 155 MB).
-- `get_rows_by_ids(dataset_id, row_ids)` – Bulk-Lookup, behält
-  Eingabe-Reihenfolge, ignoriert stale IDs, chunkt bei >900 Parametern
-  (SQLite-Bind-Limit 999).
-- `get_all_rows(dataset_id)` – Tests-Convenience. **In Production
-  nicht mehr verwendet** – der frühere Advanced-Sampling-Pfad nutzt
-  seit Sprint 19 / P-005 `distinct_values`.
-- `distinct_values(dataset_id, column)` – distinkte Nicht-None-Werte
-  einer Spalte via `SELECT json_extract(...) GROUP BY raw,jtype` +
-  `MIN(row_index)`-Tie-Break, dekodiert nur die kleine Ergebnismenge.
-  RAM ~ Anzahl distinkter Werte statt Zeilen; bit-identisch zum alten
-  `get_all_rows`-Pfad. Speist das Filter-Wert-Dropdown im Advanced-
-  Sampling-Dialog (Sprint 19 / P-005).
-
-**Was nicht streamt (legitime Ausnahmen):**
-- ImportResult.dataset (Metadaten) – klein, keine Rows.
-
-(Der Advanced-SamplingDialog lud bis Sprint 18 `get_all_rows` für die
-distinct-Werte der Cluster/Stratum-ComboBoxen – seit Sprint 19 / P-005
-ersetzt durch `DatasetRepo.distinct_values`, kein Row-Materialize mehr.)
-
-**Reproduzierbarkeit bleibt gewahrt**: `row_id` ist die stabile
-Sortier-Ordnung, `iter_rows` sortiert per `ORDER BY row_index`,
-Sampler nutzen row_id-basierte Indices. Generator-Konsum ist
-deterministisch.
+Die Sprint-Chronik (Sprint-Status-Tabelle + die ausführlichen Feature-Erzählungen
+der Sprints 11–33) liegt seit Sprint 62 in `CHANGELOG.md` – hier bleibt nur die
+langlebige Referenz. Bedeutende Grundsatzentscheidungen sind zusätzlich als kurze
+ADRs unter `docs/adr/` destilliert (RNG-Vertrag, Append-only-Threat-Model,
+DB-Migrationen).
 
 ## Architektur
 
@@ -706,30 +83,28 @@ ui ──▶ controllers ──▶ core ◀── io
   und unit-test-bar ohne Mocks.
   - `models.py` – frozen Dataclasses (Engagement, Dataset, SampleConfig, …).
     `Dataset` ist seit Sprint 11.1 nur Metadaten (`columns`, `row_count`,
-    `source_file`, Engagement-FK) – Rows leben im Repo (siehe Block
-    "Streaming-Architektur" oben).
+    `source_file`, Engagement-FK) – Rows leben im Repo (siehe „Streaming-Architektur" in CHANGELOG.md).
   - `rng.py` – `make_rng(seed)` + `fisher_yates_shuffle`; seit Sprint 39 (R-001)
     expliziter `Generator(PCG64(seed))`-BitGenerator (output-identisch zum
     vorherigen `numpy.random.default_rng`-Default), siehe Abschnitt
     „Versionsfester RNG-Vertrag (Sprint 39 / S1.2, R-001)".
   - `presets.py` – `SamplingPreset` (Sprint 23): benanntes Template einer
     Stichproben-Konfiguration (= `SampleConfig` minus Seed/Daten/Ergebnis) +
-    stdlib-JSON-Serialisierung. Qt-/SQL-/I/O-frei. Siehe Block „Sampling-Presets
-    (Sprint 23)" oben. Der QSettings-Store dazu lebt in `ui/preset_store.py`.
+    stdlib-JSON-Serialisierung. Qt-/SQL-/I/O-frei. Siehe CHANGELOG.md („Sampling-Presets (Sprint 23)"). Der QSettings-Store dazu lebt in `ui/preset_store.py`.
   - `formatting.py` – zentrale Anzeige-Formatierung (Sprint 18 / Q-005).
     `format_event_timestamp` / `format_optional_timestamp` / `ensure_utc`.
     Eintrittspunkt für ALLE Audit-Trail-Timestamp-Anzeigen (UI, PDF,
     Excel-Report, HTML-Report). Normalisiert UTC → lokale TZ, Format
     `YYYY-MM-DD HH:MM:SS`. Vorher 5× dupliziert, PDF-Pfad ohne
     TZ-Normalisierung → Drift zwischen UI und PDF.
-  - `cancellation.py` – siehe Worker-Architektur-Block oben.
+  - `cancellation.py` – siehe CHANGELOG.md („Worker-Architektur").
   - `sampling.py` – `BaseSampler` + Simple/Cluster/Stratified + `create_sampler`-Factory.
     `sample(rows, population_size=None)` akzeptiert einen einmalig-
     konsumierbaren Iterator, `_collect_pool` ist Single-Pass-Filter
     (zählt parallel den Pre-Filter-Total für den `population_size`-
     Default). Production-Caller setzen `population_size=dataset.row_count`
     explizit, damit auch bei Sub-Sampling die Original-Population
-    dokumentiert bleibt. Details siehe Streaming-Architektur-Block.
+    dokumentiert bleibt. Details siehe „Streaming-Architektur" in CHANGELOG.md.
     Ungefilterte Spezialpfade ohne Row-Materialisierung (bit-identisch,
     Oracle-gepinnt): `SimpleSampler.sample_ids` (Sprint 12.1 / P-002)
     sowie `ClusterSampler.sample_pairs`/`StratifiedSampler.sample_pairs`
@@ -776,9 +151,9 @@ ui ──▶ controllers ──▶ core ◀── io
     `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
     `export_sample(sample, dataset, dataset_repo, ...)` nimmt das
     `DatasetRepo` und holt nur `sample.selected_row_ids` via
-    `get_rows_by_ids` – siehe Streaming-Architektur-Block.
+    `get_rows_by_ids` – siehe „Streaming-Architektur" in CHANGELOG.md.
   - `pdf_report.py` – `AuditTrailPDF` via `reportlab.platypus`.
-    A4 Portrait, Engagement-Block oben, Event-Tabelle mit
+    A4-Querformat (`landscape(A4)`, seit Sprint 33), Engagement-Block oben, Event-Tabelle mit
     Korrektur-Highlight, Footer mit Seitenzahl + Zeitstempel. Optionales
     Briefpapier (PNG/JPG) wird via `onPage`-Hook hinter den Content gelegt.
     Falls kein Briefpapier explizit übergeben wird, lädt
@@ -839,7 +214,8 @@ ui ──▶ controllers ──▶ core ◀── io
     und JSON-Helfer aus `_json.py` – nie über die Fassade zurück.
   - `migrations/NNN_*.sql` – nummerierte SQL-Files; `001_initial.sql` ist das
     komplette Sprint-2-Schema. Migrations-Runner liest `schema_version` und führt
-    nur ausstehende Versionen aus.
+    nur ausstehende Versionen aus (atomar). Details als ADR:
+    `docs/adr/0003-db-migrationen.md`.
   - `version_manager.py` – `EngagementVersionManager` legt bei jedem
     `handle_open_engagement` einen Snapshot der `.db` unter `<mandant>/archiv/`
     ab (Dateiname `{stem}_{YYYY-MM-DD}_{HH-MM-SS}_{Auditor}.db`).
@@ -1081,9 +457,9 @@ ui ──▶ controllers ──▶ core ◀── io
     Samples-Übersicht. Liefert `ExportHtmlReportDialogResult` mit den
     drei `include_*`-Flags für `HtmlReportGenerator.render`.
   - `dialogs/bug_report_dialog.py` – 3 Freitextfelder + System-Info-
-    Checkbox. Konstruiert `mailto:`-URL und öffnet sie via
-    `QDesktopServices`. Auf Windows wird das in Sprint 7 von
-    `pywin32`/Outlook abgelöst.
+    Checkbox. Konstruiert `mailto:`-URL und öffnet sie plattformübergreifend via
+    `QDesktopServices.openUrl`; ist keine Mail-App registriert, landet der
+    Body in der Zwischenablage (Clipboard-Fallback).
   - `dialogs/about_dialog.py` – statischer About-Dialog (Version,
     Beschreibung, Repo-Link).
   - `dialogs/progress_dialog.py` – `TaskProgressDialog` wrapt
@@ -1115,7 +491,7 @@ ui ──▶ controllers ──▶ core ◀── io
   - `preset_store.py` – `PresetStore` (Sprint 23): die eine Verwaltungs-Stelle
     für `SamplingPreset`s (`list`/`save`/`rename`/`delete`), app-weit via
     `QSettings` (`presets/json`). Domain-Modell + JSON liegen in
-    `core/presets.py`. Siehe Block „Sampling-Presets (Sprint 23)" oben.
+    `core/presets.py`. Siehe CHANGELOG.md („Sampling-Presets (Sprint 23)").
   - `dialogs/settings_dialog.py` – `SettingsDialog` mit 3 Tabs
     (Allgemein / Reports / Erweitert), Reset-Button und Briefpapier-
     Vorschau via `QDesktopServices`. Konstruktor nimmt das aktuelle
@@ -1126,7 +502,7 @@ ui ──▶ controllers ──▶ core ◀── io
     (Sprint 32) ist der einzige Anlege-Weg (das „+" im Stichproben-Dialog ist
     entfallen). Menü „Stichprobe → Vorlagen verwalten…", einziger Einstiegspunkt
     `HelpController.handle_manage_templates` (Passwort-Gate später ergänzbar).
-    Siehe Block „Vorlagen als Dropdown + Verwaltungsfenster (Sprint 28/32)" oben.
+    Siehe CHANGELOG.md („Vorlagen als Dropdown + Verwaltungsfenster (Sprint 28/32)").
 
 ## Settings
 
@@ -1150,8 +526,7 @@ für Anwender-Präferenzen:
 - `show_filter_feature` / `show_cluster_feature` / `show_stratified_feature`
   (Sprint 22) – app-weite Einzel-Toggles für die drei Advanced-Funktionen,
   Default `False`. Schaltbar im „Ansicht"-Menü, wirken unabhängig neben
-  `advanced_mode` (ODER-Logik). Siehe Block „Einzel-Feature-Toggles +
-  „Ansicht"-Menü (Sprint 22)" oben.
+  `advanced_mode` (ODER-Logik). Siehe CHANGELOG.md („Einzel-Feature-Toggles + „Ansicht"-Menü (Sprint 22)").
 - `show_dashboard` / `show_audit_trail` – Default `True`. Steuern die
   Tab-Sichtbarkeit im unteren `QTabWidget`. Sind beide `False`, wird
   das gesamte untere Panel ausgeblendet und die Datentabelle nutzt die
@@ -1264,7 +639,7 @@ Grobe Übersetzungstafel zwischen altem VBA-Tool und neuer Python-Architektur.
 | Excel-Sheet als „DB"                       | SQLite via `persistence/` (Sprint 2)               |
 | `Worksheets("Audit").Range(...)`           | `audit/logger.py` + `AuditRepo`, append-only Trigger |
 | `Worksheets("UndoHistory")` Hidden-Sheet   | `core/undo.py` `UndoManager` + Tabelle `undo_snapshots` |
-| `Application.Mailer` / Outlook-COM         | `pywin32` in `ui/bug_report.py` (Sprint 7)         |
+| `Application.Mailer` / Outlook-COM         | `mailto:`-URL via `QDesktopServices` (`ui/dialogs/bug_report_dialog.py`)         |
 | Stratifiziert via `Dictionary`-Hack        | `core.sampling.StratifiedSampler` (sauber, getestet)|
 | Cluster-Sampling (war buggy in VBA)        | `core.sampling.ClusterSampler` (neu spezifiziert)  |
 | Manuelle CRLF-Exportlogik                  | `io/exporters/` mit Jinja2 / openpyxl (Sprint 3+6) |
@@ -1296,7 +671,8 @@ Drei Kerndogmen, die sich durch die ganze DB-Schicht ziehen:
    kanonischen Trigger beim Öffnen automatisch wieder her (Variante 1: warnen
    + reparieren, Öffnen wird nicht blockiert). Das ist Tamper-**Erkennung**,
    kein kryptografischer Manipulationsnachweis (signierte Checkpoints wären
-   dafür nötig – bewusst nicht Teil dieses Sprints).
+   dafür nötig – bewusst nicht Teil dieses Sprints). Als ADR destilliert:
+   `docs/adr/0002-anwendungsseitig-append-only-audit-trail.md`.
 3. **WAL-Mode + Foreign Keys an.** `connect()` setzt `journal_mode=WAL`,
    `foreign_keys=ON`, `synchronous=NORMAL`. Autocommit (`isolation_level=None`),
    Transaktionen werden via `session()` und `savepoint()` explizit gesteuert.
@@ -1308,7 +684,7 @@ Drei Kerndogmen, die sich durch die ganze DB-Schicht ziehen:
   `DatasetRepo.create(dataset, rows)`. Atomar – schlägt das fehl, bleibt
   nichts zurück. `dataset.row_count` wird vom Repo auf `len(rows)` gesetzt.
   Danach `AuditLogger.log_import(dataset)`.
-- Row-Zugriffe siehe Streaming-Architektur-Block oben (`get_row`,
+- Row-Zugriffe siehe „Streaming-Architektur" in CHANGELOG.md (`get_row`,
   `get_rows_in_range`, `iter_rows`, `iter_row_ids`, `get_rows_by_ids`,
   `get_all_rows` als Ausnahme).
 - UI-Controller (Sprint 4+) bekommt `Database`-Instanz, baut bei Bedarf eigene
@@ -1383,7 +759,7 @@ alle Methoden/Filter-Operatoren/Stratify-Modi + Nachstichprobe, 5 Seeds,
 CI-geprüft auf Ubuntu/Windows/macOS). **Rote Linie:** kein Wechsel des
 Ziehungs-Algorithmus (`rng.integers(0, i+1)`, Fisher-Yates, Key-Sortierung,
 Largest-Remainder bleiben unverändert) – nur die BitGenerator-Konstruktion
-wurde explizit gemacht.
+wurde explizit gemacht. Als ADR destilliert: `docs/adr/0001-versionsfester-rng-vertrag.md`.
 
 ## Konventionen für Tests
 
@@ -1395,8 +771,6 @@ wurde explizit gemacht.
 
 ## Bekannte Stolperfallen
 
-- `pywin32` ist Windows-only → in `pyproject.toml` per `sys_platform`-Marker abgesichert.
-  Auf macOS NICHT importieren auf Modul-Ebene; Late-Imports innerhalb von Funktionen.
 - PyQt6-Tests benötigen `pytest-qt` und einen X-Server bzw. Offscreen-Plattform
   (`QT_QPA_PLATFORM=offscreen`) – wird in CI gesetzt.
 - openpyxl wirft `DeprecationWarning` bei `data_only=True` Read von formelhaltigen Zellen

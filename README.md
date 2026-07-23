@@ -1,323 +1,367 @@
-# Sampling Tool
+# BDO Audit Sampling Tool
 
 [![CI](https://github.com/NicoHaider/Sampling-Tool/actions/workflows/ci.yml/badge.svg)](https://github.com/NicoHaider/Sampling-Tool/actions/workflows/ci.yml)
 
-Python-Port des BDO-internen, VBA-basierten Excel-Audit-Sampling-Tools (ISAE 3402).
-Cross-Platform (macOS/Windows), PyQt6-UI, SQLite-Persistenz, reproduzierbare Stichprobenziehung.
+Das BDO Audit Sampling Tool ist eine Desktop-Anwendung für die nachvollziehbare
+Stichprobenziehung aus Prüfungsdaten. Es löst ein VBA-basiertes Excel-Tool ab
+und **unterstützt reproduzierbare, dokumentierte Audit-Stichproben für
+ISAE-3402-Prüfungen**. Die Anwendung läuft auf macOS und Windows, verwendet eine
+PyQt6-Oberfläche und speichert jedes Projekt lokal in einer SQLite-Datei.
 
-## Status
+## Aktueller Stand
 
-Aktiv weiterentwickelt – Stand **Sprint 19**: SQL-DISTINCT im Advanced-Sampling
-(P-005) sowie Modul-Splits von `repositories.py` (F-007) und `main_window.py`
-(F-006). Die vollständige, je Sprint gepflegte Status-Historie steht in
-`CLAUDE.md`; die Tabelle unten bildet den initialen 8-Sprint-Plan plus den
-aktuellen Sprint ab.
+Die Anwendung deckt den vollständigen Arbeitsablauf ab: Projekt anlegen oder
+öffnen, Daten importieren, Stichprobe konfigurieren und ziehen, Ergebnisse prüfen
+und als Excel-, PDF- oder HTML-Report dokumentieren. Die Sprint-für-Sprint-
+Historie steht im [CHANGELOG](CHANGELOG.md); die langlebige Architektur-Referenz
+in [CLAUDE.md](CLAUDE.md), bedeutende Grundsatzentscheidungen als
+[Architecture Decision Records](docs/adr/).
 
-| Sprint | Inhalt                                              | Status      |
-|-------:|-----------------------------------------------------|-------------|
-| 1      | Projekt-Skelett, Config, Sampling-Core + Tests      | **done**    |
-| 2      | SQLite-Persistenz, Audit-Trail, Undo, Migrations    | **done**    |
-| 3      | I/O: Excel-/CSV-Import, Excel-Export, AuditTrail-PDF| **done**    |
-| 4      | PyQt6-UI: Hauptfenster, Datentabelle, Sidebar       | **done**    |
-| 5      | UI: Sampling-Dialog, Export, Undo/Redo, Bug/About   | **done**    |
-| 5.5    | UX-Bugfixes + Engagement-Auto-Versionierung         | **done**    |
-| 5.6    | Sample-Filter-Default, grüne Markierung, Engagement-Wechsel | **done** |
-| 6      | Dashboard, AuditTrail-View, Multi-Sheet-/HTML-Report | **done**   |
-| 6.1    | Einheitliche Export-Dialoge für alle Reports         | **done**    |
-| 7      | Settings, Platzhalter-Briefpapier, CI, Windows-Compat | **done**  |
-| 8      | PyInstaller-Build (Mac `.app` + Windows `.exe`), Release-Workflow | **done** |
-| …      | Sprints 9–18 – siehe `CLAUDE.md`                    | **done**    |
-| 19     | P-005 SQL-DISTINCT + F-007 repositories-Split + F-006 main_window-Split | **done** |
-| 20     | Toolbar „Sampling zurücksetzen" (audit-safe In-Memory-Reset) + engeres Toolbar-Spacing | **done** |
-| 21     | Hotfix: Reproduzierbarkeit nach Reset (Sampling-Dialog merkt den zuletzt genutzten Seed) | **done** |
-| 22     | Einzel-Toggles für Advanced-Funktionen im „Ansicht"-Menü (ODER-Logik neben Advanced-Mode, app-weit persistiert) | **done** |
-| 23     | Sampling-Presets (benannte Profile, app-weit via QSettings/JSON, ohne Seed/Daten) | **done** |
-| 24     | Performance-Polish: P-010 AuditTrail-Haystack-Cache (P-001/P-002 aus Pass 3 v2 waren seit Sprint 12.1 gefixt) | **done** |
-| 25     | Bugfix: Audit-Volltextsuche matcht Nicht-Wort-/Nicht-ASCII-Zeichen literal (rohe Nadel statt escaptem Pattern) | **done** |
-| 26     | Import-Performance (Profiling-first): orjson-Fast-Path im Tagged-Encoder (`OPT_PASSTHROUGH_DATETIME`), byte-identisch | **done** |
-| 27     | UI-Cleanup: Toolbar kompakt + Überlauf, Audit-Export-Datumsfilter gefixt + toggelbar (Default aus), „Engagement"→„Projekt" (nur sichtbarer Text), Seed nur in den Einstellungen änderbar (RNG unverändert) | **done** |
-| 28     | UI-Cleanup B: Vorlagen als Chip-Leiste + „+" im Stichproben-Dialog, Verwaltung (Bearbeiten/Umbenennen/Löschen/Duplizieren) in eigenem Fenster via Menü „Stichprobe → Vorlagen verwalten…" (Sprint-23-Mechanik unverändert) | **done** |
-| 29     | Import-Dialoge erweitert: „keine Kopfzeile" (generische Spaltennamen) + Header-Detection/Vorschau jetzt auch für CSV (Sprint-16-Dialog additiv ausgebaut); saubere Dateien bleiben byte-identisch | **done** |
-| 30     | Projekt-Anlage: Prüfungsart im Default-Dateinamen (`<mandant>_<prüfungstyp>.db` via `sanitize_for_path`) + „Überschreiben (mit Backup)"-Option im Duplikat-Dialog (sichert die alte `.db` ins `archiv/`, dann frisches Projekt) | **done** |
-| 31     | Import & Sidebar: „Datensätze aus Ansicht entfernen" (reiner Ansichts-Reset, kein DB-Delete) + Header-Zeile per Klick in der Vorschau wählbar + optionale ID-Spalte je Dataset (QSettings, kein Schema-Change), umschaltbar in den Einstellungen, in der Stichprobenliste angezeigt | **done** |
-| 32     | UI-Umbau: Vorlagen als Dropdown statt Chips im Stichproben-Dialog (Chip-Leiste + „+" raus, kompaktes `QComboBox` mit Platzhalter rein; Auswahl wendet die Vorlage an, manuelle Änderung setzt aufs Dropdown-Platzhalter zurück) + „Neue Vorlage…"-Button im Verwaltungsfenster (einziger Anlege-Weg; Sampling-/Reproduzierbarkeits-Mechanik unverändert) | **done** |
-| 33     | AuditTrail-PDF auf A4-Querformat (keine abgeschnittene „Datei"-Spalte mehr) + zwei unabhängige Dropdowns „BDO-Gesellschaft" und „Standort" im Export-Dialog (frei kombinierbar), die den Platzhalter-Adressblock ersetzen; beide app-weit via QSettings gemerkt + in den Einstellungen als Default setzbar (kein Schema-Change) | **done** |
-| 34     | Performance-Pass (profiling-first): Audit-Suche mit 150-ms-Debounce (ein Filterlauf pro Tipp-Pause statt pro Tastenanschlag, Treffer identisch), 1M-Re-Baseline in PERFORMANCE.md (Tabelle-Anzeige 0,27 s, Sampling Simple 4,5 s/46 MB – frühere Fixes bestätigt; PDF-„Regression" als reproduzierbarer Ist-Aufwand geklärt, weit unter Target) + 3 belegte Mikro-Fixes (Audit-Events nur noch 1× pro Aktion geladen, Filter-Werte im Stichproben-Dialog gecacht, Export-Spalten-Buttons ohne O(N²)); Startup & Snapshot gemessen, bewusst nicht umgebaut (Hebel zu klein) | **done** |
-| 35     | Cluster-/Geschichtete Stichproben ohne 1-GB-RAM-Spitze: Ziehung läuft über einen (row_id, feldwert)-Stream statt alle Zeilen zu laden – bit-genau identische Ergebnisse (gleicher Seed ⇒ gleiche Stichprobe, per Oracle-Tests + 1M-Vergleich bewiesen), bei 1 Mio. Zeilen ~2–3× schneller und −86 % RAM (1,12 GB → 155 MB); Import-Pipeline vermessen und profiliert – bewusst nicht angefasst (Hebel unter der 20-%-Schwelle, Coercion-Semantik jetzt per Äquivalenz-Test gepinnt) | **done** |
-| 36     | Spaltenfilter mit Vergleichsoperatoren (`=`, `≠`, `>`, `≥`, `<`, `≤`) statt nur Gleichheit, inkl. Live-Vorschau der tatsächlich verfügbaren Trefferzahl in der Größen-Zeile; der Filter ist jetzt ab Werk sichtbar (kein Erweiterter Modus nötig). Neue „Nachstichprobe": ergänzend aus der Basispopulation ziehen und dabei bereits gezogene Datensätze garantiert ausschließen (keine Dubletten) – zum Erweitern einer Stichprobe ohne Doppelprüfung. Bestehende Stichproben/Vorlagen bleiben unverändert (Migration mit `eq`-Default; gleicher Seed ⇒ gleiche Stichprobe) | **done** |
+Im Mittelpunkt stehen Reproduzierbarkeit und Nachvollziehbarkeit:
 
-### Was Sprint 8 liefert
+- Jede Ziehung erhält einen Seed und die Algorithmusversion `bdo-v1`.
+- Gleiche Daten, Konfiguration und Seed führen zu denselben gezogenen
+  Datensatz-IDs.
+- Ziehungen, Importe, Exporte sowie Undo-/Redo-Aktionen werden in einem
+  **anwendungsseitig append-only** Audit-Trail festgehalten.
+- Vor dem Öffnen wird eine Datenbank read-only als Sampling-Tool-Projekt
+  geprüft; erst danach werden Snapshot und Migration ausgeführt.
 
-- **PyInstaller-Build** als doppelklickbare App: `.app` auf Mac, `.exe`
-  im Ordner auf Windows. Spec-File-basiert (`sampling_tool.spec`), damit
-  alle Optionen versioniert sind.
-- **Lokales Build-Script** `scripts/build_app.py` (cross-platform, optional
-  `--dmg` auf Mac). Erzeugt Platzhalter-Icons bei Bedarf automatisch.
-- **GitHub-Actions-Release-Workflow** `.github/workflows/release.yml`:
-  Tag-Push (`v*.*.*`) baut auf `macos-latest` + `windows-latest`, hängt
-  beide Bundles in einen Draft-Release.
-- **App-Icon** als BDO-roter Platzhalter (`resources/icons/app.icns` +
-  `app.ico`). Austauschbar ohne Code-Änderung, sobald ein echtes Icon
-  vorliegt – oder via `scripts/generate_app_icon.py` regenerierbar.
-- **Anwender-Installations-Anleitung** `docs/INSTALL_USER.md` inkl.
-  "Trotzdem öffnen"-Workaround für nicht-signierte App.
-- **Code-Signing bewusst nicht konfiguriert** – Aufwand/Nutzen für internes
-  Tool aktuell zu gering. Kann später in eigenem Sprint nachgerüstet werden.
+## So funktioniert der Workflow
 
-### Was Sprint 7 liefert
+1. Beim ersten Start legt ein kurzer Assistent den Standardordner und den
+   Auditor fest. Anschließend wird ein neues Projekt angelegt oder eine
+   bestehende Projektdatei geöffnet. Ein Projekt entspricht einer `.db`-Datei
+   und enthält alle zugehörigen Daten, Stichproben und Audit-Ereignisse.
+2. Excel- oder CSV-Dateien werden mit Vorschau importiert. Bei Excel-Dateien
+   kann ein Blatt gewählt werden; für beide Formate lässt sich die Kopfzeile
+   automatisch erkennen, per Klick bestimmen oder ganz weglassen. Ohne Kopfzeile
+   erzeugt die Anwendung neutrale Spaltennamen wie „Spalte 1".
+3. Der Import schreibt die Datensätze in die lokale Projekt-Datenbank. Die
+   Oberfläche lädt für Tabelle, Suche und Ziehung nur die jeweils benötigten
+   Daten nach und bleibt dadurch auch bei großen Populationen bedienbar.
+4. Im Stichproben-Dialog werden Methode, Umfang, Seed und bei Bedarf Filter oder
+   Gruppierungsfelder festgelegt. Die Ziehung wird gespeichert, in der Tabelle
+   hervorgehoben und im Audit-Trail dokumentiert.
+5. Über die Sidebar lassen sich Datasets und frühere Stichproben wieder aufrufen.
+   Dashboard und Audit-Trail geben den aktuellen Projektstand und seine Historie
+   wieder.
+6. Die Ergebnisse lassen sich als einzelne Excel-Stichprobe, vollständiger
+   Excel-Report, AuditTrail-PDF oder HTML-Report ausgeben.
 
-- **Settings-Dialog** (`Datei → Einstellungen…`) mit 3 Tabs (Allgemein /
-  Reports / Erweitert), persistiert via `QSettings`.
-- **Platzhalter-Briefpapier** als PDF unter
-  `resources/briefpapier/bdo_placeholder.pdf` – wird automatisch
-  geladen, falls kein User-Override gesetzt ist. Austauschbar ohne
-  Code-Änderung, sobald das echte BDO-Briefpapier vorliegt.
-- **Briefpapier-Resolution-Order**: Setting (`custom_briefpapier_path`)
-  → User-Override im Filesystem → Paket-Default → ohne Briefpapier.
-- **Mail-App-Fallback** im Bug-Report-Dialog: wenn `QDesktopServices.openUrl`
-  fehlschlägt, wird der Body in die Zwischenablage kopiert und der User
-  informiert.
-- **Windows-Kompatibilität**: Snapshots werden nach Erstellung
-  read-only gesetzt (`chmod 0o444`), Restore setzt Schreibrechte
-  zurück.
-- **GitHub Actions CI**: `pytest + ruff + mypy` auf Ubuntu und Windows
-  mit Python 3.13.
-- **Docs**: `docs/USER_GUIDE.md` und `docs/ADMIN_GUIDE.md`.
-- **Hotkeys-Übersicht** im Hilfe-Menü, plus konsistente Shortcuts für
-  Neu/Öffnen/Schließen/Import/Settings.
+```text
+Excel / CSV
+    │  Vorschau, Blatt- und Kopfzeilenauswahl
+    ▼
+Dataset in der Projekt-SQLite-Datei ──► Datentabelle, Sidebar und Dashboard
+    │
+    │  Methode + Umfang + Seed + optionale Einschränkungen
+    ▼
+Gespeicherte Stichprobe ──► Markierung in der Tabelle + Audit-Ereignis
+    │
+    ├──► Sample-Excel
+    ├──► Excel-Projektreport
+    ├──► AuditTrail-PDF
+    └──► HTML-Report
+```
 
-### Was Sprint 6 liefert
+### Was in einem Projekt gespeichert wird
 
-- **Splitter-Layout** im Workspace: Tabelle oben (60 %), unten ein
-  `QTabWidget` mit zwei Tabs (AuditTrail / Dashboard, 40 %).
-  Splitter-Größen werden in `QSettings` persistiert.
-- **AuditTrail-View** (`ui/widgets/audit_trail_view.py`): sortierbar,
-  filterbar nach Aktion / User / Zeitraum + Volltext. Doppelklick auf
-  einen Sample-Event markiert das Sample in der Tabelle.
-- **Dashboard-View** (`ui/widgets/dashboard_view.py`): sechs Kacheln
-  mit Statistiken und Mini-Charts (Sampling-Historie, Methoden-
-  Verteilung, Top-Eventtypen). Klick auf eine Stichprobe in
-  „Letzte Stichproben" selektiert sie.
-- **Multi-Sheet Excel-Report** (`io/multi_report_exporter.py`): vier
-  Sheets (Übersicht, AuditTrail, Samples, Statistiken) – komplettes
-  Engagement in einer Datei, Chart als Bild eingebettet.
-- **HTML-Report** (`io/html_report.py`): selbstständige Datei mit
-  Inline-CSS und Base64-Charts, Jinja2-Template.
-- **Briefpapier-System** (`io/briefpapier.py`): `BriefpapierConfig` +
-  `get_default_briefpapier()` (User-Override → Resource-Fallback);
-  echtes BDO-Briefpapier kommt Sprint 7.
-- **Empty-States** in Tabelle, AuditTrail-, Dashboard- und
-  Sidebar-Listen.
-- **About-Dialog** mit Changelog der letzten drei Versionen.
-- **matplotlib** als neue Dependency (Agg-Backend, headless).
+| Bereich | Inhalt |
+|---|---|
+| Projektstammdaten | Mandant, Prüfungstyp, Auditor und Position |
+| Datenbestände | Importquelle, Spalten, stabile Zeilen-IDs und die importierten Werte |
+| Stichproben | Methode, gewünschte und tatsächliche Größe, Population, Seed, Filter und gegebenenfalls Eltern-Stichprobe |
+| Audit-Trail | Importe, Ziehungen, Exporte, Rückgängig/Wiederherstellen, Resets und Korrekturen |
+| Arbeitszustand | Aktuelle Auswahl und Undo-/Redo-Snapshots für die Bedienung |
 
-### Was Sprint 5.5 liefert
+### Projektordner und Lebenszyklus
 
-- **Toolbar-Buttons** für Undo/Redo (Standard-Icons + deutsche Tooltips)
-- **Sample-Highlight bleibt** beim Klick auf das aktive Dataset; bei
-  Navigation auf ein fremdes Dataset wird `_active_sample_id` aber **nicht**
-  vergessen → Rückkehr zum ursprünglichen Dataset stellt das Highlight wieder her
-- **`ENGAGEMENTS_DIR`** = `~/Documents/BDO Audit Sampling/` als Standard-Ablage
-  (idempotent beim Start erzeugt). Datei-Dialoge starten dort, neue
-  Engagements werden in `{MandantSanitized}/{MandantSanitized}.db` vorgeschlagen
-- **Sanitisierung** mit Umlaut-Transliteration: „Müller & Söhne GmbH" →
-  `Mueller__Soehne_GmbH` (config.sanitize_for_path)
-- **`EngagementVersionManager`**: Snapshot in `{mandant}/archiv/` bei jedem
-  Öffnen einer Engagement-DB (Konzept A: Auto-Snapshot pro Session). Datei-
-  Pattern: `{stem}_{YYYY-MM-DD}_{HH-MM-SS}_{Auditor}.db`. WAL-/SHM-Dateien
-  werden bewusst NICHT mitkopiert. Compliance-Pfad für ISAE-3402-Versions-
-  nachweis
-- **Aktive Stichprobe sichtbar**: Statusbar zeigt
-  `Aktive Stichprobe: #<id> (<Methode>, <gewählt>/<Population>)` und das
-  Sidebar-Item bekommt einen „●"-Bullet plus fette Schrift
+Ein Projekt besteht nicht nur aus der Datenbankdatei. In der üblichen Ablage
+entsteht ein eigener Ordner pro Mandant. Neben der `.db`-Datei nutzt die
+Anwendung darin insbesondere diese Bereiche:
 
-### Was Sprint 5 liefert
+| Pfad bzw. Datei | Zweck |
+|---|---|
+| `<Mandant>/<Projekt>.db` | Die lokale Projektdatei mit Stammdaten, Datasets, Stichproben und Audit-Trail. |
+| `<Mandant>/archiv/` | Automatisch erzeugte Datenbanksnapshots vor dem Öffnen bzw. vor einem Überschreiben. |
+| `<Mandant>/exports/` | Vorgeschlagener Ablageort für erzeugte Reports und Exporte. |
 
-- `ui/dialogs/sampling_dialog.py` – Sampling-Konfigurator
-  (Simple/Cluster/Stratified, Filter, Seed-Würfel, Resample-Checkbox)
-- `ui/dialogs/export_sample_dialog.py` – Multi-Select-Spaltenauswahl +
-  Filename/ID + Zielordner + Live-Vorschau
-- `ui/dialogs/bug_report_dialog.py` – mailto-basierter Bug-Report mit
-  URL-Encoding und optionaler System-Info
-- `ui/dialogs/about_dialog.py` – Version, Beschreibung, Repo-Link
-- `ui/dialogs/progress_dialog.py` – Wrapper für `QProgressDialog`
-- `ui/controllers/main_controller.py` – Handler für alle Menü-Aktionen,
-  Undo/Redo-State, Sampling/Reset/Export-Flow
-- `ui/main_window.py` – alle Menü-Hooks verdrahtet, Undo/Redo via
-  `QKeySequence.StandardKey.Undo/Redo`
-- `ui/widgets/data_table.py` – Datums-Formatierung (Zeit nur bei != 00:00:00)
-- `core/undo.py` – neue `peek_undo()`/`peek_redo()`-Methoden für
-  saubere UI-Undo-Semantik
-- ~40 neue UI-Tests via pytest-qt
-- End-to-End-Workflow funktioniert: Engagement → Import → Sampling →
-  Export → AuditTrail-PDF
+Beim Anlegen werden Mandant und Prüfungstyp für den Dateinamen bereinigt, damit
+der gleiche Ablauf auf macOS und Windows funktioniert. Beim erneuten Öffnen merkt
+sich die Anwendung das Projekt für den Welcome-Screen und das Menü „Zuletzt
+geöffnet". Nicht mehr existierende Einträge werden aus dieser Liste bereinigt.
 
-### Was Sprint 4 liefert
+## Funktionsumfang
 
-- `ui/main_window.py` – `MainWindow` mit State-Maschine Welcome ↔ Workspace
-  (`QStackedWidget`), Menü/Toolbar/Splitter/Statusbar, typisierte Signals
-- `ui/widgets/data_table.py` – `DatasetTableModel(QAbstractTableModel)` +
-  `DataTableView`. Virtuell, sample-highlighting per `BackgroundRole`,
-  Filter ohne Proxy
-- `ui/widgets/sidebar.py` – `NavigationSidebar` (Engagement/Datasets/Samples)
-  mit Klick- und Doppelklick-Signals
-- `ui/widgets/welcome.py` – `WelcomeScreen` mit Recent-Engagement-Karten
-- `ui/dialogs/new_engagement_dialog.py` – Pflichtfeld-Dialog
-  (Auditor/Position/Mandant/Prüfungstyp) + Save-Path-Auswahl
-- `ui/recent.py` – `RecentEngagementsStore` mit JSON-Persistenz via
-  `platformdirs.user_data_dir()`
-- `ui/controllers/main_controller.py` – Glue-Schicht UI ↔ Persistence/IO
-- `ui/styles/bdo_light.qss` – Qt-Stylesheet (BDO-Rot/Weiß/Grau)
-- `__main__.py` startet die Qt-App
-- 47 neue UI-Tests via pytest-qt (offscreen-fähig)
+### Projekte und Datenhaltung
 
-### Was Sprint 3 liefert
+- Ein separates SQLite-Projekt pro Mandant bzw. Prüfung, einschließlich Auditor,
+  Position und Prüfungstyp.
+- Neue Projekte werden in einem eigenen Mandantenordner abgelegt; der
+  vorgeschlagene Dateiname enthält Mandant und Prüfungstyp. Bei bereits
+  vorhandener Datei kann der Vorgang abgebrochen oder mit vorherigem Backup
+  fortgesetzt werden.
+- Beim Öffnen einer bestehenden Projektdatei prüft das Tool zuerst rein lesend,
+  ob es sich um eine intakte und unterstützte Sampling-Tool-Datenbank handelt. Es
+  erstellt erst danach einen Snapshot und führt gegebenenfalls Migrationen aus.
+  Fremde, beschädigte oder zu neue Datenbanken bleiben unangetastet.
+- Automatische Sitzungssnapshots liegen im Projektordner `archiv/`, tragen
+  Zeitstempel und Auditor im Dateinamen und werden schreibgeschützt abgelegt.
+- Kürzlich verwendete Projekte, Einstellungen und Stichprobenvorlagen werden
+  app-weit gespeichert.
+- Undo/Redo für den Arbeitszustand sowie ein klar abgegrenztes „Datensätze aus
+  Ansicht entfernen", das keine Quelldaten aus der Datenbank löscht.
 
-- `io/importer.py` – `ExcelImporter` mit Streaming-Read (openpyxl read_only),
-  Header-Detection, Encoding-Fallback bei CSV (utf-8/utf-8-sig/latin-1/cp1252),
-  Duplikat-Spalten-Suffix, Progress-Callback, Multi-Sheet-Auswahl + `preview()`
-- `io/exporter.py` – `ExcelExporter` mit atomarem Write (`.tmp` + `os.replace`),
-  Sheet "Sample" (BDO-rotes Header-Styling, Auto-Spaltenbreiten) + Sheet
-  "Metadaten" (Engagement, Seed, Methode, Population). Dateiname-Schema:
-  `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`
-- `io/pdf_report.py` – `AuditTrailPDF` (reportlab.platypus): A4-Portrait,
-  Engagement-Block, Event-Tabelle mit Korrektur-Highlight, optionales
-  Briefpapier (PNG/JPG) als Layer hinter dem Content
-- `scripts/demo_full_workflow.py` – End-to-End-Smoke-Test über alle Layer
-- 40 neue Integration-Tests (10 Importer, 10 Exporter, 7 PDF, 1 datetime-
-  Roundtrip in `DatasetRepo`, 12 Helper-Fixtures)
-- Persistenz: `dataset_rows.values_json` nutzt jetzt einen tagged JSON-Encoder
-  für `datetime`/`date`/`time` aus dem Excel-Import (roundtrip-sicher)
+### Import und Verarbeitung
 
-### Was Sprint 2 liefert
+- Excel- und CSV-Import, inklusive Mehrblatt-Auswahl, Header-Vorschau,
+  Zeichensatz-Erkennung für CSV und generischen Spaltennamen ohne Kopfzeile.
+- Excel wird über die Rust-basierte `python-calamine`-Bibliothek zeilenweise
+  gelesen (deutlich schneller und speicherschonender als ein voll
+  materialisierter Read); CSV über die stdlib mit Encoding-Fallback. Unterstützte
+  Eingaben sind `.xlsx`, `.xlsm`, `.csv` und `.tsv`.
+- Streaming-orientierte Speicherung und Abfrage: auch große Populationen müssen
+  nicht vollständig als Python-Objekte im Arbeitsspeicher liegen.
+- Jeder importierte Datensatz erhält eine stabile Zeilen-ID. Werte wie Datum,
+  Uhrzeit und Zahlen bleiben für Filter, Export und spätere Reproduktion
+  typisiert erhalten.
 
-- `persistence/database.py` – `Database` mit WAL/FK-PRAGMAs, `session()`-Transaktionen,
-  `savepoint()`-Helper, automatische Migrations + UTC-aware Datetime-Adapter
-- `persistence/migrations/001_initial.sql` – 8 Tabellen, FKs, Indizes, Append-Only-Trigger
-- `persistence/repositories.py` – `EngagementRepo`, `DatasetRepo`, `SampleRepo`, `AuditRepo`
-- `audit/logger.py` – `AuditLogger` mit `log_sampling`/`log_import`/`log_export`/
-  `log_undo`/`log_redo`/`log_reset`/`log_correction`
-- `core/undo.py` – `UndoManager` mit Stack-Tiefe 20, Redo-Clear-on-Push, persistiert
-  über Connection-Wechsel hinweg
-- 48 neue Integration-Tests (DB-Lifecycle, Repos, Append-Only-Trigger, Logger, Undo)
+#### Importablauf im Detail
 
-### Was Sprint 1 liefert
+Bei einer klar strukturierten Datei – einer Excel-Tabelle mit eindeutig erkannter
+Kopfzeile oder einer entsprechend klaren CSV – startet der Import direkt. Bei
+mehreren Excel-Blättern oder unsicherer Kopfzeilenerkennung zeigt das Tool
+dagegen einen Konfigurationsdialog. Dort wird zuerst das Blatt und anschließend
+die Kopfzeile gewählt:
 
-- Build-Setup: `pyproject.toml` (setuptools src-Layout), Ruff (line=100), Mypy strict, Pytest+Coverage
-- VSCode-Workspace (`.vscode/`): Interpreter, Pytest, Ruff-Format-on-Save, Launch-Configs
-- `core/models.py` – frozen Dataclasses + StrEnums (`SamplingMethod`, `StratifyMode`)
-- `core/rng.py` – `make_rng(seed)` + deterministischer Fisher-Yates-Shuffle
-- `core/sampling.py` – `SimpleSampler`, `ClusterSampler`, `StratifiedSampler` (Largest-Remainder),
-  Factory `create_sampler`, einheitliche `SamplingError` mit deutschen Messages
-- 22 Unit-Tests inkl. „same seed → bit-genau gleiches Ergebnis"
-- Stubs für `io/`, `persistence/` (mit `001_initial.sql`), `audit/`, `ui/`
+1. Die Vorschau zeigt Rohzeilen, ohne sie vorab als Daten oder Überschriften zu
+   interpretieren.
+2. Die automatische Erkennung schlägt eine Kopfzeile mit einer
+   Vertrauenseinschätzung vor.
+3. Der Benutzer kann die vorgeschlagene Zeile übernehmen, eine andere Zeile in
+   der Vorschau anklicken oder „keine Kopfzeile" wählen.
+4. Zeilen vor einer gewählten Kopfzeile werden nicht als Daten importiert. Ohne
+   Kopfzeile werden alle nicht leeren Zeilen importiert und die Spalten heißen
+   `Spalte 1`, `Spalte 2` usw.
+5. Während des vollständigen Imports werden die Daten zeilenweise verarbeitet und
+   fortlaufend in die Projekt-Datenbank geschrieben. Der Vorgang ist abbrechbar
+   und führt einen Fortschrittsdialog.
 
-## Voraussetzungen
+Der Import verändert die Quelldatei nie. Die Quelle wird im Dataset und im
+Audit-Trail als Pfad festgehalten; die Arbeitsgrundlage für alle folgenden
+Schritte ist die lokale Kopie der Daten in der Projektdatei.
 
-- Python **3.13+**
-- macOS oder Windows 10/11
-- Aktives venv (siehe unten)
+### Stichproben
+
+| Verfahren | Anwendung im Tool |
+|---|---|
+| Einfach | Zieht die gewünschte Anzahl zufällig und ohne Zurücklegen aus der verfügbaren Population. |
+| Cluster | Wählt ganze Gruppen anhand einer frei wählbaren Spalte. Da vollständige Cluster übernommen werden, kann die tatsächliche Zeilenzahl über dem Zielwert liegen. |
+| Geschichtet | Verteilt die Zielgröße auf Werte einer Schichtspalte – entweder proportional zur Schichtgröße oder gleichmäßig über die Schichten. Rundungen werden über die Largest-Remainder-Methode nachvollziehbar verteilt. |
+
+Für jede Methode gilt:
+
+- Vor der Ziehung kann eine Spalte mit `=`, `≠`, `>`, `≥`, `<` oder `≤` gefiltert
+  werden. Für Gleichheit und Ungleichheit werden vorhandene Werte angeboten; bei
+  Größenvergleichen wird ein Schwellenwert eingegeben. Die Vorschau zeigt die für
+  die Ziehung verfügbare Menge.
+- „Nur aus aktueller Auswahl ziehen" begrenzt eine neue Ziehung auf das aktive
+  Sample. Die Alternative „Ergänzen" zieht aus der Restpopulation und schließt
+  bereits gezogene Zeilen aus. Beide halten die Herkunft über eine
+  Eltern-Stichprobe fest.
+- Benannte Vorlagen speichern wiederkehrende Einstellungen wie Methode, Felder
+  und Filter. Der Seed gehört bewusst nicht zur Vorlage und wird in den
+  Einstellungen zentral festgelegt oder für eine neue Ziehung erzeugt.
+- Vor der Zufallsauswahl wird die Population in eine stabile Reihenfolge gebracht.
+  Der explizit versionierte Zufallsalgorithmus `bdo-v1` und der gespeicherte Seed
+  machen eine Ziehung mit denselben Eingabedaten reproduzierbar (siehe
+  [ADR 0001](docs/adr/0001-versionsfester-rng-vertrag.md)).
+
+#### Wiederholen, einschränken oder ergänzen
+
+Diese drei Fälle unterscheiden sich bewusst:
+
+| Vorgang | Population der neuen Ziehung | Beziehung zur vorherigen Stichprobe |
+|---|---|---|
+| Neue unabhängige Ziehung | Gesamtes aktuelle Dataset, eventuell mit Spaltenfilter | Keine Eltern-Stichprobe |
+| Nur aus aktueller Auswahl ziehen | Nur die Zeilen der aktiven Stichprobe | Neue Ziehung referenziert die aktive Stichprobe |
+| Ergänzen / Nachstichprobe | Gesamte Basispopulation abzüglich der bereits gezogenen Zeilen | Referenziert die aktive Stichprobe, enthält keine Dubletten zu ihr |
+
+Das Zurücksetzen einer Auswahl löscht keine gespeicherten Stichproben oder
+Audit-Ereignisse. Es ändert nur den sichtbaren Arbeitszustand. Auch Undo und Redo
+stellen diesen Arbeitszustand wieder her und hinterlassen selbst wieder
+nachvollziehbare Audit-Ereignisse.
+
+### Nachweis und Reports
+
+Der Audit-Trail ist **anwendungsseitig append-only**: bestehende Einträge werden
+nicht überschrieben oder gelöscht. Eine fachliche Korrektur wird als neuer,
+referenzierter Korrektur-Eintrag protokolliert. Bei einer Ziehung enthält der
+Eintrag unter anderem Methode, Größe, Population, Anteil, Seed sowie Filter- und
+Gruppierungsparameter. Importe und Exporte halten außerdem Quelle bzw. Zieldatei
+fest. Details und Grenzen des Modells: [ADR 0002](docs/adr/0002-anwendungsseitig-append-only-audit-trail.md).
+
+| Ausgabe | Inhalt und Optionen |
+|---|---|
+| Sample-Excel | Die ausgewählten Zeilen in frei wählbaren Spalten plus Metadatenblatt mit Ziehungsdaten. Das Schreiben erfolgt zunächst in eine temporäre Datei und wird erst danach atomar an den Zielpfad verschoben. |
+| Excel-Projektreport | Vier Arbeitsblätter: Projektübersicht, AuditTrail, alle Stichproben und Statistiken mit Diagramm. |
+| AuditTrail-PDF | Chronologischer Ereignisnachweis im A4-Querformat; nach Zeitraum und Ereignistyp eingrenzbar, optional mit Statistikseite und Briefpapier. Gesellschaft und Standort sind unabhängig auswählbar. |
+| HTML-Report | Eigenständige Datei mit Projektkennzahlen sowie optionalen Diagrammen, AuditTrail und Stichprobenübersicht. Diagramme werden eingebettet, sodass keine zusätzlichen Dateien nötig sind. |
+
+Alle Excel-Exporte behandeln Inhalte aus Daten und Metadaten sicher als Text,
+wenn diese wie Excel-Formeln aussehen. Dadurch wird verhindert, dass solche Werte
+beim Öffnen der Datei als Formel ausgeführt werden. Alle Exportdialoge teilen sich
+eine gemeinsame Zielauswahl mit Dateiname, Kennung, Zielordner und Pfadvorschau;
+die erzeugten Dateien benennen Mandant, Kennung, Ausgabetyp und Datum.
+
+### Oberfläche und Betrieb
+
+- PyQt6-Desktop-Oberfläche mit Willkommensansicht, Navigation, Datentabelle,
+  Audit-Trail und Dashboard.
+- Der Audit-Trail kann nach Aktion, Benutzer und Zeitraum gefiltert sowie per
+  Volltext durchsucht werden. Ein Doppelklick auf eine Stichprobenaktion führt
+  zur zugehörigen Auswahl in der Datentabelle.
+- Das Dashboard zeigt unter anderem Anzahl von Datasets, Stichproben und
+  Audit-Ereignissen, eine Methodenverteilung und die jüngsten Aktivitäten.
+- Zeitintensive Import- und Exportaufgaben laufen im Worker, damit die Oberfläche
+  bedienbar bleibt und ein laufender Vorgang abgebrochen werden kann.
+- Einstellbare Ansichtsfunktionen, Tastatur-Shortcuts, Fehlerbericht-Dialog und
+  Ersteinrichtungsassistent.
+- CI auf Ubuntu, macOS und Windows; lokale Qualitätssicherung mit Pytest, Ruff
+  und Mypy.
+
+## Architektur in Kürze
+
+Die Anwendung trennt fachliche Ziehungslogik, lokale Speicherung, Ein-/Ausgabe
+und Oberfläche. Dadurch bleibt die Reproduzierbarkeit unabhängig davon, ob eine
+Aktion über einen Dialog, einen Worker oder einen Export ausgelöst wird.
+
+| Baustein | Verantwortung |
+|---|---|
+| `core/` | Fachmodelle, Filtervergleich, Zufallsalgorithmus, Stichprobenverfahren, Vorlagen und Undo-Modelle. Kein Qt, keine SQL, keine I/O. |
+| `persistence/` | SQLite-Verbindung, Schema-Migrationen, Repositories für Projekte, Daten, Samples, Audit-Ereignisse und Snapshots. |
+| `audit/` | Baut für Benutzeraktionen strukturierte Audit-Ereignisse statt untypisierter Freitexteinträge. |
+| `io/` | Liest Excel/CSV ein und erzeugt Excel-, PDF- und HTML-Ausgaben einschließlich Diagrammen und Briefpapier. |
+| `ui/` | PyQt6-Fenster, Dialoge und Widgets; Controller koordinieren den Ablauf, Worker führen längere Aufgaben im Hintergrund aus. |
+
+Für die wichtigsten Aktionen folgt der Code einem wiederkehrenden Muster: Ein
+Controller nimmt die Eingabe entgegen, prüft die Voraussetzungen (Projekt,
+Dataset, aktive Stichprobe), liest über Repositories genau die benötigten Daten
+aus SQLite, lässt die Fachlogik in `core/` ein Ergebnis oder eine verständliche
+Fehlermeldung liefern und persistiert bei einer Zustandsänderung die fachlichen
+Daten und das Audit-Ereignis zusammen. So bleiben Ziehung, Export und Audit-Trail
+über denselben Projektzustand verbunden.
+
+### Datenbank und Migrationen
+
+SQLite ist die alleinige Projektpersistenz, mit Foreign-Key-Prüfung und
+WAL-Modus. Die Schemaversion wird in der Projektdatei mitgeführt; beim Öffnen
+einer gültigen, älteren Datei spielt die Anwendung die vorhandenen SQL-Migrationen
+in Versionsreihenfolge atomar ein. Eine read-only Preflight-Prüfung schützt davor,
+dass dieser Prozess gegen eine beliebige oder zu neue SQLite-Datei läuft. Details:
+[ADR 0003](docs/adr/0003-db-migrationen.md).
+
+## Nachvollziehbarkeit und Schutzmechanismen
+
+Die folgenden Mechanismen sind absichtlich Teil des fachlichen Ablaufs, nicht nur
+technische Nebenwirkungen:
+
+| Bereich | Umsetzung im aktuellen Stand | Praktische Wirkung |
+|---|---|---|
+| Reproduzierbarkeit | Seed, vollständige Sampling-Konfiguration und Algorithmusversion `bdo-v1` werden pro Sample gespeichert; die Eingabe wird vor der Ziehung stabil nach Zeilen-ID geordnet. | Eine Ziehung kann bei unveränderten Eingabedaten mit ihren Parametern erneut durchgeführt werden. |
+| Auditierbarkeit | Audit-Ereignisse sind strukturiert und per Datenbank-Trigger gegen Update/Delete geschützt; Korrekturen entstehen als neue Ereignisse mit Verweis auf das Original. | Die Historie bleibt nachvollziehbar, statt nachträglich überschrieben zu werden. |
+| Sicheres Öffnen | Eine Datei wird mit SQLite im rein lesenden, unveränderlichen Modus auf Integrität, Tool-Identität und Schemaalter geprüft. | Eine fremde oder beschädigte Datei wird nicht durch Snapshot, WAL-Dateien oder Migration verändert. |
+| Versionsstände | Beim Öffnen wird ein schreibgeschützter Snapshot der `.db`-Datei unter `archiv/` angelegt. | Vor einer Sitzung liegt ein wiederherstellbarer Datenbankstand vor. |
+| Excel-Schutz | Exportwerte, Spaltennamen und Metadaten werden vor dem Schreiben gegen formelartige Inhalte abgesichert. | Unvertrauenswürdige Daten starten beim Öffnen der Excel-Datei keine Formelberechnung. |
+| HTML-Schutz | Der HTML-Report rendert dynamische Inhalte mit aktiviertem Autoescaping. | Inhalte aus Projekt- oder Quelldaten werden nicht als HTML-Markup interpretiert. |
+
+Ein Snapshot ist eine Kopie der Projekt-`.db` vor dem regulären Öffnen und **kein
+Ersatz** für eine organisationsweite Backup- oder Aufbewahrungsstrategie. Die
+Tamper-Erkennung des Audit-Trails ist bewusst anwendungsseitig und kein
+kryptografischer Manipulationsnachweis (siehe
+[ADR 0002](docs/adr/0002-anwendungsseitig-append-only-audit-trail.md)).
 
 ## Installation für Anwender
 
-Vorgefertigte Bundles (Mac `.app` / Windows `.exe`) gibt es im
-[Release-Bereich](https://github.com/NicoHaider/Sampling-Tool/releases).
-Schritt-für-Schritt-Anleitung inkl. "Trotzdem öffnen"-Workaround:
-[docs/INSTALL_USER.md](docs/INSTALL_USER.md).
+Vorgefertigte Bundles für macOS und Windows stehen im
+[Release-Bereich](https://github.com/NicoHaider/Sampling-Tool/releases) zur
+Verfügung. Python, virtuelle Umgebung und Terminal sind für diese Variante nicht
+erforderlich.
 
-Kein Python, keine venv, kein Terminal nötig – ZIP entpacken,
-doppelklicken, fertig.
+Die konkrete Installation ist in [docs/INSTALL_USER.md](docs/INSTALL_USER.md)
+beschrieben; die tägliche Nutzung im [Anwender-Handbuch](docs/USER_GUIDE.md) und
+Betrieb bzw. Wiederherstellung im [Admin-Handbuch](docs/ADMIN_GUIDE.md).
 
-## Installation für Entwickler
+## Entwicklung
 
-Empfohlen: [uv](https://docs.astral.sh/uv/) installieren, dann hash-geprüft
-exakt aus `uv.lock` synchen – das ist derselbe Weg, den CI und der
-Release-Build seit Sprint 55 nutzen:
+Voraussetzungen: Python **3.13+**, macOS oder Windows.
+
+Empfohlen: [uv](https://docs.astral.sh/uv/) installieren, dann hash-geprüft exakt
+aus `uv.lock` synchen – derselbe Weg, den CI und der Release-Build nutzen:
 
 ```bash
 uv sync --locked --extra dev
+git config core.hooksPath .githooks    # optional: lokale Pre-Push-Prüfung
 
-# Start
 uv run python -m sampling_tool
 ```
 
-Alternativ klassisch mit `pip` (nutzt die offenen Ranges aus
-`pyproject.toml`, nicht die gepinnten Hashes aus `uv.lock`):
+Alternativ klassisch mit `pip` (nutzt die offenen Ranges aus `pyproject.toml`,
+nicht die gepinnten Hashes aus `uv.lock`):
 
 ```bash
+python3.13 -m venv .venv
+source .venv/bin/activate               # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 python -m sampling_tool
 ```
 
-## Distribution / Release-Build
+Wichtige Kommandos (mit `uv run` voranstellen bzw. aktiviertem `.venv`):
 
-Lokal eine `.app` (Mac) bzw. einen `.exe`-Ordner (Windows) bauen:
+```bash
+pytest                    # Tests mit Coverage
+pytest --no-cov           # schneller Testlauf
+ruff check .              # Lint
+ruff format --check .     # Format prüfen
+mypy src tests            # strikter Typcheck
+python scripts/demo_full_workflow.py   # End-to-End-Smoke über alle Layer
+```
+
+## Build und Release
+
+Für lokale App-Bundles wird PyInstaller verwendet:
 
 ```bash
 uv sync --locked --extra build
-uv run python scripts/build_app.py            # Output: dist/
-uv run python scripts/build_app.py --dmg      # Mac: zusätzlich .dmg (brew install create-dmg)
+uv run python scripts/build_app.py          # Ausgabe in dist/
+uv run python scripts/build_app.py --dmg    # zusätzliches DMG auf macOS
 ```
 
-Offiziellen Release auslösen – baut Mac + Windows parallel via GitHub
-Actions und legt einen Draft-Release mit beiden ZIPs an:
-
-```bash
-git tag v0.8.0
-git push --tags
-```
-
-Details: `sampling_tool.spec` (PyInstaller-Konfiguration) und
-`.github/workflows/release.yml`.
-
-## Tests
-
-```bash
-pytest                            # alle Tests + Coverage
-pytest tests/unit                 # nur Unit-Tests
-pytest -k "stratified"            # einzelne Tests filtern
-pytest --cov-report=html          # HTML-Coverage in ./htmlcov/
-```
-
-## End-to-End-Demo (Sprint 1–3)
-
-```bash
-python scripts/demo_full_workflow.py
-```
-
-Erzeugt unter `./demo_output/` (gitignored):
-- `engagement.db` – frische SQLite mit Sprint-2-Schema
-- `source_data.xlsx` – generierte Quelldatei (200 Buchungssätze)
-- `DemoSimple_ID001_BDO_sampling_<datum>.xlsx`
-- `DemoStratified_ID002_BDO_sampling_<datum>.xlsx`
-- `audit_trail.pdf`
-
-## Code-Qualität
-
-```bash
-ruff check .                      # Lint
-ruff format .                     # Format
-mypy src tests                    # Typcheck (strict)
-```
+Ein Tag nach dem Muster `vX.Y.Z` startet den Release-Workflow für macOS und
+Windows und legt einen Draft-Release mit beiden Bundles an. Die Konfigurationen
+liegen in `sampling_tool.spec` und `.github/workflows/release.yml`.
 
 ## Projektstruktur
 
-```
+```text
 src/sampling_tool/
-├── core/           Sampling-Algorithmen, Modelle, RNG
-├── io/             Excel-/CSV-Import, Export, PDF   (Sprint 3)
-├── persistence/    SQLite + Migrations              (Sprint 2)
-├── audit/          Audit-Trail / Event-Log          (Sprint 2)
-└── ui/             PyQt6-Frontend                   (Sprint 4–5)
+├── core/          Fachmodelle, RNG, Sampling und Undo
+├── persistence/   SQLite, Migrationen, Repositories und Snapshots
+├── audit/         Anwendungsseitig append-only Audit-Trail
+├── io/            Import sowie Excel-, PDF- und HTML-Reports
+└── ui/            PyQt6-Fenster, Dialoge, Controller und Worker
 
-scripts/
-└── demo_full_workflow.py   End-to-End-Smoke-Test    (Sprint 3)
-
-tests/
-├── unit/           schnelle, isolierte Tests
-├── integration/    DB- / Filesystem-Tests           (Sprint 2+)
-└── fixtures/       (zur Laufzeit erzeugt in conftest.py)
+scripts/           Build-, Demo- und Performance-Hilfen
+tests/             Unit-, Integrations- und UI-Tests
+docs/              Anwender-, Installations-, Admin-Doku und ADRs
 ```
+
+## Weiterführende Dokumentation
+
+- [CHANGELOG.md](CHANGELOG.md) – Sprint-Chronik.
+- [CLAUDE.md](CLAUDE.md) – langlebige Architektur- und Konventionen-Referenz.
+- [docs/adr/](docs/adr/) – Architecture Decision Records.
 
 ## Lizenz
 
