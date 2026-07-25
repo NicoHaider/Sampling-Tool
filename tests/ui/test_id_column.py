@@ -368,7 +368,7 @@ class TestPostImportIdColumnWiring:
             ),
             patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
         ):
-            ctrl.handle_import_excel()
+            ctrl.workspace.handle_import_excel()
         new_ds = ctrl.session.dataset
         assert new_ds is not None
         assert new_ds.id is not None

@@ -219,27 +219,6 @@ class MainController:
     def handle_close_engagement(self) -> None:
         self.engagement.handle_close_engagement()
 
-    def handle_import_excel(self) -> None:
-        self.workspace.handle_import_excel()
-
-    def handle_clear_loaded_datasets(self) -> None:
-        self.workspace.handle_clear_loaded_datasets()
-
-    def handle_new_sampling(self) -> None:
-        self.workspace.handle_new_sampling()
-
-    def handle_reset(self) -> None:
-        self.workspace.handle_reset()
-
-    def handle_reset_sampling(self) -> None:
-        self.workspace.handle_reset_sampling()
-
-    def handle_undo(self) -> None:
-        self.workspace.handle_undo()
-
-    def handle_redo(self) -> None:
-        self.workspace.handle_redo()
-
     def handle_dataset_selected(self, dataset_id: int) -> None:
         self.selection.handle_dataset_selected(dataset_id)
 
