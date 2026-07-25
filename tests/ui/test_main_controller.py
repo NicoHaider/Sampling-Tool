@@ -2707,7 +2707,7 @@ class TestSettingsIntegration:
             recent_store=recent_store,
             settings_dialog_factory=lambda parent, current: _StubSettingsDialog(current, parent),
         )
-        controller.handle_settings()
+        controller.help.handle_settings()
         from sampling_tool.ui.settings_store import load_settings
 
         assert controller._settings.default_auditor_name == "Updated"
@@ -3570,7 +3570,7 @@ class TestPanelVisibilityWiring:
             settings_dialog_factory=lambda _p, _s: _StubSettingsDialog(defaults),
             settings=defaults,
         )
-        controller.handle_settings()
+        controller.help.handle_settings()
         # Beide Tabs sind weg.
         assert window._lower_tabs.count() == 0
         assert window._lower_tabs.isVisible() is False

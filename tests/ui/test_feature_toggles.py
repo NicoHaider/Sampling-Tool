@@ -357,7 +357,7 @@ class TestFeatureToggleWiring:
             settings_dialog_factory=lambda _p, _s: _StubSettingsDialog(defaults),
             settings=defaults,
         )
-        controller.handle_settings()
+        controller.help.handle_settings()
         # Menü-Check-State spiegelt die im Dialog geänderte Panel-Sichtbarkeit.
         assert window._action_view_dashboard.isChecked() is False
 

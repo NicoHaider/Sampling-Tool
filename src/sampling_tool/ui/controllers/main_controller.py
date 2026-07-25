@@ -255,21 +255,6 @@ class MainController:
     def handle_audit_event_double_clicked(self, event_id: int) -> None:
         self.selection.handle_audit_event_double_clicked(event_id)
 
-    def handle_bug_report(self) -> None:
-        self.help.handle_bug_report()
-
-    def handle_about(self) -> None:
-        self.help.handle_about()
-
-    def handle_settings(self) -> None:
-        self.help.handle_settings()
-
-    def handle_hotkeys(self) -> None:
-        self.help.handle_hotkeys()
-
-    def handle_manage_templates(self) -> None:
-        self.help.handle_manage_templates()
-
     # ---- Backward-Compat: interne Helfer als Forwards ------------------
     #
     # Einzelne Tests greifen auf private Helper zu (z. B. `_refresh_audit_trail`
