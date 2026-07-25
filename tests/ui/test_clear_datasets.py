@@ -115,7 +115,7 @@ class TestClearLoadedDatasets:
         assert window.data_table().table_model().rowCount() == 5
 
         with patch(_QUESTION, return_value=QMessageBox.StandardButton.Yes):
-            ctrl.handle_clear_loaded_datasets()
+            ctrl.workspace.handle_clear_loaded_datasets()
 
         assert window.sidebar().datasets_widget().count() == 0
         assert window.sidebar().samples_widget().count() == 0
@@ -129,7 +129,7 @@ class TestClearLoadedDatasets:
         ctrl = self._open_and_select(window, tmp_path, populated_db)
 
         with patch(_QUESTION, return_value=QMessageBox.StandardButton.Yes):
-            ctrl.handle_clear_loaded_datasets()
+            ctrl.workspace.handle_clear_loaded_datasets()
 
         assert ctrl.session.db is not None
         repo = DatasetRepo(ctrl.session.db.connect())
@@ -148,7 +148,7 @@ class TestClearLoadedDatasets:
         ctrl = self._open_and_select(window, tmp_path, populated_db)
 
         with patch(_QUESTION, return_value=QMessageBox.StandardButton.Yes):
-            ctrl.handle_clear_loaded_datasets()
+            ctrl.workspace.handle_clear_loaded_datasets()
 
         # Kein Wechsel zum Welcome-Screen; Engagement bleibt geladen.
         assert window.is_workspace_visible() is True
@@ -161,7 +161,7 @@ class TestClearLoadedDatasets:
         ctrl = self._open_and_select(window, tmp_path, populated_db)
 
         with patch(_QUESTION, return_value=QMessageBox.StandardButton.No):
-            ctrl.handle_clear_loaded_datasets()
+            ctrl.workspace.handle_clear_loaded_datasets()
 
         # Abbruch → nichts geleert.
         assert window.sidebar().datasets_widget().count() == 1
@@ -192,7 +192,7 @@ class TestClearLoadedDatasets:
         assert real_sample_id is not None
 
         with patch(_QUESTION, return_value=QMessageBox.StandardButton.Yes):
-            ctrl.handle_clear_loaded_datasets()
+            ctrl.workspace.handle_clear_loaded_datasets()
         assert ctrl.session.dataset is None
 
         # Snapshot mit EXISTIERENDER Sample-ID → ohne Guard würde das Sample

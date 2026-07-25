@@ -357,7 +357,7 @@ class TestFeatureToggleWiring:
             settings_dialog_factory=lambda _p, _s: _StubSettingsDialog(defaults),
             settings=defaults,
         )
-        controller.handle_settings()
+        controller.help.handle_settings()
         # Menü-Check-State spiegelt die im Dialog geänderte Panel-Sichtbarkeit.
         assert window._action_view_dashboard.isChecked() is False
 
@@ -397,19 +397,19 @@ class TestToggleSamplingNeutrality:
         try:
             _open_dataset(controller, window, populated_db)
             with _real_sampling_dialog_driver(seeds=[111, 222, 333, 444]):
-                controller.handle_new_sampling()
+                controller.workspace.handle_new_sampling()
                 assert controller.session.sample is not None
                 first = tuple(controller.session.sample.selected_row_ids)
                 seed1 = controller.session.sample.config.seed
 
-                controller.handle_reset_sampling()
+                controller.workspace.handle_reset_sampling()
                 assert controller.session.sample is None
 
                 # Filter-Funktion SICHTBAR schalten – aber KEINEN Filter setzen.
                 window._action_feature_filter.setChecked(True)
                 assert controller.session.settings.show_filter_feature is True
 
-                controller.handle_new_sampling()
+                controller.workspace.handle_new_sampling()
                 assert controller.session.sample is not None
                 second = tuple(controller.session.sample.selected_row_ids)
                 seed2 = controller.session.sample.config.seed

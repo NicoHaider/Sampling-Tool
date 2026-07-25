@@ -219,27 +219,6 @@ class MainController:
     def handle_close_engagement(self) -> None:
         self.engagement.handle_close_engagement()
 
-    def handle_import_excel(self) -> None:
-        self.workspace.handle_import_excel()
-
-    def handle_clear_loaded_datasets(self) -> None:
-        self.workspace.handle_clear_loaded_datasets()
-
-    def handle_new_sampling(self) -> None:
-        self.workspace.handle_new_sampling()
-
-    def handle_reset(self) -> None:
-        self.workspace.handle_reset()
-
-    def handle_reset_sampling(self) -> None:
-        self.workspace.handle_reset_sampling()
-
-    def handle_undo(self) -> None:
-        self.workspace.handle_undo()
-
-    def handle_redo(self) -> None:
-        self.workspace.handle_redo()
-
     def handle_dataset_selected(self, dataset_id: int) -> None:
         self.selection.handle_dataset_selected(dataset_id)
 
@@ -254,21 +233,6 @@ class MainController:
 
     def handle_audit_event_double_clicked(self, event_id: int) -> None:
         self.selection.handle_audit_event_double_clicked(event_id)
-
-    def handle_bug_report(self) -> None:
-        self.help.handle_bug_report()
-
-    def handle_about(self) -> None:
-        self.help.handle_about()
-
-    def handle_settings(self) -> None:
-        self.help.handle_settings()
-
-    def handle_hotkeys(self) -> None:
-        self.help.handle_hotkeys()
-
-    def handle_manage_templates(self) -> None:
-        self.help.handle_manage_templates()
 
     # ---- Backward-Compat: interne Helfer als Forwards ------------------
     #

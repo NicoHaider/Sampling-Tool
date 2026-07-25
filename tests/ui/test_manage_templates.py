@@ -77,7 +77,7 @@ class TestManageTemplatesEntryPoint:
             "sampling_tool.ui.controllers.help_controller.TemplateManagerDialog",
             _FakeDialog,
         )
-        controller.handle_manage_templates()
+        controller.help.handle_manage_templates()
         # Genau ein Einstiegspunkt öffnet das Verwaltungsfenster …
         assert opened.get("exec") is True
         # … mit der app-weiten PresetStore-Schicht (Sprint 23).

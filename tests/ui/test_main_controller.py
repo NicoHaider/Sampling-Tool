@@ -616,7 +616,7 @@ class TestMainController:
                 ),
                 patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
             ):
-                controller.handle_import_excel()
+                controller.workspace.handle_import_excel()
 
             assert window.sidebar().datasets_widget().count() == 2
             assert window.data_table().table_model().rowCount() == 3
@@ -647,7 +647,7 @@ class TestMainController:
                     "sampling_tool.ui.controllers.workspace_controller.QMessageBox.warning"
                 ) as mock_warning,
             ):
-                controller.handle_import_excel()
+                controller.workspace.handle_import_excel()
 
             mock_preflight.assert_called_once()
             mock_warning.assert_called_once()
@@ -680,7 +680,7 @@ class TestMainController:
                 ) as mock_question,
                 patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
             ):
-                controller.handle_import_excel()
+                controller.workspace.handle_import_excel()
 
             mock_question.assert_called_once()
             assert window.sidebar().datasets_widget().count() == 2
@@ -712,7 +712,7 @@ class TestMainController:
                     return_value=QMessageBox.StandardButton.No,
                 ),
             ):
-                controller.handle_import_excel()
+                controller.workspace.handle_import_excel()
 
             assert window.sidebar().datasets_widget().count() == datasets_before
         finally:
@@ -740,7 +740,7 @@ class TestMainController:
                 ) as mock_question,
                 patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
             ):
-                controller.handle_import_excel()
+                controller.workspace.handle_import_excel()
 
             mock_question.assert_not_called()
             assert window.sidebar().datasets_widget().count() == 2
@@ -1379,7 +1379,7 @@ class TestImportDialogDispatch:
                 ),
                 patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
             ):
-                controller.handle_import_excel()
+                controller.workspace.handle_import_excel()
             assert dialog_calls == [], "Dialog darf bei high confidence + 1 Sheet NICHT erscheinen"
             assert window.sidebar().datasets_widget().count() == 2
         finally:
@@ -1413,7 +1413,7 @@ class TestImportDialogDispatch:
                 ),
                 patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
             ):
-                controller.handle_import_excel()
+                controller.workspace.handle_import_excel()
             assert len(dialog_calls) == 1
             assert dialog_calls[0] == leading_blank_import_xlsx
             assert window.sidebar().datasets_widget().count() == 2
@@ -1448,7 +1448,7 @@ class TestImportDialogDispatch:
                 ),
                 patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
             ):
-                controller.handle_import_excel()
+                controller.workspace.handle_import_excel()
             assert len(dialog_calls) == 1, "Bei Multi-Sheet muss der Dialog immer erscheinen"
         finally:
             controller.handle_close_engagement()
@@ -1475,7 +1475,7 @@ class TestImportDialogDispatch:
                 "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
                 return_value=(str(multi_sheet_import_xlsx), ""),
             ):
-                controller.handle_import_excel()
+                controller.workspace.handle_import_excel()
             assert window.sidebar().datasets_widget().count() == before
         finally:
             controller.handle_close_engagement()
@@ -1505,7 +1505,7 @@ class TestImportDialogDispatch:
                 ),
                 patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
             ):
-                controller.handle_import_excel()
+                controller.workspace.handle_import_excel()
             # Zweites Sheet hat 2 Datenzeilen, 3 Spalten.
             assert window.data_table().table_model().rowCount() == 2
             assert window.data_table().table_model().columnCount() == 3
@@ -1543,7 +1543,7 @@ class TestImportDialogDispatch:
                 ),
                 patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
             ):
-                controller.handle_import_excel()
+                controller.workspace.handle_import_excel()
             assert dialog_calls == [], "Saubere CSV darf KEINEN Dialog zeigen"
             assert window.data_table().table_model().rowCount() == 2
             assert window.data_table().table_model().columnCount() == 2
@@ -1582,7 +1582,7 @@ class TestImportDialogDispatch:
                 ),
                 patch("sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"),
             ):
-                controller.handle_import_excel()
+                controller.workspace.handle_import_excel()
             assert len(dialog_calls) == 1, "Unsaubere CSV muss den Header-Dialog zeigen"
             # Kopfzeile = Zeile 3 ⇒ Spalten (Konto, Betrag), 2 Datenzeilen.
             assert window.data_table().table_model().columnCount() == 2
@@ -1659,7 +1659,7 @@ class TestSamplingFlow:
         try:
             _open_dataset(controller, window, populated_db)
             samples_before = window.sidebar().samples_widget().count()
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             samples_after = window.sidebar().samples_widget().count()
             assert samples_after == samples_before + 1
             highlighted = window.data_table().table_model().highlighted_row_ids()
@@ -1683,7 +1683,7 @@ class TestSamplingFlow:
                     "PyQt6.QtWidgets", fromlist=["QMessageBox"]
                 ).QMessageBox.StandardButton.Yes,
             ):
-                controller.handle_reset()
+                controller.workspace.handle_reset()
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
             controller.handle_close_engagement()
@@ -1704,7 +1704,7 @@ class TestSamplingFlow:
                 "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.No,
             ):
-                controller.handle_reset()
+                controller.workspace.handle_reset()
             # Highlight unverändert
             assert len(window.data_table().table_model().highlighted_row_ids()) == 2
         finally:
@@ -1731,15 +1731,15 @@ class TestSamplingFlow:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             after_sampling = window.data_table().table_model().highlighted_row_ids()
             assert len(after_sampling) == 3
 
-            controller.handle_undo()
+            controller.workspace.handle_undo()
             # Vorheriger Zustand: kein Sample (vor dem ersten Sampling-Push gab es nichts).
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
 
-            controller.handle_redo()
+            controller.workspace.handle_redo()
             assert window.data_table().table_model().highlighted_row_ids() == after_sampling
         finally:
             controller.handle_close_engagement()
@@ -1767,7 +1767,7 @@ class TestSamplingFlow:
             _open_dataset(controller, window, populated_db)
             # Vorhandenes Sample auswählen (row_ids 2,4 aus dem Fixture)
             controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             new_highlight = window.data_table().table_model().highlighted_row_ids()
             assert new_highlight  # mindestens eine
             # Die neue Auswahl darf nur row_ids aus dem Vorsample enthalten.
@@ -2152,7 +2152,7 @@ class TestFilterAndSwitchEngagement:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             # Tabelle ist auf die gezogenen Zeilen reduziert.
             assert window.data_table().table_model().rowCount() == 2
             # Sidebar-Checkbox ist an.
@@ -2182,7 +2182,7 @@ class TestFilterAndSwitchEngagement:
                 "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.Yes,
             ):
-                controller.handle_reset()
+                controller.workspace.handle_reset()
             assert window.sidebar().is_filter_only_sample() is False
             # Tabelle zeigt wieder alle 5 Zeilen.
             assert window.data_table().table_model().rowCount() == 5
@@ -2707,7 +2707,7 @@ class TestSettingsIntegration:
             recent_store=recent_store,
             settings_dialog_factory=lambda parent, current: _StubSettingsDialog(current, parent),
         )
-        controller.handle_settings()
+        controller.help.handle_settings()
         from sampling_tool.ui.settings_store import load_settings
 
         assert controller._settings.default_auditor_name == "Updated"
@@ -2886,7 +2886,7 @@ class TestSettingsIntegration:
             controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
             controller.handle_filter_only_sample_toggled(True)
             assert controller._filter_active_sample_id is not None
-            controller.handle_reset()
+            controller.workspace.handle_reset()
             # Filter bleibt aktiv (Setting), aber Sample-Highlight ist weg.
             assert controller._sample is None
             assert controller._filter_active_sample_id is not None
@@ -3134,7 +3134,7 @@ class TestEngagementStateRestore:
             controller.handle_dataset_selected(ds_id)
             sample_id = _first_item_data(window.sidebar().samples_widget())
             controller.handle_sample_selected(sample_id)
-            controller.handle_reset()
+            controller.workspace.handle_reset()
 
             assert controller._state_repo is not None
             assert controller._engagement is not None
@@ -3185,7 +3185,7 @@ class TestFeatureVisibilityPropagation:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             features = received["features"]
             # Sprint 36: Filter ist ab Werk sichtbar (auch ohne Advanced-Mode),
             # Cluster/Geschichtet bleiben aus.
@@ -3226,7 +3226,7 @@ class TestFeatureVisibilityPropagation:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             features = received["features"]
             assert features.show_filter is True
             assert features.show_cluster is True
@@ -3268,7 +3268,7 @@ class TestFeatureVisibilityPropagation:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             features = received["features"]
             assert features.show_filter is True
             assert features.show_cluster is False
@@ -3312,7 +3312,7 @@ class TestNewSamplingDistinctProvider:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             provider = captured["provider"]
             assert callable(provider)
             assert provider("Konto") == ["K1", "K2", "K3", "K4", "K5"]
@@ -3354,7 +3354,7 @@ class TestNewSamplingDistinctProvider:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert captured["provider"] is None
         finally:
             controller.handle_close_engagement()
@@ -3387,7 +3387,7 @@ class TestNewSamplingDistinctProvider:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()  # darf NICHT in boom() laufen
+            controller.workspace.handle_new_sampling()  # darf NICHT in boom() laufen
         finally:
             controller.handle_close_engagement()
 
@@ -3426,7 +3426,7 @@ class TestFilterMatchCountProvider:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             provider = captured["match_count"]
             assert provider is not None
             assert callable(provider)
@@ -3464,7 +3464,7 @@ class TestFilterMatchCountProvider:
         try:
             _open_dataset(controller, window, populated_db)
             # Beim Dialog-Bau ist noch KEIN Sample aktiv.
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert controller.session.sample is None
             provider = captured["match_count"]
             assert provider is not None
@@ -3519,7 +3519,7 @@ class TestFilterMatchCountProvider:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert captured["match_count"] is None
         finally:
             controller.handle_close_engagement()
@@ -3570,7 +3570,7 @@ class TestPanelVisibilityWiring:
             settings_dialog_factory=lambda _p, _s: _StubSettingsDialog(defaults),
             settings=defaults,
         )
-        controller.handle_settings()
+        controller.help.handle_settings()
         # Beide Tabs sind weg.
         assert window._lower_tabs.count() == 0
         assert window._lower_tabs.isVisible() is False
@@ -3761,7 +3761,7 @@ class TestSamplingPathDispatch:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert calls == ["sample_ids"]
         finally:
             controller.handle_close_engagement()
@@ -3795,7 +3795,7 @@ class TestSamplingPathDispatch:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert calls == ["sample"]
         finally:
             controller.handle_close_engagement()
@@ -3824,7 +3824,7 @@ class TestSamplingPathDispatch:
             _open_dataset(controller, window, populated_db)
             # Vorhandenes Sample (row_ids 2,4 aus dem Fixture) auswählen.
             controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert calls == ["sample"]
         finally:
             controller.handle_close_engagement()
@@ -3858,7 +3858,7 @@ class TestSamplingPathDispatch:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert calls == ["sample_pairs"]
         finally:
             controller.handle_close_engagement()
@@ -3892,7 +3892,7 @@ class TestSamplingPathDispatch:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert calls == ["sample"]
         finally:
             controller.handle_close_engagement()
@@ -3926,7 +3926,7 @@ class TestSamplingPathDispatch:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert calls == ["sample_pairs"]
         finally:
             controller.handle_close_engagement()
@@ -3960,7 +3960,7 @@ class TestSamplingPathDispatch:
         try:
             _open_dataset(controller, window, populated_db)
             controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert calls == ["sample"]
         finally:
             controller.handle_close_engagement()
@@ -3997,7 +3997,7 @@ class TestSamplingPathDispatch:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert calls == ["sample"]
         finally:
             controller.handle_close_engagement()
@@ -4033,7 +4033,7 @@ class TestSamplingPathDispatch:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             drawn = controller.session.sample
             assert drawn is not None
 
@@ -4129,7 +4129,7 @@ class TestSupplementarySampling:
         try:
             _open_dataset(controller, window, populated_db)
             _activate_existing_sample(controller, window)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert controller.session.sample is not None
             drawn = set(controller.session.sample.selected_row_ids)
             # Klassischer Pfad (sample), NICHT der sample_ids-Fastpath.
@@ -4162,7 +4162,7 @@ class TestSupplementarySampling:
         try:
             _open_dataset(controller, window, populated_db)
             _activate_existing_sample(controller, window)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert controller.session.sample is not None
             # row_count 5 - 2 ausgeschlossene = 3 reale Population dieser Ziehung.
             assert controller.session.sample.population_size == 3
@@ -4190,7 +4190,7 @@ class TestSupplementarySampling:
         try:
             _open_dataset(controller, window, populated_db)
             parent_id = _activate_existing_sample(controller, window)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             stored = controller.session.sample
             assert stored is not None
             assert stored.parent_sample_id == parent_id
@@ -4242,7 +4242,7 @@ class TestSupplementarySampling:
             try:
                 _open_dataset(controller, window, fresh_db)
                 _activate_existing_sample(controller, window)
-                controller.handle_new_sampling()
+                controller.workspace.handle_new_sampling()
                 assert controller.session.sample is not None
                 drawn = tuple(controller.session.sample.selected_row_ids)
                 # Immer dublettenfrei, egal welcher Seed.
@@ -4295,7 +4295,7 @@ class TestSupplementarySampling:
         try:
             _open_dataset(controller, window, populated_db)
             _activate_existing_sample(controller, window)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert controller.session.sample is not None
             drawn = set(controller.session.sample.selected_row_ids)
             # (a) alle erfüllen den Filter (Betrag > 20 ⇒ row_ids 3,4,5) UND
@@ -4329,7 +4329,7 @@ class TestSupplementarySampling:
         try:
             _open_dataset(controller, window, populated_db)
             assert controller.session.sample is None  # nichts aktiv ausgewählt
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             assert controller.session.sample is not None
             drawn = set(controller.session.sample.selected_row_ids)
             # Volle Population {1..5}, kein Ausschluss, kein parent.
@@ -4370,7 +4370,7 @@ class TestSupplementarySampling:
             with patch(
                 "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
             ) as warning:
-                controller.handle_new_sampling()
+                controller.workspace.handle_new_sampling()
             # Fehler wurde dem User gezeigt ...
             assert warning.called
             # ... und es wurde KEINE neue (Teil-)Stichprobe gezogen: die aktive
@@ -4533,7 +4533,7 @@ class TestResetSampling:
                 "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.Yes,
             ):
-                controller.handle_reset_sampling()
+                controller.workspace.handle_reset_sampling()
             assert controller.session.sample is None
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
@@ -4555,7 +4555,7 @@ class TestResetSampling:
                 "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.No,
             ):
-                controller.handle_reset_sampling()
+                controller.workspace.handle_reset_sampling()
             assert controller.session.sample is not None
             assert len(window.data_table().table_model().highlighted_row_ids()) == 2
         finally:
@@ -4742,7 +4742,7 @@ class TestAuditTrailRobustness:
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as mock_warning,
             ):
-                controller.handle_reset()  # darf NICHT werfen
+                controller.workspace.handle_reset()  # darf NICHT werfen
             mock_warning.assert_called_once()
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
@@ -4776,7 +4776,7 @@ class TestAuditTrailRobustness:
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as mock_warning,
             ):
-                controller.handle_reset_sampling()  # darf NICHT werfen
+                controller.workspace.handle_reset_sampling()  # darf NICHT werfen
             mock_warning.assert_called_once()
             assert controller.session.sample is None
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
@@ -4807,9 +4807,9 @@ class TestAuditTrailRobustness:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()  # genau eine Ziehung
+            controller.workspace.handle_new_sampling()  # genau eine Ziehung
 
-            controller.handle_undo()
+            controller.workspace.handle_undo()
 
             assert controller.session.db is not None
             assert controller.session.engagement is not None
@@ -4846,7 +4846,7 @@ class TestAuditTrailRobustness:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
             with (
                 patch.object(
                     AuditRepo, "log", side_effect=sqlite3.OperationalError("database is locked")
@@ -4855,7 +4855,7 @@ class TestAuditTrailRobustness:
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as mock_warning,
             ):
-                controller.handle_undo()  # darf NICHT werfen
+                controller.workspace.handle_undo()  # darf NICHT werfen
             mock_warning.assert_called_once()
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
@@ -4901,11 +4901,11 @@ class TestAuditTrailRobustness:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()  # erste Ziehung
+            controller.workspace.handle_new_sampling()  # erste Ziehung
             first_sample_id = controller.session.sample.id  # type: ignore[union-attr]
-            controller.handle_new_sampling()  # zweite Ziehung (normale Ziehung)
+            controller.workspace.handle_new_sampling()  # zweite Ziehung (normale Ziehung)
 
-            controller.handle_undo()  # zurück zur ersten Ziehung
+            controller.workspace.handle_undo()  # zurück zur ersten Ziehung
 
             assert controller.session.sample is not None
             assert controller.session.sample.id == first_sample_id
@@ -4946,10 +4946,10 @@ class TestAuditTrailRobustness:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
-            controller.handle_undo()
+            controller.workspace.handle_new_sampling()
+            controller.workspace.handle_undo()
 
-            controller.handle_redo()
+            controller.workspace.handle_redo()
 
             assert controller.session.db is not None
             assert controller.session.engagement is not None
@@ -4985,8 +4985,8 @@ class TestAuditTrailRobustness:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_new_sampling()
-            controller.handle_undo()
+            controller.workspace.handle_new_sampling()
+            controller.workspace.handle_undo()
             with (
                 patch.object(
                     AuditRepo, "log", side_effect=sqlite3.OperationalError("database is locked")
@@ -4995,7 +4995,7 @@ class TestAuditTrailRobustness:
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as mock_warning,
             ):
-                controller.handle_redo()  # darf NICHT werfen
+                controller.workspace.handle_redo()  # darf NICHT werfen
             mock_warning.assert_called_once()
             assert len(window.data_table().table_model().highlighted_row_ids()) == 3
         finally:
@@ -5053,16 +5053,16 @@ class TestReproducibilityViaController:
         try:
             _open_dataset(controller, window, populated_db)
             with _real_sampling_dialog_driver(seeds=[111, 222, 333]):
-                controller.handle_new_sampling()
+                controller.workspace.handle_new_sampling()
                 assert controller.session.sample is not None
                 first = controller.session.sample
                 r1 = tuple(first.selected_row_ids)
                 seed1 = first.config.seed
 
-                controller.handle_reset_sampling()
+                controller.workspace.handle_reset_sampling()
                 assert controller.session.sample is None
 
-                controller.handle_new_sampling()
+                controller.workspace.handle_new_sampling()
                 assert controller.session.sample is not None
                 second = controller.session.sample
                 r2 = tuple(second.selected_row_ids)
@@ -5088,11 +5088,11 @@ class TestReproducibilityViaController:
             seeds_used: list[int] = []
             with _real_sampling_dialog_driver(seeds=[111, 222, 333, 444]):
                 for _ in range(3):
-                    controller.handle_new_sampling()
+                    controller.workspace.handle_new_sampling()
                     assert controller.session.sample is not None
                     samples.append(tuple(controller.session.sample.selected_row_ids))
                     seeds_used.append(controller.session.sample.config.seed)
-                    controller.handle_reset_sampling()
+                    controller.workspace.handle_reset_sampling()
                     assert controller.session.sample is None
             assert seeds_used[0] == seeds_used[1] == seeds_used[2]
             assert samples[0] == samples[1] == samples[2]
@@ -5111,12 +5111,12 @@ class TestReproducibilityViaController:
         try:
             _open_dataset(controller, window, populated_db)
             with _real_sampling_dialog_driver(seeds=[111, 222, 333]):
-                controller.handle_new_sampling()
+                controller.workspace.handle_new_sampling()
                 assert controller.session.sample is not None
                 r1 = tuple(controller.session.sample.selected_row_ids)
                 seed1 = controller.session.sample.config.seed
 
-                controller.handle_new_sampling()
+                controller.workspace.handle_new_sampling()
                 assert controller.session.sample is not None
                 r2 = tuple(controller.session.sample.selected_row_ids)
                 seed2 = controller.session.sample.config.seed
@@ -5148,15 +5148,15 @@ class TestSeedRelocationReproducibility:
             # Verschiedene Zufalls-Listen pro Dialog-Open: Würde der feste Seed
             # aus den Settings ignoriert, fielen die Ziehungen auseinander.
             with _real_sampling_dialog_driver(seeds=[111, 222, 333, 444]):
-                controller.handle_new_sampling()
+                controller.workspace.handle_new_sampling()
                 assert controller.session.sample is not None
                 r1 = tuple(controller.session.sample.selected_row_ids)
                 seed1 = controller.session.sample.config.seed
 
-                controller.handle_reset_sampling()
+                controller.workspace.handle_reset_sampling()
                 assert controller.session.sample is None
 
-                controller.handle_new_sampling()
+                controller.workspace.handle_new_sampling()
                 assert controller.session.sample is not None
                 r2 = tuple(controller.session.sample.selected_row_ids)
                 seed2 = controller.session.sample.config.seed
@@ -5187,13 +5187,13 @@ class TestSeedRelocationReproducibility:
         try:
             _open_dataset(controller, window, populated_db)
             with _real_sampling_dialog_driver(seeds=[111, 222, 333]):
-                controller.handle_new_sampling()
+                controller.workspace.handle_new_sampling()
                 assert controller.session.sample is not None
                 assert controller.session.sample.config.seed == 1001
 
                 # User ändert den Seed in den Einstellungen.
                 controller.session.settings = dc_replace(controller.session.settings, seed=2002)
-                controller.handle_new_sampling()
+                controller.workspace.handle_new_sampling()
                 assert controller.session.sample is not None
                 assert controller.session.sample.config.seed == 2002
         finally:
@@ -5266,3 +5266,49 @@ class TestRefreshViewsSingleEventLoad:
         controller.session.refresh_views()
         # Beide Views werden weiterhin versorgt – mit identischen Events.
         assert seen["audit"] == seen["dashboard"]
+
+
+def test_maincontroller_has_no_help_or_workspace_forwards(controller: MainController) -> None:
+    """Sprint 64 / L-003 Etappe 1: help- + workspace-Forwards sind aus dem
+    MainController raus – Aufrufer nutzen jetzt ``controller.help.*`` bzw.
+    ``controller.workspace.*`` (analog zum export-Piloten, Sprint 59).
+
+    Pinnt die Etappen-Grenze: selection-/engagement-Forwards bleiben noch
+    (Etappen 2/3), die Fassade fällt erst danach ganz.
+    """
+    removed_help = (
+        "handle_bug_report",
+        "handle_about",
+        "handle_settings",
+        "handle_hotkeys",
+        "handle_manage_templates",
+    )
+    removed_workspace = (
+        "handle_import_excel",
+        "handle_clear_loaded_datasets",
+        "handle_new_sampling",
+        "handle_reset",
+        "handle_reset_sampling",
+        "handle_undo",
+        "handle_redo",
+    )
+    for name in removed_help:
+        assert not hasattr(controller, name), (
+            f"MainController.{name} soll kein Forward mehr sein (nutze controller.help.{name})"
+        )
+    for name in removed_workspace:
+        assert not hasattr(controller, name), (
+            f"MainController.{name} soll kein Forward mehr sein (nutze controller.workspace.{name})"
+        )
+
+    # Die Handler leben unverändert auf den Subcontrollern.
+    assert callable(controller.help.handle_settings)
+    assert callable(controller.help.handle_manage_templates)
+    assert callable(controller.workspace.handle_new_sampling)
+    assert callable(controller.workspace.handle_import_excel)
+
+    # Etappen-Beweis: selection-/engagement-Forwards sind noch da (Etappen 2/3).
+    assert callable(controller.handle_dataset_selected)
+    assert callable(controller.handle_audit_event_double_clicked)
+    assert callable(controller.handle_new_engagement)
+    assert callable(controller.handle_close_engagement)
