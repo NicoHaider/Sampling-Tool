@@ -5321,8 +5321,9 @@ def test_maincontroller_has_no_help_or_workspace_forwards(controller: MainContro
     MainController raus – Aufrufer nutzen jetzt ``controller.help.*`` bzw.
     ``controller.workspace.*`` (analog zum export-Piloten, Sprint 59).
 
-    Pinnt die Etappen-Grenze: selection-/engagement-Forwards bleiben noch
-    (Etappen 2/3), die Fassade fällt erst danach ganz.
+    Pinnt die Etappen-Grenze: engagement-Forwards bleiben noch (Etappe 3),
+    die Fassade fällt erst danach ganz. selection-Forwards sind seit Sprint 65
+    (Etappe 2) ebenfalls weg – siehe test_maincontroller_has_no_selection_forwards.
     """
     removed_help = (
         "handle_bug_report",
@@ -5355,8 +5356,38 @@ def test_maincontroller_has_no_help_or_workspace_forwards(controller: MainContro
     assert callable(controller.workspace.handle_new_sampling)
     assert callable(controller.workspace.handle_import_excel)
 
-    # Etappen-Beweis: selection-/engagement-Forwards sind noch da (Etappen 2/3).
+    # Etappen-Beweis: engagement-Forwards sind noch da (Etappe 3).
+    assert callable(controller.handle_new_engagement)
+    assert callable(controller.handle_close_engagement)
+
+
+def test_maincontroller_has_no_selection_forwards(controller: MainController) -> None:
+    """Sprint 65 / L-003 Etappe 2: selection-Forwards sind aus dem
+    MainController raus – Aufrufer nutzen jetzt ``controller.selection.*``
+    (analog zum export-Piloten Sprint 59, help/workspace Sprint 64).
+
+    Pinnt die Etappen-Grenze: engagement-Forwards + Compat-Properties/-Helfer
+    bleiben noch (Etappe 3), die Fassade fällt erst danach ganz.
+    """
+    removed_selection = (
+        "handle_dataset_selected",
+        "handle_sample_selected",
+        "handle_sample_filter_toggled",
+        "handle_filter_only_sample_toggled",
+        "handle_audit_event_double_clicked",
+    )
+    for name in removed_selection:
+        assert not hasattr(controller, name), (
+            f"MainController.{name} soll kein Forward mehr sein (nutze controller.selection.{name})"
+        )
+
+    # Die Handler leben unverändert auf dem Subcontroller.
     assert callable(controller.selection.handle_dataset_selected)
+    assert callable(controller.selection.handle_sample_selected)
+    assert callable(controller.selection.handle_sample_filter_toggled)
+    assert callable(controller.selection.handle_filter_only_sample_toggled)
     assert callable(controller.selection.handle_audit_event_double_clicked)
+
+    # Etappen-Beweis: engagement-Forwards sind noch da (Etappe 3).
     assert callable(controller.handle_new_engagement)
     assert callable(controller.handle_close_engagement)
