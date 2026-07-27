@@ -2732,7 +2732,7 @@ class TestSettingsIntegration:
         controller.help.handle_settings()
         from sampling_tool.ui.settings_store import load_settings
 
-        assert controller._settings.default_auditor_name == "Updated"
+        assert controller.session.settings.default_auditor_name == "Updated"
         loaded = load_settings()
         assert loaded.default_auditor_name == "Updated"
         assert loaded.undo_depth == 33
@@ -2876,8 +2876,8 @@ class TestSettingsIntegration:
             assert task.company.key == "consulting_gmbh"
             assert task.location is not None
             assert task.location.key == "linz"
-            assert controller._settings.bdo_company_key == "consulting_gmbh"
-            assert controller._settings.bdo_location_key == "linz"
+            assert controller.session.settings.bdo_company_key == "consulting_gmbh"
+            assert controller.session.settings.bdo_location_key == "linz"
             loaded = load_settings()
             assert loaded.bdo_company_key == "consulting_gmbh"
             assert loaded.bdo_location_key == "linz"
@@ -2909,11 +2909,11 @@ class TestSettingsIntegration:
                 _first_item_data(window.sidebar().samples_widget())
             )
             controller.selection.handle_filter_only_sample_toggled(True)
-            assert controller._filter_active_sample_id is not None
+            assert controller.session.filter_active_sample_id is not None
             controller.workspace.handle_reset()
             # Filter bleibt aktiv (Setting), aber Sample-Highlight ist weg.
-            assert controller._sample is None
-            assert controller._filter_active_sample_id is not None
+            assert controller.session.sample is None
+            assert controller.session.filter_active_sample_id is not None
         finally:
             controller.engagement.handle_close_engagement()
 
@@ -3015,9 +3015,9 @@ class TestEngagementStateRestore:
         populated_db: Path,
     ) -> None:
         controller.engagement.handle_open_engagement(populated_db)
-        assert controller._sample is None
-        assert controller._active_sample_id is None
-        assert controller._filter_active_sample_id is None
+        assert controller.session.sample is None
+        assert controller.session.active_sample_id is None
+        assert controller.session.filter_active_sample_id is None
 
     def test_sample_selection_is_persisted(
         self,
@@ -3031,10 +3031,10 @@ class TestEngagementStateRestore:
         sample_id = _first_item_data(window.sidebar().samples_widget())
         controller.selection.handle_sample_selected(sample_id)
 
-        assert controller._state_repo is not None
-        assert controller._engagement is not None
-        assert controller._engagement.id is not None
-        state = controller._state_repo.get(controller._engagement.id)
+        assert controller.session.state_repo is not None
+        assert controller.session.engagement is not None
+        assert controller.session.engagement.id is not None
+        state = controller.session.state_repo.get(controller.session.engagement.id)
         assert state is not None
         assert state.active_dataset_id == ds_id
         assert state.active_sample_id == sample_id
@@ -3061,9 +3061,9 @@ class TestEngagementStateRestore:
         ctrl2 = MainController(window, recent_store=recent_store)
         try:
             ctrl2.engagement.handle_open_engagement(populated_db)
-            assert ctrl2._sample is not None
-            assert ctrl2._sample.id == sample_id
-            assert ctrl2._filter_active_sample_id == sample_id
+            assert ctrl2.session.sample is not None
+            assert ctrl2.session.sample.id == sample_id
+            assert ctrl2.session.filter_active_sample_id == sample_id
             assert window.data_table().table_model().rowCount() == 2
             highlights = window.data_table().table_model().highlighted_row_ids()
             assert highlights == frozenset({2, 4})
@@ -3085,7 +3085,7 @@ class TestEngagementStateRestore:
             sample_id = _first_item_data(window.sidebar().samples_widget())
             ctrl1.selection.handle_sample_selected(sample_id)
             # Filter NICHT aktiv – nur Highlight.
-            assert ctrl1._filter_active_sample_id is None
+            assert ctrl1.session.filter_active_sample_id is None
             assert window.data_table().table_model().rowCount() == 5
         finally:
             ctrl1.engagement.handle_close_engagement()
@@ -3093,8 +3093,8 @@ class TestEngagementStateRestore:
         ctrl2 = MainController(window, recent_store=recent_store)
         try:
             ctrl2.engagement.handle_open_engagement(populated_db)
-            assert ctrl2._sample is not None
-            assert ctrl2._filter_active_sample_id is None
+            assert ctrl2.session.sample is not None
+            assert ctrl2.session.filter_active_sample_id is None
             # Tabelle ungefiltert, aber Highlight da.
             assert window.data_table().table_model().rowCount() == 5
             highlights = window.data_table().table_model().highlighted_row_ids()
@@ -3134,7 +3134,7 @@ class TestEngagementStateRestore:
         controller = MainController(window, recent_store=recent_store)
         try:
             controller.engagement.handle_open_engagement(populated_db)
-            assert controller._sample is None
+            assert controller.session.sample is None
             assert window.is_workspace_visible() is True
         finally:
             controller.engagement.handle_close_engagement()
@@ -3160,10 +3160,10 @@ class TestEngagementStateRestore:
             controller.selection.handle_sample_selected(sample_id)
             controller.workspace.handle_reset()
 
-            assert controller._state_repo is not None
-            assert controller._engagement is not None
-            assert controller._engagement.id is not None
-            state = controller._state_repo.get(controller._engagement.id)
+            assert controller.session.state_repo is not None
+            assert controller.session.engagement is not None
+            assert controller.session.engagement.id is not None
+            state = controller.session.state_repo.get(controller.session.engagement.id)
             assert state is not None
             assert state.active_sample_id is None
             assert state.filter_active is False

@@ -58,9 +58,7 @@ from sampling_tool.ui.recent import RecentEngagementsStore
 from sampling_tool.ui.settings_store import AppSettings, load_settings
 
 if TYPE_CHECKING:
-    from sampling_tool.core.models import Engagement, SampleResult
     from sampling_tool.io.briefpapier import BriefpapierConfig
-    from sampling_tool.persistence.repositories import EngagementStateRepo
     from sampling_tool.ui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
@@ -151,51 +149,6 @@ class MainController:
         )
         # Sprint 22: „Ansicht"-Menü-Checks aus den app-weiten Toggles spiegeln.
         self.session.sync_view_menu()
-
-    # ---- Externe Convenience-Properties (für Tests) --------------------
-    #
-    # Bestehende Tests greifen direkt auf private MainController-Attribute
-    # zu (`controller._sample`, `controller._engagement`, etc.). Diese
-    # Properties delegieren transparent an die Session-State, damit die
-    # Tests unverändert weiterlaufen.
-
-    @property
-    def window(self) -> MainWindow:
-        return self.session.window
-
-    @property
-    def _settings(self) -> AppSettings:
-        return self.session.settings
-
-    @_settings.setter
-    def _settings(self, value: AppSettings) -> None:
-        self.session.settings = value
-
-    @property
-    def _engagement(self) -> Engagement | None:
-        return self.session.engagement
-
-    @property
-    def _sample(self) -> SampleResult | None:
-        return self.session.sample
-
-    @property
-    def _active_sample_id(self) -> int | None:
-        return self.session.active_sample_id
-
-    @property
-    def _filter_active_sample_id(self) -> int | None:
-        return self.session.filter_active_sample_id
-
-    @property
-    def _state_repo(self) -> EngagementStateRepo | None:
-        return self.session.state_repo
-
-    # ---- Public Convenience-Methode -------------------------------------
-
-    def refresh_recent(self) -> None:
-        """Liest die Recent-Liste und gibt sie ans Fenster."""
-        self.engagement.refresh_recent()
 
     # ---- Backward-Compat: interne Helfer als Forwards ------------------
     #
