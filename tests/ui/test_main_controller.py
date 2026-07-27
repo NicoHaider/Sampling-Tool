@@ -2429,7 +2429,7 @@ class TestSprint6Reports:
             evt = logger_.log_sampling(sample, sample_id, ds_id)
             db.close()
 
-            controller._refresh_audit_trail()
+            controller.session.refresh_audit_trail()
             assert evt.id is not None
             controller.selection.handle_audit_event_double_clicked(evt.id)
             # Sample sollte jetzt hervorgehoben sein.
@@ -2942,7 +2942,7 @@ class TestSettingsIntegration:
 
         settings = replace(AppSettings.defaults(), custom_briefpapier_path=custom_pdf)
         controller = MainController(window, recent_store=recent_store, settings=settings)
-        cfg = controller._resolve_briefpapier()
+        cfg = controller.session.resolve_briefpapier()
         assert cfg is not None
         assert cfg.background_image == custom_pdf
 
@@ -2966,7 +2966,7 @@ class TestSettingsIntegration:
         settings = replace(AppSettings.defaults(), custom_briefpapier_path=corrupt_pdf)
         controller = MainController(window, recent_store=recent_store, settings=settings)
         with caplog.at_level("WARNING", logger="sampling_tool.ui.controllers.workspace_session"):
-            cfg = controller._resolve_briefpapier()
+            cfg = controller.session.resolve_briefpapier()
 
         assert cfg is None or cfg.background_image != corrupt_pdf
         warnings = [r for r in caplog.records if r.levelname == "WARNING"]
@@ -2995,7 +2995,7 @@ class TestSettingsIntegration:
         settings = replace(AppSettings.defaults(), custom_briefpapier_path=missing_pdf)
         controller = MainController(window, recent_store=recent_store, settings=settings)
         with caplog.at_level("WARNING", logger="sampling_tool.ui.controllers.workspace_session"):
-            cfg = controller._resolve_briefpapier()
+            cfg = controller.session.resolve_briefpapier()
 
         assert cfg is None or cfg.background_image != missing_pdf
         warnings = [r for r in caplog.records if r.levelname == "WARNING"]
@@ -5384,3 +5384,62 @@ def test_maincontroller_has_no_selection_forwards(controller: MainController) ->
     assert callable(controller.selection.handle_sample_filter_toggled)
     assert callable(controller.selection.handle_filter_only_sample_toggled)
     assert callable(controller.selection.handle_audit_event_double_clicked)
+
+
+def test_maincontroller_facade_removed(controller: MainController) -> None:
+    """Sprint 66 / L-003 Etappe 3 (Schluss-Gate): die Backward-Compat-Fassade
+    ist vollständig aus dem MainController entfernt – letzter offener Punkt
+    des Review-Backlogs (L-003) ist damit abgeschlossen.
+
+    Weg: die 4 engagement-Forwards (handle_new_engagement, handle_open_
+    engagement, handle_close_engagement_requested, handle_close_engagement),
+    alle 7 Compat-Properties (_engagement, _sample, _settings,
+    _active_sample_id, _filter_active_sample_id, _state_repo, window),
+    refresh_recent() sowie die beiden privaten Forward-Helfer
+    (_refresh_audit_trail, _resolve_briefpapier).
+
+    Der MainController ist damit ein reiner Koordinator: Aufrufer nutzen
+    ausschließlich `controller.<subcontroller>.handle_*` bzw.
+    `controller.session.*`.
+    """
+    removed_engagement = (
+        "handle_new_engagement",
+        "handle_open_engagement",
+        "handle_close_engagement_requested",
+        "handle_close_engagement",
+    )
+    removed_properties = (
+        "_engagement",
+        "_sample",
+        "_settings",
+        "_active_sample_id",
+        "_filter_active_sample_id",
+        "_state_repo",
+        "window",
+        "refresh_recent",
+    )
+    removed_helpers = (
+        "_refresh_audit_trail",
+        "_resolve_briefpapier",
+    )
+    for name in removed_engagement:
+        assert not hasattr(controller, name), (
+            f"MainController.{name} soll kein Forward mehr sein (nutze controller.engagement.{name})"
+        )
+    for name in removed_properties:
+        assert not hasattr(controller, name), (
+            f"MainController.{name} soll keine Compat-Property mehr sein (nutze controller.session.*)"
+        )
+    for name in removed_helpers:
+        assert not hasattr(controller, name), (
+            f"MainController.{name} soll kein privater Forward-Helfer mehr sein (nutze controller.session.*)"
+        )
+
+    # Die Handler/State leben unverändert auf Subcontroller bzw. Session.
+    assert callable(controller.engagement.handle_new_engagement)
+    assert callable(controller.engagement.handle_open_engagement)
+    assert callable(controller.engagement.handle_close_engagement_requested)
+    assert callable(controller.engagement.handle_close_engagement)
+    assert controller.session.engagement is None
+    assert callable(controller.session.refresh_audit_trail)
+    assert callable(controller.session.resolve_briefpapier)
