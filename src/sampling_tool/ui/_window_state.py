@@ -1,13 +1,29 @@
-"""WindowStateController – QSettings-Restore/Save + Panel-Visibility (Sprint 19 / F-006)."""
+"""WindowStateController – QSettings-Restore/Save + Panel-Visibility (Sprint 19 / F-006).
+
+Sprint 67 / Teil A: übernimmt zusätzlich die Fenster-Startgröße –
+bildschirmgerecht über `_geometry.fit_to_available` statt einer harten
+`resize()`. Die Entscheidungslogik steckt in den reinen Funktionen aus
+`_geometry.py`; hier bleibt nur die dünne Qt-Anbindung (Property-Lesen/
+-Schreiben, QSettings-I/O).
+"""
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QByteArray, QSettings
-from PyQt6.QtWidgets import QSplitter, QTabWidget
+from PyQt6.QtCore import QByteArray, QRect, QSettings, QSize
+from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtWidgets import QMainWindow, QSplitter, QTabWidget
 
+from sampling_tool.ui._geometry import fit_to_available
 from sampling_tool.ui._window_layout import _TAB_TITLE_AUDIT, _TAB_TITLE_DASHBOARD
 from sampling_tool.ui.widgets.audit_trail_view import AuditTrailView
 from sampling_tool.ui.widgets.dashboard_view import DashboardView
+
+# Wunschgröße beim Start – wird über `fit_to_available` auf den tatsächlich
+# verfügbaren Bildschirmbereich begrenzt (vorher hart `resize(1280, 800)`
+# ohne jeden Bezug zur Bildschirmgröße – auf 1280×720 ragte das Fenster
+# unter die Taskleiste).
+_DESIRED_WIDTH: int = 1280
+_DESIRED_HEIGHT: int = 800
 
 
 class WindowStateController:
@@ -17,12 +33,14 @@ class WindowStateController:
         self,
         *,
         settings: QSettings,
+        window: QMainWindow,
         workspace_splitter: QSplitter,
         lower_tabs: QTabWidget,
         audit_trail_view: AuditTrailView,
         dashboard_view: DashboardView,
     ) -> None:
         self._settings = settings
+        self._window = window
         self._workspace_splitter = workspace_splitter
         self._lower_tabs = lower_tabs
         self._audit_trail_view = audit_trail_view
@@ -30,7 +48,8 @@ class WindowStateController:
         self._cached_splitter_sizes: list[int] | None = None
 
     def restore(self) -> None:
-        """Stellt Splitter-Größen + aktiven Tab aus QSettings wieder her."""
+        """Stellt Fenster-Startgröße, Splitter-Größen + aktiven Tab wieder her."""
+        self._restore_window_geometry()
         state = self._settings.value("workspace/inner_splitter")
         if isinstance(state, QByteArray):
             self._workspace_splitter.restoreState(state)
@@ -57,6 +76,19 @@ class WindowStateController:
             self._workspace_splitter.setSizes(self._cached_splitter_sizes)
         self._settings.setValue("workspace/inner_splitter", self._workspace_splitter.saveState())
         self._settings.setValue("workspace/lower_tab", self._lower_tabs.currentIndex())
+
+    # ---- Fenstergeometrie (Sprint 67 / Teil A) --------------------------
+
+    def _restore_window_geometry(self) -> None:
+        """Setzt die Startgröße bildschirmgerecht (begrenzt + zentriert)."""
+        desired = QSize(_DESIRED_WIDTH, _DESIRED_HEIGHT)
+        self._window.setGeometry(fit_to_available(desired, self._current_available_geometry()))
+
+    def _current_available_geometry(self) -> QRect:
+        screen = self._window.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return QRect(0, 0, _DESIRED_WIDTH, _DESIRED_HEIGHT)
+        return screen.availableGeometry()
 
     def apply_panel_visibility(self, *, show_dashboard: bool, show_audit_trail: bool) -> None:
         """Schaltet Dashboard- und AuditTrail-Tab im unteren Panel ein/aus.

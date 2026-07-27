@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from PyQt6.QtCore import QSettings, QSize
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import (
@@ -316,8 +317,6 @@ class TestToolbarCompactOverflow:
         assert isinstance(win._toolbar, QToolBar)
 
     def test_toolbar_icons_are_compact(self, qtbot: QtBot) -> None:
-        from PyQt6.QtCore import QSize
-
         from sampling_tool.ui._window_toolbar import _TOOLBAR_ICON_SIZE
 
         win = MainWindow()
@@ -550,3 +549,21 @@ class TestResetSamplingToolbar:
         win.set_reset_enabled(True)
         win.show_welcome()
         assert win._action_reset_sampling.isEnabled() is False
+
+
+class TestWindowGeometryFitsScreen:
+    """Sprint 67 / Teil A: Startgröße passt in den verfügbaren Bildschirmbereich."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Schiebt `QSettings`-IO in einen tmp-Pfad, damit echte Prefs unangetastet
+        bleiben (gleiches Muster wie `test_feature_toggles`/`test_settings_store`)."""
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+
+    def test_initial_geometry_fits_available_screen(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        screen = win.screen()
+        assert screen is not None
+        assert screen.availableGeometry().contains(win.geometry())

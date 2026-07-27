@@ -134,7 +134,6 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.resize(1280, 800)
 
         self._settings = QSettings(APP_ORG, APP_NAME)
 
@@ -151,6 +150,7 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._workspace)
         self._window_state = WindowStateController(
             settings=self._settings,
+            window=self,
             workspace_splitter=self._workspace_splitter,
             lower_tabs=self._lower_tabs,
             audit_trail_view=self._audit_trail_view,
