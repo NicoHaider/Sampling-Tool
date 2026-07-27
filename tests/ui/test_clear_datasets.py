@@ -103,7 +103,7 @@ class TestClearLoadedDatasets:
             window, recent_store=RecentEngagementsStore(path=tmp_path / "recent.json")
         )
         ctrl.handle_open_engagement(db_path)
-        ctrl.handle_dataset_selected(ds_id)  # Dataset in die Tabelle laden.
+        ctrl.selection.handle_dataset_selected(ds_id)  # Dataset in die Tabelle laden.
         return ctrl
 
     def test_clear_empties_sidebar_and_table(
