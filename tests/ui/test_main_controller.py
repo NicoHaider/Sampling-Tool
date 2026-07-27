@@ -276,7 +276,9 @@ class TestMainController:
         populated_db: Path,
     ) -> None:
         controller.handle_open_engagement(populated_db)
-        controller.handle_dataset_selected(_first_item_data(window.sidebar().datasets_widget()))
+        controller.selection.handle_dataset_selected(
+            _first_item_data(window.sidebar().datasets_widget())
+        )
         assert window.data_table().table_model().rowCount() == 5
         assert window.sidebar().samples_widget().count() == 1
 
@@ -287,8 +289,12 @@ class TestMainController:
         populated_db: Path,
     ) -> None:
         controller.handle_open_engagement(populated_db)
-        controller.handle_dataset_selected(_first_item_data(window.sidebar().datasets_widget()))
-        controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+        controller.selection.handle_dataset_selected(
+            _first_item_data(window.sidebar().datasets_widget())
+        )
+        controller.selection.handle_sample_selected(
+            _first_item_data(window.sidebar().samples_widget())
+        )
         highlights = window.data_table().table_model().highlighted_row_ids()
         assert highlights == frozenset({2, 4})
 
@@ -299,13 +305,15 @@ class TestMainController:
         populated_db: Path,
     ) -> None:
         controller.handle_open_engagement(populated_db)
-        controller.handle_dataset_selected(_first_item_data(window.sidebar().datasets_widget()))
+        controller.selection.handle_dataset_selected(
+            _first_item_data(window.sidebar().datasets_widget())
+        )
         sample_id = _first_item_data(window.sidebar().samples_widget())
 
-        controller.handle_sample_filter_toggled(sample_id)
+        controller.selection.handle_sample_filter_toggled(sample_id)
         assert window.data_table().table_model().rowCount() == 2
 
-        controller.handle_sample_filter_toggled(sample_id)
+        controller.selection.handle_sample_filter_toggled(sample_id)
         assert window.data_table().table_model().rowCount() == 5
 
     def test_close_engagement_returns_to_welcome(
@@ -1632,7 +1640,7 @@ class _StubExportDialog:
 def _open_dataset(controller: MainController, window: MainWindow, db_path: Path) -> int:
     controller.handle_open_engagement(db_path)
     ds_id = _first_item_data(window.sidebar().datasets_widget())
-    controller.handle_dataset_selected(ds_id)
+    controller.selection.handle_dataset_selected(ds_id)
     return ds_id
 
 
@@ -1676,7 +1684,9 @@ class TestSamplingFlow:
         controller = MainController(window, recent_store=recent_store)
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             with patch(
                 "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
                 return_value=__import__(
@@ -1697,7 +1707,9 @@ class TestSamplingFlow:
         controller = MainController(window, recent_store=recent_store)
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             from PyQt6.QtWidgets import QMessageBox
 
             with patch(
@@ -1766,7 +1778,9 @@ class TestSamplingFlow:
         try:
             _open_dataset(controller, window, populated_db)
             # Vorhandenes Sample auswählen (row_ids 2,4 aus dem Fixture)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             controller.workspace.handle_new_sampling()
             new_highlight = window.data_table().table_model().highlighted_row_ids()
             assert new_highlight  # mindestens eine
@@ -1798,7 +1812,9 @@ class TestSamplingFlow:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.export.handle_export_sample()
             files = list(tmp_path.glob("testname_ID42_BDO_sampling_*.xlsx"))
@@ -1907,10 +1923,10 @@ class TestDatasetClickPreservesHighlight:
         controller = MainController(window, recent_store=recent_store)
         try:
             controller.handle_open_engagement(db_path)
-            controller.handle_dataset_selected(ds1_id)
-            controller.handle_sample_selected(sample_id)
+            controller.selection.handle_dataset_selected(ds1_id)
+            controller.selection.handle_sample_selected(sample_id)
             before = window.data_table().table_model().highlighted_row_ids()
-            controller.handle_dataset_selected(ds1_id)  # gleicher Klick
+            controller.selection.handle_dataset_selected(ds1_id)  # gleicher Klick
             after = window.data_table().table_model().highlighted_row_ids()
             assert before == after
             assert before == frozenset({1, 3})
@@ -1927,9 +1943,9 @@ class TestDatasetClickPreservesHighlight:
         controller = MainController(window, recent_store=recent_store)
         try:
             controller.handle_open_engagement(db_path)
-            controller.handle_dataset_selected(ds1_id)
-            controller.handle_sample_selected(sample_id)
-            controller.handle_dataset_selected(ds2_id)  # anderes Dataset
+            controller.selection.handle_dataset_selected(ds1_id)
+            controller.selection.handle_sample_selected(sample_id)
+            controller.selection.handle_dataset_selected(ds2_id)  # anderes Dataset
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
             controller.handle_close_engagement()
@@ -1944,13 +1960,13 @@ class TestDatasetClickPreservesHighlight:
         controller = MainController(window, recent_store=recent_store)
         try:
             controller.handle_open_engagement(db_path)
-            controller.handle_dataset_selected(ds1_id)
-            controller.handle_sample_selected(sample_id)
+            controller.selection.handle_dataset_selected(ds1_id)
+            controller.selection.handle_sample_selected(sample_id)
             # Wechsel auf ds2 → Highlight verschwindet
-            controller.handle_dataset_selected(ds2_id)
+            controller.selection.handle_dataset_selected(ds2_id)
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
             # Zurück zu ds1 → Highlight kommt wieder (Sample gehört wieder dazu)
-            controller.handle_dataset_selected(ds1_id)
+            controller.selection.handle_dataset_selected(ds1_id)
             assert window.data_table().table_model().highlighted_row_ids() == frozenset({1, 3})
         finally:
             controller.handle_close_engagement()
@@ -2173,9 +2189,11 @@ class TestFilterAndSwitchEngagement:
         controller = MainController(window, recent_store=recent_store)
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             # Filter manuell aktivieren
-            controller.handle_filter_only_sample_toggled(True)
+            controller.selection.handle_filter_only_sample_toggled(True)
             assert window.sidebar().is_filter_only_sample() is True
 
             with patch(
@@ -2198,10 +2216,12 @@ class TestFilterAndSwitchEngagement:
         controller = MainController(window, recent_store=recent_store)
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
-            controller.handle_filter_only_sample_toggled(True)
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
+            controller.selection.handle_filter_only_sample_toggled(True)
             assert window.data_table().table_model().rowCount() == 2
-            controller.handle_filter_only_sample_toggled(False)
+            controller.selection.handle_filter_only_sample_toggled(False)
             assert window.data_table().table_model().rowCount() == 5
         finally:
             controller.handle_close_engagement()
@@ -2217,7 +2237,9 @@ class TestFilterAndSwitchEngagement:
             _open_dataset(controller, window, populated_db)
             # Frisches Dataset ohne aktives Sample → Checkbox disabled.
             assert window.sidebar().filter_checkbox().isEnabled() is False
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             # Sample aktiv → Checkbox enabled.
             assert window.sidebar().filter_checkbox().isEnabled() is True
         finally:
@@ -2391,7 +2413,7 @@ class TestSprint6Reports:
             controller.handle_open_engagement(populated_db)
             # Trigger eine Aktion mit Sample-Bezug.
             ds_id = _first_item_data(window.sidebar().datasets_widget())
-            controller.handle_dataset_selected(ds_id)
+            controller.selection.handle_dataset_selected(ds_id)
             sample_id = _first_item_data(window.sidebar().samples_widget())
 
             # Manuell einen Sample-Event ins Audit-Log schreiben.
@@ -2409,7 +2431,7 @@ class TestSprint6Reports:
 
             controller._refresh_audit_trail()
             assert evt.id is not None
-            controller.handle_audit_event_double_clicked(evt.id)
+            controller.selection.handle_audit_event_double_clicked(evt.id)
             # Sample sollte jetzt hervorgehoben sein.
             highlights = window.data_table().table_model().highlighted_row_ids()
             assert sample_id in {s for s in [sample_id]}  # smoke
@@ -2883,8 +2905,10 @@ class TestSettingsIntegration:
         try:
             controller.handle_open_engagement(populated_db)
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
-            controller.handle_filter_only_sample_toggled(True)
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
+            controller.selection.handle_filter_only_sample_toggled(True)
             assert controller._filter_active_sample_id is not None
             controller.workspace.handle_reset()
             # Filter bleibt aktiv (Setting), aber Sample-Highlight ist weg.
@@ -3003,9 +3027,9 @@ class TestEngagementStateRestore:
     ) -> None:
         controller.handle_open_engagement(populated_db)
         ds_id = _first_item_data(window.sidebar().datasets_widget())
-        controller.handle_dataset_selected(ds_id)
+        controller.selection.handle_dataset_selected(ds_id)
         sample_id = _first_item_data(window.sidebar().samples_widget())
-        controller.handle_sample_selected(sample_id)
+        controller.selection.handle_sample_selected(sample_id)
 
         assert controller._state_repo is not None
         assert controller._engagement is not None
@@ -3026,9 +3050,9 @@ class TestEngagementStateRestore:
         try:
             ctrl1.handle_open_engagement(populated_db)
             ds_id = _first_item_data(window.sidebar().datasets_widget())
-            ctrl1.handle_dataset_selected(ds_id)
+            ctrl1.selection.handle_dataset_selected(ds_id)
             sample_id = _first_item_data(window.sidebar().samples_widget())
-            ctrl1.handle_sample_filter_toggled(sample_id)
+            ctrl1.selection.handle_sample_filter_toggled(sample_id)
             assert window.data_table().table_model().rowCount() == 2
         finally:
             ctrl1.handle_close_engagement()
@@ -3057,9 +3081,9 @@ class TestEngagementStateRestore:
         try:
             ctrl1.handle_open_engagement(populated_db)
             ds_id = _first_item_data(window.sidebar().datasets_widget())
-            ctrl1.handle_dataset_selected(ds_id)
+            ctrl1.selection.handle_dataset_selected(ds_id)
             sample_id = _first_item_data(window.sidebar().samples_widget())
-            ctrl1.handle_sample_selected(sample_id)
+            ctrl1.selection.handle_sample_selected(sample_id)
             # Filter NICHT aktiv – nur Highlight.
             assert ctrl1._filter_active_sample_id is None
             assert window.data_table().table_model().rowCount() == 5
@@ -3131,9 +3155,9 @@ class TestEngagementStateRestore:
         try:
             controller.handle_open_engagement(populated_db)
             ds_id = _first_item_data(window.sidebar().datasets_widget())
-            controller.handle_dataset_selected(ds_id)
+            controller.selection.handle_dataset_selected(ds_id)
             sample_id = _first_item_data(window.sidebar().samples_widget())
-            controller.handle_sample_selected(sample_id)
+            controller.selection.handle_sample_selected(sample_id)
             controller.workspace.handle_reset()
 
             assert controller._state_repo is not None
@@ -3471,7 +3495,7 @@ class TestFilterMatchCountProvider:
 
             # Erst JETZT eine Stichprobe aktiv setzen (Rows 2, 4 ⇒ Betrag 20, 40).
             sample_id = _first_item_data(window.sidebar().samples_widget())
-            controller.handle_sample_selected(sample_id)
+            controller.selection.handle_sample_selected(sample_id)
             assert controller.session.sample is not None
             assert tuple(controller.session.sample.selected_row_ids) == (2, 4)
 
@@ -3823,7 +3847,9 @@ class TestSamplingPathDispatch:
         try:
             _open_dataset(controller, window, populated_db)
             # Vorhandenes Sample (row_ids 2,4 aus dem Fixture) auswählen.
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             controller.workspace.handle_new_sampling()
             assert calls == ["sample"]
         finally:
@@ -3959,7 +3985,9 @@ class TestSamplingPathDispatch:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             controller.workspace.handle_new_sampling()
             assert calls == ["sample"]
         finally:
@@ -4059,7 +4087,7 @@ def _activate_existing_sample(controller: MainController, window: MainWindow) ->
     """Wählt die im `populated_db` vorhandene Stichprobe (row_ids 2,4) aktiv und
     liefert deren id zurück."""
     sample_id = _first_item_data(window.sidebar().samples_widget())
-    controller.handle_sample_selected(sample_id)
+    controller.selection.handle_sample_selected(sample_id)
     assert controller.session.sample is not None
     assert tuple(controller.session.sample.selected_row_ids) == (2, 4)
     return sample_id
@@ -4406,7 +4434,9 @@ class TestResetSampling:
         controller = MainController(window, recent_store=recent_store)
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             assert controller.session.sample is not None
             assert len(window.data_table().table_model().highlighted_row_ids()) == 2
 
@@ -4429,7 +4459,9 @@ class TestResetSampling:
         controller = MainController(window, recent_store=recent_store)
         try:
             ds_id = _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             assert controller.session.db is not None
             repo = DatasetRepo(controller.session.db.connect())
             rows_before = repo.get_all_rows(ds_id)
@@ -4457,7 +4489,9 @@ class TestResetSampling:
         controller = MainController(window, recent_store=recent_store)
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             settings_before = controller.session.settings
             dataset_before = controller.session.dataset
 
@@ -4506,7 +4540,7 @@ class TestResetSampling:
         try:
             ds_id = _open_dataset(controller, window, populated_db)
             sample_id = _first_item_data(window.sidebar().samples_widget())
-            controller.handle_sample_selected(sample_id)
+            controller.selection.handle_sample_selected(sample_id)
             assert controller.session.db is not None
 
             controller.session.reset_sampling()
@@ -4528,7 +4562,9 @@ class TestResetSampling:
         controller = MainController(window, recent_store=recent_store)
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             with patch(
                 "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.Yes,
@@ -4550,7 +4586,9 @@ class TestResetSampling:
         controller = MainController(window, recent_store=recent_store)
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             with patch(
                 "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.No,
@@ -4592,7 +4630,9 @@ class TestAuditTrailRobustness:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             with (
                 patch(
                     "sampling_tool.ui.controllers.export_controller.TaskProgressDialog.run_task",
@@ -4634,7 +4674,9 @@ class TestAuditTrailRobustness:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             from PyQt6.QtWidgets import QMessageBox
 
             with (
@@ -4680,7 +4722,9 @@ class TestAuditTrailRobustness:
         )
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             from PyQt6.QtWidgets import QMessageBox
 
             original_log = AuditRepo.log
@@ -4729,7 +4773,9 @@ class TestAuditTrailRobustness:
         controller = MainController(window, recent_store=recent_store)
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             with (
                 patch(
                     "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
@@ -4763,7 +4809,9 @@ class TestAuditTrailRobustness:
         controller = MainController(window, recent_store=recent_store)
         try:
             _open_dataset(controller, window, populated_db)
-            controller.handle_sample_selected(_first_item_data(window.sidebar().samples_widget()))
+            controller.selection.handle_sample_selected(
+                _first_item_data(window.sidebar().samples_widget())
+            )
             with (
                 patch(
                     "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
@@ -5273,8 +5321,9 @@ def test_maincontroller_has_no_help_or_workspace_forwards(controller: MainContro
     MainController raus – Aufrufer nutzen jetzt ``controller.help.*`` bzw.
     ``controller.workspace.*`` (analog zum export-Piloten, Sprint 59).
 
-    Pinnt die Etappen-Grenze: selection-/engagement-Forwards bleiben noch
-    (Etappen 2/3), die Fassade fällt erst danach ganz.
+    Pinnt die Etappen-Grenze: engagement-Forwards bleiben noch (Etappe 3),
+    die Fassade fällt erst danach ganz. selection-Forwards sind seit Sprint 65
+    (Etappe 2) ebenfalls weg – siehe test_maincontroller_has_no_selection_forwards.
     """
     removed_help = (
         "handle_bug_report",
@@ -5307,8 +5356,38 @@ def test_maincontroller_has_no_help_or_workspace_forwards(controller: MainContro
     assert callable(controller.workspace.handle_new_sampling)
     assert callable(controller.workspace.handle_import_excel)
 
-    # Etappen-Beweis: selection-/engagement-Forwards sind noch da (Etappen 2/3).
-    assert callable(controller.handle_dataset_selected)
-    assert callable(controller.handle_audit_event_double_clicked)
+    # Etappen-Beweis: engagement-Forwards sind noch da (Etappe 3).
+    assert callable(controller.handle_new_engagement)
+    assert callable(controller.handle_close_engagement)
+
+
+def test_maincontroller_has_no_selection_forwards(controller: MainController) -> None:
+    """Sprint 65 / L-003 Etappe 2: selection-Forwards sind aus dem
+    MainController raus – Aufrufer nutzen jetzt ``controller.selection.*``
+    (analog zum export-Piloten Sprint 59, help/workspace Sprint 64).
+
+    Pinnt die Etappen-Grenze: engagement-Forwards + Compat-Properties/-Helfer
+    bleiben noch (Etappe 3), die Fassade fällt erst danach ganz.
+    """
+    removed_selection = (
+        "handle_dataset_selected",
+        "handle_sample_selected",
+        "handle_sample_filter_toggled",
+        "handle_filter_only_sample_toggled",
+        "handle_audit_event_double_clicked",
+    )
+    for name in removed_selection:
+        assert not hasattr(controller, name), (
+            f"MainController.{name} soll kein Forward mehr sein (nutze controller.selection.{name})"
+        )
+
+    # Die Handler leben unverändert auf dem Subcontroller.
+    assert callable(controller.selection.handle_dataset_selected)
+    assert callable(controller.selection.handle_sample_selected)
+    assert callable(controller.selection.handle_sample_filter_toggled)
+    assert callable(controller.selection.handle_filter_only_sample_toggled)
+    assert callable(controller.selection.handle_audit_event_double_clicked)
+
+    # Etappen-Beweis: engagement-Forwards sind noch da (Etappe 3).
     assert callable(controller.handle_new_engagement)
     assert callable(controller.handle_close_engagement)

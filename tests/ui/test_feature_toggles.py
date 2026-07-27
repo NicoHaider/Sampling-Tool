@@ -297,7 +297,7 @@ def _open_dataset(controller: MainController, window: MainWindow, db_path: Path)
 
     ds_id = item.data(int(Qt.ItemDataRole.UserRole))
     assert isinstance(ds_id, int)
-    controller.handle_dataset_selected(ds_id)
+    controller.selection.handle_dataset_selected(ds_id)
     return ds_id
 
 

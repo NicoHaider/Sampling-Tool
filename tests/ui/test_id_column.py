@@ -196,7 +196,7 @@ class TestIdColumnEndToEnd:
         )
         ctrl.handle_open_engagement(db_path)
         DatasetIdColumnStore().set(db_path.stem, ds_id, "Belegnr")
-        ctrl.handle_dataset_selected(ds_id)
+        ctrl.selection.handle_dataset_selected(ds_id)
 
         item = win.sidebar().samples_widget().item(0)
         assert item is not None
@@ -213,7 +213,7 @@ class TestIdColumnEndToEnd:
         )
         ctrl.handle_open_engagement(db_path)
         DatasetIdColumnStore().set(db_path.stem, ds_id, "Belegnr")
-        ctrl.handle_dataset_selected(ds_id)
+        ctrl.selection.handle_dataset_selected(ds_id)
         assert "IDs:" in _samples_item_text(win)
 
         # Toggle aus → live ohne Neustart.
@@ -234,7 +234,7 @@ class TestIdColumnEndToEnd:
         )
         ctrl.handle_open_engagement(db_path)
         # KEINE ID-Spalte gesetzt.
-        ctrl.handle_dataset_selected(ds_id)
+        ctrl.selection.handle_dataset_selected(ds_id)
         assert "IDs:" not in _samples_item_text(win)
         ctrl.handle_close_engagement()
 
@@ -251,12 +251,12 @@ class TestIdColumnEndToEnd:
             win, recent_store=RecentEngagementsStore(path=tmp_path / "recent.json")
         )
         ctrl.handle_open_engagement(db_path)
-        ctrl.handle_dataset_selected(ds_id)
+        ctrl.selection.handle_dataset_selected(ds_id)
 
         assert ctrl.session.db is not None
         sample_id = SampleRepo(ctrl.session.db.connect()).list_for_dataset(ds_id)[0].id
         assert sample_id is not None
-        ctrl.handle_sample_selected(sample_id)
+        ctrl.selection.handle_sample_selected(sample_id)
         item = win.sidebar().samples_widget().item(0)
         assert item is not None
         assert item.text().startswith("●")

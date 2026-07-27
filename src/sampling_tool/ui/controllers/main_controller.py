@@ -219,21 +219,6 @@ class MainController:
     def handle_close_engagement(self) -> None:
         self.engagement.handle_close_engagement()
 
-    def handle_dataset_selected(self, dataset_id: int) -> None:
-        self.selection.handle_dataset_selected(dataset_id)
-
-    def handle_sample_selected(self, sample_id: int) -> None:
-        self.selection.handle_sample_selected(sample_id)
-
-    def handle_sample_filter_toggled(self, sample_id: int) -> None:
-        self.selection.handle_sample_filter_toggled(sample_id)
-
-    def handle_filter_only_sample_toggled(self, active: bool) -> None:
-        self.selection.handle_filter_only_sample_toggled(active)
-
-    def handle_audit_event_double_clicked(self, event_id: int) -> None:
-        self.selection.handle_audit_event_double_clicked(event_id)
-
     # ---- Backward-Compat: interne Helfer als Forwards ------------------
     #
     # Einzelne Tests greifen auf private Helper zu (z. B. `_refresh_audit_trail`
