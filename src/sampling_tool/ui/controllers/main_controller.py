@@ -5,11 +5,12 @@ hat jetzt nur noch zwei Aufgaben:
 1. Sub-Controller + `WorkspaceSession` aufbauen, Factories durchreichen.
 2. UI-Signale an den jeweils zuständigen Sub-Controller weiterleiten.
 
-Externe API (`MainController(window, **factories)`) unverändert. Public
-`handle_*`-Methoden bleiben (noch) als Backward-Compat-Fassade erhalten,
-damit bestehende Tests ohne Anpassung weiterlaufen — wird schrittweise pro
-Subcontroller abgebaut (Sprint 59 / Teil C: `export` migriert,
-`self.export.handle_export_*` statt Forward).
+Externe API (`MainController(window, **factories)`) unverändert. Die
+Backward-Compat-Fassade aus public `handle_*`-Forwards + privaten
+Convenience-Properties ist vollständig abgebaut (Sprint 59 Teil C `export`,
+Sprint 64 `help`/`workspace`, Sprint 65 `selection`, Sprint 66 `engagement`
++ Properties/-Helfer, L-003): Aufrufer nutzen jetzt ausschließlich
+`self.<subcontroller>.handle_*` bzw. `self.session.*`.
 
 Sub-Controller:
 - `EngagementController` – Engagement-Lifecycle (New, Open, Close, Recent)
@@ -33,7 +34,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sampling_tool.ui.controllers._factories import (
@@ -59,9 +59,6 @@ from sampling_tool.ui.recent import RecentEngagementsStore
 from sampling_tool.ui.settings_store import AppSettings, load_settings
 
 if TYPE_CHECKING:
-    from sampling_tool.core.models import Engagement, SampleResult
-    from sampling_tool.io.briefpapier import BriefpapierConfig
-    from sampling_tool.persistence.repositories import EngagementStateRepo
     from sampling_tool.ui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
@@ -70,9 +67,10 @@ logger = logging.getLogger(__name__)
 class MainController:
     """Coordinator – delegiert UI-Signale an Sub-Controller.
 
-    Externe API (Konstruktor-Parameter + public `handle_*`-Methoden)
-    unverändert ggü. dem Pre-Sprint-13-Stand. Tests, die `controller.
-    handle_new_sampling()` direkt aufrufen, laufen unverändert weiter.
+    Konstruktor-API unverändert ggü. dem Pre-Sprint-13-Stand. Keine
+    Backward-Compat-Forwards/-Properties mehr (L-003 abgeschlossen):
+    Aufrufer nutzen `controller.<subcontroller>.handle_*` bzw.
+    `controller.session.*`.
     """
 
     def __init__(
@@ -152,84 +150,6 @@ class MainController:
         )
         # Sprint 22: „Ansicht"-Menü-Checks aus den app-weiten Toggles spiegeln.
         self.session.sync_view_menu()
-
-    # ---- Externe Convenience-Properties (für Tests) --------------------
-    #
-    # Bestehende Tests greifen direkt auf private MainController-Attribute
-    # zu (`controller._sample`, `controller._engagement`, etc.). Diese
-    # Properties delegieren transparent an die Session-State, damit die
-    # Tests unverändert weiterlaufen.
-
-    @property
-    def window(self) -> MainWindow:
-        return self.session.window
-
-    @property
-    def _settings(self) -> AppSettings:
-        return self.session.settings
-
-    @_settings.setter
-    def _settings(self, value: AppSettings) -> None:
-        self.session.settings = value
-
-    @property
-    def _engagement(self) -> Engagement | None:
-        return self.session.engagement
-
-    @property
-    def _sample(self) -> SampleResult | None:
-        return self.session.sample
-
-    @property
-    def _active_sample_id(self) -> int | None:
-        return self.session.active_sample_id
-
-    @property
-    def _filter_active_sample_id(self) -> int | None:
-        return self.session.filter_active_sample_id
-
-    @property
-    def _state_repo(self) -> EngagementStateRepo | None:
-        return self.session.state_repo
-
-    # ---- Public Convenience-Methode -------------------------------------
-
-    def refresh_recent(self) -> None:
-        """Liest die Recent-Liste und gibt sie ans Fenster."""
-        self.engagement.refresh_recent()
-
-    # ---- Backward-Compat-Fassade für public handle_*-Methoden ----------
-    #
-    # Bestehende Tests rufen diese Methoden direkt auf dem MainController auf.
-    # Forwards an den jeweiligen Sub-Controller. Reine Delegation, keine
-    # eigene Logik.
-    #
-    # `export` hat hier bewusst keine Forwards mehr: Sprint 59 / Teil C hat
-    # sie entfernt, Aufrufer nutzen jetzt `self.export.handle_export_*`.
-
-    def handle_new_engagement(self) -> None:
-        self.engagement.handle_new_engagement()
-
-    def handle_open_engagement(self, db_path: Path) -> None:
-        self.engagement.handle_open_engagement(db_path)
-
-    def handle_close_engagement_requested(self) -> None:
-        self.engagement.handle_close_engagement_requested()
-
-    def handle_close_engagement(self) -> None:
-        self.engagement.handle_close_engagement()
-
-    # ---- Backward-Compat: interne Helfer als Forwards ------------------
-    #
-    # Einzelne Tests greifen auf private Helper zu (z. B. `_refresh_audit_trail`
-    # in einem Test, der manuell einen Refresh triggert; `_resolve_briefpapier`
-    # für Briefpapier-Logik). Delegate-Forwards auf die Session.
-
-    def _refresh_audit_trail(self) -> None:
-        self.session.refresh_audit_trail()
-
-    def _resolve_briefpapier(self) -> BriefpapierConfig | None:
-        return self.session.resolve_briefpapier()
 
     # ---- Signal-Routing ------------------------------------------------
 
