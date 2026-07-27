@@ -89,7 +89,7 @@ def controller(
 ) -> Iterator[MainController]:
     ctrl = MainController(window, recent_store=recent_store)
     yield ctrl
-    ctrl.handle_close_engagement()
+    ctrl.engagement.handle_close_engagement()
 
 
 @pytest.fixture
@@ -252,7 +252,7 @@ class TestMainController:
         window: MainWindow,
         populated_db: Path,
     ) -> None:
-        controller.handle_open_engagement(populated_db)
+        controller.engagement.handle_open_engagement(populated_db)
         assert window.is_workspace_visible() is True
         assert window.sidebar().datasets_widget().count() == 1
 
@@ -265,7 +265,7 @@ class TestMainController:
         ghost = tmp_path / "ghost.db"
         # Sprint 13 / F-001: `error()` ist auf WorkspaceSession – Patch dort.
         with patch("sampling_tool.ui.controllers.workspace_session.QMessageBox.warning") as warning:
-            controller.handle_open_engagement(ghost)
+            controller.engagement.handle_open_engagement(ghost)
         assert warning.called
         assert window.is_workspace_visible() is False
 
@@ -275,7 +275,7 @@ class TestMainController:
         window: MainWindow,
         populated_db: Path,
     ) -> None:
-        controller.handle_open_engagement(populated_db)
+        controller.engagement.handle_open_engagement(populated_db)
         controller.selection.handle_dataset_selected(
             _first_item_data(window.sidebar().datasets_widget())
         )
@@ -288,7 +288,7 @@ class TestMainController:
         window: MainWindow,
         populated_db: Path,
     ) -> None:
-        controller.handle_open_engagement(populated_db)
+        controller.engagement.handle_open_engagement(populated_db)
         controller.selection.handle_dataset_selected(
             _first_item_data(window.sidebar().datasets_widget())
         )
@@ -304,7 +304,7 @@ class TestMainController:
         window: MainWindow,
         populated_db: Path,
     ) -> None:
-        controller.handle_open_engagement(populated_db)
+        controller.engagement.handle_open_engagement(populated_db)
         controller.selection.handle_dataset_selected(
             _first_item_data(window.sidebar().datasets_widget())
         )
@@ -322,8 +322,8 @@ class TestMainController:
         window: MainWindow,
         populated_db: Path,
     ) -> None:
-        controller.handle_open_engagement(populated_db)
-        controller.handle_close_engagement()
+        controller.engagement.handle_open_engagement(populated_db)
+        controller.engagement.handle_close_engagement()
         assert window.is_workspace_visible() is False
         assert window.data_table().table_model().rowCount() == 0
 
@@ -356,7 +356,7 @@ class TestMainController:
             ) as warning,
             caplog.at_level("WARNING", logger="sampling_tool.ui.controllers.engagement_controller"),
         ):
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
 
         assert warning.called
         assert window.is_workspace_visible() is True
@@ -404,7 +404,7 @@ class TestMainController:
             ) as warning,
             caplog.at_level("ERROR", logger="sampling_tool.ui.controllers.engagement_controller"),
         ):
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
 
         assert window.is_workspace_visible() is True  # Öffnen bleibt unblockiert
         assert warning.called
@@ -442,12 +442,12 @@ class TestMainController:
             dialog_factory=lambda parent, _settings, _prefill: _StubDialog(parent),
         )
         try:
-            controller.handle_new_engagement()
+            controller.engagement.handle_new_engagement()
             assert target_db.exists()
             assert window.is_workspace_visible() is True
             assert recent_store.list()[0].path == target_db.resolve()
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_new_engagement_no_duplicate_skips_duplicate_dialog(
         self,
@@ -467,12 +467,12 @@ class TestMainController:
             ),
         )
         try:
-            controller.handle_new_engagement()
+            controller.engagement.handle_new_engagement()
             assert target_db.exists()
             assert duplicate_calls == [], "DuplicateDialog darf nicht erscheinen"
             assert window.is_workspace_visible() is True
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_new_engagement_migrate_failure_closes_connection(
         self,
@@ -499,13 +499,13 @@ class TestMainController:
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as warning,
             ):
-                controller.handle_new_engagement()
+                controller.engagement.handle_new_engagement()
 
             assert warning.called
             assert window.is_workspace_visible() is False
             assert len(close_calls) == 1
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_new_engagement_with_duplicate_open_existing_opens_db(
         self,
@@ -524,12 +524,12 @@ class TestMainController:
             ),
         )
         try:
-            controller.handle_new_engagement()
+            controller.engagement.handle_new_engagement()
             assert window.is_workspace_visible() is True
             # Bestehende DB nicht überschrieben → Sample-Eintrag aus Fixture noch da.
             assert window.sidebar().datasets_widget().count() == 1
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_new_engagement_with_duplicate_rename_reopens_new_dialog(
         self,
@@ -566,7 +566,7 @@ class TestMainController:
             duplicate_dialog_factory=_dup_factory,
         )
         try:
-            controller.handle_new_engagement()
+            controller.engagement.handle_new_engagement()
             assert len(new_dialog_calls) == 2, "NewEngagementDialog muss erneut geöffnet werden"
             # Zweiter Aufruf bekommt das vorher eingegebene Engagement als Prefill.
             assert new_dialog_calls[0] is None
@@ -576,7 +576,7 @@ class TestMainController:
             assert fresh.exists()
             assert window.is_workspace_visible() is True
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_new_engagement_with_duplicate_cancel_aborts(
         self,
@@ -599,13 +599,13 @@ class TestMainController:
             ),
         )
         try:
-            controller.handle_new_engagement()
+            controller.engagement.handle_new_engagement()
             assert window.is_workspace_visible() is False
             assert existing.read_bytes() == before, (
                 "Bestehende Datei darf nicht überschrieben werden"
             )
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_import_excel_persists_dataset_and_logs_audit(
         self,
@@ -616,7 +616,7 @@ class TestMainController:
     ) -> None:
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with (
                 patch(
                     "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
@@ -629,7 +629,7 @@ class TestMainController:
             assert window.sidebar().datasets_widget().count() == 2
             assert window.data_table().table_model().rowCount() == 3
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_import_rejected_by_preflight_shows_error_and_skips_worker(
         self,
@@ -640,7 +640,7 @@ class TestMainController:
     ) -> None:
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             datasets_before = window.sidebar().datasets_widget().count()
             with (
                 patch(
@@ -661,7 +661,7 @@ class TestMainController:
             mock_warning.assert_called_once()
             assert window.sidebar().datasets_widget().count() == datasets_before
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_import_shows_confirm_dialog_and_proceeds_on_yes(
         self,
@@ -672,7 +672,7 @@ class TestMainController:
     ) -> None:
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with (
                 patch(
                     "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
@@ -693,7 +693,7 @@ class TestMainController:
             mock_question.assert_called_once()
             assert window.sidebar().datasets_widget().count() == 2
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_import_aborts_when_confirm_dialog_answered_no(
         self,
@@ -704,7 +704,7 @@ class TestMainController:
     ) -> None:
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             datasets_before = window.sidebar().datasets_widget().count()
             with (
                 patch(
@@ -724,7 +724,7 @@ class TestMainController:
 
             assert window.sidebar().datasets_widget().count() == datasets_before
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_import_without_warnings_does_not_show_confirm_dialog(
         self,
@@ -737,7 +737,7 @@ class TestMainController:
         Confirm-Dialog, lautloser Import wie vor Sprint 48."""
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with (
                 patch(
                     "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
@@ -753,7 +753,7 @@ class TestMainController:
             mock_question.assert_not_called()
             assert window.sidebar().datasets_widget().count() == 2
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 # ---------------------------------------------------------------------------
@@ -826,7 +826,7 @@ class TestOverwriteWithBackup:
             with patch(
                 "sampling_tool.ui.controllers.engagement_controller.QMessageBox.information"
             ):
-                controller.handle_new_engagement()
+                controller.engagement.handle_new_engagement()
 
             # (1) Backup mit altem Inhalt im archiv/.
             backups = _archive_db_files(target.parent)
@@ -838,7 +838,7 @@ class TestOverwriteWithBackup:
             assert window.is_workspace_visible() is True
             assert window.sidebar().datasets_widget().count() == 0
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_overwrite_aborts_when_backup_fails(
         self,
@@ -858,7 +858,7 @@ class TestOverwriteWithBackup:
             ),
         )
         try:
-            controller.handle_open_engagement(target)
+            controller.engagement.handle_open_engagement(target)
             old_db = controller.session.db
             assert old_db is not None
             old_connection = old_db.connect()
@@ -877,7 +877,7 @@ class TestOverwriteWithBackup:
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as warning,
             ):
-                controller.handle_new_engagement()
+                controller.engagement.handle_new_engagement()
 
             # Aktive alte DB/Session unangetastet, keine Löschung, harte Fehlermeldung.
             assert _probe_markers(target) == ["preserve-me"]
@@ -891,7 +891,7 @@ class TestOverwriteWithBackup:
             assert "wurde nichts überschrieben" in warning_body
             assert "archiv nicht beschreibbar" in warning_body
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_overwrite_shows_info_with_backup_path(
         self,
@@ -914,7 +914,7 @@ class TestOverwriteWithBackup:
             with patch(
                 "sampling_tool.ui.controllers.engagement_controller.QMessageBox.information"
             ) as info:
-                controller.handle_new_engagement()
+                controller.engagement.handle_new_engagement()
 
             assert info.called
             backups = _archive_db_files(target.parent)
@@ -926,7 +926,7 @@ class TestOverwriteWithBackup:
             assert "gesichert" in body
             assert str(backups[0]) in body
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_overwrite_migrate_failure_after_same_path_detach_resets_to_welcome(
         self,
@@ -948,7 +948,7 @@ class TestOverwriteWithBackup:
             ),
         )
         try:
-            controller.handle_open_engagement(target)
+            controller.engagement.handle_open_engagement(target)
             old_db = controller.session.db
             assert old_db is not None
             snapshots_before_overwrite = set(_archive_db_files(target.parent))
@@ -960,7 +960,7 @@ class TestOverwriteWithBackup:
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as warning,
             ):
-                controller.handle_new_engagement()
+                controller.engagement.handle_new_engagement()
 
             warning.assert_called_once()
             assert window.is_workspace_visible() is False
@@ -975,7 +975,7 @@ class TestOverwriteWithBackup:
             # Backup ist trotzdem passiert – nur die Neuanlage danach scheiterte.
             assert len(set(_archive_db_files(target.parent)) - snapshots_before_overwrite) == 1
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_overwrite_remove_failure_after_same_path_detach_resets_to_welcome(
         self,
@@ -994,7 +994,7 @@ class TestOverwriteWithBackup:
             ),
         )
         try:
-            controller.handle_open_engagement(target)
+            controller.engagement.handle_open_engagement(target)
             with (
                 patch(
                     "sampling_tool.ui.controllers.engagement_controller._remove_db_files",
@@ -1004,7 +1004,7 @@ class TestOverwriteWithBackup:
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as warning,
             ):
-                controller.handle_new_engagement()
+                controller.engagement.handle_new_engagement()
 
             warning.assert_called_once()
             assert window.is_workspace_visible() is False
@@ -1015,7 +1015,7 @@ class TestOverwriteWithBackup:
             assert controller.session.undo_manager is None
             assert controller.session.state_repo is None
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_overwrite_closes_open_connection_and_backup_is_complete(
         self,
@@ -1035,7 +1035,7 @@ class TestOverwriteWithBackup:
             ),
         )
         try:
-            controller.handle_open_engagement(target)
+            controller.engagement.handle_open_engagement(target)
             old_db = controller.session.db
             assert old_db is not None
             old_connection = old_db.connect()
@@ -1104,7 +1104,7 @@ class TestOverwriteWithBackup:
                 ),
                 patch("sampling_tool.ui.controllers.engagement_controller.QMessageBox.information"),
             ):
-                controller.handle_new_engagement()
+                controller.engagement.handle_new_engagement()
 
             overwrite_snapshots = set(_archive_db_files(target.parent)) - snapshots_before_overwrite
             assert len(overwrite_snapshots) == 1
@@ -1118,7 +1118,7 @@ class TestOverwriteWithBackup:
             assert controller.session.db.db_path == target
             assert window.is_workspace_visible() is True
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_overwrite_detaches_same_open_file_reached_through_symlink_alias(
         self,
@@ -1143,7 +1143,7 @@ class TestOverwriteWithBackup:
             ),
         )
         try:
-            controller.handle_open_engagement(alias)
+            controller.engagement.handle_open_engagement(alias)
             old_db = controller.session.db
             assert old_db is not None
             assert old_db.db_path == alias
@@ -1174,7 +1174,7 @@ class TestOverwriteWithBackup:
                 ),
                 patch("sampling_tool.ui.controllers.engagement_controller.QMessageBox.information"),
             ):
-                controller.handle_new_engagement()
+                controller.engagement.handle_new_engagement()
 
             assert removal_observations == [(True, True, True, True)]
             assert controller.session.db is not None
@@ -1182,7 +1182,7 @@ class TestOverwriteWithBackup:
             assert controller.session.db.db_path == target
             assert window.is_workspace_visible() is True
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_overwrite_other_target_keeps_active_project_until_adoption(
         self,
@@ -1203,7 +1203,7 @@ class TestOverwriteWithBackup:
             ),
         )
         try:
-            controller.handle_open_engagement(active_path)
+            controller.engagement.handle_open_engagement(active_path)
             active_db = controller.session.db
             assert active_db is not None
             active_connection = active_db.connect()
@@ -1245,7 +1245,7 @@ class TestOverwriteWithBackup:
                 ),
                 patch("sampling_tool.ui.controllers.engagement_controller.QMessageBox.information"),
             ):
-                controller.handle_new_engagement()
+                controller.engagement.handle_new_engagement()
 
             assert deletion_observations == [(True, ["active-a"])]
             assert adoption_observations == [(True, ["active-a"])]
@@ -1256,7 +1256,7 @@ class TestOverwriteWithBackup:
             assert controller.session.db.db_path == target
             assert window.is_workspace_visible() is True
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_overwrite_other_target_failure_keeps_active_project_open(
         self,
@@ -1277,7 +1277,7 @@ class TestOverwriteWithBackup:
             ),
         )
         try:
-            controller.handle_open_engagement(active_path)
+            controller.engagement.handle_open_engagement(active_path)
             active_db = controller.session.db
             assert active_db is not None
             active_connection = active_db.connect()
@@ -1291,7 +1291,7 @@ class TestOverwriteWithBackup:
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as warning,
             ):
-                controller.handle_new_engagement()
+                controller.engagement.handle_new_engagement()
 
             warning.assert_called_once()
             assert controller.session.db is active_db
@@ -1299,7 +1299,7 @@ class TestOverwriteWithBackup:
             assert _probe_markers(target) == ["target-b"]
             assert window.is_workspace_visible() is True
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 # ---------------------------------------------------------------------------
@@ -1379,7 +1379,7 @@ class TestImportDialogDispatch:
             import_options_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with (
                 patch(
                     "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
@@ -1391,7 +1391,7 @@ class TestImportDialogDispatch:
             assert dialog_calls == [], "Dialog darf bei high confidence + 1 Sheet NICHT erscheinen"
             assert window.sidebar().datasets_widget().count() == 2
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_single_sheet_low_confidence_shows_dialog(
         self,
@@ -1413,7 +1413,7 @@ class TestImportDialogDispatch:
             import_options_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with (
                 patch(
                     "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
@@ -1426,7 +1426,7 @@ class TestImportDialogDispatch:
             assert dialog_calls[0] == leading_blank_import_xlsx
             assert window.sidebar().datasets_widget().count() == 2
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_multi_sheet_always_shows_dialog(
         self,
@@ -1448,7 +1448,7 @@ class TestImportDialogDispatch:
             import_options_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with (
                 patch(
                     "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
@@ -1459,7 +1459,7 @@ class TestImportDialogDispatch:
                 controller.workspace.handle_import_excel()
             assert len(dialog_calls) == 1, "Bei Multi-Sheet muss der Dialog immer erscheinen"
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_dialog_cancel_aborts_import(
         self,
@@ -1477,7 +1477,7 @@ class TestImportDialogDispatch:
             import_options_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             before = window.sidebar().datasets_widget().count()
             with patch(
                 "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
@@ -1486,7 +1486,7 @@ class TestImportDialogDispatch:
                 controller.workspace.handle_import_excel()
             assert window.sidebar().datasets_widget().count() == before
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_dialog_accept_uses_configured_import_path(
         self,
@@ -1505,7 +1505,7 @@ class TestImportDialogDispatch:
             import_options_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with (
                 patch(
                     "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
@@ -1518,7 +1518,7 @@ class TestImportDialogDispatch:
             assert window.data_table().table_model().rowCount() == 2
             assert window.data_table().table_model().columnCount() == 3
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     # ---- Sprint 29: CSV nimmt am Header-Detection-Dialog teil ----------
 
@@ -1543,7 +1543,7 @@ class TestImportDialogDispatch:
             import_options_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with (
                 patch(
                     "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
@@ -1556,7 +1556,7 @@ class TestImportDialogDispatch:
             assert window.data_table().table_model().rowCount() == 2
             assert window.data_table().table_model().columnCount() == 2
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_messy_csv_shows_dialog_and_imports_chosen_header(
         self,
@@ -1582,7 +1582,7 @@ class TestImportDialogDispatch:
             import_options_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with (
                 patch(
                     "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
@@ -1596,7 +1596,7 @@ class TestImportDialogDispatch:
             assert window.data_table().table_model().columnCount() == 2
             assert window.data_table().table_model().rowCount() == 2
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 # ---------------------------------------------------------------------------
@@ -1638,7 +1638,7 @@ class _StubExportDialog:
 
 
 def _open_dataset(controller: MainController, window: MainWindow, db_path: Path) -> int:
-    controller.handle_open_engagement(db_path)
+    controller.engagement.handle_open_engagement(db_path)
     ds_id = _first_item_data(window.sidebar().datasets_widget())
     controller.selection.handle_dataset_selected(ds_id)
     return ds_id
@@ -1673,7 +1673,7 @@ class TestSamplingFlow:
             highlighted = window.data_table().table_model().highlighted_row_ids()
             assert len(highlighted) == 2
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_reset_clears_highlight_with_confirmation(
         self,
@@ -1696,7 +1696,7 @@ class TestSamplingFlow:
                 controller.workspace.handle_reset()
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_reset_cancelled_keeps_highlight(
         self,
@@ -1720,7 +1720,7 @@ class TestSamplingFlow:
             # Highlight unverändert
             assert len(window.data_table().table_model().highlighted_row_ids()) == 2
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_undo_redo_round_trip(
         self,
@@ -1754,7 +1754,7 @@ class TestSamplingFlow:
             controller.workspace.handle_redo()
             assert window.data_table().table_model().highlighted_row_ids() == after_sampling
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_resample_filters_to_current_sample(
         self,
@@ -1787,7 +1787,7 @@ class TestSamplingFlow:
             # Die neue Auswahl darf nur row_ids aus dem Vorsample enthalten.
             assert new_highlight.issubset({2, 4})
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_export_sample_calls_excel_exporter(
         self,
@@ -1820,7 +1820,7 @@ class TestSamplingFlow:
             files = list(tmp_path.glob("testname_ID42_BDO_sampling_*.xlsx"))
             assert len(files) == 1
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_export_audit_pdf_writes_file(
         self,
@@ -1849,13 +1849,13 @@ class TestSamplingFlow:
             audit_pdf_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.export.handle_export_audit_pdf()
             assert target.exists()
             assert target.stat().st_size > 0
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_undo_redo_state_after_open_engagement(
         self,
@@ -1865,12 +1865,12 @@ class TestSamplingFlow:
     ) -> None:
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             # Frisches Engagement: weder Undo noch Redo verfügbar.
             assert window._action_undo.isEnabled() is False
             assert window._action_redo.isEnabled() is False
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 # ---------------------------------------------------------------------------
@@ -1922,7 +1922,7 @@ class TestDatasetClickPreservesHighlight:
         db_path, ds1_id, _ds2_id, sample_id = _two_dataset_db(tmp_path)
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(db_path)
+            controller.engagement.handle_open_engagement(db_path)
             controller.selection.handle_dataset_selected(ds1_id)
             controller.selection.handle_sample_selected(sample_id)
             before = window.data_table().table_model().highlighted_row_ids()
@@ -1931,7 +1931,7 @@ class TestDatasetClickPreservesHighlight:
             assert before == after
             assert before == frozenset({1, 3})
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_clicking_other_dataset_clears_highlight_when_sample_unrelated(
         self,
@@ -1942,13 +1942,13 @@ class TestDatasetClickPreservesHighlight:
         db_path, ds1_id, ds2_id, sample_id = _two_dataset_db(tmp_path)
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(db_path)
+            controller.engagement.handle_open_engagement(db_path)
             controller.selection.handle_dataset_selected(ds1_id)
             controller.selection.handle_sample_selected(sample_id)
             controller.selection.handle_dataset_selected(ds2_id)  # anderes Dataset
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_clicking_other_dataset_reapplies_highlight_when_sample_belongs(
         self,
@@ -1959,7 +1959,7 @@ class TestDatasetClickPreservesHighlight:
         db_path, ds1_id, ds2_id, sample_id = _two_dataset_db(tmp_path)
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(db_path)
+            controller.engagement.handle_open_engagement(db_path)
             controller.selection.handle_dataset_selected(ds1_id)
             controller.selection.handle_sample_selected(sample_id)
             # Wechsel auf ds2 → Highlight verschwindet
@@ -1969,7 +1969,7 @@ class TestDatasetClickPreservesHighlight:
             controller.selection.handle_dataset_selected(ds1_id)
             assert window.data_table().table_model().highlighted_row_ids() == frozenset({1, 3})
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_open_engagement_creates_snapshot(
         self,
@@ -1982,12 +1982,12 @@ class TestDatasetClickPreservesHighlight:
         db_path, _ds1, _ds2, _s = _two_dataset_db(tmp_path)
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(db_path)
+            controller.engagement.handle_open_engagement(db_path)
             archive = db_path.parent / ARCHIVE_DIR_NAME
             snaps = list(archive.glob("*.db"))
             assert len(snaps) == 1
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_open_snapshot_failure_shows_visible_warning(
         self,
@@ -2036,7 +2036,7 @@ class TestDatasetClickPreservesHighlight:
                 ),
                 patch.object(status, "showMessage", side_effect=_record_show_message),
             ):
-                controller.handle_open_engagement(db_path)
+                controller.engagement.handle_open_engagement(db_path)
 
             assert window.is_workspace_visible() is True
             assert order == ["adopt", "warning"]
@@ -2045,7 +2045,7 @@ class TestDatasetClickPreservesHighlight:
             assert "Datenträger voll" in status.currentMessage()
             warning.assert_not_called()
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_open_foreign_db_shows_error_and_creates_no_snapshot(
         self,
@@ -2073,7 +2073,7 @@ class TestDatasetClickPreservesHighlight:
             with patch(
                 "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
             ) as warning:
-                controller.handle_open_engagement(foreign_path)
+                controller.engagement.handle_open_engagement(foreign_path)
 
             assert warning.called
             assert window.is_workspace_visible() is False
@@ -2082,7 +2082,7 @@ class TestDatasetClickPreservesHighlight:
             assert not foreign_path.with_name(foreign_path.name + "-shm").exists()
             assert not (foreign_path.parent / ARCHIVE_DIR_NAME).exists()
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 class TestOpenEngagementConnectionCleanup:
@@ -2110,13 +2110,13 @@ class TestOpenEngagementConnectionCleanup:
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as warning,
             ):
-                controller.handle_open_engagement(db_path)
+                controller.engagement.handle_open_engagement(db_path)
 
             assert warning.called
             assert window.is_workspace_visible() is False
             assert len(close_calls) == 1
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_open_engagement_migrate_failure_closes_connection(
         self,
@@ -2135,13 +2135,13 @@ class TestOpenEngagementConnectionCleanup:
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as warning,
             ):
-                controller.handle_open_engagement(db_path)
+                controller.engagement.handle_open_engagement(db_path)
 
             assert warning.called
             assert window.is_workspace_visible() is False
             assert len(close_calls) == 1
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 class TestFilterAndSwitchEngagement:
@@ -2176,7 +2176,7 @@ class TestFilterAndSwitchEngagement:
             # Statusbar-Suffix sichtbar.
             assert "gefiltert" in window._status_sample.text()
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_reset_deactivates_filter(
         self,
@@ -2205,7 +2205,7 @@ class TestFilterAndSwitchEngagement:
             # Tabelle zeigt wieder alle 5 Zeilen.
             assert window.data_table().table_model().rowCount() == 5
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_filter_only_sample_toggle_filters_and_unfilters(
         self,
@@ -2224,7 +2224,7 @@ class TestFilterAndSwitchEngagement:
             controller.selection.handle_filter_only_sample_toggled(False)
             assert window.data_table().table_model().rowCount() == 5
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_filter_checkbox_disabled_without_sample(
         self,
@@ -2243,7 +2243,7 @@ class TestFilterAndSwitchEngagement:
             # Sample aktiv → Checkbox enabled.
             assert window.sidebar().filter_checkbox().isEnabled() is True
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_close_request_confirmed_returns_to_welcome(
         self,
@@ -2255,15 +2255,15 @@ class TestFilterAndSwitchEngagement:
 
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with patch(
                 "sampling_tool.ui.controllers.engagement_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.Yes,
             ):
-                controller.handle_close_engagement_requested()
+                controller.engagement.handle_close_engagement_requested()
             assert window.is_workspace_visible() is False
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_close_request_cancelled_stays_in_workspace(
         self,
@@ -2275,15 +2275,15 @@ class TestFilterAndSwitchEngagement:
 
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with patch(
                 "sampling_tool.ui.controllers.engagement_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.No,
             ):
-                controller.handle_close_engagement_requested()
+                controller.engagement.handle_close_engagement_requested()
             assert window.is_workspace_visible() is True
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_close_request_noop_when_no_engagement(
         self,
@@ -2294,7 +2294,7 @@ class TestFilterAndSwitchEngagement:
         with patch(
             "sampling_tool.ui.controllers.engagement_controller.QMessageBox.question"
         ) as question:
-            controller.handle_close_engagement_requested()
+            controller.engagement.handle_close_engagement_requested()
         assert question.called is False
         assert window.is_workspace_visible() is False
 
@@ -2383,7 +2383,7 @@ class TestSprint6Reports:
         window: MainWindow,
         populated_db: Path,
     ) -> None:
-        controller.handle_open_engagement(populated_db)
+        controller.engagement.handle_open_engagement(populated_db)
         events = window.audit_trail_view().model()._events
         # populated_db enthält noch keine Events (Sample wurde direkt
         # eingefügt, kein Logger). Aber das Modell muss gesetzt sein.
@@ -2395,7 +2395,7 @@ class TestSprint6Reports:
         window: MainWindow,
         populated_db: Path,
     ) -> None:
-        controller.handle_open_engagement(populated_db)
+        controller.engagement.handle_open_engagement(populated_db)
         # Dashboard sollte aus dem Empty-State raus sein, da Datasets vorhanden sind.
         dashboard = window.dashboard_view()
         assert dashboard._stack.currentWidget() is not dashboard._empty_label
@@ -2410,7 +2410,7 @@ class TestSprint6Reports:
         """Nach einem Import sollte ein Doppelklick aufs Import-Event nichts brechen."""
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             # Trigger eine Aktion mit Sample-Bezug.
             ds_id = _first_item_data(window.sidebar().datasets_widget())
             controller.selection.handle_dataset_selected(ds_id)
@@ -2437,7 +2437,7 @@ class TestSprint6Reports:
             assert sample_id in {s for s in [sample_id]}  # smoke
             assert highlights
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_handle_export_excel_report_writes_file(
         self,
@@ -2462,12 +2462,12 @@ class TestSprint6Reports:
             excel_report_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.export.handle_export_excel_report()
             assert target.exists()
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_handle_export_excel_report_includes_dataset_id_in_samples_sheet(
         self,
@@ -2497,7 +2497,7 @@ class TestSprint6Reports:
             excel_report_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             ds_id = _first_item_data(window.sidebar().datasets_widget())
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.export.handle_export_excel_report()
@@ -2508,7 +2508,7 @@ class TestSprint6Reports:
             dataset_id_col = header.index("Dataset-ID")
             assert rows[1][dataset_id_col] == ds_id
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_handle_export_html_report_writes_file(
         self,
@@ -2535,14 +2535,14 @@ class TestSprint6Reports:
             html_report_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.export.handle_export_html_report()
             assert target.exists()
             content = target.read_text(encoding="utf-8")
             assert "ACME" in content
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_refresh_views_resets_to_empty_on_close(
         self,
@@ -2550,8 +2550,8 @@ class TestSprint6Reports:
         window: MainWindow,
         populated_db: Path,
     ) -> None:
-        controller.handle_open_engagement(populated_db)
-        controller.handle_close_engagement()
+        controller.engagement.handle_open_engagement(populated_db)
+        controller.engagement.handle_close_engagement()
         assert window.audit_trail_view().model()._events == []
 
 
@@ -2600,7 +2600,7 @@ class TestUnifiedExportDialogs:
             audit_pdf_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with patch(
                 "sampling_tool.ui.controllers.export_controller.QMessageBox.information"
             ) as info:
@@ -2610,7 +2610,7 @@ class TestUnifiedExportDialogs:
             args = info.call_args[0]
             assert "1 Events" in args[2]
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_audit_pdf_handler_cancelled_returns_silently(
         self,
@@ -2626,11 +2626,11 @@ class TestUnifiedExportDialogs:
             audit_pdf_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             controller.export.handle_export_audit_pdf()
             assert not list(tmp_path.glob("*.pdf"))
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_excel_report_handler_passes_sheets_subset(
         self,
@@ -2657,14 +2657,14 @@ class TestUnifiedExportDialogs:
             excel_report_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.export.handle_export_excel_report()
             assert target.exists()
             wb = load_workbook(target)
             assert len(wb.sheetnames) == 1
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 class TestSettingsIntegration:
@@ -2795,12 +2795,12 @@ class TestSettingsIntegration:
             settings=settings,
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             controller.export.handle_export_audit_pdf()
             assert captured["default_use_briefpapier"] is False
             assert captured["default_include_statistics"] is False
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_audit_pdf_persists_and_resolves_company_location(
         self,
@@ -2868,7 +2868,7 @@ class TestSettingsIntegration:
             audit_pdf_dialog_factory=factory,  # type: ignore[arg-type]
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.export.handle_export_audit_pdf()
             task = captured["task"]
@@ -2882,7 +2882,7 @@ class TestSettingsIntegration:
             assert loaded.bdo_company_key == "consulting_gmbh"
             assert loaded.bdo_location_key == "linz"
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_reset_keeps_filter_when_setting_enabled(
         self,
@@ -2903,7 +2903,7 @@ class TestSettingsIntegration:
             QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes
         )
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             _open_dataset(controller, window, populated_db)
             controller.selection.handle_sample_selected(
                 _first_item_data(window.sidebar().samples_widget())
@@ -2915,7 +2915,7 @@ class TestSettingsIntegration:
             assert controller._sample is None
             assert controller._filter_active_sample_id is not None
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_resolve_briefpapier_uses_setting_override(
         self,
@@ -3014,7 +3014,7 @@ class TestEngagementStateRestore:
         window: MainWindow,
         populated_db: Path,
     ) -> None:
-        controller.handle_open_engagement(populated_db)
+        controller.engagement.handle_open_engagement(populated_db)
         assert controller._sample is None
         assert controller._active_sample_id is None
         assert controller._filter_active_sample_id is None
@@ -3025,7 +3025,7 @@ class TestEngagementStateRestore:
         window: MainWindow,
         populated_db: Path,
     ) -> None:
-        controller.handle_open_engagement(populated_db)
+        controller.engagement.handle_open_engagement(populated_db)
         ds_id = _first_item_data(window.sidebar().datasets_widget())
         controller.selection.handle_dataset_selected(ds_id)
         sample_id = _first_item_data(window.sidebar().samples_widget())
@@ -3048,19 +3048,19 @@ class TestEngagementStateRestore:
         # Session 1: Sample auswählen, Filter aktivieren, schließen.
         ctrl1 = MainController(window, recent_store=recent_store)
         try:
-            ctrl1.handle_open_engagement(populated_db)
+            ctrl1.engagement.handle_open_engagement(populated_db)
             ds_id = _first_item_data(window.sidebar().datasets_widget())
             ctrl1.selection.handle_dataset_selected(ds_id)
             sample_id = _first_item_data(window.sidebar().samples_widget())
             ctrl1.selection.handle_sample_filter_toggled(sample_id)
             assert window.data_table().table_model().rowCount() == 2
         finally:
-            ctrl1.handle_close_engagement()
+            ctrl1.engagement.handle_close_engagement()
 
         # Session 2: gleiches Engagement erneut öffnen – State muss da sein.
         ctrl2 = MainController(window, recent_store=recent_store)
         try:
-            ctrl2.handle_open_engagement(populated_db)
+            ctrl2.engagement.handle_open_engagement(populated_db)
             assert ctrl2._sample is not None
             assert ctrl2._sample.id == sample_id
             assert ctrl2._filter_active_sample_id == sample_id
@@ -3068,7 +3068,7 @@ class TestEngagementStateRestore:
             highlights = window.data_table().table_model().highlighted_row_ids()
             assert highlights == frozenset({2, 4})
         finally:
-            ctrl2.handle_close_engagement()
+            ctrl2.engagement.handle_close_engagement()
 
     def test_restore_without_filter(
         self,
@@ -3079,7 +3079,7 @@ class TestEngagementStateRestore:
         # Session 1: Sample auswählen ohne Filter (Default ohne Toggle).
         ctrl1 = MainController(window, recent_store=recent_store)
         try:
-            ctrl1.handle_open_engagement(populated_db)
+            ctrl1.engagement.handle_open_engagement(populated_db)
             ds_id = _first_item_data(window.sidebar().datasets_widget())
             ctrl1.selection.handle_dataset_selected(ds_id)
             sample_id = _first_item_data(window.sidebar().samples_widget())
@@ -3088,11 +3088,11 @@ class TestEngagementStateRestore:
             assert ctrl1._filter_active_sample_id is None
             assert window.data_table().table_model().rowCount() == 5
         finally:
-            ctrl1.handle_close_engagement()
+            ctrl1.engagement.handle_close_engagement()
 
         ctrl2 = MainController(window, recent_store=recent_store)
         try:
-            ctrl2.handle_open_engagement(populated_db)
+            ctrl2.engagement.handle_open_engagement(populated_db)
             assert ctrl2._sample is not None
             assert ctrl2._filter_active_sample_id is None
             # Tabelle ungefiltert, aber Highlight da.
@@ -3100,7 +3100,7 @@ class TestEngagementStateRestore:
             highlights = window.data_table().table_model().highlighted_row_ids()
             assert highlights == frozenset({2, 4})
         finally:
-            ctrl2.handle_close_engagement()
+            ctrl2.engagement.handle_close_engagement()
 
     def test_restore_survives_deleted_sample(
         self,
@@ -3133,11 +3133,11 @@ class TestEngagementStateRestore:
         # Öffnen darf nicht crashen, State wird stillschweigend ignoriert.
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             assert controller._sample is None
             assert window.is_workspace_visible() is True
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_reset_clears_persisted_sample(
         self,
@@ -3153,7 +3153,7 @@ class TestEngagementStateRestore:
         )
         controller = MainController(window, recent_store=recent_store)
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             ds_id = _first_item_data(window.sidebar().datasets_widget())
             controller.selection.handle_dataset_selected(ds_id)
             sample_id = _first_item_data(window.sidebar().samples_widget())
@@ -3168,7 +3168,7 @@ class TestEngagementStateRestore:
             assert state.active_sample_id is None
             assert state.filter_active is False
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 # ---------------------------------------------------------------------------
@@ -3217,7 +3217,7 @@ class TestFeatureVisibilityPropagation:
             assert features.show_cluster is False
             assert features.show_stratified is False
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_advanced_mode_macht_alle_features_sichtbar(
         self,
@@ -3256,7 +3256,7 @@ class TestFeatureVisibilityPropagation:
             assert features.show_cluster is True
             assert features.show_stratified is True
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_einzel_toggle_macht_nur_eine_funktion_sichtbar(
         self,
@@ -3298,7 +3298,7 @@ class TestFeatureVisibilityPropagation:
             assert features.show_cluster is False
             assert features.show_stratified is False
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 class TestNewSamplingDistinctProvider:
@@ -3341,7 +3341,7 @@ class TestNewSamplingDistinctProvider:
             assert callable(provider)
             assert provider("Konto") == ["K1", "K2", "K3", "K4", "K5"]
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_hidden_filter_passes_none_provider(
         self,
@@ -3381,7 +3381,7 @@ class TestNewSamplingDistinctProvider:
             controller.workspace.handle_new_sampling()
             assert captured["provider"] is None
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_get_all_rows_not_called_on_dialog_open(
         self,
@@ -3413,7 +3413,7 @@ class TestNewSamplingDistinctProvider:
             _open_dataset(controller, window, populated_db)
             controller.workspace.handle_new_sampling()  # darf NICHT in boom() laufen
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 class TestFilterMatchCountProvider:
@@ -3457,7 +3457,7 @@ class TestFilterMatchCountProvider:
             # Betrag-Werte: 10, 20, 30, 40, 50 (Row 1..5). GT 20 ⇒ {30, 40, 50}.
             assert provider("Betrag", FilterOperator.GT, 20, False) == 3
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_provider_reads_active_sample_at_call_time(
         self,
@@ -3508,7 +3508,7 @@ class TestFilterMatchCountProvider:
             assert unrestricted == 3
             assert restricted != unrestricted
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_hidden_filter_passes_none_match_count_provider(
         self,
@@ -3546,7 +3546,7 @@ class TestFilterMatchCountProvider:
             controller.workspace.handle_new_sampling()
             assert captured["match_count"] is None
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 # ---------------------------------------------------------------------------
@@ -3648,7 +3648,7 @@ class TestUndoDepthWiring:
         settings = dc_replace(AppSettings.defaults(), undo_depth=depth)
         controller = MainController(window, recent_store=recent_store, settings=settings)
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             undo_manager = controller.session.undo_manager
             assert undo_manager is not None
             assert undo_manager._max_depth == depth
@@ -3657,7 +3657,7 @@ class TestUndoDepthWiring:
                 undo_manager.push(sample_id=None, visible_rows=[i], highlighted_rows=[])
             assert sum(1 for _ in iter(undo_manager.undo, None)) == depth
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_undo_depth_applied_live(
         self,
@@ -3672,7 +3672,7 @@ class TestUndoDepthWiring:
         settings = AppSettings.defaults()
         controller = MainController(window, recent_store=recent_store, settings=settings)
         try:
-            controller.handle_open_engagement(populated_db)
+            controller.engagement.handle_open_engagement(populated_db)
             undo_manager = controller.session.undo_manager
             assert undo_manager is not None
 
@@ -3685,7 +3685,7 @@ class TestUndoDepthWiring:
                 undo_manager.push(sample_id=None, visible_rows=[i], highlighted_rows=[])
             assert sum(1 for _ in iter(undo_manager.undo, None)) == new_depth
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 # ---------------------------------------------------------------------------
@@ -3788,7 +3788,7 @@ class TestSamplingPathDispatch:
             controller.workspace.handle_new_sampling()
             assert calls == ["sample_ids"]
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_simple_with_filter_uses_classic_path(
         self,
@@ -3822,7 +3822,7 @@ class TestSamplingPathDispatch:
             controller.workspace.handle_new_sampling()
             assert calls == ["sample"]
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_simple_with_from_sample_only_uses_classic_path(
         self,
@@ -3853,7 +3853,7 @@ class TestSamplingPathDispatch:
             controller.workspace.handle_new_sampling()
             assert calls == ["sample"]
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_cluster_unfiltered_uses_pairs_path(
         self,
@@ -3887,7 +3887,7 @@ class TestSamplingPathDispatch:
             controller.workspace.handle_new_sampling()
             assert calls == ["sample_pairs"]
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_cluster_with_filter_uses_classic_path(
         self,
@@ -3921,7 +3921,7 @@ class TestSamplingPathDispatch:
             controller.workspace.handle_new_sampling()
             assert calls == ["sample"]
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_stratified_unfiltered_uses_pairs_path(
         self,
@@ -3955,7 +3955,7 @@ class TestSamplingPathDispatch:
             controller.workspace.handle_new_sampling()
             assert calls == ["sample_pairs"]
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_stratified_from_sample_only_uses_classic_path(
         self,
@@ -3991,7 +3991,7 @@ class TestSamplingPathDispatch:
             controller.workspace.handle_new_sampling()
             assert calls == ["sample"]
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_cluster_field_with_quote_falls_back_to_classic_path(
         self,
@@ -4028,7 +4028,7 @@ class TestSamplingPathDispatch:
             controller.workspace.handle_new_sampling()
             assert calls == ["sample"]
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     @pytest.mark.parametrize(
         ("method", "size"),
@@ -4075,7 +4075,7 @@ class TestSamplingPathDispatch:
             )
             assert drawn.selected_row_ids == reference.selected_row_ids
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 # ---------------------------------------------------------------------------
@@ -4130,7 +4130,7 @@ class TestSupplementarySampling:
             # population_size = row_count - len(exclude).
             assert population_size == 5 - 2
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_supplement_draw_is_duplicate_free_and_skips_fastpath(
         self,
@@ -4167,7 +4167,7 @@ class TestSupplementarySampling:
             # ... und alles stammt aus der Restmenge {1, 3, 5}.
             assert drawn == {1, 3, 5}  # size=3 über die 3-elementige Restmenge
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_supplement_population_size_is_remainder(
         self,
@@ -4195,7 +4195,7 @@ class TestSupplementarySampling:
             # row_count 5 - 2 ausgeschlossene = 3 reale Population dieser Ziehung.
             assert controller.session.sample.population_size == 3
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_supplement_sets_parent_sample_id(
         self,
@@ -4229,7 +4229,7 @@ class TestSupplementarySampling:
             assert reloaded is not None
             assert reloaded.parent_sample_id == parent_id
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_supplement_reproducible_same_seed_identical(
         self,
@@ -4277,7 +4277,7 @@ class TestSupplementarySampling:
                 assert set(drawn).issubset({1, 3, 5})
                 return drawn
             finally:
-                controller.handle_close_engagement()
+                controller.engagement.handle_close_engagement()
 
         # Mehrere Seeds, jeder zweimal aus frischer DB-Kopie gezogen ⇒ pro Seed
         # bit-identisch (Oracle über mehrere Läufe/Seeds, ISAE-3402).
@@ -4332,7 +4332,7 @@ class TestSupplementarySampling:
             assert drawn.issubset({3, 4, 5})
             assert drawn.isdisjoint({2, 4})
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_supplement_without_active_sample_falls_through(
         self,
@@ -4365,7 +4365,7 @@ class TestSupplementarySampling:
             assert controller.session.sample.population_size == 5
             assert controller.session.sample.parent_sample_id is None
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_oversized_supplement_surfaces_clean_error(
         self,
@@ -4407,7 +4407,7 @@ class TestSupplementarySampling:
             assert controller.session.sample.id == active_id
             assert set(controller.session.sample.selected_row_ids) == {2, 4}
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 # ---------------------------------------------------------------------------
@@ -4448,7 +4448,7 @@ class TestResetSampling:
             assert controller.session.filter_active_sample_id is None
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_reset_preserves_population(
         self,
@@ -4473,7 +4473,7 @@ class TestResetSampling:
             assert controller.session.dataset is not None
             assert controller.session.dataset.row_count == len(rows_before)
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_reset_preserves_parameters(
         self,
@@ -4500,7 +4500,7 @@ class TestResetSampling:
             assert controller.session.settings == settings_before
             assert controller.session.dataset == dataset_before
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_reset_when_nothing_drawn_is_noop(
         self,
@@ -4520,7 +4520,7 @@ class TestResetSampling:
             assert controller.session.active_sample_id is None
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_reset_keeps_persisted_sample_and_audit(
         self,
@@ -4549,7 +4549,7 @@ class TestResetSampling:
             remaining = SampleRepo(controller.session.db.connect()).list_for_dataset(ds_id)
             assert any(s.id == sample_id for s in remaining)
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_handle_reset_sampling_confirmation_clears(
         self,
@@ -4573,7 +4573,7 @@ class TestResetSampling:
             assert controller.session.sample is None
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_handle_reset_sampling_cancelled_keeps_sample(
         self,
@@ -4597,7 +4597,7 @@ class TestResetSampling:
             assert controller.session.sample is not None
             assert len(window.data_table().table_model().highlighted_row_ids()) == 2
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 class TestAuditTrailRobustness:
@@ -4645,7 +4645,7 @@ class TestAuditTrailRobustness:
                 controller.export.handle_export_sample()  # darf NICHT werfen
             mock_warning.assert_called_once()
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_export_kept_and_warns_when_audit_log_fails(
         self,
@@ -4694,7 +4694,7 @@ class TestAuditTrailRobustness:
             files = list(tmp_path.glob("testname_ID42_BDO_sampling_*.xlsx"))
             assert len(files) == 1, "Exportdatei muss trotz Audit-Log-Fehler erhalten bleiben"
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_export_audit_log_retry_succeeds_on_second_attempt(
         self,
@@ -4756,7 +4756,7 @@ class TestAuditTrailRobustness:
             export_events = [e for e in events if e.event_type == "export"]
             assert len(export_events) == 1
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_reset_survives_audit_log_failure(
         self,
@@ -4792,7 +4792,7 @@ class TestAuditTrailRobustness:
             mock_warning.assert_called_once()
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_reset_sampling_survives_audit_log_failure(
         self,
@@ -4829,7 +4829,7 @@ class TestAuditTrailRobustness:
             assert controller.session.sample is None
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_undo_of_first_draw_logs_event(
         self,
@@ -4870,7 +4870,7 @@ class TestAuditTrailRobustness:
             assert undo_events[0].sample_id is None
             assert undo_events[0].details == {"restored": "empty"}
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_undo_survives_audit_log_failure(
         self,
@@ -4907,7 +4907,7 @@ class TestAuditTrailRobustness:
             mock_warning.assert_called_once()
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_undo_logs_real_sample_id_when_restoring_prior_draw(
         self,
@@ -4968,7 +4968,7 @@ class TestAuditTrailRobustness:
             assert len(undo_events) == 1
             assert undo_events[0].sample_id == first_sample_id
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_redo_logs_event(
         self,
@@ -5009,7 +5009,7 @@ class TestAuditTrailRobustness:
             assert len(redo_events) == 1
             assert redo_events[0].sample_id is not None
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_redo_survives_audit_log_failure(
         self,
@@ -5047,7 +5047,7 @@ class TestAuditTrailRobustness:
             mock_warning.assert_called_once()
             assert len(window.data_table().table_model().highlighted_row_ids()) == 3
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 @contextlib.contextmanager
@@ -5121,7 +5121,7 @@ class TestReproducibilityViaController:
             assert seed2 == seed1
             assert r1 == r2
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_multiple_resets_stay_identical(
         self,
@@ -5145,7 +5145,7 @@ class TestReproducibilityViaController:
             assert seeds_used[0] == seeds_used[1] == seeds_used[2]
             assert samples[0] == samples[1] == samples[2]
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_two_consecutive_draws_without_reset_identical(
         self,
@@ -5172,7 +5172,7 @@ class TestReproducibilityViaController:
             assert seed2 == seed1
             assert r1 == r2
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 class TestSeedRelocationReproducibility:
@@ -5213,7 +5213,7 @@ class TestSeedRelocationReproducibility:
             assert seed2 == 24680
             assert r1 == r2
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_changed_settings_seed_used_for_next_draw(
         self,
@@ -5245,7 +5245,7 @@ class TestSeedRelocationReproducibility:
                 assert controller.session.sample is not None
                 assert controller.session.sample.config.seed == 2002
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
 
 class TestRefreshViewsSingleEventLoad:
@@ -5266,7 +5266,7 @@ class TestRefreshViewsSingleEventLoad:
         from sampling_tool.core.models import AuditEvent
         from sampling_tool.persistence.repositories import AuditRepo
 
-        controller.handle_open_engagement(populated_db)
+        controller.engagement.handle_open_engagement(populated_db)
 
         calls: list[int] = []
         original = AuditRepo.list_for_engagement
@@ -5289,7 +5289,7 @@ class TestRefreshViewsSingleEventLoad:
     ) -> None:
         from sampling_tool.core.models import AuditEvent
 
-        controller.handle_open_engagement(populated_db)
+        controller.engagement.handle_open_engagement(populated_db)
 
         seen: dict[str, list[AuditEvent]] = {}
         original_set_events = window.set_audit_events
@@ -5321,9 +5321,10 @@ def test_maincontroller_has_no_help_or_workspace_forwards(controller: MainContro
     MainController raus – Aufrufer nutzen jetzt ``controller.help.*`` bzw.
     ``controller.workspace.*`` (analog zum export-Piloten, Sprint 59).
 
-    Pinnt die Etappen-Grenze: engagement-Forwards bleiben noch (Etappe 3),
-    die Fassade fällt erst danach ganz. selection-Forwards sind seit Sprint 65
-    (Etappe 2) ebenfalls weg – siehe test_maincontroller_has_no_selection_forwards.
+    selection-Forwards sind seit Sprint 65 (Etappe 2) ebenfalls weg – siehe
+    test_maincontroller_has_no_selection_forwards. engagement-Forwards +
+    Compat-Properties/-Helfer sind seit Sprint 66 (Etappe 3) ebenfalls weg –
+    siehe test_maincontroller_facade_removed.
     """
     removed_help = (
         "handle_bug_report",
@@ -5356,18 +5357,14 @@ def test_maincontroller_has_no_help_or_workspace_forwards(controller: MainContro
     assert callable(controller.workspace.handle_new_sampling)
     assert callable(controller.workspace.handle_import_excel)
 
-    # Etappen-Beweis: engagement-Forwards sind noch da (Etappe 3).
-    assert callable(controller.handle_new_engagement)
-    assert callable(controller.handle_close_engagement)
-
 
 def test_maincontroller_has_no_selection_forwards(controller: MainController) -> None:
     """Sprint 65 / L-003 Etappe 2: selection-Forwards sind aus dem
     MainController raus – Aufrufer nutzen jetzt ``controller.selection.*``
     (analog zum export-Piloten Sprint 59, help/workspace Sprint 64).
 
-    Pinnt die Etappen-Grenze: engagement-Forwards + Compat-Properties/-Helfer
-    bleiben noch (Etappe 3), die Fassade fällt erst danach ganz.
+    engagement-Forwards + Compat-Properties/-Helfer sind seit Sprint 66
+    (Etappe 3) ebenfalls weg – siehe test_maincontroller_facade_removed.
     """
     removed_selection = (
         "handle_dataset_selected",
@@ -5387,7 +5384,3 @@ def test_maincontroller_has_no_selection_forwards(controller: MainController) ->
     assert callable(controller.selection.handle_sample_filter_toggled)
     assert callable(controller.selection.handle_filter_only_sample_toggled)
     assert callable(controller.selection.handle_audit_event_double_clicked)
-
-    # Etappen-Beweis: engagement-Forwards sind noch da (Etappe 3).
-    assert callable(controller.handle_new_engagement)
-    assert callable(controller.handle_close_engagement)

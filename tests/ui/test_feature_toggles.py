@@ -290,7 +290,7 @@ def populated_db(tmp_path: Path) -> Path:
 
 
 def _open_dataset(controller: MainController, window: MainWindow, db_path: Path) -> int:
-    controller.handle_open_engagement(db_path)
+    controller.engagement.handle_open_engagement(db_path)
     item = window.sidebar().datasets_widget().item(0)
     assert item is not None
     from PyQt6.QtCore import Qt
@@ -312,7 +312,7 @@ class TestFeatureToggleWiring:
             # App-weit persistiert.
             assert load_settings().show_filter_feature is True
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_panel_action_toggle_applies_visibility_live(
         self, window: MainWindow, recent_store: RecentEngagementsStore
@@ -325,7 +325,7 @@ class TestFeatureToggleWiring:
             assert window._lower_tabs.indexOf(window._dashboard_view) == -1
             assert load_settings().show_dashboard is False
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()
 
     def test_init_syncs_menu_from_settings(
         self, window: MainWindow, recent_store: RecentEngagementsStore
@@ -420,4 +420,4 @@ class TestToggleSamplingNeutrality:
             # Nur die Sichtbarkeit wurde geändert – kein Filter ist gesetzt.
             assert controller.session.sample.config.filter_field is None
         finally:
-            controller.handle_close_engagement()
+            controller.engagement.handle_close_engagement()

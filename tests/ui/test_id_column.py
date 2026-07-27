@@ -194,7 +194,7 @@ class TestIdColumnEndToEnd:
         ctrl = MainController(
             win, recent_store=RecentEngagementsStore(path=tmp_path / "recent.json")
         )
-        ctrl.handle_open_engagement(db_path)
+        ctrl.engagement.handle_open_engagement(db_path)
         DatasetIdColumnStore().set(db_path.stem, ds_id, "Belegnr")
         ctrl.selection.handle_dataset_selected(ds_id)
 
@@ -202,7 +202,7 @@ class TestIdColumnEndToEnd:
         assert item is not None
         # selected_row_ids (1,2,3,4,5) → erste 3 Belegnr-Werte + „…“.
         assert "IDs: 1001, 1002, 1003, …" in item.text()
-        ctrl.handle_close_engagement()
+        ctrl.engagement.handle_close_engagement()
 
     def test_toggle_off_then_on_live_updates_sidebar(self, qtbot: QtBot, tmp_path: Path) -> None:
         db_path, ds_id = _populated_db(tmp_path)
@@ -211,7 +211,7 @@ class TestIdColumnEndToEnd:
         ctrl = MainController(
             win, recent_store=RecentEngagementsStore(path=tmp_path / "recent.json")
         )
-        ctrl.handle_open_engagement(db_path)
+        ctrl.engagement.handle_open_engagement(db_path)
         DatasetIdColumnStore().set(db_path.stem, ds_id, "Belegnr")
         ctrl.selection.handle_dataset_selected(ds_id)
         assert "IDs:" in _samples_item_text(win)
@@ -223,7 +223,7 @@ class TestIdColumnEndToEnd:
         # Wieder an → IDs zurück.
         ctrl.session.apply_new_settings(replace(ctrl.session.settings, show_sample_id_column=True))
         assert "IDs:" in _samples_item_text(win)
-        ctrl.handle_close_engagement()
+        ctrl.engagement.handle_close_engagement()
 
     def test_no_column_chosen_shows_legacy_label(self, qtbot: QtBot, tmp_path: Path) -> None:
         db_path, ds_id = _populated_db(tmp_path)
@@ -232,11 +232,11 @@ class TestIdColumnEndToEnd:
         ctrl = MainController(
             win, recent_store=RecentEngagementsStore(path=tmp_path / "recent.json")
         )
-        ctrl.handle_open_engagement(db_path)
+        ctrl.engagement.handle_open_engagement(db_path)
         # KEINE ID-Spalte gesetzt.
         ctrl.selection.handle_dataset_selected(ds_id)
         assert "IDs:" not in _samples_item_text(win)
-        ctrl.handle_close_engagement()
+        ctrl.engagement.handle_close_engagement()
 
     def test_active_sample_marker_survives_settings_change(
         self, qtbot: QtBot, tmp_path: Path
@@ -250,7 +250,7 @@ class TestIdColumnEndToEnd:
         ctrl = MainController(
             win, recent_store=RecentEngagementsStore(path=tmp_path / "recent.json")
         )
-        ctrl.handle_open_engagement(db_path)
+        ctrl.engagement.handle_open_engagement(db_path)
         ctrl.selection.handle_dataset_selected(ds_id)
 
         assert ctrl.session.db is not None
@@ -270,7 +270,7 @@ class TestIdColumnEndToEnd:
         # Aktive-Sample-Markierung + Export-Button bleiben erhalten.
         assert item.text().startswith("●")
         assert win._action_export_sample.isEnabled() is True
-        ctrl.handle_close_engagement()
+        ctrl.engagement.handle_close_engagement()
 
 
 def _samples_item_text(win: MainWindow) -> str:
@@ -360,7 +360,7 @@ class TestPostImportIdColumnWiring:
             recent_store=RecentEngagementsStore(path=tmp_path / "recent.json"),
             id_column_dialog_factory=id_factory,  # type: ignore[arg-type]
         )
-        ctrl.handle_open_engagement(db_path)
+        ctrl.engagement.handle_open_engagement(db_path)
         with (
             patch(
                 "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
@@ -380,18 +380,18 @@ class TestPostImportIdColumnWiring:
         db_stem = ctrl.session.db.db_path.stem  # type: ignore[union-attr]
         assert DatasetIdColumnStore().get(db_stem, ds_id) == "Belegnr"
         assert stub.seen_columns == ["Belegnr", "Betrag"]
-        ctrl.handle_close_engagement()
+        ctrl.engagement.handle_close_engagement()
 
     def test_cancel_stores_nothing(self, qtbot: QtBot, tmp_path: Path) -> None:
         stub = _StubIdColumnDialog("Belegnr", accept=False)
         ctrl, ds_id = self._run_import(qtbot, tmp_path, stub)
         db_stem = ctrl.session.db.db_path.stem  # type: ignore[union-attr]
         assert DatasetIdColumnStore().get(db_stem, ds_id) is None
-        ctrl.handle_close_engagement()
+        ctrl.engagement.handle_close_engagement()
 
     def test_keine_choice_stores_nothing(self, qtbot: QtBot, tmp_path: Path) -> None:
         stub = _StubIdColumnDialog(None)  # „Keine" gewählt + bestätigt.
         ctrl, ds_id = self._run_import(qtbot, tmp_path, stub)
         db_stem = ctrl.session.db.db_path.stem  # type: ignore[union-attr]
         assert DatasetIdColumnStore().get(db_stem, ds_id) is None
-        ctrl.handle_close_engagement()
+        ctrl.engagement.handle_close_engagement()

@@ -102,7 +102,7 @@ class TestClearLoadedDatasets:
         ctrl = MainController(
             window, recent_store=RecentEngagementsStore(path=tmp_path / "recent.json")
         )
-        ctrl.handle_open_engagement(db_path)
+        ctrl.engagement.handle_open_engagement(db_path)
         ctrl.selection.handle_dataset_selected(ds_id)  # Dataset in die Tabelle laden.
         return ctrl
 
@@ -120,7 +120,7 @@ class TestClearLoadedDatasets:
         assert window.sidebar().datasets_widget().count() == 0
         assert window.sidebar().samples_widget().count() == 0
         assert window.data_table().table_model().rowCount() == 0
-        ctrl.handle_close_engagement()
+        ctrl.engagement.handle_close_engagement()
 
     def test_clear_does_not_touch_db(
         self, window: MainWindow, tmp_path: Path, populated_db: tuple[Path, int, int]
@@ -140,7 +140,7 @@ class TestClearLoadedDatasets:
         # Erneutes reload_datasets zeigt sie wieder in der Sidebar.
         ctrl.session.reload_datasets()
         assert window.sidebar().datasets_widget().count() == 1
-        ctrl.handle_close_engagement()
+        ctrl.engagement.handle_close_engagement()
 
     def test_clear_keeps_project_open(
         self, window: MainWindow, tmp_path: Path, populated_db: tuple[Path, int, int]
@@ -153,7 +153,7 @@ class TestClearLoadedDatasets:
         # Kein Wechsel zum Welcome-Screen; Engagement bleibt geladen.
         assert window.is_workspace_visible() is True
         assert ctrl.session.has_engagement() is True
-        ctrl.handle_close_engagement()
+        ctrl.engagement.handle_close_engagement()
 
     def test_clear_cancelled_is_noop(
         self, window: MainWindow, tmp_path: Path, populated_db: tuple[Path, int, int]
@@ -166,7 +166,7 @@ class TestClearLoadedDatasets:
         # Abbruch → nichts geleert.
         assert window.sidebar().datasets_widget().count() == 1
         assert window.data_table().table_model().rowCount() == 5
-        ctrl.handle_close_engagement()
+        ctrl.engagement.handle_close_engagement()
 
     def test_menu_action_emits_signal(
         self, window: MainWindow, tmp_path: Path, populated_db: tuple[Path, int, int]
@@ -176,7 +176,7 @@ class TestClearLoadedDatasets:
         with patch(_QUESTION, return_value=QMessageBox.StandardButton.Yes):
             window._action_clear_datasets.trigger()
         assert window.sidebar().datasets_widget().count() == 0
-        ctrl.handle_close_engagement()
+        ctrl.engagement.handle_close_engagement()
 
     def test_undo_snapshot_after_clear_applies_empty_state(
         self, window: MainWindow, tmp_path: Path, populated_db: tuple[Path, int, int]
@@ -208,4 +208,4 @@ class TestClearLoadedDatasets:
         assert ctrl.session.sample is None
         assert ctrl.session.active_sample_id is None
         assert ctrl.session.filter_active_sample_id is None
-        ctrl.handle_close_engagement()
+        ctrl.engagement.handle_close_engagement()

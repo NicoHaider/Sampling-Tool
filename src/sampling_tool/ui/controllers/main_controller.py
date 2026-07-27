@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sampling_tool.ui.controllers._factories import (
@@ -197,27 +196,6 @@ class MainController:
     def refresh_recent(self) -> None:
         """Liest die Recent-Liste und gibt sie ans Fenster."""
         self.engagement.refresh_recent()
-
-    # ---- Backward-Compat-Fassade für public handle_*-Methoden ----------
-    #
-    # Bestehende Tests rufen diese Methoden direkt auf dem MainController auf.
-    # Forwards an den jeweiligen Sub-Controller. Reine Delegation, keine
-    # eigene Logik.
-    #
-    # `export` hat hier bewusst keine Forwards mehr: Sprint 59 / Teil C hat
-    # sie entfernt, Aufrufer nutzen jetzt `self.export.handle_export_*`.
-
-    def handle_new_engagement(self) -> None:
-        self.engagement.handle_new_engagement()
-
-    def handle_open_engagement(self, db_path: Path) -> None:
-        self.engagement.handle_open_engagement(db_path)
-
-    def handle_close_engagement_requested(self) -> None:
-        self.engagement.handle_close_engagement_requested()
-
-    def handle_close_engagement(self) -> None:
-        self.engagement.handle_close_engagement()
 
     # ---- Backward-Compat: interne Helfer als Forwards ------------------
     #
