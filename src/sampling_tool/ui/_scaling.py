@@ -28,10 +28,18 @@ _SCALE_FACTORS: Final[dict[str, float]] = {
 UI_SCALE_LEVELS: Final[tuple[str, ...]] = tuple(_SCALE_FACTORS)
 
 _FONT_SIZE_RE: Final[re.Pattern[str]] = re.compile(r"(font-size:\s*)(\d+)(px)")
-# Erfasst nur die vier LogoPlaceholder-Grenzwerte – die einzige Stelle in
-# bdo_light.qss, an der diese vier Properties vorkommen (siehe
-# `QLabel#LogoPlaceholder`-Block).
+# Grenzwert-Muster für min/max-width/height – wird NUR innerhalb des per
+# `_LOGO_BLOCK_RE` isolierten LogoPlaceholder-Blocks angewendet (siehe unten),
+# damit andere Blöcke mit denselben Property-Namen (z. B. der
+# QScrollBar::handle-Block mit `min-height`/`min-width`) unangetastet bleiben.
 _LOGO_BOUND_RE: Final[re.Pattern[str]] = re.compile(r"((?:min|max)-(?:width|height):\s*)(\d+)(px)")
+# Isoliert den `QLabel#LogoPlaceholder { ... }`-Block, damit `_LOGO_BOUND_RE`
+# nur dort greift. QSS-Blöcke in dieser Datei sind flach (keine verschachtelten
+# `{`), daher fängt ein non-greedy `.*?` mit `re.DOTALL` zuverlässig genau
+# einen Block-Body bis zur schließenden `}`.
+_LOGO_BLOCK_RE: Final[re.Pattern[str]] = re.compile(
+    r"(QLabel#LogoPlaceholder\s*\{)(.*?)(\})", re.DOTALL
+)
 
 
 def scale_factor(ui_scale: str) -> float:
@@ -56,8 +64,12 @@ def scale_stylesheet(qss: str, factor: float) -> str:
         prefix, value, suffix = match.group(1), match.group(2), match.group(3)
         return f"{prefix}{scaled_px(int(value), factor)}{suffix}"
 
+    def _replace_logo_block(match: re.Match[str]) -> str:
+        prefix, body, suffix = match.group(1), match.group(2), match.group(3)
+        return f"{prefix}{_LOGO_BOUND_RE.sub(_replace, body)}{suffix}"
+
     scaled = _FONT_SIZE_RE.sub(_replace, qss)
-    return _LOGO_BOUND_RE.sub(_replace, scaled)
+    return _LOGO_BLOCK_RE.sub(_replace_logo_block, scaled)
 
 
 def load_scaled_stylesheet(factor: float) -> str:

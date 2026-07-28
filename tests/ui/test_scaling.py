@@ -95,6 +95,14 @@ class TestScaleStylesheetScaling:
         assert "padding: 8px 18px;" in scaled  # unverändertes Layout-px
         assert "width: 24px;" in scaled  # QComboBox::drop-down – kein font-size
 
+    def test_scrollbar_handle_min_size_unchanged(self) -> None:
+        """Regression: `_LOGO_BOUND_RE` must NOT touch the scrollbar handle's
+        `min-height`/`min-width` (Sprint 68 self-review finding) — only the
+        LogoPlaceholder block's bounds may scale."""
+        scaled = scale_stylesheet(_real_qss(), 1.15)
+        assert "min-height: 30px;" in scaled
+        assert "min-width: 30px;" in scaled
+
 
 class TestLoadScaledStylesheet:
     def test_normal_matches_real_file_byte_identical(self) -> None:
