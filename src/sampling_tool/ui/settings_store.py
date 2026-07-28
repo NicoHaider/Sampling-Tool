@@ -20,6 +20,7 @@ from typing import Final
 from PyQt6.QtCore import QSettings
 
 from sampling_tool.config import APP_NAME, APP_ORG, ENGAGEMENTS_DIR
+from sampling_tool.ui._scaling import UI_SCALE_DEFAULT, UI_SCALE_LEVELS
 
 LOG_LEVELS: Final[tuple[str, ...]] = ("INFO", "DEBUG")
 DEFAULT_UNDO_DEPTH: Final[int] = 20
@@ -104,6 +105,10 @@ class AppSettings:
     advanced_mode: bool
     undo_depth: int
     log_level: str
+    # Sprint 68 / Teil B1: app-weite UI-Größe (klein/normal/groß). Faktor-SSOT
+    # lebt in `ui/_scaling.py`, damit Persistenz und Skalierung nicht zwei
+    # eigene Wertelisten pflegen.
+    ui_scale: str
 
     # Einzel-Toggles für Advanced-Sampling-Funktionen (Sprint 22) – app-weit,
     # Default aus. Wirken unabhängig neben `advanced_mode` (ODER-Logik in
@@ -141,6 +146,7 @@ class AppSettings:
             advanced_mode=False,
             undo_depth=DEFAULT_UNDO_DEPTH,
             log_level=DEFAULT_LOG_LEVEL,
+            ui_scale=UI_SCALE_DEFAULT,
             # Sprint 36: Spalten-Filter ist ab Werk sichtbar (unabhängig von
             # Advanced-Mode). Bewusste Verhaltensänderung – auch für
             # Bestandsuser ohne explizit gesetzten Key. Cluster/Geschichtet
@@ -236,6 +242,10 @@ def load_settings() -> AppSettings:
     if log_level not in LOG_LEVELS:
         log_level = base.log_level
 
+    ui_scale = _str(s.value("settings/ui_scale", base.ui_scale))
+    if ui_scale not in UI_SCALE_LEVELS:
+        ui_scale = base.ui_scale
+
     has_first_run_key = s.contains("settings/first_run_completed")
     raw_engagements_dir = _str(s.value("settings/engagements_dir", ""))
     if has_first_run_key:
@@ -286,6 +296,7 @@ def load_settings() -> AppSettings:
         ),
         undo_depth=_int(s.value("settings/undo_depth", base.undo_depth), base.undo_depth),
         log_level=log_level,
+        ui_scale=ui_scale,
         first_run_completed=first_run_completed,
     )
 
@@ -327,6 +338,7 @@ def save_settings(settings: AppSettings) -> None:
     s.setValue("settings/first_run_completed", settings.first_run_completed)
     s.setValue("settings/undo_depth", settings.undo_depth)
     s.setValue("settings/log_level", settings.log_level)
+    s.setValue("settings/ui_scale", settings.ui_scale)
     s.sync()
 
 
