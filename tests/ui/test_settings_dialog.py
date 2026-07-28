@@ -520,3 +520,39 @@ class TestScrollFallback:
         screen = dialog.screen()
         assert screen is not None
         assert dialog.maximumHeight() <= screen.availableGeometry().height()
+
+
+class TestUiScaleSetting:
+    """Sprint 68 / Teil B1: UI-Größe-Dropdown im Erweitert-Tab."""
+
+    def test_default_shows_normal(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        assert dialog._ui_scale.currentData() == "normal"
+
+    def test_prefilled_with_current_value(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        current = replace(defaults, ui_scale="groß")
+        dialog = SettingsDialog(current)
+        qtbot.addWidget(dialog)
+        assert dialog._ui_scale.currentData() == "groß"
+
+    def test_ok_propagates(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        dialog._ui_scale.setCurrentIndex(dialog._ui_scale.findData("klein"))
+        dialog._on_accept()
+        result = dialog.get_settings()
+        assert result is not None
+        assert result.ui_scale == "klein"
+
+    def test_reset_restores_normal(
+        self, qtbot: QtBot, defaults: AppSettings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        current = replace(defaults, ui_scale="groß")
+        dialog = SettingsDialog(current)
+        qtbot.addWidget(dialog)
+        monkeypatch.setattr(
+            QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes
+        )
+        dialog._on_reset_defaults()
+        assert dialog._ui_scale.currentData() == "normal"
