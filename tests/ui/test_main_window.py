@@ -763,6 +763,20 @@ class TestOuterSplitterPersistence:
         )
 
     def test_outer_splitter_persisted(self, qtbot: QtBot) -> None:
+        # Verarbeitet zuerst liegengebliebene `deleteLater()`-Events aus
+        # vorangegangenen Tests dieser Datei (viele kurzlebige `MainWindow`-
+        # Instanzen mit je einer `DataTableView`). Dieser Test ist der erste
+        # mit zwei parallel sichtbaren Workspace-Fenstern – ohne den Wait
+        # traf ein längst geplantes, aber noch nicht zugestelltes Paint-Event
+        # empirisch reproduzierbar auf ein inzwischen C++-seitig gelöschtes
+        # Widget und crashte den Prozess mit einem Segfault (nicht nur einen
+        # Testfehler). `qtbot.wait(0)` reichte nicht, um den Rückstau aus
+        # ~60 vorangehenden Tests zu leeren; 200 ms taten es zuverlässig
+        # (7 Wiederholungen ohne Crash). Zusätzlich abgesichert durch den
+        # `sip.isdeleted`-Check + das `except RuntimeError` in
+        # `DataTableView.paintEvent` – die eigentliche, verlässliche
+        # Fehlerbehebung ist aber dieser Wait, nicht der Guard dort.
+        qtbot.wait(200)
         win1 = MainWindow()
         qtbot.addWidget(win1)
         win1.show()

@@ -28,6 +28,7 @@ from collections.abc import Sequence
 from datetime import date, datetime, time
 from typing import Any, ClassVar
 
+from PyQt6 import sip
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PyQt6.QtGui import QBrush, QColor, QPainter, QPaintEvent
 from PyQt6.QtWidgets import QHeaderView, QTableView, QWidget
@@ -358,9 +359,27 @@ class DataTableView(QTableView):
         if self._model.rowCount() > 0:
             return
         viewport = self.viewport()
-        if viewport is None:
+        # `viewport()` kann ein Python-Wrapper-Objekt liefern, dessen C++-Seite
+        # bereits (per `deleteLater()`) zerstört wurde – `is None` prüft nur
+        # den Python-Zustand, nicht den C++-Zustand. Zusätzliche Härtung für
+        # den Fall, dass ein Paint-Event auf ein bereits gelöschtes Widget
+        # zugestellt wird: der `sip.isdeleted`-Check fängt den Normalfall ab,
+        # das `except RuntimeError` um die Konstruktion fängt den knappen
+        # Race zwischen Prüfung und Konstruktion. Wichtig: dieser Guard
+        # allein verhindert NICHT zuverlässig den in Sprint 67 beobachteten
+        # Prozess-Crash (der trat mit exakt diesem Guard weiterhin auf) –
+        # die eigentliche Fehlerbehebung dafür ist ein sauberes Leeren der
+        # Event-Queue vor dem betroffenen Test (siehe `qtbot.wait(200)` in
+        # `TestOuterSplitterPersistence.test_outer_splitter_persisted`,
+        # tests/ui/test_main_window.py). Dieser Guard bleibt trotzdem sinnvoll
+        # als Verteidigung gegen denselben Fehlerklasse in anderen, nicht
+        # getesteten Aufrufkontexten.
+        if viewport is None or sip.isdeleted(viewport):
             return
-        painter = QPainter(viewport)
+        try:
+            painter = QPainter(viewport)
+        except RuntimeError:
+            return
         try:
             painter.setPen(QColor("#B0B0B0"))
             font = painter.font()
