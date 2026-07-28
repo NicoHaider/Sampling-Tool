@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QSettings, pyqtSignal
+from PyQt6.QtCore import QSettings, QSize, pyqtSignal
 from PyQt6.QtGui import QAction, QCloseEvent
 from PyQt6.QtWidgets import (
     QFileDialog,
@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 from sampling_tool.config import APP_NAME, APP_ORG, ENGAGEMENTS_DIR
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.persistence.repositories import DatasetRepo
+from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui._window_layout import (
     build_workspace,
 )
@@ -37,11 +38,11 @@ from sampling_tool.ui._window_menu import (
     rebuild_recent_menu,
 )
 from sampling_tool.ui._window_state import WindowStateController
-from sampling_tool.ui._window_toolbar import build_toolbar
+from sampling_tool.ui._window_toolbar import _TOOLBAR_ICON_SIZE, build_toolbar
 from sampling_tool.ui.recent import RecentEntry
 from sampling_tool.ui.widgets.audit_trail_view import AuditTrailView
 from sampling_tool.ui.widgets.dashboard_view import DashboardView
-from sampling_tool.ui.widgets.data_table import DataTableView
+from sampling_tool.ui.widgets.data_table import _DEFAULT_ROW_HEIGHT, DataTableView
 from sampling_tool.ui.widgets.sidebar import NavigationSidebar
 from sampling_tool.ui.widgets.welcome import WelcomeScreen
 
@@ -384,6 +385,14 @@ class MainWindow(QMainWindow):
         self._window_state.apply_panel_visibility(
             show_dashboard=show_dashboard, show_audit_trail=show_audit_trail
         )
+
+    def apply_ui_scale(self, factor: float) -> None:
+        """Wendet den UI-Skalierungsfaktor auf Toolbar-Icons, Tabellen-
+        Zeilenhöhe und die persistenten Dashboard-/Welcome-Widgets an
+        (Sprint 68 / Teil B1)."""
+        icon_px = scaled_px(_TOOLBAR_ICON_SIZE, factor)
+        self._toolbar.setIconSize(QSize(icon_px, icon_px))
+        self._data_table.set_row_height_px(scaled_px(_DEFAULT_ROW_HEIGHT, factor))
 
     def apply_view_menu_state(
         self,
