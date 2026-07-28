@@ -787,12 +787,16 @@ class TestOuterSplitterPersistence:
         # nicht-aktuelle Stack-Seite bekommt von Qt keine reale Layout-Größe
         # zugewiesen – jede `setSizes`-Anfrage würde sonst wirkungslos auf die
         # winzige Default-Größe zurückfallen, weshalb hier zuerst auf den
-        # Workspace umgeschaltet wird. Zusätzlich braucht das Fenster – analog
-        # zu `TestWindowGeometryPersistence.test_geometry_roundtrip` – eine
-        # reale Breite oberhalb seiner Layout-Mindestbreite (~810–870px),
-        # sonst ist für den Splitter kein Spielraum zum Verschieben vorhanden.
+        # Workspace umgeschaltet wird. Zusätzlich braucht das Fenster genug
+        # reale Breite oberhalb seiner Layout-Mindestbreite: 1000px reichte
+        # auf macOS/Ubuntu-CI, schlug auf Windows-CI aber fehl (Sidebar
+        # landete bei genau `_SIDEBAR_MIN_WIDTH` statt 300) – vermutlich
+        # weil Windows' Default-Schriftmetriken den Workspace-Bereich
+        # (AuditTrail/Dashboard/Tabelle) breiter machen als auf macOS/Linux,
+        # sodass bei 1000px zu wenig Spielraum für eine 300px-Sidebar bleibt.
+        # 1600px lässt auf allen drei OS reichlich Puffer.
         win1.show_workspace()
-        win1.setGeometry(20, 20, 1000, 650)
+        win1.setGeometry(20, 20, 1600, 800)
         win1.outer_splitter().setSizes([300, 400])
         win1._window_state.save()
 
@@ -801,7 +805,7 @@ class TestOuterSplitterPersistence:
         win2.show()
         qtbot.waitExposed(win2)
         win2.show_workspace()
-        win2.setGeometry(20, 20, 1000, 650)
+        win2.setGeometry(20, 20, 1600, 800)
         assert win2.outer_splitter().sizes()[0] == 300
 
 
