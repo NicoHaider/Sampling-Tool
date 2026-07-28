@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QSplitter, QTabWidget
 from sampling_tool.ui.widgets.audit_trail_view import AuditTrailView
 from sampling_tool.ui.widgets.dashboard_view import DashboardView
 from sampling_tool.ui.widgets.data_table import DataTableView
-from sampling_tool.ui.widgets.sidebar import NavigationSidebar
+from sampling_tool.ui.widgets.sidebar import _SIDEBAR_WIDTH, NavigationSidebar
 
 if TYPE_CHECKING:
     from sampling_tool.ui.main_window import MainWindow
@@ -66,5 +66,9 @@ def build_workspace(window: MainWindow) -> QSplitter:
     outer.addWidget(window._workspace_splitter)
     outer.setStretchFactor(0, 0)
     outer.setStretchFactor(1, 1)
-    outer.setSizes([250, 1030])
+    # Sprint 67 / Teil A: der zweite Wert ist kein festes Ziel, sondern
+    # drückt "Rest der verfügbaren Breite" aus – Qt kappt auf die
+    # tatsächliche Fenstergröße, Stretch-Faktor 1 lässt Pane 1 wachsen.
+    # Vorher hart auf eine angenommene Fenstergröße (1280 px) gerechnet.
+    outer.setSizes([_SIDEBAR_WIDTH, 10_000])
     return outer

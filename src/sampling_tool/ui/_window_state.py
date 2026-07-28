@@ -35,6 +35,7 @@ class WindowStateController:
         *,
         settings: QSettings,
         window: QMainWindow,
+        outer_splitter: QSplitter,
         workspace_splitter: QSplitter,
         lower_tabs: QTabWidget,
         audit_trail_view: AuditTrailView,
@@ -42,6 +43,7 @@ class WindowStateController:
     ) -> None:
         self._settings = settings
         self._window = window
+        self._outer_splitter = outer_splitter
         self._workspace_splitter = workspace_splitter
         self._lower_tabs = lower_tabs
         self._audit_trail_view = audit_trail_view
@@ -51,6 +53,9 @@ class WindowStateController:
     def restore(self) -> None:
         """Stellt Fenstergeometrie, Splitter-Größen + aktiven Tab wieder her."""
         self._restore_window_geometry()
+        outer_state = self._settings.value("workspace/outer_splitter")
+        if isinstance(outer_state, QByteArray):
+            self._outer_splitter.restoreState(outer_state)
         state = self._settings.value("workspace/inner_splitter")
         if isinstance(state, QByteArray):
             self._workspace_splitter.restoreState(state)
@@ -76,6 +81,7 @@ class WindowStateController:
         if self._cached_splitter_sizes is not None:
             self._lower_tabs.setVisible(True)
             self._workspace_splitter.setSizes(self._cached_splitter_sizes)
+        self._settings.setValue("workspace/outer_splitter", self._outer_splitter.saveState())
         self._settings.setValue("workspace/inner_splitter", self._workspace_splitter.saveState())
         self._settings.setValue("workspace/lower_tab", self._lower_tabs.currentIndex())
 

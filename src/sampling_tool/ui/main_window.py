@@ -151,6 +151,7 @@ class MainWindow(QMainWindow):
         self._window_state = WindowStateController(
             settings=self._settings,
             window=self,
+            outer_splitter=self._workspace,
             workspace_splitter=self._workspace_splitter,
             lower_tabs=self._lower_tabs,
             audit_trail_view=self._audit_trail_view,
@@ -351,6 +352,10 @@ class MainWindow(QMainWindow):
     def workspace_splitter(self) -> QSplitter:
         """Vertikaler Workspace-Splitter (Tests)."""
         return self._workspace_splitter
+
+    def outer_splitter(self) -> QSplitter:
+        """Horizontaler Splitter Sidebar | Workspace (Tests)."""
+        return self._workspace
 
     def lower_tabs(self) -> QTabWidget:
         """Tab-Widget unten (Tests)."""

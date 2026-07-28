@@ -511,6 +511,12 @@ class TestMainWindowComposition:
         assert callable(_window_toolbar.build_toolbar)
         assert _window_state.WindowStateController is not None
 
+    def test_sidebar_is_resizable(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        sidebar = win.sidebar()
+        assert sidebar.minimumWidth() < sidebar.maximumWidth()
+
 
 class TestResetSamplingToolbar:
     """Sprint 20: Toolbar-Button „Sampling zurücksetzen"."""
@@ -736,3 +742,50 @@ class TestIntOrNone:
     def test_rejects_none_and_other_types(self) -> None:
         assert _int_or_none(None) is None
         assert _int_or_none(3.5) is None
+
+
+class TestOuterSplitterPersistence:
+    """Sprint 67 / Teil A: Sidebar-Breite (äußerer Splitter) überlebt einen Neustart."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Schiebt `QSettings`-IO in einen tmp-Pfad, damit echte Prefs unangetastet
+        bleiben. Siehe `TestWindowGeometryPersistence._isolated_qsettings` für den
+        vollständigen Hintergrund (QSettings(org, app) ignoriert setPath/setDefaultFormat,
+        `main_window.QSettings` muss deshalb zusätzlich gepatcht werden)."""
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+        monkeypatch.setattr(
+            "sampling_tool.ui.main_window.QSettings",
+            lambda organization, application: QSettings(
+                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
+            ),
+        )
+
+    def test_outer_splitter_persisted(self, qtbot: QtBot) -> None:
+        win1 = MainWindow()
+        qtbot.addWidget(win1)
+        win1.show()
+        qtbot.waitExposed(win1)
+        # Der äußere Splitter liegt auf der Workspace-Seite des Welcome/
+        # Workspace-`QStackedWidget`, die anfangs NICHT die aktuelle Seite ist
+        # (siehe `show_welcome()` am Ende von `MainWindow.__init__`). Eine
+        # nicht-aktuelle Stack-Seite bekommt von Qt keine reale Layout-Größe
+        # zugewiesen – jede `setSizes`-Anfrage würde sonst wirkungslos auf die
+        # winzige Default-Größe zurückfallen, weshalb hier zuerst auf den
+        # Workspace umgeschaltet wird. Zusätzlich braucht das Fenster – analog
+        # zu `TestWindowGeometryPersistence.test_geometry_roundtrip` – eine
+        # reale Breite oberhalb seiner Layout-Mindestbreite (~810–870px),
+        # sonst ist für den Splitter kein Spielraum zum Verschieben vorhanden.
+        win1.show_workspace()
+        win1.setGeometry(20, 20, 1000, 650)
+        win1.outer_splitter().setSizes([300, 400])
+        win1._window_state.save()
+
+        win2 = MainWindow()
+        qtbot.addWidget(win2)
+        win2.show()
+        qtbot.waitExposed(win2)
+        win2.show_workspace()
+        win2.setGeometry(20, 20, 1000, 650)
+        assert win2.outer_splitter().sizes()[0] == 300
