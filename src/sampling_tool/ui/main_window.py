@@ -393,6 +393,7 @@ class MainWindow(QMainWindow):
         icon_px = scaled_px(_TOOLBAR_ICON_SIZE, factor)
         self._toolbar.setIconSize(QSize(icon_px, icon_px))
         self._data_table.set_row_height_px(scaled_px(_DEFAULT_ROW_HEIGHT, factor))
+        self._dashboard_view.set_ui_scale(factor)
 
     def apply_view_menu_state(
         self,
