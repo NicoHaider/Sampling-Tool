@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.config import ENGAGEMENTS_DIR
+from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui.recent import RecentEntry
 
 
@@ -31,7 +32,13 @@ class _RecentCard(QFrame):
 
     clicked = pyqtSignal(Path)
 
-    def __init__(self, entry: RecentEntry, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        entry: RecentEntry,
+        parent: QWidget | None = None,
+        *,
+        ui_scale_factor: float = 1.0,
+    ) -> None:
         super().__init__(parent)
         self._entry = entry
         self.setObjectName("WelcomeCard")
@@ -42,15 +49,17 @@ class _RecentCard(QFrame):
         layout.setSpacing(4)
 
         title = QLabel(entry.client_name)
-        title.setStyleSheet("font-weight: 700; font-size: 14px; color: #333333;")
+        title.setStyleSheet(
+            f"font-weight: 700; font-size: {scaled_px(14, ui_scale_factor)}px; color: #333333;"
+        )
         layout.addWidget(title)
 
         subtitle = QLabel(entry.audit_type or "—")
-        subtitle.setStyleSheet("color: #7F7F7F; font-size: 11px;")
+        subtitle.setStyleSheet(f"color: #7F7F7F; font-size: {scaled_px(11, ui_scale_factor)}px;")
         layout.addWidget(subtitle)
 
         path_label = QLabel(str(entry.path))
-        path_label.setStyleSheet("color: #B0B0B0; font-size: 10px;")
+        path_label.setStyleSheet(f"color: #B0B0B0; font-size: {scaled_px(10, ui_scale_factor)}px;")
         path_label.setWordWrap(True)
         layout.addWidget(path_label)
 
@@ -66,8 +75,10 @@ class WelcomeScreen(QWidget):
     new_engagement_requested = pyqtSignal()
     open_engagement_requested = pyqtSignal(Path)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, ui_scale_factor: float = 1.0) -> None:
         super().__init__(parent)
+        self._factor = ui_scale_factor
+        self._last_entries: list[RecentEntry] = []
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(40, 40, 40, 40)
@@ -142,6 +153,7 @@ class WelcomeScreen(QWidget):
 
     def set_recent_entries(self, entries: list[RecentEntry]) -> None:
         """Erneuert die Recent-Karten."""
+        self._last_entries = entries
         # Vorhandene Karten entsorgen (Stretch + Empty-Label bleiben dazwischen).
         while self._recent_layout.count() > 0:
             item = self._recent_layout.takeAt(0)
@@ -158,10 +170,16 @@ class WelcomeScreen(QWidget):
             return
 
         for entry in entries:
-            card = _RecentCard(entry, parent=self._recent_container)
+            card = _RecentCard(entry, parent=self._recent_container, ui_scale_factor=self._factor)
             card.clicked.connect(self.open_engagement_requested.emit)
             self._recent_layout.addWidget(card)
         self._recent_layout.addStretch(1)
+
+    def set_ui_scale(self, factor: float) -> None:
+        """Wendet einen neuen UI-Skalierungsfaktor auf die Recent-Karten an
+        (Sprint 68 / Teil B1)."""
+        self._factor = factor
+        self.set_recent_entries(self._last_entries)
 
     def recent_card_count(self) -> int:
         """Anzahl der aktuell sichtbaren Recent-Karten (Tests)."""
