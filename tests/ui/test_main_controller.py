@@ -1658,7 +1658,7 @@ class TestSamplingFlow:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -1735,7 +1735,7 @@ class TestSamplingFlow:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -1769,7 +1769,7 @@ class TestSamplingFlow:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=3),
             from_sample_only=True,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -2160,7 +2160,7 @@ class TestFilterAndSwitchEngagement:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -3197,6 +3197,7 @@ class TestFeatureVisibilityPropagation:
             _current: object,
             features: SamplingFeatures,
             _match_count: object = None,
+            _factor: object = None,
         ) -> _StubSamplingDialog:
             received["features"] = features
             return _StubSamplingDialog(None, accept=False)
@@ -3238,6 +3239,7 @@ class TestFeatureVisibilityPropagation:
             _current: object,
             features: SamplingFeatures,
             _match_count: object = None,
+            _factor: object = None,
         ) -> _StubSamplingDialog:
             received["features"] = features
             return _StubSamplingDialog(None, accept=False)
@@ -3278,6 +3280,7 @@ class TestFeatureVisibilityPropagation:
             _current: object,
             features: SamplingFeatures,
             _match_count: object = None,
+            _factor: object = None,
         ) -> _StubSamplingDialog:
             received["features"] = features
             return _StubSamplingDialog(None, accept=False)
@@ -3324,6 +3327,7 @@ class TestNewSamplingDistinctProvider:
             _current: object,
             _advanced: bool,
             _match_count: object = None,
+            _factor: object = None,
         ) -> _StubSamplingDialog:
             captured["provider"] = provider
             return _StubSamplingDialog(None, accept=False)
@@ -3362,6 +3366,7 @@ class TestNewSamplingDistinctProvider:
             _current: object,
             _advanced: bool,
             _match_count: object = None,
+            _factor: object = None,
         ) -> _StubSamplingDialog:
             captured["provider"] = provider
             return _StubSamplingDialog(None, accept=False)
@@ -3402,7 +3407,9 @@ class TestNewSamplingDistinctProvider:
 
         monkeypatch.setattr(DatasetRepo, "get_all_rows", boom)
 
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(None, accept=False)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(  # noqa: E731
+            None, accept=False
+        )
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -3438,6 +3445,7 @@ class TestFilterMatchCountProvider:
             _current: object,
             _features: object,
             match_count: object = None,
+            _factor: object = None,
         ) -> _StubSamplingDialog:
             captured["match_count"] = match_count
             return _StubSamplingDialog(None, accept=False)
@@ -3476,6 +3484,7 @@ class TestFilterMatchCountProvider:
             _current: object,
             _features: object,
             match_count: object = None,
+            _factor: object = None,
         ) -> _StubSamplingDialog:
             captured["match_count"] = match_count
             return _StubSamplingDialog(None, accept=False)
@@ -3529,6 +3538,7 @@ class TestFilterMatchCountProvider:
             _current: object,
             _features: object,
             match_count: object = None,
+            _factor: object = None,
         ) -> _StubSamplingDialog:
             captured["match_count"] = match_count
             return _StubSamplingDialog(None, accept=False)
@@ -3545,6 +3555,55 @@ class TestFilterMatchCountProvider:
             _open_dataset(controller, window, populated_db)
             controller.workspace.handle_new_sampling()
             assert captured["match_count"] is None
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 68 / Teil B1: der aktuelle UI-Skalierungsfaktor wird als 7. Factory-
+# Arg durchgereicht – analog zum Match-Count-Provider (6. Arg) oben.
+# ---------------------------------------------------------------------------
+
+
+class TestSamplingDialogUiScaleWiring:
+    def test_handle_new_sampling_passes_ui_scale_factor(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.settings_store import AppSettings
+
+        captured: dict[str, float] = {}
+        settings = dc_replace(AppSettings.defaults(), ui_scale="groß")
+
+        def fake_factory(
+            _parent: MainWindow,
+            _dataset: object,
+            _provider: object,
+            _current: object,
+            _features: object,
+            _match_count: object,
+            ui_scale_factor: float,
+        ) -> _StubSamplingDialog:
+            # `_factories.sampling(...)` is called positionally (it's typed as a
+            # plain `Callable[[...], SamplingDialog]`, so mypy requires
+            # positional args at the call site) – bind by position, not **kwargs.
+            captured["factor"] = ui_scale_factor
+            return _StubSamplingDialog(None, accept=False)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            settings=settings,
+            sampling_dialog_factory=fake_factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.workspace.handle_new_sampling()
+            assert captured["factor"] == pytest.approx(1.15)
         finally:
             controller.engagement.handle_close_engagement()
 
@@ -3777,7 +3836,7 @@ class TestSamplingPathDispatch:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=42),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -3811,7 +3870,7 @@ class TestSamplingPathDispatch:
             ),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -3838,7 +3897,7 @@ class TestSamplingPathDispatch:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=42),
             from_sample_only=True,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -3876,7 +3935,7 @@ class TestSamplingPathDispatch:
             ),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -3910,7 +3969,7 @@ class TestSamplingPathDispatch:
             ),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -3944,7 +4003,7 @@ class TestSamplingPathDispatch:
             ),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -3977,7 +4036,7 @@ class TestSamplingPathDispatch:
             ),
             from_sample_only=True,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -4017,7 +4076,7 @@ class TestSamplingPathDispatch:
             ),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -4053,7 +4112,7 @@ class TestSamplingPathDispatch:
         else:
             cfg = SampleConfig(method=method, size=size, seed=4711, stratum_field="Konto")
         result = SamplingDialogResult(config=cfg, from_sample_only=False)
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -4148,7 +4207,7 @@ class TestSupplementarySampling:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=42),
             exclude_sample_ids=True,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -4181,7 +4240,7 @@ class TestSupplementarySampling:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
             exclude_sample_ids=True,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -4209,7 +4268,7 @@ class TestSupplementarySampling:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
             exclude_sample_ids=True,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -4259,7 +4318,7 @@ class TestSupplementarySampling:
                 config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=seed),
                 exclude_sample_ids=True,
             )
-            factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(  # noqa: E731
+            factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(  # noqa: E731
                 result
             )
             controller = MainController(
@@ -4314,7 +4373,7 @@ class TestSupplementarySampling:
             ),
             exclude_sample_ids=True,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -4348,7 +4407,7 @@ class TestSupplementarySampling:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
             exclude_sample_ids=True,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -4386,7 +4445,7 @@ class TestSupplementarySampling:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=4, seed=7),
             exclude_sample_ids=True,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -4847,7 +4906,7 @@ class TestAuditTrailRobustness:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -4886,7 +4945,7 @@ class TestAuditTrailRobustness:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -4939,7 +4998,7 @@ class TestAuditTrailRobustness:
             from_sample_only=False,
         )
         results = [first_result, second_result]
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(  # noqa: E731
             results.pop(0)
         )
         controller = MainController(
@@ -4986,7 +5045,7 @@ class TestAuditTrailRobustness:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,
@@ -5025,7 +5084,7 @@ class TestAuditTrailRobustness:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=11),
             from_sample_only=False,
         )
-        factory = lambda _p, _d, _r, _s, _am, _mcp=None: _StubSamplingDialog(result)  # noqa: E731
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
         controller = MainController(
             window,
             recent_store=recent_store,

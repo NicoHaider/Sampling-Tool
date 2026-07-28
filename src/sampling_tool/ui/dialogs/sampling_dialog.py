@@ -57,6 +57,7 @@ from sampling_tool.core.models import (
 )
 from sampling_tool.core.presets import SamplingPreset
 from sampling_tool.ui._dialog_sizing import clamp_dialog_height_to_screen
+from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui.preset_store import PresetStore
 from sampling_tool.ui.settings_store import SamplingFeatures
 
@@ -129,6 +130,7 @@ class SamplingDialog(QDialog):
         features: SamplingFeatures | None = None,
         preset_store: PresetStore | None = None,
         filter_match_count_provider: Callable[[str, FilterOperator, Any, bool], int] | None = None,
+        ui_scale_factor: float = 1.0,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Neue Stichprobe")
@@ -136,6 +138,7 @@ class SamplingDialog(QDialog):
         self.setMinimumWidth(520)
 
         self._dataset = dataset
+        self._factor = ui_scale_factor
         # Sprint 19 / P-005: kein Row-Materialize mehr – der Controller
         # injiziert einen distinct-Werte-Provider (SQL-basiert). None, wenn das
         # Filter-Feld nicht freigeschaltet ist.
@@ -318,7 +321,9 @@ class SamplingDialog(QDialog):
         size_layout.setSpacing(2)
         size_layout.addWidget(self._size_spin)
         self._lbl_size_hint = QLabel()
-        self._lbl_size_hint.setStyleSheet("color: #7F7F7F; font-size: 11px;")
+        self._lbl_size_hint.setStyleSheet(
+            f"color: #7F7F7F; font-size: {scaled_px(11, self._factor)}px;"
+        )
         size_layout.addWidget(self._lbl_size_hint)
         form.addRow("Stichprobengröße *", size_box)
 
@@ -423,7 +428,7 @@ class SamplingDialog(QDialog):
             "bit-genau gleiche Stichprobe."
         )
         seed_hint = QLabel("in den Einstellungen änderbar")
-        seed_hint.setStyleSheet("color: #7F7F7F; font-size: 11px;")
+        seed_hint.setStyleSheet(f"color: #7F7F7F; font-size: {scaled_px(11, self._factor)}px;")
         seed_row.addWidget(self._seed_spin, stretch=1)
         seed_row.addWidget(seed_hint)
         seed_widget = QWidget()
@@ -478,7 +483,7 @@ class SamplingDialog(QDialog):
             icon = style.standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation)
             icon_lbl.setPixmap(icon.pixmap(14, 14))
         text_lbl = QLabel("Einfach-Modus")
-        text_lbl.setStyleSheet("color: #7F7F7F; font-size: 11px;")
+        text_lbl.setStyleSheet(f"color: #7F7F7F; font-size: {scaled_px(11, self._factor)}px;")
 
         tooltip = (
             "Im Einfach-Modus sind erweiterte Sampling-Methoden (Cluster, "
