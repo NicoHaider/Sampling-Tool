@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QDate, Qt
-from PyQt6.QtWidgets import QDialogButtonBox
+from PyQt6.QtWidgets import QDialogButtonBox, QScrollArea
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import AuditEvent, Engagement
@@ -280,3 +280,29 @@ class TestAuditExportDateFilter:
         assert result is not None
         assert result.date_from == date(2024, 1, 2)
         assert result.date_to == date(2024, 3, 4)
+
+
+class TestScrollFallback:
+    """Sprint 67 / Teil A: Inhalt scrollt, OK/Abbrechen bleiben immer sichtbar."""
+
+    def _dialog(self, qtbot: QtBot) -> ExportAuditPdfDialog:
+        dialog = ExportAuditPdfDialog(
+            engagement=_engagement(),
+            event_types_available=["sampling"],
+            briefpapier_available=True,
+        )
+        qtbot.addWidget(dialog)
+        return dialog
+
+    def test_scroll_area_wraps_content_buttons_stay_outside(self, qtbot: QtBot) -> None:
+        dialog = self._dialog(qtbot)
+        scroll_areas = dialog.findChildren(QScrollArea)
+        assert scroll_areas
+        for scroll in scroll_areas:
+            assert not scroll.isAncestorOf(dialog._buttons)
+
+    def test_height_is_clamped_to_available_screen(self, qtbot: QtBot) -> None:
+        dialog = self._dialog(qtbot)
+        screen = dialog.screen()
+        assert screen is not None
+        assert dialog.maximumHeight() <= screen.availableGeometry().height()

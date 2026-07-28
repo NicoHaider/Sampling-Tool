@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 import pytest
-from PyQt6.QtWidgets import QDialogButtonBox, QLineEdit
+from PyQt6.QtWidgets import QDialogButtonBox, QLineEdit, QScrollArea
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import (
@@ -991,3 +991,22 @@ class TestSupplementCheckbox:
         assert result is not None
         assert result.exclude_sample_ids is False
         assert result.from_sample_only is False
+
+
+class TestScrollFallback:
+    """Sprint 67 / Teil A: Inhalt scrollt, OK/Abbrechen bleiben immer sichtbar."""
+
+    def test_scroll_area_wraps_content_buttons_stay_outside(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_ALL)
+        qtbot.addWidget(dialog)
+        scroll_areas = dialog.findChildren(QScrollArea)
+        assert scroll_areas
+        for scroll in scroll_areas:
+            assert not scroll.isAncestorOf(dialog._buttons)
+
+    def test_height_is_clamped_to_available_screen(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_ALL)
+        qtbot.addWidget(dialog)
+        screen = dialog.screen()
+        assert screen is not None
+        assert dialog.maximumHeight() <= screen.availableGeometry().height()

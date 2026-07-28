@@ -789,3 +789,13 @@ class TestOuterSplitterPersistence:
         win2.show_workspace()
         win2.setGeometry(20, 20, 1000, 650)
         assert win2.outer_splitter().sizes()[0] == 300
+
+
+class TestMainWindowMinimumSize:
+    """Sprint 67 / Teil A: Mindestgröße passt auf 1280×720 (13-Zoll-Zielgerät)."""
+
+    def test_minimum_size_fits_target_device(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        assert 0 < win.minimumWidth() <= 1280
+        assert 0 < win.minimumHeight() <= 720

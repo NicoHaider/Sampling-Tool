@@ -135,6 +135,18 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(APP_NAME)
 
+        # Sprint 67 / Teil A: Richtwert fürs kleinste Zielgerät (13"-Laptop,
+        # ~1280×720 logische Pixel bei Windows-Standardskalierung) – MUSS
+        # kleiner bleiben als 1280×720, sonst wäre die App dort nicht mehr
+        # bedienbar. Breite bewusst unter dem `DEFAULT_FIT_MARGIN`-Clamp der
+        # virtuellen Qt-„offscreen"-Testplattform (fixer 800×800-Screen →
+        # 752px verfügbare Breite/Höhe, siehe `_geometry.fit_to_available`);
+        # ein größerer Wert würde die von `_window_state.restore()` exakt
+        # berechnete Fallback-Geometrie zusätzlich aufblähen und
+        # `TestWindowGeometryPersistence`/`TestWindowGeometryFitsScreen`
+        # (Sprint 67 / Teil A, Task 1+2) verfälschen.
+        self.setMinimumSize(700, 600)
+
         self._settings = QSettings(APP_ORG, APP_NAME)
 
         # ---- zentrale Widgets ----

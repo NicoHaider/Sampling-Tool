@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QDialog, QMessageBox
+from PyQt6.QtWidgets import QDialog, QMessageBox, QScrollArea
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.config import APP_NAME, APP_ORG
@@ -497,3 +497,26 @@ class TestSnapshotRetentionRemoved:
         dialog = SettingsDialog(defaults)
         qtbot.addWidget(dialog)
         assert not hasattr(dialog, "_snapshot_retention")
+
+
+class TestScrollFallback:
+    """Sprint 67 / Teil A: Inhalt scrollt, OK/Abbrechen bleiben immer sichtbar."""
+
+    def test_scroll_area_wraps_content_buttons_stay_outside(
+        self, qtbot: QtBot, defaults: AppSettings
+    ) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        scroll_areas = dialog.findChildren(QScrollArea)
+        assert scroll_areas
+        for scroll in scroll_areas:
+            assert not scroll.isAncestorOf(dialog._buttons)
+
+    def test_height_is_clamped_to_available_screen(
+        self, qtbot: QtBot, defaults: AppSettings
+    ) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        screen = dialog.screen()
+        assert screen is not None
+        assert dialog.maximumHeight() <= screen.availableGeometry().height()

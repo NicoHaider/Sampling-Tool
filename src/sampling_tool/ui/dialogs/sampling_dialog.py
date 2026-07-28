@@ -26,12 +26,14 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QRadioButton,
+    QScrollArea,
     QSpinBox,
     QStackedWidget,
     QStyle,
@@ -54,6 +56,7 @@ from sampling_tool.core.models import (
     StratifyMode,
 )
 from sampling_tool.core.presets import SamplingPreset
+from sampling_tool.ui._dialog_sizing import clamp_dialog_height_to_screen
 from sampling_tool.ui.preset_store import PresetStore
 from sampling_tool.ui.settings_store import SamplingFeatures
 
@@ -180,6 +183,7 @@ class SamplingDialog(QDialog):
         if self._show_methods:
             self._on_method_changed()
         self._validate()
+        clamp_dialog_height_to_screen(self)
 
     # ---- Public API -----------------------------------------------------
 
@@ -243,8 +247,9 @@ class SamplingDialog(QDialog):
     # ---- UI-Aufbau -----------------------------------------------------
 
     def _build_ui(self) -> None:
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
+        content = QWidget()
+        outer = QVBoxLayout(content)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(12)
 
         intro = QLabel(
@@ -436,6 +441,9 @@ class SamplingDialog(QDialog):
         outer.addWidget(self._error_label)
 
         # ---- Footer: Mode-Hint (links, nur Simple) + Buttons (rechts) ----
+        # Sprint 67 / Teil A: Buttons liegen BEWUSST außerhalb der
+        # ScrollArea (siehe unten) – OK/Abbrechen müssen immer erreichbar
+        # bleiben, auch wenn der Inhalt auf kleinen Screens scrollt.
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -445,7 +453,17 @@ class SamplingDialog(QDialog):
             footer.addWidget(self._mode_hint)
         footer.addStretch(1)
         footer.addWidget(self._buttons)
-        outer.addLayout(footer)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(content)
+
+        dialog_layout = QVBoxLayout(self)
+        dialog_layout.setContentsMargins(20, 20, 20, 20)
+        dialog_layout.setSpacing(12)
+        dialog_layout.addWidget(scroll, stretch=1)
+        dialog_layout.addLayout(footer)
 
     def _build_mode_hint(self) -> QWidget:
         """Diskreter Hinweis unten links: 'Einfach-Modus' mit Erklär-Tooltip."""

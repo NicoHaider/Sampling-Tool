@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -27,6 +28,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSpinBox,
     QStyle,
     QTabWidget,
@@ -44,6 +46,7 @@ from sampling_tool.io.bdo_locations import (
 )
 from sampling_tool.io.briefpapier import validate_briefpapier
 from sampling_tool.logging_setup import log_file_path
+from sampling_tool.ui._dialog_sizing import clamp_dialog_height_to_screen
 from sampling_tool.ui.settings_store import (
     LOG_LEVELS,
     AppSettings,
@@ -77,15 +80,23 @@ class SettingsDialog(QDialog):
         self._initial = current
         self._result: AppSettings | None = None
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
-        outer.setSpacing(12)
-
         self._tabs = QTabWidget()
         self._tabs.addTab(self._build_general_tab(current), "Allgemein")
         self._tabs.addTab(self._build_reports_tab(current), "Reports")
         self._tabs.addTab(self._build_advanced_tab(current), "Erweitert")
-        outer.addWidget(self._tabs)
+
+        # Sprint 67 / Teil A: Tabs scrollen als Ganzes, wenn der Dialog auf
+        # einem kleinen Screen niedriger als der Inhalt sein muss. Buttons
+        # bleiben BEWUSST außerhalb der ScrollArea (immer erreichbar).
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(self._tabs)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 20, 20, 20)
+        outer.setSpacing(12)
+        outer.addWidget(scroll, stretch=1)
 
         # Reset-Button (links) + OK/Cancel (rechts).
         button_row = QHBoxLayout()
@@ -101,6 +112,8 @@ class SettingsDialog(QDialog):
         self._buttons.rejected.connect(self.reject)
         button_row.addWidget(self._buttons)
         outer.addLayout(button_row)
+
+        clamp_dialog_height_to_screen(self)
 
     # ---- Public API -----------------------------------------------------
 
