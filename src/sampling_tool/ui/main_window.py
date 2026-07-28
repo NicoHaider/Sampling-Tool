@@ -134,7 +134,18 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.resize(1280, 800)
+
+        # Sprint 67 / Teil A: Richtwert fürs kleinste Zielgerät (13"-Laptop,
+        # ~1280×720 logische Pixel bei Windows-Standardskalierung) – MUSS
+        # kleiner bleiben als 1280×720, sonst wäre die App dort nicht mehr
+        # bedienbar. Breite bewusst unter dem `DEFAULT_FIT_MARGIN`-Clamp der
+        # virtuellen Qt-„offscreen"-Testplattform (fixer 800×800-Screen →
+        # 752px verfügbare Breite/Höhe, siehe `_geometry.fit_to_available`);
+        # ein größerer Wert würde die von `_window_state.restore()` exakt
+        # berechnete Fallback-Geometrie zusätzlich aufblähen und
+        # `TestWindowGeometryPersistence`/`TestWindowGeometryFitsScreen`
+        # (Sprint 67 / Teil A, Task 1+2) verfälschen.
+        self.setMinimumSize(700, 600)
 
         self._settings = QSettings(APP_ORG, APP_NAME)
 
@@ -151,6 +162,8 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._workspace)
         self._window_state = WindowStateController(
             settings=self._settings,
+            window=self,
+            outer_splitter=self._workspace,
             workspace_splitter=self._workspace_splitter,
             lower_tabs=self._lower_tabs,
             audit_trail_view=self._audit_trail_view,
@@ -351,6 +364,10 @@ class MainWindow(QMainWindow):
     def workspace_splitter(self) -> QSplitter:
         """Vertikaler Workspace-Splitter (Tests)."""
         return self._workspace_splitter
+
+    def outer_splitter(self) -> QSplitter:
+        """Horizontaler Splitter Sidebar | Workspace (Tests)."""
+        return self._workspace
 
     def lower_tabs(self) -> QTabWidget:
         """Tab-Widget unten (Tests)."""

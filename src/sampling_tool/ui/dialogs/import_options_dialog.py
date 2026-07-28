@@ -70,7 +70,10 @@ class ImportOptionsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"Datei importieren: {path.name}")
         self.setModal(True)
-        self.setMinimumSize(720, 520)
+        # Sprint 67 / Teil A: 520 klemmte auf 1280×720-Zielgeräten (13"-
+        # Laptop, Windows-Skalierung) – 420 passt bequem, die Vorschau-
+        # Tabelle bleibt mit `stretch=1` weiterhin der dominante Bereich.
+        self.setMinimumSize(720, 420)
 
         self._path = path
         self._importer = importer

@@ -7,8 +7,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from PyQt6.QtCore import QRect, QSettings, QSize, Qt
 from pytestqt.qtbot import QtBot
 
+from sampling_tool.config import APP_NAME, APP_ORG
 from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
@@ -19,6 +21,8 @@ from sampling_tool.core.models import (
 )
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import DatasetRepo, EngagementRepo
+from sampling_tool.ui._geometry import fit_to_available
+from sampling_tool.ui._window_state import _DESIRED_HEIGHT, _DESIRED_WIDTH, _int_or_none
 from sampling_tool.ui.main_window import MainWindow
 from sampling_tool.ui.recent import RecentEntry
 
@@ -316,8 +320,6 @@ class TestToolbarCompactOverflow:
         assert isinstance(win._toolbar, QToolBar)
 
     def test_toolbar_icons_are_compact(self, qtbot: QtBot) -> None:
-        from PyQt6.QtCore import QSize
-
         from sampling_tool.ui._window_toolbar import _TOOLBAR_ICON_SIZE
 
         win = MainWindow()
@@ -509,6 +511,12 @@ class TestMainWindowComposition:
         assert callable(_window_toolbar.build_toolbar)
         assert _window_state.WindowStateController is not None
 
+    def test_sidebar_is_resizable(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        sidebar = win.sidebar()
+        assert sidebar.minimumWidth() < sidebar.maximumWidth()
+
 
 class TestResetSamplingToolbar:
     """Sprint 20: Toolbar-Button „Sampling zurücksetzen"."""
@@ -550,3 +558,262 @@ class TestResetSamplingToolbar:
         win.set_reset_enabled(True)
         win.show_welcome()
         assert win._action_reset_sampling.isEnabled() is False
+
+
+class TestWindowGeometryFitsScreen:
+    """Sprint 67 / Teil A: Startgröße passt in den verfügbaren Bildschirmbereich."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Schiebt `QSettings`-IO in einen tmp-Pfad, damit echte Prefs unangetastet
+        bleiben (gleiches Muster wie `test_feature_toggles`/`test_settings_store`).
+
+        Zusatz (Code-Review-Nachtrag zu Sprint 67 Task 2): `QSettings(org, app)`
+        ist laut Qt-Doku fest auf `NativeFormat`/`UserScope` verdrahtet und
+        ignoriert `setDefaultFormat`/`setPath` (siehe ausführlicher Kommentar in
+        `TestWindowGeometryPersistence._isolated_qsettings`). Seit Task 2 liest
+        `restore()` echte `window/*`-Werte – ohne diesen Patch würde dieser Test
+        von zufällig echten (auf diesem Rechner bereits gespeicherten) Prefs
+        abhängen und könnte je nach Ausführungsreihenfolge/Vorlauf flackern.
+        """
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+        monkeypatch.setattr(
+            "sampling_tool.ui.main_window.QSettings",
+            lambda organization, application: QSettings(
+                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
+            ),
+        )
+
+    def test_initial_geometry_fits_available_screen(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        screen = win.screen()
+        assert screen is not None
+        assert screen.availableGeometry().contains(win.geometry())
+
+
+class TestWindowGeometryPersistence:
+    """Sprint 67 / Teil A: Fenstergeometrie (Größe/Position/Maximiert) überlebt einen Neustart."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Schiebt `QSettings`-IO in einen tmp-Pfad, damit echte Prefs unangetastet
+        bleiben (gleiches Muster wie `test_feature_toggles`/`test_settings_store`).
+
+        Zusatz (Code-Review-Nachtrag): der 2-Arg-Konstruktor `QSettings(org, app)`
+        ist laut Qt-Doku fest auf `NativeFormat`/`UserScope` verdrahtet und
+        ignoriert `setDefaultFormat`/`setPath` – verifiziert via `fileName()`,
+        das trotz obigem `setPath` weiterhin auf die echte
+        `~/Library/Preferences/…plist` zeigte. `MainWindow.__init__` nutzt genau
+        diesen Konstruktor fest verdrahtet (kein überschreibbares Factory wie
+        `settings_store._qsettings`) – deshalb hier zusätzlich `main_window.
+        QSettings` patchen, analog zum Muster in `test_settings_store.py`.
+        """
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+        monkeypatch.setattr(
+            "sampling_tool.ui.main_window.QSettings",
+            lambda organization, application: QSettings(
+                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
+            ),
+        )
+
+    def test_geometry_roundtrip(self, qtbot: QtBot) -> None:
+        """Größe/Position/Maximiert überleben einen Save/Restore-Zyklus."""
+        win1 = MainWindow()
+        qtbot.addWidget(win1)
+        win1.show()
+        qtbot.waitExposed(win1)
+        # 1000×650 statt eines kleineren Werts: `MainWindow` hat (unabhängig von
+        # Sprint 67) über Sidebar + AuditTrail-Filterzeile eine echte Layout-
+        # Mindestbreite von ca. 810–870px – ein kleinerer Zielwert würde beim
+        # `setGeometry` auf einem bereits `show()`n Fenster von Qt sofort auf
+        # die Mindestgröße hochgeklemmt und damit den Roundtrip verfälschen.
+        win1.setGeometry(20, 20, 1000, 650)
+        win1._window_state.save()
+
+        win2 = MainWindow()
+        qtbot.addWidget(win2)
+        win2.show()
+        qtbot.waitExposed(win2)
+        assert win2.geometry() == QRect(20, 20, 1000, 650)
+
+        win3 = MainWindow()
+        qtbot.addWidget(win3)
+        win3.show()
+        qtbot.waitExposed(win3)
+        win3.setWindowState(win3.windowState() | Qt.WindowState.WindowMaximized)
+        win3._window_state.save()
+
+        win4 = MainWindow()
+        qtbot.addWidget(win4)
+        win4.show()
+        qtbot.waitExposed(win4)
+        assert bool(win4.windowState() & Qt.WindowState.WindowMaximized) is True
+
+    def test_invalid_geometry_falls_back(self, qtbot: QtBot) -> None:
+        """Eine außerhalb aller Screens liegende gespeicherte Geometrie wird verworfen."""
+        # Explizites Format/Scope statt `QSettings(APP_ORG, APP_NAME)`: der
+        # 2-Arg-Konstruktor ignoriert `setPath`/`setDefaultFormat` (siehe
+        # `_isolated_qsettings`) – ohne dies würde hier in die echten,
+        # ungeschützten Prefs geschrieben statt in den isolierten tmp-Pfad.
+        settings = QSettings(
+            QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME
+        )
+        settings.setValue("window/x", 50_000)
+        settings.setValue("window/y", 50_000)
+        settings.setValue("window/width", 700)
+        settings.setValue("window/height", 500)
+
+        win = MainWindow()
+        qtbot.addWidget(win)
+
+        screen = win.screen()
+        assert screen is not None
+        expected = fit_to_available(
+            QSize(_DESIRED_WIDTH, _DESIRED_HEIGHT), screen.availableGeometry()
+        )
+        assert win.geometry() == expected
+
+    def test_partial_geometry_falls_back(self, qtbot: QtBot) -> None:
+        """Nur x/y ohne width/height gesetzt → `_read_saved_rect` verwirft, Fallback greift."""
+        # Siehe Kommentar in `test_invalid_geometry_falls_back`: explizites
+        # Format/Scope statt des isolierungslosen 2-Arg-Konstruktors.
+        settings = QSettings(
+            QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME
+        )
+        settings.setValue("window/x", 100)
+        settings.setValue("window/y", 100)
+        # width/height bewusst NICHT gesetzt.
+
+        win = MainWindow()
+        qtbot.addWidget(win)
+
+        screen = win.screen()
+        assert screen is not None
+        expected = fit_to_available(
+            QSize(_DESIRED_WIDTH, _DESIRED_HEIGHT), screen.availableGeometry()
+        )
+        assert win.geometry() == expected
+
+    def test_non_positive_size_falls_back(self, qtbot: QtBot) -> None:
+        """width=0 (alle 4 Werte vorhanden, aber kaputt) → `_read_saved_rect` verwirft.
+
+        Andere Fehlerart als `test_partial_geometry_falls_back` (dort fehlen
+        Werte komplett) – deckt den separaten `width <= 0 or height <= 0`-Zweig
+        in `_read_saved_rect` ab.
+        """
+        settings = QSettings(
+            QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME
+        )
+        settings.setValue("window/x", 100)
+        settings.setValue("window/y", 100)
+        settings.setValue("window/width", 0)
+        settings.setValue("window/height", 500)
+
+        win = MainWindow()
+        qtbot.addWidget(win)
+
+        screen = win.screen()
+        assert screen is not None
+        expected = fit_to_available(
+            QSize(_DESIRED_WIDTH, _DESIRED_HEIGHT), screen.availableGeometry()
+        )
+        assert win.geometry() == expected
+
+
+class TestIntOrNone:
+    """Sprint 67 / Teil A: `_int_or_none` – QSettings liefert str (Windows/INI) oder nativen Typ."""
+
+    def test_rejects_bool_despite_bool_being_an_int_subtype(self) -> None:
+        assert _int_or_none(True) is None
+        assert _int_or_none(False) is None
+
+    def test_accepts_native_int(self) -> None:
+        assert _int_or_none(42) == 42
+
+    def test_parses_numeric_string(self) -> None:
+        assert _int_or_none("42") == 42
+
+    def test_rejects_malformed_string(self) -> None:
+        assert _int_or_none("not-a-number") is None
+
+    def test_rejects_none_and_other_types(self) -> None:
+        assert _int_or_none(None) is None
+        assert _int_or_none(3.5) is None
+
+
+class TestOuterSplitterPersistence:
+    """Sprint 67 / Teil A: Sidebar-Breite (äußerer Splitter) überlebt einen Neustart."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Schiebt `QSettings`-IO in einen tmp-Pfad, damit echte Prefs unangetastet
+        bleiben. Siehe `TestWindowGeometryPersistence._isolated_qsettings` für den
+        vollständigen Hintergrund (QSettings(org, app) ignoriert setPath/setDefaultFormat,
+        `main_window.QSettings` muss deshalb zusätzlich gepatcht werden)."""
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+        monkeypatch.setattr(
+            "sampling_tool.ui.main_window.QSettings",
+            lambda organization, application: QSettings(
+                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
+            ),
+        )
+
+    def test_outer_splitter_persisted(self, qtbot: QtBot) -> None:
+        # Verarbeitet zuerst liegengebliebene `deleteLater()`-Events aus
+        # vorangegangenen Tests dieser Datei (viele kurzlebige `MainWindow`-
+        # Instanzen mit je einer `DataTableView`). Dieser Test ist der erste
+        # mit zwei parallel sichtbaren Workspace-Fenstern – ohne den Wait
+        # traf ein längst geplantes, aber noch nicht zugestelltes Paint-Event
+        # empirisch reproduzierbar auf ein inzwischen C++-seitig gelöschtes
+        # Widget und crashte den Prozess mit einem Segfault (nicht nur einen
+        # Testfehler). `qtbot.wait(0)` reichte nicht, um den Rückstau aus
+        # ~60 vorangehenden Tests zu leeren; 200 ms taten es zuverlässig
+        # (7 Wiederholungen ohne Crash). Zusätzlich abgesichert durch den
+        # `sip.isdeleted`-Check + das `except RuntimeError` in
+        # `DataTableView.paintEvent` – die eigentliche, verlässliche
+        # Fehlerbehebung ist aber dieser Wait, nicht der Guard dort.
+        qtbot.wait(200)
+        win1 = MainWindow()
+        qtbot.addWidget(win1)
+        win1.show()
+        qtbot.waitExposed(win1)
+        # Der äußere Splitter liegt auf der Workspace-Seite des Welcome/
+        # Workspace-`QStackedWidget`, die anfangs NICHT die aktuelle Seite ist
+        # (siehe `show_welcome()` am Ende von `MainWindow.__init__`). Eine
+        # nicht-aktuelle Stack-Seite bekommt von Qt keine reale Layout-Größe
+        # zugewiesen – jede `setSizes`-Anfrage würde sonst wirkungslos auf die
+        # winzige Default-Größe zurückfallen, weshalb hier zuerst auf den
+        # Workspace umgeschaltet wird. Zusätzlich braucht das Fenster genug
+        # reale Breite oberhalb seiner Layout-Mindestbreite: 1000px reichte
+        # auf macOS/Ubuntu-CI, schlug auf Windows-CI aber fehl (Sidebar
+        # landete bei genau `_SIDEBAR_MIN_WIDTH` statt 300) – vermutlich
+        # weil Windows' Default-Schriftmetriken den Workspace-Bereich
+        # (AuditTrail/Dashboard/Tabelle) breiter machen als auf macOS/Linux,
+        # sodass bei 1000px zu wenig Spielraum für eine 300px-Sidebar bleibt.
+        # 1600px lässt auf allen drei OS reichlich Puffer.
+        win1.show_workspace()
+        win1.setGeometry(20, 20, 1600, 800)
+        win1.outer_splitter().setSizes([300, 400])
+        win1._window_state.save()
+
+        win2 = MainWindow()
+        qtbot.addWidget(win2)
+        win2.show()
+        qtbot.waitExposed(win2)
+        win2.show_workspace()
+        win2.setGeometry(20, 20, 1600, 800)
+        assert win2.outer_splitter().sizes()[0] == 300
+
+
+class TestMainWindowMinimumSize:
+    """Sprint 67 / Teil A: Mindestgröße passt auf 1280×720 (13-Zoll-Zielgerät)."""
+
+    def test_minimum_size_fits_target_device(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        assert 0 < win.minimumWidth() <= 1280
+        assert 0 < win.minimumHeight() <= 720

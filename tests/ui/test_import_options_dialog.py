@@ -325,3 +325,14 @@ class TestCsvImportOptions:
         assert isinstance(result, ImportOptionsResult)
         assert result.sheet_name is None
         assert result.header_row is None
+
+
+class TestMinimumSize:
+    """Sprint 67 / Teil A: passt auf 1280×720 (13-Zoll-Zielgerät)."""
+
+    def test_minimum_height_fits_target_device(
+        self, qtbot: QtBot, importer: ExcelImporter, simple_path: Path
+    ) -> None:
+        dialog = ImportOptionsDialog(simple_path, importer)
+        qtbot.addWidget(dialog)
+        assert dialog.minimumHeight() <= 720

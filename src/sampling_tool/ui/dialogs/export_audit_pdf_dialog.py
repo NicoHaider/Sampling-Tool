@@ -23,12 +23,14 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -40,6 +42,7 @@ from sampling_tool.io.bdo_locations import (
     default_location,
     locations,
 )
+from sampling_tool.ui._dialog_sizing import clamp_dialog_height_to_screen
 from sampling_tool.ui.dialogs._export_base import ExportTargetWidget
 
 _DEFAULT_TYPES: tuple[str, ...] = (
@@ -107,16 +110,23 @@ class ExportAuditPdfDialog(QDialog):
         )
         self._default_include_statistics = default_include_statistics
 
+        body_widget = QWidget()
+        body = QHBoxLayout(body_widget)
+        body.setSpacing(20)
+        body.addLayout(self._build_left(event_types_available, briefpapier_available), stretch=2)
+        body.addLayout(self._build_right(engagement, default_output_dir), stretch=3)
+
+        # Sprint 67 / Teil A: Inhalt scrollt als Ganzes auf kleinen Screens –
+        # Buttons bleiben BEWUSST außerhalb der ScrollArea (immer erreichbar).
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(body_widget)
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 20, 20, 20)
         outer.setSpacing(12)
-
-        body = QHBoxLayout()
-        body.setSpacing(20)
-
-        body.addLayout(self._build_left(event_types_available, briefpapier_available), stretch=2)
-        body.addLayout(self._build_right(engagement, default_output_dir), stretch=3)
-        outer.addLayout(body)
+        outer.addWidget(scroll, stretch=1)
 
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -132,6 +142,7 @@ class ExportAuditPdfDialog(QDialog):
         self._buttons.rejected.connect(self.reject)
 
         self._update_state()
+        clamp_dialog_height_to_screen(self)
 
     # ---- Public API ----------------------------------------------------
 

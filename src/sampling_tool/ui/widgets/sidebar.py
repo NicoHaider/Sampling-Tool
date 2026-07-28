@@ -34,6 +34,13 @@ _SAMPLE_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 _SAMPLE_LABEL_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 _ACTIVE_PREFIX: str = "● "
 _SIDEBAR_WIDTH: int = 250
+# Sprint 67 / Teil A: Sidebar war zuvor `setFixedWidth` – der äußere
+# Splitter (Sidebar | Workspace) war dadurch faktisch nicht bedienbar.
+# Min/Max lassen den Splitter greifbar, ohne dass die Sidebar beim
+# Fenster-Vergrößern unbegrenzt mitwächst (siehe Stretch-Faktoren in
+# `_window_layout.py`).
+_SIDEBAR_MIN_WIDTH: int = 180
+_SIDEBAR_MAX_WIDTH: int = 400
 # Sprint 31: Max. ID-Werte, die im Sample-Label gezeigt werden (Rest → „…“).
 MAX_IDS_IN_LABEL: int = 3
 
@@ -58,7 +65,7 @@ def format_sample_id_values(
 
 
 class NavigationSidebar(QFrame):
-    """Sidebar-Widget – Höhe 100 %, fixe Breite ~250 px."""
+    """Sidebar-Widget – Höhe 100 %, Breite 180–400 px verstellbar (Default 250 px)."""
 
     dataset_selected = pyqtSignal(int)
     sample_selected = pyqtSignal(int)
@@ -68,7 +75,8 @@ class NavigationSidebar(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("Sidebar")
-        self.setFixedWidth(_SIDEBAR_WIDTH)
+        self.setMinimumWidth(_SIDEBAR_MIN_WIDTH)
+        self.setMaximumWidth(_SIDEBAR_MAX_WIDTH)
         self.setFrameShape(QFrame.Shape.NoFrame)
 
         layout = QVBoxLayout(self)
