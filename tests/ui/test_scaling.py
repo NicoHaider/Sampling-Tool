@@ -110,3 +110,66 @@ class TestLoadScaledStylesheet:
 
     def test_other_factor_differs_from_real_file(self) -> None:
         assert load_scaled_stylesheet(1.15) != _real_qss()
+
+
+class TestCheckboxRadioIndicatorVisibility:
+    """Sprint 69 / Bug 1: unchecked Checkboxen/Radiobuttons waren unsichtbar
+    (weiß auf weiß) – `bdo_light.qss` hatte null `QCheckBox::indicator` /
+    `QRadioButton::indicator`-Regeln, die generische QWidget-Regel malte den
+    nativen Indikator randlos weiß über. Fix: fixe Indikator-Größe + ein
+    sichtbar umrandeter `:unchecked`-Zustand, während `:checked` komplett
+    unangetastet bleibt (kein Selektor matcht `:checked` – Qt rendert ihn
+    also weiterhin nativ/unverändert, siehe QSS-Kommentar im Abschnitt
+    "Checkboxen & Radiobuttons")."""
+
+    def test_checkbox_indicator_has_visible_unchecked_style(self) -> None:
+        qss = _real_qss()
+
+        # 1) Beide Sub-Controls bekommen eine explizite, fixe Pixel-Größe –
+        #    erst das macht aus dem Indikator überhaupt eine sichtbare
+        #    Box/Kreis-Fläche (vorher: implizite, stilabhängige Größe).
+        size_rule = re.search(
+            r"QCheckBox::indicator\s*,\s*QRadioButton::indicator\s*\{([^}]*)\}", qss
+        )
+        assert size_rule is not None, "erwarte eine gemeinsame Basis-Regel für die Indikator-Größe"
+        assert re.search(r"width:\s*16px", size_rule.group(1))
+        assert re.search(r"height:\s*16px", size_rule.group(1))
+
+        # 2) `:unchecked` muss klar sichtbar sein: helles Background PLUS
+        #    eine echte (nicht transparente, nicht weiß-auf-weiß) Umrandung
+        #    in einem der bereits im File verwendeten Palette-Grautöne.
+        unchecked_rule = re.search(
+            r"QCheckBox::indicator:unchecked\s*,\s*QRadioButton::indicator:unchecked\s*\{([^}]*)\}",
+            qss,
+        )
+        assert unchecked_rule is not None, (
+            "erwarte eine gemeinsame :unchecked-Regel für beide Controls"
+        )
+        body = unchecked_rule.group(1)
+        assert re.search(r"background-color:\s*#[0-9A-Fa-f]{6}", body)
+        border_match = re.search(r"border:\s*1px solid (#[0-9A-Fa-f]{6})", body)
+        assert border_match is not None
+        assert border_match.group(1) in {"#B0B0B0", "#D9D9D9"}
+
+        # 3) Radiobuttons müssen wie ein Kreis aussehen (nicht wie ein
+        #    Quadrat) – gerundet via border-radius, beschränkt auf
+        #    `:unchecked` (ein Radius auf dem selektorlosen Basis-Fall
+        #    würde – empirisch geprüft, siehe QSS-Kommentar – den nativen
+        #    angehakten Punkt zum Verschwinden bringen).
+        assert re.search(r"QRadioButton::indicator:unchecked\s*\{[^}]*border-radius:\s*\d+px", qss)
+
+        # 4) Checkboxen bleiben eckig: kein border-radius in irgendeiner
+        #    QCheckBox::indicator-Regel.
+        checkbox_blocks = re.findall(r"QCheckBox::indicator[^{]*\{([^}]*)\}", qss)
+        assert checkbox_blocks, "erwarte mindestens eine QCheckBox::indicator-Regel"
+        assert not any("border-radius" in block for block in checkbox_blocks)
+
+        # 5) 🔒 Sicherheitslinie: der angehakte Zustand bleibt komplett
+        #    unangetastet – keine Regel darf `::indicator:checked` matchen,
+        #    sonst würde das bestehende (native) Aussehen überschrieben.
+        assert "::indicator:checked" not in qss
+
+        # 6) Hard Constraint: keine font-size-Deklaration in den neuen
+        #    Regeln (der Skalierungstest zählt jedes font-size-Vorkommen).
+        indicator_section = qss[qss.index("Checkboxen & Radiobuttons") : qss.index("Splitter")]
+        assert "font-size" not in indicator_section

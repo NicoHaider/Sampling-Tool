@@ -314,6 +314,31 @@ QComboBox::drop-down {
 }
 
 /* -------------------------------------------------------------------------
+ * Checkboxen & Radiobuttons
+ *
+ * `:checked` hat absichtlich keinen eigenen Selektor – Qt rendert diesen
+ * Zustand dadurch weiterhin nativ. `border-radius` für den Radiobutton
+ * ist auf `:unchecked` beschränkt, weil er auf dem selektorlosen
+ * Basis-Selektor die native angehakte Markierung verschwinden lässt (Qt
+ * schaltet den gesamten Indikator dann auf reine Box-Zeichnung um).
+ * ------------------------------------------------------------------------- */
+QCheckBox::indicator,
+QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+}
+
+QCheckBox::indicator:unchecked,
+QRadioButton::indicator:unchecked {
+    background-color: #FFFFFF;
+    border: 1px solid #B0B0B0;
+}
+
+QRadioButton::indicator:unchecked {
+    border-radius: 8px;
+}
+
+/* -------------------------------------------------------------------------
  * Splitter
  * ------------------------------------------------------------------------- */
 QSplitter::handle {
