@@ -521,6 +521,53 @@ class TestScrollFallback:
         assert screen is not None
         assert dialog.maximumHeight() <= screen.availableGeometry().height()
 
+    def test_settings_hint_labels_not_clipped(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        """Sprint 69 / Bug 2: Wortumbruch-Hinweise wurden bei der `QScrollArea`
+        aus Sprint 67 einzeilig gerendert und dadurch abgeschnitten/überlappten
+        die nächste Formularzeile. Fix: `_WrappingHintLabel` hält die
+        Mindesthöhe passend zur Wortumbruch-Höhe bei der aktuellen Breite.
+        """
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        # Erzwingt die kleinste zulässige Dialogbreite (`setMinimumWidth`)
+        # statt der evtl. größeren sizeHint-Breite, weil genau dort am
+        # wenigsten Platz für den Wortumbruch ist.
+        dialog.resize(dialog.minimumWidth(), dialog.height())
+        dialog.show()
+        qtbot.waitExposed(dialog)
+        # Der "Erweitert"-Tab (Index 2) ist beim Öffnen nicht die aktive
+        # Tab-Seite; `QTabWidget` layoutet inaktive Seiten nicht, bevor sie
+        # zum ersten Mal sichtbar werden – genau bei diesem ersten Layout-Pass
+        # trat der Clipping-Bug auf.
+        dialog._tabs.setCurrentIndex(2)
+        qtbot.wait(50)
+
+        for label in (dialog._ui_scale_hint, dialog._info_label):
+            # 1) Bei der Breite, die das reale Layout gerade zuweist.
+            width = label.width()
+            assert label.height() >= label.heightForWidth(width), (
+                f"{label.text()!r}: height={label.height()} "
+                f"< heightForWidth({width})={label.heightForWidth(width)}"
+            )
+
+            # 2) Zusätzlich explizit bei einer schmalen Breite: Die im
+            # Offscreen-Test verwendete Ersatzschrift ist deutlich schmaler
+            # als reale Desktop-Schriften, außerdem zieht der breitere
+            # "Reports"-Tab die gemeinsame `QTabWidget`-Breite hoch (Qt
+            # bemisst sie an der breitesten Tab-Seite, nicht an der gerade
+            # aktiven) – auf einem echten Bildschirm mit realer Schrift wird
+            # trotzdem mehrzeilig umgebrochen. Ein direktes Resize auf eine
+            # schmale Breite bildet das nach und prüft den eigentlichen
+            # Mechanismus (Mindesthöhe folgt `heightForWidth` bei JEDER
+            # Breite), unabhängig von Font-Metriken der Testumgebung.
+            narrow_width = 300
+            label.resize(narrow_width, label.height())
+            qtbot.wait(10)
+            assert label.height() >= label.heightForWidth(narrow_width), (
+                f"{label.text()!r} @ {narrow_width}px: height={label.height()} "
+                f"< heightForWidth({narrow_width})={label.heightForWidth(narrow_width)}"
+            )
+
 
 class TestUiScaleSetting:
     """Sprint 68 / Teil B1: UI-Größe-Dropdown im Erweitert-Tab."""

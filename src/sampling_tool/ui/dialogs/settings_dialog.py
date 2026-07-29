@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Final
 
 from PyQt6.QtCore import QUrl
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QDesktopServices, QResizeEvent
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStyle,
     QTabWidget,
@@ -71,6 +72,28 @@ def _select_combo_by_key(combo: QComboBox, key: str, fallback_key: str) -> None:
         idx = combo.findData(fallback_key)
     if idx >= 0:
         combo.setCurrentIndex(idx)
+
+
+class _WrappingHintLabel(QLabel):
+    """Word-wrap-`QLabel`, das seine Mindesthöhe selbst nachführt.
+
+    Sprint 69 / Bug 2: Innerhalb der `QScrollArea` aus Sprint 67 propagiert
+    `QFormLayout` `heightForWidth` nicht zuverlässig durch die Layout-Kette
+    (QScrollArea → QTabWidget → Tab-Seite → QFormLayout). Ohne Gegenmaßnahme
+    bekommt das Label nur eine einzeilige Höhe zugewiesen, obwohl der
+    Wortumbruch bei der tatsächlichen Breite mehrzeilig ist – der Text wird
+    abgeschnitten und überlappt die nächste Zeile. Der `resizeEvent`-Override
+    erzwingt vor jedem Resize eine Mindesthöhe passend zur aktuellen Breite.
+    """
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.setWordWrap(True)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding)
+
+    def resizeEvent(self, event: QResizeEvent | None) -> None:  # noqa: N802
+        self.setMinimumHeight(self.heightForWidth(self.width()))
+        super().resizeEvent(event)
 
 
 class SettingsDialog(QDialog):
@@ -321,13 +344,12 @@ class SettingsDialog(QDialog):
         _select_combo_by_key(self._ui_scale, current.ui_scale, AppSettings.defaults().ui_scale)
         form.addRow("UI-Größe", self._ui_scale)
 
-        ui_scale_hint = QLabel(
+        self._ui_scale_hint = _WrappingHintLabel(
             "Skaliert Schrift, Symbole und Zeilenhöhe. Wirkt sofort; einzelne "
             "Dialoge übernehmen die neue Größe beim nächsten Öffnen."
         )
-        ui_scale_hint.setWordWrap(True)
-        ui_scale_hint.setStyleSheet("color: #7F7F7F;")
-        form.addRow(" ", ui_scale_hint)
+        self._ui_scale_hint.setStyleSheet("color: #7F7F7F;")
+        form.addRow(" ", self._ui_scale_hint)
 
         # Sprint 27: Der Sampling-Seed wird ausschließlich hier geändert – im
         # Haupt-Dialog ist das Feld schreibgeschützt. 0 (= specialValueText)
@@ -353,13 +375,12 @@ class SettingsDialog(QDialog):
         seed_widget.setLayout(seed_row)
         form.addRow("Sampling-Seed", seed_widget)
 
-        info = QLabel(
+        self._info_label = _WrappingHintLabel(
             f"Log-Datei: zentral unter {log_file_path()} (app-weit, nicht im "
             "Projekt-Ordner). Das Log-Level wirkt sofort, ohne Neustart."
         )
-        info.setWordWrap(True)
-        info.setStyleSheet("color: #7F7F7F;")
-        form.addRow(" ", info)
+        self._info_label.setStyleSheet("color: #7F7F7F;")
+        form.addRow(" ", self._info_label)
         outer.addLayout(form)
         outer.addStretch(1)
         return page
