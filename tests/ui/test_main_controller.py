@@ -5502,3 +5502,39 @@ def test_maincontroller_facade_removed(controller: MainController) -> None:
     assert controller.session.engagement is None
     assert callable(controller.session.refresh_audit_trail)
     assert callable(controller.session.resolve_briefpapier)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 68 / Teil B1: UI-Größe wird bei jedem Settings-OK live gesetzt
+# ---------------------------------------------------------------------------
+
+
+class TestUiScaleWiring:
+    def test_ui_scale_setting_roundtrip_and_effect(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from PyQt6.QtWidgets import QApplication
+
+        from sampling_tool.ui._window_toolbar import _TOOLBAR_ICON_SIZE
+        from sampling_tool.ui.settings_store import AppSettings
+
+        defaults = AppSettings.defaults()
+        controller = MainController(window, recent_store=recent_store, settings=defaults)
+
+        controller.session.apply_new_settings(dc_replace(defaults, ui_scale="groß"))
+
+        # Wirkung, nicht nur Roundtrip: Stylesheet + Toolbar-Icon + Tabellen-Zeile
+        # haben sich sofort geändert.
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        assert "font-size: 15px" in app.styleSheet()  # 13px-Basis * 1.15 = 14.95 → 15
+        assert window._toolbar.iconSize().width() > _TOOLBAR_ICON_SIZE
+        v_header = window.data_table().verticalHeader()
+        assert v_header is not None
+        assert v_header.defaultSectionSize() > 22
+
+        assert controller.session.settings.ui_scale == "groß"
