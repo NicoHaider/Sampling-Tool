@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 from sampling_tool import __version__
 from sampling_tool.config import APP_NAME
 from sampling_tool.logging_setup import log_file_path
+from sampling_tool.ui._scaling import scaled_px
 
 REPO_URL: str = "https://github.com/NicoHaider/Sampling-Tool"
 
@@ -94,7 +95,7 @@ CHANGELOG: tuple[tuple[str, tuple[str, ...]], ...] = (
 class AboutDialog(QDialog):
     """Über-Dialog mit Version, Beschreibung und Repo-Link."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, ui_scale_factor: float = 1.0) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Über {APP_NAME}")
         self.setModal(True)
@@ -113,7 +114,9 @@ class AboutDialog(QDialog):
 
         text = QVBoxLayout()
         title = QLabel(APP_NAME)
-        title.setStyleSheet("font-size: 22px; font-weight: 800; color: #E81A3B;")
+        title.setStyleSheet(
+            f"font-size: {scaled_px(22, ui_scale_factor)}px; font-weight: 800; color: #E81A3B;"
+        )
         version = QLabel(f"Version {__version__}")
         version.setStyleSheet("color: #7F7F7F;")
         description = QLabel(
@@ -138,7 +141,9 @@ class AboutDialog(QDialog):
 
         self._log_path_label = QLabel(f"Log-Datei: {log_file_path()}")
         self._log_path_label.setWordWrap(True)
-        self._log_path_label.setStyleSheet("color: #7F7F7F; font-size: 11px;")
+        self._log_path_label.setStyleSheet(
+            f"color: #7F7F7F; font-size: {scaled_px(11, ui_scale_factor)}px;"
+        )
         outer.addWidget(self._log_path_label)
 
         # Changelog-Block – Trenner + Liste der letzten Releases.
@@ -149,7 +154,8 @@ class AboutDialog(QDialog):
 
         changelog_title = QLabel("Was gibt es Neues")
         changelog_title.setStyleSheet(
-            "font-weight: 700; color: #333333; font-size: 13px; padding-top: 4px;"
+            f"font-weight: 700; color: #333333; font-size: {scaled_px(13, ui_scale_factor)}px; "
+            "padding-top: 4px;"
         )
         outer.addWidget(changelog_title)
 

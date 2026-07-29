@@ -54,3 +54,15 @@ class TestAboutDialog:
         dialog = AboutDialog()
         qtbot.addWidget(dialog)
         assert str(fake_path) in dialog._log_path_label.text()
+
+
+class TestUiScale:
+    def test_default_factor_matches_base_size(self, qtbot: QtBot) -> None:
+        dialog = AboutDialog()
+        qtbot.addWidget(dialog)
+        assert "font-size: 11px" in dialog._log_path_label.styleSheet()
+
+    def test_larger_factor_scales_log_path_label(self, qtbot: QtBot) -> None:
+        dialog = AboutDialog(ui_scale_factor=1.15)
+        qtbot.addWidget(dialog)
+        assert "font-size: 13px" in dialog._log_path_label.styleSheet()
