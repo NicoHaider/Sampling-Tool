@@ -5522,19 +5522,27 @@ class TestUiScaleWiring:
         from sampling_tool.ui._window_toolbar import _TOOLBAR_ICON_SIZE
         from sampling_tool.ui.settings_store import AppSettings
 
-        defaults = AppSettings.defaults()
-        controller = MainController(window, recent_store=recent_store, settings=defaults)
-
-        controller.session.apply_new_settings(dc_replace(defaults, ui_scale="groß"))
-
-        # Wirkung, nicht nur Roundtrip: Stylesheet + Toolbar-Icon + Tabellen-Zeile
-        # haben sich sofort geändert.
         app = QApplication.instance()
         assert isinstance(app, QApplication)
-        assert "font-size: 15px" in app.styleSheet()  # 13px-Basis * 1.15 = 14.95 → 15
-        assert window._toolbar.iconSize().width() > _TOOLBAR_ICON_SIZE
-        v_header = window.data_table().verticalHeader()
-        assert v_header is not None
-        assert v_header.defaultSectionSize() > 22
+        original_stylesheet = app.styleSheet()
+        try:
+            defaults = AppSettings.defaults()
+            controller = MainController(window, recent_store=recent_store, settings=defaults)
 
-        assert controller.session.settings.ui_scale == "groß"
+            controller.session.apply_new_settings(dc_replace(defaults, ui_scale="groß"))
+
+            # Wirkung, nicht nur Roundtrip: Stylesheet + Toolbar-Icon + Tabellen-Zeile
+            # haben sich sofort geändert. `font-size: 17px` ist die skalierte Version
+            # der `engagementTitle`-Regel (15px-Basis * 1.15 = 17.25 → 17) – eindeutig,
+            # weil dieser Wert (anders als das ungeskalierte `font-size: 15px`, das
+            # bereits unskaliert im QSS vorkommt) nur bei korrekt angewendetem
+            # Faktor 1.15 auftritt.
+            assert "font-size: 17px" in app.styleSheet()
+            assert window._toolbar.iconSize().width() > _TOOLBAR_ICON_SIZE
+            v_header = window.data_table().verticalHeader()
+            assert v_header is not None
+            assert v_header.defaultSectionSize() > 22
+
+            assert controller.session.settings.ui_scale == "groß"
+        finally:
+            app.setStyleSheet(original_stylesheet)
