@@ -72,6 +72,7 @@ def build_toolbar(window: MainWindow) -> None:
     # konkurrieren. Reihenfolge rechts: Einstellungen (häufiger genutzt),
     # dann Bug-Report.
     spacer = QWidget()
+    spacer.setObjectName("toolbarSpacer")  # Sprint 69/6: QSS-Hook, siehe bdo_light.qss
     spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
     toolbar.addWidget(spacer)
     if style is not None and window._action_settings.icon().isNull():

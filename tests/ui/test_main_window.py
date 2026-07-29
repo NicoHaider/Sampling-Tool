@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QRect, QSettings, QSize, Qt
+from PyQt6.QtWidgets import QWidget
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.config import APP_NAME, APP_ORG
@@ -21,6 +23,7 @@ from sampling_tool.core.models import (
 )
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import DatasetRepo, EngagementRepo
+from sampling_tool.resources import package_resource
 from sampling_tool.ui._geometry import fit_to_available
 from sampling_tool.ui._window_state import _DESIRED_HEIGHT, _DESIRED_WIDTH, _int_or_none
 from sampling_tool.ui.main_window import MainWindow
@@ -356,6 +359,32 @@ class TestToolbarCompactOverflow:
         action = win._action_bug_report
         assert action.toolTip() == "Fehler melden oder Feedback senden"
         assert not action.icon().isNull()
+
+
+class TestToolbarSpacerTransparent:
+    """Sprint 69/6: Expanding-Spacer zwischen Haupt- und Settings-/Bug-Report-
+    Aktionen zeigte einen weißen Block (generische QWidget-Regel malte ihn
+    weiß über den etwas dunkleren Toolbar-Hintergrund)."""
+
+    def test_toolbar_spacer_is_transparent(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+
+        # Der Spacer ist das einzige per addWidget() eingefügte, nicht als
+        # Separator markierte bare-QWidget in der Toolbar (Separatoren sind
+        # ebenfalls QWidget-Instanzen, aber mit isSeparator()==True).
+        spacer = next(
+            widget
+            for action in win._toolbar.actions()
+            if not action.isSeparator()
+            and type(widget := win._toolbar.widgetForAction(action)) is QWidget
+        )
+        assert spacer.objectName() != ""
+
+        qss = package_resource("ui/styles/bdo_light.qss").read_text(encoding="utf-8")
+        rule = re.search(rf"QWidget#{re.escape(spacer.objectName())}\s*\{{([^}}]*)\}}", qss)
+        assert rule is not None, "erwarte eine QSS-Regel für den Spacer-Objektnamen"
+        assert re.search(r"background(-color)?:\s*transparent", rule.group(1))
 
 
 class TestPanelVisibility:

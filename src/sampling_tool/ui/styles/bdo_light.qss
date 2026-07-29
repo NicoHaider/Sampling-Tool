@@ -94,6 +94,11 @@ QToolBar QToolButton:disabled {
     color: #B0B0B0;
 }
 
+/* Sprint 69/6: Expanding-Spacer sonst durch generische QWidget-Regel weiß. */
+QWidget#toolbarSpacer {
+    background: transparent;
+}
+
 /* -------------------------------------------------------------------------
  * Buttons
  * ------------------------------------------------------------------------- */
