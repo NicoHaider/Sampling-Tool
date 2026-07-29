@@ -86,7 +86,8 @@ class HelpController:
         damit später ein Passwort-Gate davorgeschaltet werden kann (jetzt noch
         keins).
         """
-        TemplateManagerDialog(PresetStore(), self.session.window).exec()
+        factor = scale_factor(self.session.settings.ui_scale)
+        TemplateManagerDialog(PresetStore(), self.session.window, ui_scale_factor=factor).exec()
 
     def handle_hotkeys(self) -> None:
         """Statisches Info-Fenster mit Tastatur-Shortcuts."""

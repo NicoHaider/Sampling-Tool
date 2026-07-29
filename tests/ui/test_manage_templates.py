@@ -65,9 +65,16 @@ class TestManageTemplatesEntryPoint:
         opened: dict[str, object] = {}
 
         class _FakeDialog:
-            def __init__(self, store: object, parent: object = None) -> None:
+            def __init__(
+                self,
+                store: object,
+                parent: object = None,
+                *,
+                ui_scale_factor: float = 1.0,
+            ) -> None:
                 opened["store"] = store
                 opened["parent"] = parent
+                opened["ui_scale_factor"] = ui_scale_factor
 
             def exec(self) -> int:
                 opened["exec"] = True
@@ -91,7 +98,13 @@ class TestManageTemplatesEntryPoint:
         opened: list[bool] = []
 
         class _FakeDialog:
-            def __init__(self, store: object, parent: object = None) -> None:
+            def __init__(
+                self,
+                store: object,
+                parent: object = None,
+                *,
+                ui_scale_factor: float = 1.0,
+            ) -> None:
                 pass
 
             def exec(self) -> int:
