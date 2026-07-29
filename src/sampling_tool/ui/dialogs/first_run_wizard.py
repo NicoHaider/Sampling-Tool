@@ -107,9 +107,7 @@ class _FolderPage(QWizardPage):
         self._hint = QLabel(
             "Wenn der Ordner nicht existiert, wird er beim Weiterklicken automatisch angelegt."
         )
-        self._hint.setStyleSheet(
-            f"color: #7F7F7F; font-size: {scaled_px(11, ui_scale_factor)}px;"
-        )
+        self._hint.setStyleSheet(f"color: #7F7F7F; font-size: {scaled_px(11, ui_scale_factor)}px;")
         self._hint.setWordWrap(True)
 
         layout.addLayout(row)
