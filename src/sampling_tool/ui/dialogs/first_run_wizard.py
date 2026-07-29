@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool import config
+from sampling_tool.ui._scaling import scaled_px
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +40,7 @@ class FirstRunResult:
 class FirstRunWizard(QWizard):
     """Vierseitiger Erst-Einrichtungs-Wizard."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, ui_scale_factor: float = 1.0) -> None:
         super().__init__(parent)
         self.setWindowTitle("Erst-Einrichtung")
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
@@ -47,7 +48,7 @@ class FirstRunWizard(QWizard):
         self.setMinimumSize(560, 380)
 
         self._page_welcome = _WelcomePage()
-        self._page_folder = _FolderPage()
+        self._page_folder = _FolderPage(ui_scale_factor=ui_scale_factor)
         self._page_auditor = _AuditorPage()
         self._page_summary = _SummaryPage()
 
@@ -90,7 +91,7 @@ class _WelcomePage(QWizardPage):
 
 
 class _FolderPage(QWizardPage):
-    def __init__(self) -> None:
+    def __init__(self, *, ui_scale_factor: float = 1.0) -> None:
         super().__init__()
         self.setTitle("Standard-Ordner")
         self.setSubTitle("Hier speichert das Tool deine Projekt-Dateien (SQLite-DBs).")
@@ -103,14 +104,16 @@ class _FolderPage(QWizardPage):
         row.addWidget(self._line_edit, 1)
         row.addWidget(self._browse_btn)
 
-        hint = QLabel(
+        self._hint = QLabel(
             "Wenn der Ordner nicht existiert, wird er beim Weiterklicken automatisch angelegt."
         )
-        hint.setStyleSheet("color: #7F7F7F; font-size: 11px;")
-        hint.setWordWrap(True)
+        self._hint.setStyleSheet(
+            f"color: #7F7F7F; font-size: {scaled_px(11, ui_scale_factor)}px;"
+        )
+        self._hint.setWordWrap(True)
 
         layout.addLayout(row)
-        layout.addWidget(hint)
+        layout.addWidget(self._hint)
         layout.addStretch(1)
 
     def _on_browse_clicked(self) -> None:

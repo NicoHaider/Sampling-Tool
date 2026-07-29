@@ -91,3 +91,15 @@ class TestFirstRunWizard:
         wizard._page_auditor._line_edit.setText("   Mit Whitespace   ")
         result = wizard.result_data()
         assert result.default_auditor_name == "Mit Whitespace"
+
+
+class TestUiScale:
+    def test_default_factor_matches_base_size(self, qtbot: QtBot) -> None:
+        wizard = FirstRunWizard()
+        qtbot.addWidget(wizard)
+        assert "font-size: 11px" in wizard._page_folder._hint.styleSheet()
+
+    def test_larger_factor_scales_hint(self, qtbot: QtBot) -> None:
+        wizard = FirstRunWizard(ui_scale_factor=1.15)
+        qtbot.addWidget(wizard)
+        assert "font-size: 13px" in wizard._page_folder._hint.styleSheet()

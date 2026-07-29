@@ -58,7 +58,7 @@ def run_first_run_wizard(initial: AppSettings) -> AppSettings:
 
     from sampling_tool.ui.dialogs.first_run_wizard import FirstRunWizard
 
-    wizard = FirstRunWizard()
+    wizard = FirstRunWizard(ui_scale_factor=scale_factor(initial.ui_scale))
     if wizard.exec() == QWizard.DialogCode.Accepted:
         result = wizard.result_data()
         return replace(
