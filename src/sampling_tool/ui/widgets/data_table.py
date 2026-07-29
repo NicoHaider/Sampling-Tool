@@ -43,6 +43,8 @@ HIGHLIGHT_ALPHA: int = SAMPLE_HIGHLIGHT_ALPHA
 _MIN_COLUMN_WIDTH: int = 60
 _MAX_COLUMN_WIDTH: int = 320
 _EMPTY_MESSAGE: str = "Keine Datensätze – Datei importieren"
+# Sprint 68 / Teil B1: Basiswert für die UI-Skalierung (`MainWindow.apply_ui_scale`).
+_DEFAULT_ROW_HEIGHT: int = 22
 
 
 class DatasetTableModel(QAbstractTableModel):
@@ -309,7 +311,7 @@ class DataTableView(QTableView):
         h_header.setResizeContentsPrecision(100)
         v_header = self.verticalHeader()
         assert v_header is not None
-        v_header.setDefaultSectionSize(22)
+        v_header.setDefaultSectionSize(_DEFAULT_ROW_HEIGHT)
         v_header.setVisible(True)
 
     # ---- Public API -----------------------------------------------------
@@ -326,6 +328,12 @@ class DataTableView(QTableView):
     def clear_dataset(self) -> None:
         """Entfernt das aktuelle Dataset aus der Ansicht."""
         self._model.clear()
+
+    def set_row_height_px(self, px: int) -> None:
+        """Setzt die Default-Zeilenhöhe (Sprint 68 / Teil B1: UI-Skalierung)."""
+        v_header = self.verticalHeader()
+        assert v_header is not None
+        v_header.setDefaultSectionSize(px)
 
     def highlight_rows(self, row_ids: Sequence[int]) -> None:
         """Markiert Zeilen mit den angegebenen `row_id`s und scrollt zur ersten."""

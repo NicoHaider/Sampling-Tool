@@ -9,7 +9,7 @@ from pathlib import Path
 
 from sampling_tool.config import APP_NAME, APP_ORG, APP_ORG_DOMAIN
 from sampling_tool.logging_setup import configure_logging, install_excepthook
-from sampling_tool.resources import package_resource
+from sampling_tool.ui._scaling import load_scaled_stylesheet, scale_factor
 from sampling_tool.ui.settings_store import AppSettings, load_settings, save_settings
 
 logger = logging.getLogger(__name__)
@@ -27,11 +27,10 @@ def main() -> int:
     app.setOrganizationName(APP_ORG)
     app.setOrganizationDomain(APP_ORG_DOMAIN)
 
-    qss_path = package_resource("ui/styles/bdo_light.qss")
-    if qss_path.exists():
-        app.setStyleSheet(qss_path.read_text(encoding="utf-8"))
-
     settings = load_settings()
+    factor = scale_factor(settings.ui_scale)
+    app.setStyleSheet(load_scaled_stylesheet(factor))
+
     log_path = configure_logging(settings.log_level)
     install_excepthook()
     logger.info("Sampling-Tool gestartet (Log-Datei: %s)", log_path)
@@ -41,6 +40,7 @@ def main() -> int:
         save_settings(settings)
 
     window = MainWindow()
+    window.apply_ui_scale(factor)
     # Reference muss am Leben bleiben (sonst werden Signal-Slots GC'd).
     window.controller = MainController(window, settings=settings)  # type: ignore[attr-defined]
     window.show()
@@ -58,7 +58,7 @@ def run_first_run_wizard(initial: AppSettings) -> AppSettings:
 
     from sampling_tool.ui.dialogs.first_run_wizard import FirstRunWizard
 
-    wizard = FirstRunWizard()
+    wizard = FirstRunWizard(ui_scale_factor=scale_factor(initial.ui_scale))
     if wizard.exec() == QWizard.DialogCode.Accepted:
         result = wizard.result_data()
         return replace(

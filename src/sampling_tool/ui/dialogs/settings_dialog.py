@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import secrets
 from pathlib import Path
+from typing import Final
 
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
@@ -47,6 +48,7 @@ from sampling_tool.io.bdo_locations import (
 from sampling_tool.io.briefpapier import validate_briefpapier
 from sampling_tool.logging_setup import log_file_path
 from sampling_tool.ui._dialog_sizing import clamp_dialog_height_to_screen
+from sampling_tool.ui._scaling import UI_SCALE_LEVELS
 from sampling_tool.ui.settings_store import (
     LOG_LEVELS,
     AppSettings,
@@ -57,6 +59,9 @@ from sampling_tool.ui.settings_store import (
 _SEED_SPIN_MAX: int = min(SEED_MAX, 2_147_483_647)
 # Label für den Seed-Wert 0 = kein fester Seed.
 _SEED_RANDOM_LABEL: str = "Zufällig (bei jeder Ziehung neu)"
+# Sprint 68 / Teil B1: Anzeige-Labels für die UI-Größe-Stufen (userData bleibt
+# der interne Key aus `ui/_scaling.py`).
+_UI_SCALE_DISPLAY: Final[dict[str, str]] = {"klein": "Klein", "normal": "Normal", "groß": "Groß"}
 
 
 def _select_combo_by_key(combo: QComboBox, key: str, fallback_key: str) -> None:
@@ -310,6 +315,20 @@ class SettingsDialog(QDialog):
             self._log_level.setCurrentIndex(idx)
         form.addRow("Log-Level", self._log_level)
 
+        self._ui_scale = QComboBox()
+        for level in UI_SCALE_LEVELS:
+            self._ui_scale.addItem(_UI_SCALE_DISPLAY[level], userData=level)
+        _select_combo_by_key(self._ui_scale, current.ui_scale, AppSettings.defaults().ui_scale)
+        form.addRow("UI-Größe", self._ui_scale)
+
+        ui_scale_hint = QLabel(
+            "Skaliert Schrift, Symbole und Zeilenhöhe. Wirkt sofort; einzelne "
+            "Dialoge übernehmen die neue Größe beim nächsten Öffnen."
+        )
+        ui_scale_hint.setWordWrap(True)
+        ui_scale_hint.setStyleSheet("color: #7F7F7F;")
+        form.addRow(" ", ui_scale_hint)
+
         # Sprint 27: Der Sampling-Seed wird ausschließlich hier geändert – im
         # Haupt-Dialog ist das Feld schreibgeschützt. 0 (= specialValueText)
         # bedeutet „kein fester Seed": es wird wie bisher zufällig gewürfelt
@@ -418,6 +437,7 @@ class SettingsDialog(QDialog):
         idx = self._log_level.findText(defaults.log_level)
         if idx >= 0:
             self._log_level.setCurrentIndex(idx)
+        _select_combo_by_key(self._ui_scale, defaults.ui_scale, defaults.ui_scale)
 
     def _on_accept(self) -> None:
         custom_path: Path | None = None
@@ -460,6 +480,7 @@ class SettingsDialog(QDialog):
             advanced_mode=self._chk_advanced_mode.isChecked(),
             undo_depth=self._undo_depth.value(),
             log_level=self._log_level.currentText(),
+            ui_scale=self._ui_scale.currentData() or AppSettings.defaults().ui_scale,
             # Sprint 22: Die Einzel-Toggles für Advanced-Funktionen leben im
             # „Ansicht"-Menü, nicht in diesem Dialog. Werte unverändert
             # durchreichen, damit OK sie nicht versehentlich zurücksetzt.

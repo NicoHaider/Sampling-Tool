@@ -49,6 +49,7 @@ SamplingDialogFactory = Callable[
         SampleResult | None,
         SamplingFeatures,
         Callable[[str, FilterOperator, Any, bool], int] | None,
+        float,
     ],
     SamplingDialog,
 ]
@@ -155,6 +156,7 @@ def default_sampling_factory(
     current_sample: SampleResult | None,
     features: SamplingFeatures,
     filter_match_count_provider: Callable[[str, FilterOperator, Any, bool], int] | None = None,
+    ui_scale_factor: float = 1.0,
 ) -> SamplingDialog:
     return SamplingDialog(
         dataset,
@@ -163,6 +165,7 @@ def default_sampling_factory(
         parent=parent,
         features=features,
         filter_match_count_provider=filter_match_count_provider,
+        ui_scale_factor=ui_scale_factor,
     )
 
 

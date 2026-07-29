@@ -10,6 +10,7 @@ from dataclasses import replace
 
 from PyQt6.QtWidgets import QMessageBox
 
+from sampling_tool.ui._scaling import scale_factor
 from sampling_tool.ui.controllers._factories import ControllerFactories
 from sampling_tool.ui.controllers.workspace_session import WorkspaceSession
 from sampling_tool.ui.dialogs.about_dialog import AboutDialog
@@ -32,7 +33,8 @@ class HelpController:
 
     def handle_about(self) -> None:
         """About-Dialog öffnen."""
-        AboutDialog(self.session.window).exec()
+        factor = scale_factor(self.session.settings.ui_scale)
+        AboutDialog(self.session.window, ui_scale_factor=factor).exec()
 
     def handle_settings(self) -> None:
         """Settings-Dialog öffnen und auf OK persistieren."""
@@ -84,7 +86,8 @@ class HelpController:
         damit später ein Passwort-Gate davorgeschaltet werden kann (jetzt noch
         keins).
         """
-        TemplateManagerDialog(PresetStore(), self.session.window).exec()
+        factor = scale_factor(self.session.settings.ui_scale)
+        TemplateManagerDialog(PresetStore(), self.session.window, ui_scale_factor=factor).exec()
 
     def handle_hotkeys(self) -> None:
         """Statisches Info-Fenster mit Tastatur-Shortcuts."""

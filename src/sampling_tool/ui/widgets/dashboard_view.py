@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 
 from sampling_tool.core.formatting import ensure_utc
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
+from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui.widgets.chart_renderer import (
     render_bar_chart,
     render_line_chart,
@@ -49,7 +50,9 @@ _HISTORY_DAYS: Final[int] = 30
 class DashboardTile(QFrame):
     """Generische Kachel – Title + Body."""
 
-    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, title: str, parent: QWidget | None = None, *, ui_scale_factor: float = 1.0
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("DashboardTile")
         self.setFrameShape(QFrame.Shape.StyledPanel)
@@ -65,7 +68,8 @@ class DashboardTile(QFrame):
 
         self._title_label = QLabel(title)
         self._title_label.setStyleSheet(
-            "font-weight: 700; color: #333333; font-size: 12px; text-transform: uppercase;"
+            f"font-weight: 700; color: #333333; font-size: {scaled_px(12, ui_scale_factor)}px; "
+            "text-transform: uppercase;"
         )
         layout.addWidget(self._title_label)
 
@@ -88,6 +92,13 @@ class DashboardTile(QFrame):
             if w is not None:
                 w.setParent(None)
                 w.deleteLater()
+
+    def set_ui_scale(self, factor: float) -> None:
+        """Skaliert den Kachel-Titel neu (Sprint 68 / Teil B1)."""
+        self._title_label.setStyleSheet(
+            f"font-weight: 700; color: #333333; font-size: {scaled_px(12, factor)}px; "
+            "text-transform: uppercase;"
+        )
 
 
 class _ClickableSampleLabel(QLabel):
@@ -117,8 +128,12 @@ class DashboardView(QWidget):
     dataset_clicked = pyqtSignal(int)
     refresh_requested = pyqtSignal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, ui_scale_factor: float = 1.0) -> None:
         super().__init__(parent)
+        self._factor = ui_scale_factor
+        self._last_data: (
+            tuple[Engagement | None, list[Dataset], list[SampleResult], list[AuditEvent]] | None
+        ) = None
         self.setObjectName("DashboardView")
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
@@ -145,12 +160,16 @@ class DashboardView(QWidget):
         self._grid.setSpacing(10)
 
         # Kacheln (initial leer, set_data füllt sie).
-        self._tile_datasets = DashboardTile("Datasets")
-        self._tile_samples = DashboardTile("Samples")
-        self._tile_events = DashboardTile("Audit-Events")
-        self._tile_last_activity = DashboardTile("Letzte Aktivität")
-        self._tile_recent_samples = DashboardTile("Letzte Stichproben")
-        self._tile_history = DashboardTile("Sampling-Historie (30 Tage)")
+        self._tile_datasets = DashboardTile("Datasets", ui_scale_factor=self._factor)
+        self._tile_samples = DashboardTile("Samples", ui_scale_factor=self._factor)
+        self._tile_events = DashboardTile("Audit-Events", ui_scale_factor=self._factor)
+        self._tile_last_activity = DashboardTile("Letzte Aktivität", ui_scale_factor=self._factor)
+        self._tile_recent_samples = DashboardTile(
+            "Letzte Stichproben", ui_scale_factor=self._factor
+        )
+        self._tile_history = DashboardTile(
+            "Sampling-Historie (30 Tage)", ui_scale_factor=self._factor
+        )
 
         for index, tile in enumerate(
             (
@@ -190,6 +209,7 @@ class DashboardView(QWidget):
         audit_events: list[AuditEvent],
     ) -> None:
         """Aktualisiert alle Kacheln basierend auf den übergebenen Daten."""
+        self._last_data = (engagement, datasets, samples, audit_events)
         if engagement is None or (not datasets and not samples and not audit_events):
             self._stack.setCurrentWidget(self._empty_label)
             self._render_default_body()
@@ -206,7 +226,7 @@ class DashboardView(QWidget):
     # ---- Renderer pro Kachel --------------------------------------------
 
     def _render_datasets_tile(self, datasets: list[Dataset]) -> None:
-        label = _big_number_label(len(datasets), "Datensätze")
+        label = _big_number_label(len(datasets), "Datensätze", self._factor)
         self._tile_datasets.set_body_widget(label)
 
     def _render_samples_tile(self, samples: list[SampleResult]) -> None:
@@ -214,7 +234,7 @@ class DashboardView(QWidget):
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-        layout.addWidget(_big_number_label(len(samples), "Stichproben"))
+        layout.addWidget(_big_number_label(len(samples), "Stichproben", self._factor))
 
         method_counts: Counter[str] = Counter()
         for s in samples:
@@ -236,7 +256,7 @@ class DashboardView(QWidget):
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-        layout.addWidget(_big_number_label(len(events), "Events"))
+        layout.addWidget(_big_number_label(len(events), "Events", self._factor))
 
         type_counts: Counter[str] = Counter()
         for e in events:
@@ -267,7 +287,9 @@ class DashboardView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
         absolute_label = QLabel(absolute)
-        absolute_label.setStyleSheet("font-size: 16px; font-weight: 700; color: #333333;")
+        absolute_label.setStyleSheet(
+            f"font-size: {scaled_px(16, self._factor)}px; font-weight: 700; color: #333333;"
+        )
         relative_label = QLabel(relative)
         relative_label.setStyleSheet("color: #7F7F7F;")
         layout.addWidget(absolute_label)
@@ -336,19 +358,34 @@ class DashboardView(QWidget):
     def history_tile(self) -> DashboardTile:
         return self._tile_history
 
+    def set_ui_scale(self, factor: float) -> None:
+        """Wendet einen neuen UI-Skalierungsfaktor sofort an (Sprint 68 / Teil B1)."""
+        self._factor = factor
+        for tile in (
+            self._tile_datasets,
+            self._tile_samples,
+            self._tile_events,
+            self._tile_last_activity,
+            self._tile_recent_samples,
+            self._tile_history,
+        ):
+            tile.set_ui_scale(factor)
+        if self._last_data is not None:
+            self.set_data(*self._last_data)
+
 
 # ---------------------------------------------------------------------------
 # Hilfen
 # ---------------------------------------------------------------------------
 
 
-def _big_number_label(value: int, label: str) -> QWidget:
+def _big_number_label(value: int, label: str, factor: float = 1.0) -> QWidget:
     box = QWidget()
     layout = QVBoxLayout(box)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(0)
     number = QLabel(str(value))
-    number.setStyleSheet("font-size: 28px; font-weight: 800; color: #E81A3B;")
+    number.setStyleSheet(f"font-size: {scaled_px(28, factor)}px; font-weight: 800; color: #E81A3B;")
     sub = QLabel(label)
     sub.setStyleSheet("color: #7F7F7F;")
     layout.addWidget(number)

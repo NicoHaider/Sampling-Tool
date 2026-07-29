@@ -107,3 +107,28 @@ class TestDashboardView:
             lbl.pixmap() is not None and not lbl.pixmap().isNull() for lbl in chart_labels
         )
         assert has_chart
+
+
+class TestUiScale:
+    """Sprint 68 / Teil B1: Kachel-Titel + Big-Number-Labels folgen dem Faktor."""
+
+    def test_default_factor_matches_base_size(self, view: DashboardView) -> None:
+        assert "font-size: 12px" in view.datasets_tile()._title_label.styleSheet()
+
+    def test_set_ui_scale_updates_tile_titles(self, view: DashboardView) -> None:
+        view.set_ui_scale(1.15)
+        assert "font-size: 14px" in view.datasets_tile()._title_label.styleSheet()
+
+    def test_set_ui_scale_rerenders_cached_body(self, view: DashboardView) -> None:
+        view.set_data(_engagement(), [_dataset(1), _dataset(2)], [], [_event(1)])
+        view.set_ui_scale(1.15)
+        tile = view.datasets_tile()
+        # Big-Number-Label (28px-Basis) muss nach Re-Render die 2 weiterhin zeigen,
+        # jetzt mit skalierter font-size.
+        labels = [c for c in tile.findChildren(type(tile._title_label)) if c.text() == "2"]
+        assert labels
+        assert "font-size: 32px" in labels[0].styleSheet()
+
+    def test_set_ui_scale_without_data_does_not_crash(self, view: DashboardView) -> None:
+        view.set_ui_scale(0.9)  # kein set_data() zuvor – darf nicht crashen.
+        assert "font-size: 11px" in view.datasets_tile()._title_label.styleSheet()

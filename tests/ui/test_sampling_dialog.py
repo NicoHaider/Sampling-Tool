@@ -1010,3 +1010,17 @@ class TestScrollFallback:
         screen = dialog.screen()
         assert screen is not None
         assert dialog.maximumHeight() <= screen.availableGeometry().height()
+
+
+class TestUiScale:
+    """Sprint 68 / Teil B1: die drei Hint-Labels folgen dem Faktor."""
+
+    def test_default_factor_matches_base_size(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_ALL)
+        qtbot.addWidget(dialog)
+        assert "font-size: 11px" in dialog._lbl_size_hint.styleSheet()
+
+    def test_larger_factor_scales_hint_labels(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(*_make_dataset(), features=_ALL, ui_scale_factor=1.15)
+        qtbot.addWidget(dialog)
+        assert "font-size: 13px" in dialog._lbl_size_hint.styleSheet()

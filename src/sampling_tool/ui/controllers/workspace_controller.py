@@ -51,6 +51,7 @@ from sampling_tool.persistence.repositories import (
     DatasetRepo,
     SampleRepo,
 )
+from sampling_tool.ui._scaling import scale_factor
 from sampling_tool.ui.controllers._factories import ControllerFactories
 from sampling_tool.ui.controllers.workspace_session import WorkspaceSession
 from sampling_tool.ui.dataset_id_store import DatasetIdColumnStore
@@ -338,7 +339,13 @@ class WorkspaceController:
             self._make_match_count_provider(repo, dataset_id) if features.show_filter else None
         )
         dialog = self._factories.sampling(
-            s.window, s.dataset, distinct_provider, s.sample, features, match_count_provider
+            s.window,
+            s.dataset,
+            distinct_provider,
+            s.sample,
+            features,
+            match_count_provider,
+            scale_factor(s.settings.ui_scale),
         )
         # Seed-Quelle auflösen (Sprint 27): ein fester Seed aus den
         # Einstellungen hat Vorrang („geänderter Seed gilt für die nächste

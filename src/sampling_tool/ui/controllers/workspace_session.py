@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from sampling_tool.config import APP_NAME, EXPORT_DIR_NAME
 from sampling_tool.core.models import (
@@ -39,6 +39,7 @@ from sampling_tool.persistence.repositories import (
     EngagementStateRepo,
     SampleRepo,
 )
+from sampling_tool.ui._scaling import load_scaled_stylesheet, scale_factor
 from sampling_tool.ui.dataset_id_store import DatasetIdColumnStore
 from sampling_tool.ui.recent import RecentEngagementsStore
 from sampling_tool.ui.settings_store import AppSettings
@@ -305,12 +306,22 @@ class WorkspaceSession:
     # ---- Settings-Update ------------------------------------------------
 
     def apply_new_settings(self, settings: AppSettings) -> None:
-        """Settings updaten + Log-Level und Undo-Tiefe live setzen +
+        """Settings updaten + Log-Level, Undo-Tiefe und UI-Größe live setzen +
         Engagement-Dir anlegen + Panel-Visibility anwenden."""
         self.settings = settings
         logging.getLogger().setLevel(resolve_log_level(settings.log_level))
         if self.undo_manager is not None:
             self.undo_manager.set_max_depth(settings.undo_depth)
+
+        # Sprint 68 / Teil B1: UI-Größe wirkt sofort – reapplied stylesheet +
+        # persistente Widgets (kein neuer Sonderweg: derselbe Lade-Pfad wie
+        # beim App-Start in `__main__.main`).
+        factor = scale_factor(settings.ui_scale)
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            app.setStyleSheet(load_scaled_stylesheet(factor))
+        self.window.apply_ui_scale(factor)
+
         try:
             settings.engagements_dir.mkdir(parents=True, exist_ok=True)
         except OSError:

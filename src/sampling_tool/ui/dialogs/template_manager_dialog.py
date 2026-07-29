@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
 from sampling_tool.config import BDO_GREY, DEFAULT_SAMPLE_SIZE, MIN_SAMPLE_SIZE
 from sampling_tool.core.models import SamplingMethod, StratifyMode
 from sampling_tool.core.presets import SamplingPreset
+from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui.preset_store import PresetStore
 
 _SPINBOX_MAX: Final[int] = 2_147_483_647
@@ -65,13 +66,20 @@ _STRATIFY_LABELS: Final[list[tuple[str, StratifyMode]]] = [
 class TemplateManagerDialog(QDialog):
     """Listet alle Vorlagen und erlaubt Bearbeiten/Umbenennen/Löschen/Duplizieren."""
 
-    def __init__(self, preset_store: PresetStore, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        preset_store: PresetStore,
+        parent: QWidget | None = None,
+        *,
+        ui_scale_factor: float = 1.0,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Vorlagen verwalten")
         self.setModal(True)
         self.setMinimumWidth(620)
 
         self._store = preset_store
+        self._factor = ui_scale_factor
         # Populations-abhängige Filter-Definition der gewählten Vorlage – wird
         # nur angezeigt und beim Speichern unverändert durchgereicht.
         self._current_filter_field: str | None = None
@@ -156,13 +164,15 @@ class TemplateManagerDialog(QDialog):
         form.addRow("Filter", self._lbl_filter)
         edit_outer.addLayout(form)
 
-        filter_hint = QLabel(
+        self._filter_hint = QLabel(
             "Der Filter ist populationsabhängig und hier nicht editierbar – er wird "
             "unverändert beibehalten."
         )
-        filter_hint.setWordWrap(True)
-        filter_hint.setStyleSheet(f"color: {BDO_GREY}; font-size: 11px;")
-        edit_outer.addWidget(filter_hint)
+        self._filter_hint.setWordWrap(True)
+        self._filter_hint.setStyleSheet(
+            f"color: {BDO_GREY}; font-size: {scaled_px(11, self._factor)}px;"
+        )
+        edit_outer.addWidget(self._filter_hint)
 
         save_row = QHBoxLayout()
         save_row.addStretch(1)

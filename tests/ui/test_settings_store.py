@@ -290,3 +290,33 @@ def _to_bool(value: object) -> bool:
     if isinstance(value, str):
         return value.lower() in ("true", "1", "yes")
     return bool(value)
+
+
+class TestUiScaleSetting:
+    """Sprint 68 / Teil B1: app-weite UI-Größe (klein/normal/groß, Default normal)."""
+
+    def test_default_ui_scale_is_normal(self) -> None:
+        assert AppSettings.defaults().ui_scale == "normal"
+
+    def test_roundtrips_gross(self) -> None:
+        original = replace(AppSettings.defaults(), ui_scale="groß")
+        save_settings(original)
+        loaded = load_settings()
+        assert loaded.ui_scale == "groß"
+
+    def test_roundtrips_klein(self) -> None:
+        original = replace(AppSettings.defaults(), ui_scale="klein")
+        save_settings(original)
+        loaded = load_settings()
+        assert loaded.ui_scale == "klein"
+
+    def test_missing_key_defaults_to_normal(self) -> None:
+        loaded = load_settings()
+        assert loaded.ui_scale == "normal"
+
+    def test_invalid_value_falls_back_to_normal(self) -> None:
+        s = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME)
+        s.setValue("settings/ui_scale", "riesig")
+        s.sync()
+        loaded = load_settings()
+        assert loaded.ui_scale == "normal"

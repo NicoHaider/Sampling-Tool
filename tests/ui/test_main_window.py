@@ -817,3 +817,26 @@ class TestMainWindowMinimumSize:
         qtbot.addWidget(win)
         assert 0 < win.minimumWidth() <= 1280
         assert 0 < win.minimumHeight() <= 720
+
+
+class TestUiScaleApplication:
+    """Sprint 68 / Teil B1: Toolbar-Icon-Größe + Tabellen-Zeilenhöhe folgen dem Faktor."""
+
+    def test_derived_sizes_scale(self, qtbot: QtBot) -> None:
+        from sampling_tool.ui._window_toolbar import _TOOLBAR_ICON_SIZE
+        from sampling_tool.ui.widgets.data_table import _DEFAULT_ROW_HEIGHT
+
+        win = MainWindow()
+        qtbot.addWidget(win)
+
+        win.apply_ui_scale(1.0)
+        assert win._toolbar.iconSize() == QSize(_TOOLBAR_ICON_SIZE, _TOOLBAR_ICON_SIZE)
+        v_header = win.data_table().verticalHeader()
+        assert v_header is not None
+        assert v_header.defaultSectionSize() == _DEFAULT_ROW_HEIGHT
+
+        win.apply_ui_scale(1.15)
+        assert win._toolbar.iconSize().width() > _TOOLBAR_ICON_SIZE
+        v_header = win.data_table().verticalHeader()
+        assert v_header is not None
+        assert v_header.defaultSectionSize() > _DEFAULT_ROW_HEIGHT

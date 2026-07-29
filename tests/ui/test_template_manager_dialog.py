@@ -236,3 +236,15 @@ class TestCreateNewTemplate:
         assert got is not None
         assert got.size == DEFAULT_SAMPLE_SIZE
         assert len(store.list()) == 1
+
+
+class TestUiScale:
+    def test_default_factor_matches_base_size(self, qtbot: QtBot) -> None:
+        dialog = TemplateManagerDialog(PresetStore())
+        qtbot.addWidget(dialog)
+        assert "font-size: 11px" in dialog._filter_hint.styleSheet()
+
+    def test_larger_factor_scales_filter_hint(self, qtbot: QtBot) -> None:
+        dialog = TemplateManagerDialog(PresetStore(), ui_scale_factor=1.15)
+        qtbot.addWidget(dialog)
+        assert "font-size: 13px" in dialog._filter_hint.styleSheet()
