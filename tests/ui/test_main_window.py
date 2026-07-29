@@ -840,3 +840,31 @@ class TestUiScaleApplication:
         v_header = win.data_table().verticalHeader()
         assert v_header is not None
         assert v_header.defaultSectionSize() > _DEFAULT_ROW_HEIGHT
+
+    def test_apply_ui_scale_triggers_data_table_column_resize(
+        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Sprint 69 / Bug 4: `MainWindow.apply_ui_scale` muss die Spalten-
+        breiten-Anpassung am Data-Table anstoßen – vorher wurden nur Icon-
+        Größe + Zeilenhöhe skaliert, wodurch Zellenwerte bei „Groß" visuell
+        abgeschnitten wurden (Tabellenwerte-Cutoff-Bug). Der eigentliche
+        Clamp-/Breiten-Effekt wird ausführlich in
+        `tests/ui/test_data_table.py::TestDataTableView::test_columns_resize_on_ui_scale_change`
+        getestet – hier wird nur die Verdrahtung MainWindow → DataTableView
+        abgesichert.
+        """
+        win = MainWindow()
+        qtbot.addWidget(win)
+
+        calls: list[float] = []
+        original = win.data_table().apply_ui_scale
+
+        def spy(factor: float) -> None:
+            calls.append(factor)
+            original(factor)
+
+        monkeypatch.setattr(win.data_table(), "apply_ui_scale", spy)
+
+        win.apply_ui_scale(1.15)
+
+        assert calls == [1.15]

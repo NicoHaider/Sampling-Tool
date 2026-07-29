@@ -388,11 +388,15 @@ class MainWindow(QMainWindow):
 
     def apply_ui_scale(self, factor: float) -> None:
         """Wendet den UI-Skalierungsfaktor auf Toolbar-Icons, Tabellen-
-        Zeilenhöhe und die persistenten Dashboard-/Welcome-Widgets an
-        (Sprint 68 / Teil B1)."""
+        Zeilenhöhe + -Spaltenbreiten und die persistenten Dashboard-/
+        Welcome-Widgets an (Sprint 68 / Teil B1; Spaltenbreiten seit
+        Sprint 69 / Bug 4 – ohne dies blieben Zellenwerte bei „Groß"
+        visuell abgeschnitten, weil nur Icons + Zeilenhöhe skaliert
+        wurden)."""
         icon_px = scaled_px(_TOOLBAR_ICON_SIZE, factor)
         self._toolbar.setIconSize(QSize(icon_px, icon_px))
         self._data_table.set_row_height_px(scaled_px(_DEFAULT_ROW_HEIGHT, factor))
+        self._data_table.apply_ui_scale(factor)
         self._welcome.set_ui_scale(factor)
         self._dashboard_view.set_ui_scale(factor)
 
