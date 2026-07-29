@@ -7,10 +7,11 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QDialog, QMessageBox, QScrollArea
+from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox, QScrollArea
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.config import APP_NAME, APP_ORG
+from sampling_tool.ui._scaling import load_scaled_stylesheet
 from sampling_tool.ui.dialogs.settings_dialog import SettingsDialog
 from sampling_tool.ui.settings_store import AppSettings, load_settings, save_settings
 
@@ -520,6 +521,125 @@ class TestScrollFallback:
         screen = dialog.screen()
         assert screen is not None
         assert dialog.maximumHeight() <= screen.availableGeometry().height()
+
+    def test_settings_dialog_fits_content_without_hscroll(
+        self, qtbot: QtBot, defaults: AppSettings
+    ) -> None:
+        """Sprint 69 / Bug 3: die Dialogbreite war auf `setMinimumWidth(560)`
+        hartcodiert – schmaler als der tatsächliche Inhalt (u. a. die
+        „Auswählen…“-Buttons), sodass ein horizontaler Scrollbalken nötig war.
+        Fix: die Mindestbreite wird aus der breitesten Tab-Seite abgeleitet
+        (`SettingsDialog._content_min_width`) und auf den verfügbaren Screen
+        gedeckelt (`clamp_dialog_width_to_screen`).
+
+        Die reale App wendet global das `bdo_light.qss`-Stylesheet an
+        (`font-size: 13px`, sowohl beim App-Start als auch bei jedem
+        Settings-Save via `WorkspaceSession.apply_new_settings`) – das
+        rendert breiter als Qts unbestyltes Default. Hier explizit gesetzt
+        (statt sich auf zufällig von anderen Tests hinterlassenen globalen
+        `QApplication`-Stylesheet-Zustand zu verlassen – siehe Sprint-69-
+        Notiz zu genau diesem Test-Pollution-Risiko), damit dieser Test
+        (a) dieselbe Breite misst wie die echte App und (b) unabhängig von
+        der Ausführungsreihenfolge anderer Tests deterministisch bleibt.
+
+        Geprüft wird die vom Fix berechnete Inhaltsbreite
+        (`_content_min_width()`) OHNE die Screen-Deckelung: der virtuelle
+        Offscreen-Test-Screen ist mit 800px schmaler als das
+        Sprint-Zielgerät (1280×720) und unter realer 13px-Schrift breit
+        genug, dass die Deckelung hier tatsächlich greift (~850px
+        Inhaltsbedarf > 800px Screen) – "kein Scrollbalken im Normalfall"
+        bezieht sich auf einen ausreichend großen Screen, nicht auf diesen
+        kleineren virtuellen Test-Screen (der akzeptierte Tiny-Screen-
+        Fallback aus der Aufgabenstellung). Dass die tatsächlich
+        *angewendete* Breite nie über den Screen hinausragt, wird separat
+        unten geprüft.
+        """
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        previous_stylesheet = app.styleSheet()
+        app.setStyleSheet(load_scaled_stylesheet(1.0))
+        try:
+            dialog = SettingsDialog(defaults)
+            qtbot.addWidget(dialog)
+
+            screen = dialog.screen()
+            assert screen is not None
+            assert dialog.width() <= screen.availableGeometry().width()
+
+            # Deckelung umgehen, um die reine Inhaltsberechnung zu prüfen
+            # (siehe Docstring oben).
+            desired_width = dialog._content_min_width()
+            dialog.setMaximumWidth(16_777_215)
+            dialog.setMinimumWidth(desired_width)
+            dialog.resize(desired_width, dialog.height())
+            dialog.show()
+            qtbot.waitExposed(dialog)
+            qtbot.wait(50)
+
+            scroll_areas = dialog.findChildren(QScrollArea)
+            assert scroll_areas
+            scroll = scroll_areas[0]
+            viewport = scroll.viewport()
+            assert viewport is not None
+            for i in range(dialog._tabs.count()):
+                dialog._tabs.setCurrentIndex(i)
+                qtbot.wait(20)
+                hbar = scroll.horizontalScrollBar()
+                assert hbar is not None
+                assert not hbar.isVisible(), (
+                    f"Tab {dialog._tabs.tabText(i)!r}: horizontaler Scrollbalken sichtbar "
+                    f"bei Dialogbreite {dialog.width()}px (Viewport "
+                    f"{viewport.width()}px)"
+                )
+        finally:
+            app.setStyleSheet(previous_stylesheet)
+
+    def test_settings_hint_labels_not_clipped(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        """Sprint 69 / Bug 2: Wortumbruch-Hinweise wurden bei der `QScrollArea`
+        aus Sprint 67 einzeilig gerendert und dadurch abgeschnitten/überlappten
+        die nächste Formularzeile. Fix: `_WrappingHintLabel` hält die
+        Mindesthöhe passend zur Wortumbruch-Höhe bei der aktuellen Breite.
+        """
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        # Erzwingt die kleinste zulässige Dialogbreite (`setMinimumWidth`)
+        # statt der evtl. größeren sizeHint-Breite, weil genau dort am
+        # wenigsten Platz für den Wortumbruch ist.
+        dialog.resize(dialog.minimumWidth(), dialog.height())
+        dialog.show()
+        qtbot.waitExposed(dialog)
+        # Der "Erweitert"-Tab (Index 2) ist beim Öffnen nicht die aktive
+        # Tab-Seite; `QTabWidget` layoutet inaktive Seiten nicht, bevor sie
+        # zum ersten Mal sichtbar werden – genau bei diesem ersten Layout-Pass
+        # trat der Clipping-Bug auf.
+        dialog._tabs.setCurrentIndex(2)
+        qtbot.wait(50)
+
+        for label in (dialog._ui_scale_hint, dialog._info_label):
+            # 1) Bei der Breite, die das reale Layout gerade zuweist.
+            width = label.width()
+            assert label.height() >= label.heightForWidth(width), (
+                f"{label.text()!r}: height={label.height()} "
+                f"< heightForWidth({width})={label.heightForWidth(width)}"
+            )
+
+            # 2) Zusätzlich explizit bei einer schmalen Breite: Die im
+            # Offscreen-Test verwendete Ersatzschrift ist deutlich schmaler
+            # als reale Desktop-Schriften, außerdem zieht der breitere
+            # "Reports"-Tab die gemeinsame `QTabWidget`-Breite hoch (Qt
+            # bemisst sie an der breitesten Tab-Seite, nicht an der gerade
+            # aktiven) – auf einem echten Bildschirm mit realer Schrift wird
+            # trotzdem mehrzeilig umgebrochen. Ein direktes Resize auf eine
+            # schmale Breite bildet das nach und prüft den eigentlichen
+            # Mechanismus (Mindesthöhe folgt `heightForWidth` bei JEDER
+            # Breite), unabhängig von Font-Metriken der Testumgebung.
+            narrow_width = 300
+            label.resize(narrow_width, label.height())
+            qtbot.wait(10)
+            assert label.height() >= label.heightForWidth(narrow_width), (
+                f"{label.text()!r} @ {narrow_width}px: height={label.height()} "
+                f"< heightForWidth({narrow_width})={label.heightForWidth(narrow_width)}"
+            )
 
 
 class TestUiScaleSetting:

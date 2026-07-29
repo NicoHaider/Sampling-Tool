@@ -7,11 +7,12 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QDate, Qt
-from PyQt6.QtWidgets import QDialogButtonBox, QScrollArea
+from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QScrollArea
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import AuditEvent, Engagement
 from sampling_tool.io.bdo_locations import companies, locations
+from sampling_tool.ui._scaling import load_scaled_stylesheet
 from sampling_tool.ui.controllers.export_controller import filter_audit_events
 from sampling_tool.ui.dialogs.export_audit_pdf_dialog import (
     ExportAuditPdfDialog,
@@ -306,3 +307,45 @@ class TestScrollFallback:
         screen = dialog.screen()
         assert screen is not None
         assert dialog.maximumHeight() <= screen.availableGeometry().height()
+
+    def test_width_derived_from_content_not_hardcoded(self, qtbot: QtBot) -> None:
+        """Sprint 69 / Bug 3: `setMinimumWidth(720)` war schmaler als der
+        tatsächliche Inhalt (u. a. die „BDO-Gesellschaft“-Dropdown mit den
+        langen offiziellen BDO-Firmennamen, z. B. „BDO Austria GmbH
+        Wirtschaftsprüfungs- und Steuerberatungsgesellschaft“) – ein
+        horizontaler Scrollbalken war nötig. Fix: die Mindestbreite wird aus
+        `content.sizeHint()` abgeleitet (`_dialog_sizing.content_min_width`)
+        und auf den verfügbaren Screen gedeckelt
+        (`clamp_dialog_width_to_screen`) – nie breiter als der Screen, aber
+        auch nicht mehr stur auf 720 begrenzt.
+
+        Anders als beim Settings-Dialog
+        (`test_settings_dialog_fits_content_without_hscroll`) wird hier NICHT
+        geprüft, dass gar kein horizontaler Scrollbalken mehr nötig ist: der
+        zweispaltige Inhalt (Aktionstypen-Liste + BDO-Firmennamen-Dropdown +
+        Export-Ziel-Spalte) braucht real mehr Platz, als der virtuelle
+        Offscreen-Test-Screen hergibt (kleiner als das Sprint-Zielgerät
+        1280×720) – genau der in der Aufgabenstellung vorgesehene
+        Tiny-Screen-Fallback (ein Rest-Scrollbalken bleibt dort akzeptiert).
+
+        Das reale `bdo_light.qss`-Stylesheet wird explizit gesetzt (statt
+        sich auf ambienten Test-Zustand zu verlassen) – macht die Messung
+        repräsentativ für die echte App und unabhängig von der
+        Ausführungsreihenfolge anderer Tests.
+        """
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        previous_stylesheet = app.styleSheet()
+        app.setStyleSheet(load_scaled_stylesheet(1.0))
+        try:
+            dialog = self._dialog(qtbot)
+            dialog.show()
+            qtbot.waitExposed(dialog)
+            qtbot.wait(50)
+
+            screen = dialog.screen()
+            assert screen is not None
+            assert dialog.width() <= screen.availableGeometry().width()
+            assert dialog.minimumWidth() > 720
+        finally:
+            app.setStyleSheet(previous_stylesheet)

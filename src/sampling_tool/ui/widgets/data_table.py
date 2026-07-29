@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import QHeaderView, QTableView, QWidget
 from sampling_tool.config import SAMPLE_HIGHLIGHT_ALPHA, SAMPLE_HIGHLIGHT_COLOR
 from sampling_tool.core.models import Dataset, DatasetRow
 from sampling_tool.persistence.repositories import DatasetRepo
+from sampling_tool.ui._scaling import scaled_px
 
 HIGHLIGHT_COLOR: str = SAMPLE_HIGHLIGHT_COLOR
 HIGHLIGHT_ALPHA: int = SAMPLE_HIGHLIGHT_ALPHA
@@ -335,6 +336,23 @@ class DataTableView(QTableView):
         assert v_header is not None
         v_header.setDefaultSectionSize(px)
 
+    def apply_ui_scale(self, factor: float) -> None:
+        """Skaliert die Spaltenbreiten-Grenzen und stößt ein Re-Autosizing an
+        (Sprint 69 / Bug 4).
+
+        Ohne dies blieben `_MIN_COLUMN_WIDTH`/`_MAX_COLUMN_WIDTH` fixe,
+        unskalierte px-Werte – bei „Groß" (größere Schrift, höhere Zeilen)
+        war derselbe px-Clamp relativ zum Text zu schmal und Zellenwerte
+        wurden abgeschnitten (z. B. „Eingangsrechnung …"). Nutzt dieselbe
+        `resizeContentsPrecision(100)`-Absicherung wie `_autosize_columns`
+        (header-weite Einstellung, gilt für jeden `resizeColumnsToContents`-
+        Aufruf) – siehe `test_apply_ui_scale_does_not_full_scan_for_autosize`.
+        """
+        self._autosize_columns(
+            min_width=scaled_px(_MIN_COLUMN_WIDTH, factor),
+            max_width=scaled_px(_MAX_COLUMN_WIDTH, factor),
+        )
+
     def highlight_rows(self, row_ids: Sequence[int]) -> None:
         """Markiert Zeilen mit den angegebenen `row_id`s und scrollt zur ersten."""
         self._model.set_highlight(row_ids)
@@ -404,14 +422,23 @@ class DataTableView(QTableView):
 
     # ---- intern ---------------------------------------------------------
 
-    def _autosize_columns(self) -> None:
+    def _autosize_columns(
+        self,
+        *,
+        min_width: int = _MIN_COLUMN_WIDTH,
+        max_width: int = _MAX_COLUMN_WIDTH,
+    ) -> None:
         """Heuristik: schmale Spalten an Inhalt, breite an Max-Wert.
 
         Sprint 12.1: `setResizeContentsPrecision(100)` im Konstruktor begrenzt
         die Qt-Sample-Anzahl pro Spalte – sonst würde `resizeColumnsToContents`
         bei 1M-Datasets alle Rows durchgehen und 56k SQLite-Queries
         produzieren (Pass 3 v2 P-001). Spalten ohne Inhalt im Viewport
-        bekommen die `_MIN_COLUMN_WIDTH`.
+        bekommen `min_width`.
+
+        Sprint 69 / Bug 4: `min_width`/`max_width` sind per Default die
+        unskalierten Modul-Konstanten (Faktor 1.0 – Bestandsverhalten
+        unverändert), `apply_ui_scale` übergibt bereits skalierte Werte.
         """
         self.resizeColumnsToContents()
         header = self.horizontalHeader()
@@ -419,10 +446,10 @@ class DataTableView(QTableView):
             return
         for col in range(self._model.columnCount()):
             width = header.sectionSize(col)
-            if width < _MIN_COLUMN_WIDTH:
-                header.resizeSection(col, _MIN_COLUMN_WIDTH)
-            elif width > _MAX_COLUMN_WIDTH:
-                header.resizeSection(col, _MAX_COLUMN_WIDTH)
+            if width < min_width:
+                header.resizeSection(col, min_width)
+            elif width > max_width:
+                header.resizeSection(col, max_width)
 
 
 # ---------------------------------------------------------------------------

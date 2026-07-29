@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Final
 
 from PyQt6.QtCore import QUrl
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QDesktopServices, QResizeEvent
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStyle,
     QTabWidget,
@@ -47,7 +48,10 @@ from sampling_tool.io.bdo_locations import (
 )
 from sampling_tool.io.briefpapier import validate_briefpapier
 from sampling_tool.logging_setup import log_file_path
-from sampling_tool.ui._dialog_sizing import clamp_dialog_height_to_screen
+from sampling_tool.ui._dialog_sizing import (
+    clamp_dialog_height_to_screen,
+    clamp_dialog_width_to_screen,
+)
 from sampling_tool.ui._scaling import UI_SCALE_LEVELS
 from sampling_tool.ui.settings_store import (
     LOG_LEVELS,
@@ -63,6 +67,14 @@ _SEED_RANDOM_LABEL: str = "Zufällig (bei jeder Ziehung neu)"
 # der interne Key aus `ui/_scaling.py`).
 _UI_SCALE_DISPLAY: Final[dict[str, str]] = {"klein": "Klein", "normal": "Normal", "groß": "Groß"}
 
+# Sprint 69 / Bug 3: Rand des äußeren Layouts – eigene Konstante statt zweimal
+# hartcodierter `20`, weil `_content_min_width()` denselben Wert für die
+# Mindestbreiten-Berechnung braucht (siehe dort).
+_OUTER_MARGIN: Final[int] = 20
+# Sprint 69 / Bug 3: kleiner Sicherheitspuffer für `_content_min_width()`
+# (Details im Docstring dort).
+_WIDTH_SAFETY_BUFFER: Final[int] = 8
+
 
 def _select_combo_by_key(combo: QComboBox, key: str, fallback_key: str) -> None:
     """Wählt den Eintrag mit `key` vor; fehlt/unbekannt → `fallback_key`."""
@@ -73,6 +85,28 @@ def _select_combo_by_key(combo: QComboBox, key: str, fallback_key: str) -> None:
         combo.setCurrentIndex(idx)
 
 
+class _WrappingHintLabel(QLabel):
+    """Word-wrap-`QLabel`, das seine Mindesthöhe selbst nachführt.
+
+    Sprint 69 / Bug 2: Innerhalb der `QScrollArea` aus Sprint 67 propagiert
+    `QFormLayout` `heightForWidth` nicht zuverlässig durch die Layout-Kette
+    (QScrollArea → QTabWidget → Tab-Seite → QFormLayout). Ohne Gegenmaßnahme
+    bekommt das Label nur eine einzeilige Höhe zugewiesen, obwohl der
+    Wortumbruch bei der tatsächlichen Breite mehrzeilig ist – der Text wird
+    abgeschnitten und überlappt die nächste Zeile. Der `resizeEvent`-Override
+    erzwingt vor jedem Resize eine Mindesthöhe passend zur aktuellen Breite.
+    """
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.setWordWrap(True)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding)
+
+    def resizeEvent(self, event: QResizeEvent | None) -> None:  # noqa: N802
+        self.setMinimumHeight(self.heightForWidth(self.width()))
+        super().resizeEvent(event)
+
+
 class SettingsDialog(QDialog):
     """Settings-Konfigurator. Öffnet sich mit den übergebenen Werten."""
 
@@ -80,7 +114,6 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Einstellungen")
         self.setModal(True)
-        self.setMinimumWidth(560)
 
         self._initial = current
         self._result: AppSettings | None = None
@@ -99,7 +132,7 @@ class SettingsDialog(QDialog):
         scroll.setWidget(self._tabs)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
+        outer.setContentsMargins(_OUTER_MARGIN, _OUTER_MARGIN, _OUTER_MARGIN, _OUTER_MARGIN)
         outer.setSpacing(12)
         outer.addWidget(scroll, stretch=1)
 
@@ -118,6 +151,7 @@ class SettingsDialog(QDialog):
         button_row.addWidget(self._buttons)
         outer.addLayout(button_row)
 
+        clamp_dialog_width_to_screen(self, self._content_min_width())
         clamp_dialog_height_to_screen(self)
 
     # ---- Public API -----------------------------------------------------
@@ -125,6 +159,53 @@ class SettingsDialog(QDialog):
     def get_settings(self) -> AppSettings | None:
         """Liefert die neuen Settings oder `None`, wenn der Dialog abgebrochen wurde."""
         return self._result
+
+    # ---- Größe -----------------------------------------------------------
+
+    def _content_min_width(self) -> int:
+        """Mindestbreite, die der Dialog braucht, damit KEINE Tab-Seite einen
+        horizontalen Scrollbalken auslöst (Sprint 69 / Bug 3).
+
+        Die `QScrollArea` aus Sprint 67 bricht die `minimumSizeHint`-
+        Propagation vom Inhalt zum Dialog (siehe Modul-Docstring der
+        `QScrollArea`-Einbindung oben) – ohne Gegenmaßnahme bleibt nur das
+        hartcodierte `setMinimumWidth`, das schmaler sein kann als der
+        tatsächliche Inhalt (z. B. die „Auswählen…“-Buttons).
+
+        `QTabWidget.sizeHint()` bemisst je nach Qt-Version/-Plattform u. U. NUR
+        die aktuell sichtbare Tab-Seite statt aller drei – deshalb wird hier
+        explizit über `self._tabs.widget(i)` aller Indizes iteriert und das
+        Maximum genommen, statt sich auf `self._tabs.sizeHint()` zu verlassen.
+
+        Zum Inhalt kommt Chrome dazu: der schmale Rahmen des `QTabWidget`
+        selbst (Differenz zwischen dessen eigenem `sizeHint()` und der
+        breitesten Tab-Seite), die äußeren Dialog-Ränder auf beiden Seiten
+        sowie die Breite eines vertikalen Scrollbalkens – der ist im
+        Normalfall bereits sichtbar, weil die Dialoghöhe bewusst NICHT auf die
+        volle Inhaltshöhe wächst (Sprint 67: Inhalt scrollt als Ganzes). Ein
+        kleiner fixer Puffer obendrauf fängt eine empirisch beobachtete
+        Wechselwirkung zwischen horizontalem und vertikalem Scrollbalken ab
+        (das Erscheinen/Verschwinden des einen ändert kurzzeitig den
+        verfügbaren Platz für den anderen) – kostet auf normalen Screens
+        nichts, weil `clamp_dialog_width_to_screen` einen Überschuss ohnehin
+        kappt.
+        """
+        widest_page = max(
+            (
+                page.sizeHint().width()
+                for i in range(self._tabs.count())
+                if (page := self._tabs.widget(i)) is not None
+            ),
+            default=0,
+        )
+        tabs_chrome = max(self._tabs.sizeHint().width() - widest_page, 0)
+        style = self.style()
+        scrollbar_extent = (
+            style.pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent) if style is not None else 0
+        )
+        return (
+            widest_page + tabs_chrome + 2 * _OUTER_MARGIN + scrollbar_extent + _WIDTH_SAFETY_BUFFER
+        )
 
     # ---- Tabs -----------------------------------------------------------
 
@@ -321,13 +402,12 @@ class SettingsDialog(QDialog):
         _select_combo_by_key(self._ui_scale, current.ui_scale, AppSettings.defaults().ui_scale)
         form.addRow("UI-Größe", self._ui_scale)
 
-        ui_scale_hint = QLabel(
+        self._ui_scale_hint = _WrappingHintLabel(
             "Skaliert Schrift, Symbole und Zeilenhöhe. Wirkt sofort; einzelne "
             "Dialoge übernehmen die neue Größe beim nächsten Öffnen."
         )
-        ui_scale_hint.setWordWrap(True)
-        ui_scale_hint.setStyleSheet("color: #7F7F7F;")
-        form.addRow(" ", ui_scale_hint)
+        self._ui_scale_hint.setStyleSheet("color: #7F7F7F;")
+        form.addRow(" ", self._ui_scale_hint)
 
         # Sprint 27: Der Sampling-Seed wird ausschließlich hier geändert – im
         # Haupt-Dialog ist das Feld schreibgeschützt. 0 (= specialValueText)
@@ -353,13 +433,12 @@ class SettingsDialog(QDialog):
         seed_widget.setLayout(seed_row)
         form.addRow("Sampling-Seed", seed_widget)
 
-        info = QLabel(
+        self._info_label = _WrappingHintLabel(
             f"Log-Datei: zentral unter {log_file_path()} (app-weit, nicht im "
             "Projekt-Ordner). Das Log-Level wirkt sofort, ohne Neustart."
         )
-        info.setWordWrap(True)
-        info.setStyleSheet("color: #7F7F7F;")
-        form.addRow(" ", info)
+        self._info_label.setStyleSheet("color: #7F7F7F;")
+        form.addRow(" ", self._info_label)
         outer.addLayout(form)
         outer.addStretch(1)
         return page

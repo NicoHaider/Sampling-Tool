@@ -13,7 +13,10 @@ from pytestqt.qtbot import QtBot
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import DatasetRepo, EngagementRepo
+from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui.widgets.data_table import (
+    _MAX_COLUMN_WIDTH,
+    _MIN_COLUMN_WIDTH,
     HIGHLIGHT_ALPHA,
     HIGHLIGHT_COLOR,
     DatasetTableModel,
@@ -301,6 +304,87 @@ class TestDataTableView:
         view.set_dataset(ds, repo)
         view.clear_dataset()
         assert view.table_model().rowCount() == 0
+
+    def test_columns_resize_on_ui_scale_change(
+        self, qtbot: QtBot, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        """Sprint 69 / Bug 4: Spaltenbreiten (inkl. Min-/Max-Clamp) folgen dem
+        UI-Skalierungsfaktor – vorher wurden bei „Groß" nur Icon-Größe und
+        Zeilenhöhe skaliert, wodurch Zellenwerte visuell abgeschnitten wurden.
+
+        Dataset mit einer sehr schmalen ("n", 1-stellige Werte) und einer sehr
+        breiten Spalte ("wide", 500 Zeichen) deckt beide Clamps ab: "n" landet
+        bei Faktor 1.0 am unteren (_MIN_COLUMN_WIDTH), "wide" am oberen
+        (_MAX_COLUMN_WIDTH) Clamp – bei Faktor 1.15 müssen beide Clamps
+        entsprechend mitwachsen.
+        """
+        db, eng_id = db_with_engagement
+        rows = tuple(DatasetRow(row_id=i, values={"n": 1, "wide": "X" * 500}) for i in range(1, 21))
+        ds, repo = _persist_dataset(db, eng_id, rows, columns=("n", "wide"))
+
+        view = DataTableView()
+        qtbot.addWidget(view)
+        view.set_dataset(ds, repo)
+        header = view.horizontalHeader()
+        assert header is not None
+
+        narrow_col = ds.columns.index("n")
+        wide_col = ds.columns.index("wide")
+
+        baseline_narrow = header.sectionSize(narrow_col)
+        baseline_wide = header.sectionSize(wide_col)
+        assert baseline_narrow == _MIN_COLUMN_WIDTH
+        assert baseline_wide == _MAX_COLUMN_WIDTH
+
+        view.apply_ui_scale(1.15)
+
+        scaled_narrow = header.sectionSize(narrow_col)
+        scaled_wide = header.sectionSize(wide_col)
+        assert scaled_narrow == scaled_px(_MIN_COLUMN_WIDTH, 1.15)
+        assert scaled_wide == scaled_px(_MAX_COLUMN_WIDTH, 1.15)
+        assert scaled_narrow > baseline_narrow
+        assert scaled_wide > baseline_wide
+
+    def test_apply_ui_scale_does_not_full_scan_for_autosize(
+        self,
+        qtbot: QtBot,
+        db_with_engagement: tuple[Database, int],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression-Schutz analog zu `test_set_dataset_does_not_full_scan_for_autosize`,
+        aber für den neuen `apply_ui_scale`-Pfad (Sprint 69 / Bug 4).
+
+        Das durch UI-Skalierung getriggerte Re-Autosizing ruft ebenfalls
+        `resizeColumnsToContents` auf – `setResizeContentsPrecision(100)` ist
+        eine Header-Einstellung (an den Header gebunden, nicht an den
+        ursprünglichen `set_dataset`-Aufruf) und greift daher genauso hier.
+        Ohne diesen Schutz würde ein UI-Skalierungswechsel bei einem bereits
+        geladenen Großdataset (z. B. 1M Zeilen) erneut ~56k SQLite-Queries
+        auslösen (siehe REVIEW_PERFORMANCE.md, Diagnose B).
+        """
+        db, eng_id = db_with_engagement
+        rows = tuple(
+            DatasetRow(row_id=i, values={"a": f"Wert {i}", "b": i, "c": i * 1.5})
+            for i in range(1, 5001)
+        )
+        ds, repo = _persist_dataset(db, eng_id, rows, columns=("a", "b", "c"))
+
+        view = DataTableView()
+        qtbot.addWidget(view)
+        view.set_dataset(ds, repo)  # initiales Autosizing – hier bewusst nicht gezählt
+
+        calls: list[tuple[int, int]] = []
+        original = repo.get_rows_in_range
+
+        def counting(dataset_id: int, start: int, end: int) -> list[DatasetRow]:
+            calls.append((start, end))
+            return original(dataset_id, start, end)
+
+        monkeypatch.setattr(repo, "get_rows_in_range", counting)
+
+        view.apply_ui_scale(1.15)
+
+        assert len(calls) <= 10, f"apply_ui_scale hat {len(calls)} Bulk-Loads ausgelöst"
 
 
 class TestLazyCache:

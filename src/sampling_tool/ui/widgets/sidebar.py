@@ -33,7 +33,7 @@ _DATASET_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 _SAMPLE_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 _SAMPLE_LABEL_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 _ACTIVE_PREFIX: str = "● "
-_SIDEBAR_WIDTH: int = 250
+_SIDEBAR_WIDTH: int = 296
 # Sprint 67 / Teil A: Sidebar war zuvor `setFixedWidth` – der äußere
 # Splitter (Sidebar | Workspace) war dadurch faktisch nicht bedienbar.
 # Min/Max lassen den Splitter greifbar, ohne dass die Sidebar beim
@@ -65,7 +65,7 @@ def format_sample_id_values(
 
 
 class NavigationSidebar(QFrame):
-    """Sidebar-Widget – Höhe 100 %, Breite 180–400 px verstellbar (Default 250 px)."""
+    """Sidebar-Widget – Höhe 100 %, Breite 180–400 px verstellbar (Default 296 px)."""
 
     dataset_selected = pyqtSignal(int)
     sample_selected = pyqtSignal(int)
@@ -157,6 +157,19 @@ class NavigationSidebar(QFrame):
         konkrete Sample ein (bereits gekürzter) Wert-String vorliegt. Sonst
         bleibt das Label bit-genau das bisherige Format. Die ID-Werte werden
         vom Controller hineingereicht (die Sidebar kennt nur Domain-Modelle).
+
+        Sprint 69 / Bug 5: das Label (v.a. mit angehängten IDs) ist oft breiter
+        als die Sidebar – Qt elidiert den `QListWidgetItem`-Text dann ohne
+        erkennbaren Rest. Deshalb bekommt jedes Item zusätzlich den vollen
+        Label-Text als Tooltip (`setToolTip`), unabhängig von der aktuellen
+        Sidebar-Breite. Der Tooltip trägt bewusst das bullet-lose Basis-Label
+        (identisch zu `_SAMPLE_LABEL_ROLE`) statt des ggf. mit `_ACTIVE_PREFIX`
+        versehenen sichtbaren Texts: das „● "-Präfix ist reine Aktiv-Markierung
+        (zusätzlich durch Fettschrift redundant kodiert) und steht am Anfang,
+        wird also von Qts Standard-Elide (rechtsseitig, „…“ am Textende) nie
+        abgeschnitten – es muss im Tooltip nicht dupliziert werden. Damit bleibt
+        der Tooltip stabil über `set_active_sample`-Aufrufe hinweg und muss dort
+        nicht separat nachgeführt werden.
         """
         self._samples_list.clear()
         show_ids = show_sample_id_column and bool(id_column) and id_values_by_sample is not None
@@ -174,6 +187,7 @@ class NavigationSidebar(QFrame):
             sample_id = sample.id if sample.id is not None else -1
             item.setData(_SAMPLE_ID_ROLE, sample_id)
             item.setData(_SAMPLE_LABEL_ROLE, label)
+            item.setToolTip(label)
             self._samples_list.addItem(item)
         self._samples_empty.setVisible(not samples)
 
@@ -184,7 +198,9 @@ class NavigationSidebar(QFrame):
     def set_active_sample(self, sample_id: int | None) -> None:
         """Markiert das Sample mit der gegebenen ID als „aktiv" (Bullet + Bold).
 
-        Mit `sample_id=None` wird die Markierung von allen Items entfernt.
+        Mit `sample_id=None` wird die Markierung von allen Items entfernt. Der
+        in `set_samples` gesetzte Tooltip (volles, bullet-loses Label) wird
+        hier bewusst NICHT angefasst – siehe Begründung dort.
         """
         for row in range(self._samples_list.count()):
             item = self._samples_list.item(row)

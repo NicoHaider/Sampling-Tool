@@ -94,6 +94,11 @@ QToolBar QToolButton:disabled {
     color: #B0B0B0;
 }
 
+/* Sprint 69/6: Expanding-Spacer sonst durch generische QWidget-Regel weiß. */
+QWidget#toolbarSpacer {
+    background: transparent;
+}
+
 /* -------------------------------------------------------------------------
  * Buttons
  * ------------------------------------------------------------------------- */
@@ -311,6 +316,31 @@ QTextEdit:focus {
 QComboBox::drop-down {
     border: none;
     width: 24px;
+}
+
+/* -------------------------------------------------------------------------
+ * Checkboxen & Radiobuttons
+ *
+ * `:checked` hat absichtlich keinen eigenen Selektor – Qt rendert diesen
+ * Zustand dadurch weiterhin nativ. `border-radius` für den Radiobutton
+ * ist auf `:unchecked` beschränkt, weil er auf dem selektorlosen
+ * Basis-Selektor die native angehakte Markierung verschwinden lässt (Qt
+ * schaltet den gesamten Indikator dann auf reine Box-Zeichnung um).
+ * ------------------------------------------------------------------------- */
+QCheckBox::indicator,
+QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+}
+
+QCheckBox::indicator:unchecked,
+QRadioButton::indicator:unchecked {
+    background-color: #FFFFFF;
+    border: 1px solid #B0B0B0;
+}
+
+QRadioButton::indicator:unchecked {
+    border-radius: 8px;
 }
 
 /* -------------------------------------------------------------------------

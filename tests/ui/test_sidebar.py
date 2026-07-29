@@ -100,6 +100,41 @@ class TestNavigationSidebar:
         assert "n=42" in text
         assert "seed 1" in text
 
+    def test_sample_items_have_full_text_tooltip(self, qtbot: QtBot) -> None:
+        """Sprint 69 / Bug 5: Sidebar-Breite < Label-Länge → Qt elidiert den
+        sichtbaren Text ohne Tooltip. Jedes Sample-Item muss deshalb einen
+        Tooltip mit dem VOLLEN Label tragen – unabhängig von der aktuellen
+        Sidebar-Breite (die hier im Test gar keine Rolle spielt, `toolTip()`
+        ist immer der volle String, egal ob er im UI elidiert würde oder nicht).
+        """
+        sidebar = NavigationSidebar()
+        qtbot.addWidget(sidebar)
+        sidebar.set_samples([_sample(1, size=42), _sample(2, size=7)])
+        first = sidebar.samples_widget().item(0)
+        second = sidebar.samples_widget().item(1)
+        assert first is not None
+        assert second is not None
+        # Vor jeglicher Aktiv-Markierung ist Tooltip == sichtbarer Text.
+        assert first.toolTip() == first.text()
+        assert second.toolTip() == second.text()
+        for tip in (first.toolTip(), second.toolTip()):
+            assert "simple" in tip
+            assert "seed 1" in tip
+        assert "n=42" in first.toolTip()
+        assert "n=7" in second.toolTip()
+
+        # Das Umschalten des Aktiv-Bullets darf den Tooltip weder leeren noch
+        # verstümmeln: Der Tooltip zeigt weiterhin das volle Informations-Label,
+        # unabhängig vom rein dekorativen "● "-Präfix (das laut Architektur-
+        # Entscheidung bewusst NICHT im Tooltip dupliziert wird, siehe
+        # `NavigationSidebar.set_samples`-Docstring).
+        sidebar.set_active_sample(2)
+        assert first.toolTip() == first.text()
+        assert second.text().startswith("●")
+        assert second.toolTip() in second.text()
+        assert "n=7" in second.toolTip()
+        assert "seed 1" in second.toolTip()
+
     def test_clear_samples_empties_list(self, qtbot: QtBot) -> None:
         sidebar = NavigationSidebar()
         qtbot.addWidget(sidebar)
