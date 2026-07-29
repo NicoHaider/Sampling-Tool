@@ -306,7 +306,7 @@ class WorkspaceSession:
     # ---- Settings-Update ------------------------------------------------
 
     def apply_new_settings(self, settings: AppSettings) -> None:
-        """Settings updaten + Log-Level und Undo-Tiefe live setzen +
+        """Settings updaten + Log-Level, Undo-Tiefe und UI-Größe live setzen +
         Engagement-Dir anlegen + Panel-Visibility anwenden."""
         self.settings = settings
         logging.getLogger().setLevel(resolve_log_level(settings.log_level))
