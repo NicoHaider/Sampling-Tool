@@ -48,7 +48,10 @@ from sampling_tool.io.bdo_locations import (
 )
 from sampling_tool.io.briefpapier import validate_briefpapier
 from sampling_tool.logging_setup import log_file_path
-from sampling_tool.ui._dialog_sizing import clamp_dialog_height_to_screen
+from sampling_tool.ui._dialog_sizing import (
+    clamp_dialog_height_to_screen,
+    clamp_dialog_width_to_screen,
+)
 from sampling_tool.ui._scaling import UI_SCALE_LEVELS
 from sampling_tool.ui.settings_store import (
     LOG_LEVELS,
@@ -63,6 +66,14 @@ _SEED_RANDOM_LABEL: str = "Zufällig (bei jeder Ziehung neu)"
 # Sprint 68 / Teil B1: Anzeige-Labels für die UI-Größe-Stufen (userData bleibt
 # der interne Key aus `ui/_scaling.py`).
 _UI_SCALE_DISPLAY: Final[dict[str, str]] = {"klein": "Klein", "normal": "Normal", "groß": "Groß"}
+
+# Sprint 69 / Bug 3: Rand des äußeren Layouts – eigene Konstante statt zweimal
+# hartcodierter `20`, weil `_content_min_width()` denselben Wert für die
+# Mindestbreiten-Berechnung braucht (siehe dort).
+_OUTER_MARGIN: Final[int] = 20
+# Sprint 69 / Bug 3: kleiner Sicherheitspuffer für `_content_min_width()`
+# (Details im Docstring dort).
+_WIDTH_SAFETY_BUFFER: Final[int] = 8
 
 
 def _select_combo_by_key(combo: QComboBox, key: str, fallback_key: str) -> None:
@@ -103,7 +114,6 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Einstellungen")
         self.setModal(True)
-        self.setMinimumWidth(560)
 
         self._initial = current
         self._result: AppSettings | None = None
@@ -122,7 +132,7 @@ class SettingsDialog(QDialog):
         scroll.setWidget(self._tabs)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
+        outer.setContentsMargins(_OUTER_MARGIN, _OUTER_MARGIN, _OUTER_MARGIN, _OUTER_MARGIN)
         outer.setSpacing(12)
         outer.addWidget(scroll, stretch=1)
 
@@ -141,6 +151,7 @@ class SettingsDialog(QDialog):
         button_row.addWidget(self._buttons)
         outer.addLayout(button_row)
 
+        clamp_dialog_width_to_screen(self, self._content_min_width())
         clamp_dialog_height_to_screen(self)
 
     # ---- Public API -----------------------------------------------------
@@ -148,6 +159,53 @@ class SettingsDialog(QDialog):
     def get_settings(self) -> AppSettings | None:
         """Liefert die neuen Settings oder `None`, wenn der Dialog abgebrochen wurde."""
         return self._result
+
+    # ---- Größe -----------------------------------------------------------
+
+    def _content_min_width(self) -> int:
+        """Mindestbreite, die der Dialog braucht, damit KEINE Tab-Seite einen
+        horizontalen Scrollbalken auslöst (Sprint 69 / Bug 3).
+
+        Die `QScrollArea` aus Sprint 67 bricht die `minimumSizeHint`-
+        Propagation vom Inhalt zum Dialog (siehe Modul-Docstring der
+        `QScrollArea`-Einbindung oben) – ohne Gegenmaßnahme bleibt nur das
+        hartcodierte `setMinimumWidth`, das schmaler sein kann als der
+        tatsächliche Inhalt (z. B. die „Auswählen…“-Buttons).
+
+        `QTabWidget.sizeHint()` bemisst je nach Qt-Version/-Plattform u. U. NUR
+        die aktuell sichtbare Tab-Seite statt aller drei – deshalb wird hier
+        explizit über `self._tabs.widget(i)` aller Indizes iteriert und das
+        Maximum genommen, statt sich auf `self._tabs.sizeHint()` zu verlassen.
+
+        Zum Inhalt kommt Chrome dazu: der schmale Rahmen des `QTabWidget`
+        selbst (Differenz zwischen dessen eigenem `sizeHint()` und der
+        breitesten Tab-Seite), die äußeren Dialog-Ränder auf beiden Seiten
+        sowie die Breite eines vertikalen Scrollbalkens – der ist im
+        Normalfall bereits sichtbar, weil die Dialoghöhe bewusst NICHT auf die
+        volle Inhaltshöhe wächst (Sprint 67: Inhalt scrollt als Ganzes). Ein
+        kleiner fixer Puffer obendrauf fängt eine empirisch beobachtete
+        Wechselwirkung zwischen horizontalem und vertikalem Scrollbalken ab
+        (das Erscheinen/Verschwinden des einen ändert kurzzeitig den
+        verfügbaren Platz für den anderen) – kostet auf normalen Screens
+        nichts, weil `clamp_dialog_width_to_screen` einen Überschuss ohnehin
+        kappt.
+        """
+        widest_page = max(
+            (
+                page.sizeHint().width()
+                for i in range(self._tabs.count())
+                if (page := self._tabs.widget(i)) is not None
+            ),
+            default=0,
+        )
+        tabs_chrome = max(self._tabs.sizeHint().width() - widest_page, 0)
+        style = self.style()
+        scrollbar_extent = (
+            style.pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent) if style is not None else 0
+        )
+        return (
+            widest_page + tabs_chrome + 2 * _OUTER_MARGIN + scrollbar_extent + _WIDTH_SAFETY_BUFFER
+        )
 
     # ---- Tabs -----------------------------------------------------------
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+from typing import Final
 
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtWidgets import (
@@ -42,8 +43,21 @@ from sampling_tool.io.bdo_locations import (
     default_location,
     locations,
 )
-from sampling_tool.ui._dialog_sizing import clamp_dialog_height_to_screen
+from sampling_tool.ui._dialog_sizing import (
+    clamp_dialog_height_to_screen,
+    clamp_dialog_width_to_screen,
+    content_min_width,
+)
 from sampling_tool.ui.dialogs._export_base import ExportTargetWidget
+
+# Sprint 69 / Bug 3: Rand des äußeren Layouts – eigene Konstante statt
+# zweimal hartcodierter `20`, weil die Mindestbreiten-Berechnung
+# (`content_min_width`) denselben Wert braucht.
+_OUTER_MARGIN: Final[int] = 20
+# Sprint 69 / Bug 3: kleiner Sicherheitspuffer (Details im Docstring von
+# `content_min_width` in `_dialog_sizing.py` – Wechselwirkung zwischen
+# horizontalem und vertikalem Scrollbalken).
+_WIDTH_SAFETY_BUFFER: Final[int] = 8
 
 _DEFAULT_TYPES: tuple[str, ...] = (
     "sampling",
@@ -91,7 +105,6 @@ class ExportAuditPdfDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("AuditTrail-PDF exportieren")
         self.setModal(True)
-        self.setMinimumWidth(720)
 
         self._result: ExportAuditPdfDialogResult | None = None
         self._briefpapier_available = briefpapier_available
@@ -111,6 +124,7 @@ class ExportAuditPdfDialog(QDialog):
         self._default_include_statistics = default_include_statistics
 
         body_widget = QWidget()
+        self._body_widget = body_widget
         body = QHBoxLayout(body_widget)
         body.setSpacing(20)
         body.addLayout(self._build_left(event_types_available, briefpapier_available), stretch=2)
@@ -124,7 +138,7 @@ class ExportAuditPdfDialog(QDialog):
         scroll.setWidget(body_widget)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
+        outer.setContentsMargins(_OUTER_MARGIN, _OUTER_MARGIN, _OUTER_MARGIN, _OUTER_MARGIN)
         outer.setSpacing(12)
         outer.addWidget(scroll, stretch=1)
 
@@ -142,6 +156,10 @@ class ExportAuditPdfDialog(QDialog):
         self._buttons.rejected.connect(self.reject)
 
         self._update_state()
+        clamp_dialog_width_to_screen(
+            self,
+            content_min_width(self._body_widget, self.style(), _OUTER_MARGIN, _WIDTH_SAFETY_BUFFER),
+        )
         clamp_dialog_height_to_screen(self)
 
     # ---- Public API ----------------------------------------------------

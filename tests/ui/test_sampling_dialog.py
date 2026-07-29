@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 import pytest
-from PyQt6.QtWidgets import QDialogButtonBox, QLineEdit, QScrollArea
+from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QLineEdit, QScrollArea
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import (
@@ -20,6 +20,7 @@ from sampling_tool.core.models import (
     StratifyMode,
 )
 from sampling_tool.core.presets import SamplingPreset
+from sampling_tool.ui._scaling import load_scaled_stylesheet
 from sampling_tool.ui.dialogs.sampling_dialog import (
     NO_FILTER_LABEL,
     SamplingDialog,
@@ -1010,6 +1011,61 @@ class TestScrollFallback:
         screen = dialog.screen()
         assert screen is not None
         assert dialog.maximumHeight() <= screen.availableGeometry().height()
+
+    def test_fits_content_without_hscroll(self, qtbot: QtBot) -> None:
+        """Sprint 69 / Bug 3: `setMinimumWidth(520)` war schmaler als der
+        tatsächliche Inhalt bei realistischen (längeren) Spaltennamen +
+        aktivem Advanced-Modus (Cluster-/Schicht-Feld, Filter) – ein
+        horizontaler Scrollbalken war nötig. Fix: die Mindestbreite wird aus
+        `content.sizeHint()` abgeleitet (`_dialog_sizing.content_min_width`)
+        und auf den verfügbaren Screen gedeckelt
+        (`clamp_dialog_width_to_screen`).
+
+        Das reale `bdo_light.qss`-Stylesheet (`font-size: 13px`) wird hier
+        explizit gesetzt (statt sich auf ambienten, von anderen Tests
+        hinterlassenen `QApplication`-Stylesheet-Zustand zu verlassen) –
+        macht die Messung sowohl repräsentativ für die echte App als auch
+        unabhängig von der Ausführungsreihenfolge anderer Tests (Sprint 69:
+        ein globaler `QApplication.setStyleSheet`-Aufruf in einem gänzlich
+        unabhängigen Test hat genau diese Breitenberechnung schon einmal
+        unerwartet verändert).
+        """
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        previous_stylesheet = app.styleSheet()
+        app.setStyleSheet(load_scaled_stylesheet(1.0))
+        try:
+            dataset = Dataset(
+                name="t",
+                columns=("Buchungsdatum", "Kontobezeichnung", "Belegnummer", "Betrag", "Quote"),
+                row_count=1000,
+            )
+            distinct = {
+                "Buchungsdatum": ["2024-01-01"],
+                "Kontobezeichnung": ["Aufwandskonto Reisekosten"],
+                "Belegnummer": ["B-000123"],
+            }
+            dialog = SamplingDialog(dataset, lambda field: distinct.get(field, []), features=_ALL)
+            qtbot.addWidget(dialog)
+            dialog.show()
+            qtbot.waitExposed(dialog)
+            qtbot.wait(50)
+
+            screen = dialog.screen()
+            assert screen is not None
+            assert dialog.width() <= screen.availableGeometry().width()
+
+            scroll = dialog.findChildren(QScrollArea)[0]
+            hbar = scroll.horizontalScrollBar()
+            viewport = scroll.viewport()
+            assert hbar is not None
+            assert viewport is not None
+            assert not hbar.isVisible(), (
+                f"horizontaler Scrollbalken sichtbar bei Dialogbreite {dialog.width()}px "
+                f"(Viewport {viewport.width()}px)"
+            )
+        finally:
+            app.setStyleSheet(previous_stylesheet)
 
 
 class TestUiScale:

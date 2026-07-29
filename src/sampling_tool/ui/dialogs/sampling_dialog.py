@@ -16,7 +16,7 @@ import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -56,7 +56,11 @@ from sampling_tool.core.models import (
     StratifyMode,
 )
 from sampling_tool.core.presets import SamplingPreset
-from sampling_tool.ui._dialog_sizing import clamp_dialog_height_to_screen
+from sampling_tool.ui._dialog_sizing import (
+    clamp_dialog_height_to_screen,
+    clamp_dialog_width_to_screen,
+    content_min_width,
+)
 from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui.preset_store import PresetStore
 from sampling_tool.ui.settings_store import SamplingFeatures
@@ -73,6 +77,15 @@ PRESET_PLACEHOLDER: str = "(Vorlage wählen…)"
 # nicht mehr durch das Widget gecappt – stattdessen schlägt Validierung
 # beim Accept zu (siehe `accept()`).
 _SPINBOX_MAX: int = 2_147_483_647
+
+# Sprint 69 / Bug 3: Rand des äußeren Layouts – eigene Konstante statt
+# zweimal hartcodierter `20`, weil die Mindestbreiten-Berechnung
+# (`content_min_width`) denselben Wert braucht.
+_OUTER_MARGIN: Final[int] = 20
+# Sprint 69 / Bug 3: kleiner Sicherheitspuffer (Details im Docstring von
+# `content_min_width` in `_dialog_sizing.py` – Wechselwirkung zwischen
+# horizontalem und vertikalem Scrollbalken).
+_WIDTH_SAFETY_BUFFER: Final[int] = 8
 
 # Sprint 36: Vergleichsoperatoren des Spaltenfilters. Der sichtbare Label-Text
 # steht im Combo, das `FilterOperator`-Member als `userData`.
@@ -135,7 +148,6 @@ class SamplingDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Neue Stichprobe")
         self.setModal(True)
-        self.setMinimumWidth(520)
 
         self._dataset = dataset
         self._factor = ui_scale_factor
@@ -186,6 +198,10 @@ class SamplingDialog(QDialog):
         if self._show_methods:
             self._on_method_changed()
         self._validate()
+        clamp_dialog_width_to_screen(
+            self,
+            content_min_width(self._content, self.style(), _OUTER_MARGIN, _WIDTH_SAFETY_BUFFER),
+        )
         clamp_dialog_height_to_screen(self)
 
     # ---- Public API -----------------------------------------------------
@@ -251,6 +267,7 @@ class SamplingDialog(QDialog):
 
     def _build_ui(self) -> None:
         content = QWidget()
+        self._content = content
         outer = QVBoxLayout(content)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(12)
@@ -465,7 +482,7 @@ class SamplingDialog(QDialog):
         scroll.setWidget(content)
 
         dialog_layout = QVBoxLayout(self)
-        dialog_layout.setContentsMargins(20, 20, 20, 20)
+        dialog_layout.setContentsMargins(_OUTER_MARGIN, _OUTER_MARGIN, _OUTER_MARGIN, _OUTER_MARGIN)
         dialog_layout.setSpacing(12)
         dialog_layout.addWidget(scroll, stretch=1)
         dialog_layout.addLayout(footer)
