@@ -505,5 +505,7 @@ class MainWindow(QMainWindow):
 
 def _separator() -> QLabel:
     label = QLabel("│")
-    label.setStyleSheet("color: #D9D9D9; padding: 0 6px;")
+    # Sprint 71/2: ohne `background: transparent` malt die generische
+    # QWidget-Regel das Label weiß auf die #F4F4F4-Statusbar.
+    label.setStyleSheet("color: #D9D9D9; padding: 0 6px; background: transparent;")
     return label
