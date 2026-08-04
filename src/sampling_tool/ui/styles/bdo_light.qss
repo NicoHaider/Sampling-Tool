@@ -166,16 +166,26 @@ QHeaderView::section {
     border-right: 1px solid #A41229;
 }
 
+/* Sprint 70 / Befund B: deutlich abgesetzt von der weißen/#FAFAFA-Datenfläche,
+ * damit die automatische Zeilennummer nicht für importierte Daten gehalten wird. */
 QHeaderView::section:vertical {
-    background-color: #F4F4F4;
-    color: #7F7F7F;
-    border-right: 1px solid #D9D9D9;
-    border-bottom: 1px solid #ECECEC;
+    background-color: #E4E4E4;
+    color: #6B6B6B;
+    border-right: 1px solid #C9C9C9;
+    border-bottom: 1px solid #D9D9D9;
 }
 
 QTableCornerButton::section {
     background-color: #E81A3B;
     border: 0px;
+}
+
+/* Sprint 70 / Befund B: Eck-Label "Zeile" auf dem Corner-Button. Ohne eigene
+ * Regel würde die generische QWidget-Regel (Z. 9-15) es weiß überdecken. */
+QLabel#rowNumberCornerLabel {
+    background: transparent;
+    color: #FFFFFF;
+    font-weight: bold;
 }
 
 /* -------------------------------------------------------------------------

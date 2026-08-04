@@ -26,12 +26,12 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Sequence
 from datetime import date, datetime, time
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Final
 
 from PyQt6 import sip
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PyQt6.QtGui import QBrush, QColor, QPainter, QPaintEvent
-from PyQt6.QtWidgets import QHeaderView, QTableView, QWidget
+from PyQt6.QtWidgets import QAbstractButton, QHeaderView, QLabel, QTableView, QVBoxLayout, QWidget
 
 from sampling_tool.config import SAMPLE_HIGHLIGHT_ALPHA, SAMPLE_HIGHLIGHT_COLOR
 from sampling_tool.core.models import Dataset, DatasetRow
@@ -46,6 +46,13 @@ _MAX_COLUMN_WIDTH: int = 320
 _EMPTY_MESSAGE: str = "Keine Datensätze – Datei importieren"
 # Sprint 68 / Teil B1: Basiswert für die UI-Skalierung (`MainWindow.apply_ui_scale`).
 _DEFAULT_ROW_HEIGHT: int = 22
+
+# Sprint 70 / Befund B: SSOT für Label + Tooltip der automatischen Zeilennummer.
+ROW_NUMBER_CORNER_TEXT: Final[str] = "Zeile"
+ROW_NUMBER_HINT: Final[str] = (
+    "Automatisch vergebene Zeilennummer aus der Quelldatei – "
+    "nicht Teil des importierten Datensatzes."
+)
 
 
 class DatasetTableModel(QAbstractTableModel):
@@ -227,6 +234,10 @@ class DatasetTableModel(QAbstractTableModel):
         orientation: Qt.Orientation,
         role: int = Qt.ItemDataRole.DisplayRole,
     ) -> Any:
+        if role == Qt.ItemDataRole.ToolTipRole:
+            if orientation == Qt.Orientation.Vertical:
+                return ROW_NUMBER_HINT
+            return None
         if role != Qt.ItemDataRole.DisplayRole:
             return None
         if orientation == Qt.Orientation.Horizontal:
@@ -314,6 +325,22 @@ class DataTableView(QTableView):
         assert v_header is not None
         v_header.setDefaultSectionSize(_DEFAULT_ROW_HEIGHT)
         v_header.setVisible(True)
+
+        # Sprint 70 / Befund B: Eck-Label kennzeichnet die automatische
+        # Zeilennummer. `QAbstractButton.setText()` greift hier nicht – Qts
+        # `QTableCornerButton::paintEvent` baut eine `QStyleOptionHeader` ohne
+        # `text`, ein gesetzter Text würde nie gezeichnet. Ein echtes
+        # Kind-Widget in einem Layout auf dem Corner-Button umgeht das.
+        self._corner_label: QLabel | None = None
+        corner = self.findChild(QAbstractButton)
+        if corner is not None:
+            corner.setToolTip(ROW_NUMBER_HINT)
+            corner_layout = QVBoxLayout(corner)
+            corner_layout.setContentsMargins(0, 0, 0, 0)
+            self._corner_label = QLabel(ROW_NUMBER_CORNER_TEXT, corner)
+            self._corner_label.setObjectName("rowNumberCornerLabel")
+            self._corner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            corner_layout.addWidget(self._corner_label)
 
     # ---- Public API -----------------------------------------------------
 

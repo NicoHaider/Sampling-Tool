@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QAbstractButton, QLabel
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement
@@ -19,6 +20,8 @@ from sampling_tool.ui.widgets.data_table import (
     _MIN_COLUMN_WIDTH,
     HIGHLIGHT_ALPHA,
     HIGHLIGHT_COLOR,
+    ROW_NUMBER_CORNER_TEXT,
+    ROW_NUMBER_HINT,
     DatasetTableModel,
     DataTableView,
 )
@@ -462,3 +465,52 @@ class TestLazyCache:
         model.clear()
         assert model._row_cache == {}
         assert model.rowCount() == 0
+
+
+class TestRowNumberAffordance:
+    """Sprint 70 / Befund B: automatische Zeilennummer visuell absetzen."""
+
+    def test_vertical_header_tooltip_returns_hint(
+        self, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        db, eng_id = db_with_engagement
+        ds, repo = _make_dataset(db, eng_id, 3)
+        model = DatasetTableModel(ds, repo)
+        assert (
+            model.headerData(0, Qt.Orientation.Vertical, Qt.ItemDataRole.ToolTipRole)
+            == ROW_NUMBER_HINT
+        )
+
+    def test_horizontal_header_has_no_tooltip(
+        self, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        db, eng_id = db_with_engagement
+        ds, repo = _make_dataset(db, eng_id, 3)
+        model = DatasetTableModel(ds, repo)
+        assert model.headerData(0, Qt.Orientation.Horizontal, Qt.ItemDataRole.ToolTipRole) is None
+
+    def test_vertical_display_role_unchanged(
+        self, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        db, eng_id = db_with_engagement
+        ds, repo = _make_dataset(db, eng_id, 5)
+        model = DatasetTableModel(ds, repo)
+        assert model.headerData(0, Qt.Orientation.Vertical, Qt.ItemDataRole.DisplayRole) == "1"
+
+        model.filter_to_row_ids([2, 4])
+        assert model.headerData(0, Qt.Orientation.Vertical, Qt.ItemDataRole.DisplayRole) == "2"
+        assert model.headerData(1, Qt.Orientation.Vertical, Qt.ItemDataRole.DisplayRole) == "4"
+
+    def test_corner_label_shows_row_text(self, qtbot: QtBot) -> None:
+        view = DataTableView()
+        qtbot.addWidget(view)
+        label = view.findChild(QLabel, "rowNumberCornerLabel")
+        assert label is not None
+        assert label.text() == ROW_NUMBER_CORNER_TEXT
+
+    def test_corner_button_has_hint_tooltip(self, qtbot: QtBot) -> None:
+        view = DataTableView()
+        qtbot.addWidget(view)
+        corner = view.findChild(QAbstractButton)
+        assert corner is not None
+        assert corner.toolTip() == ROW_NUMBER_HINT
