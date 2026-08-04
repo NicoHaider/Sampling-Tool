@@ -431,10 +431,44 @@ class TestToolbarChromeNotWhite:
             ),
         )
 
+    # Ein weisser HINTERGRUND bedeckt den ueberwiegenden Teil eines Widgets
+    # (vor dem Fix: 67-100 % der Flaeche). Vereinzelte weisse Pixel stammen
+    # aus Glyph-Antialiasing oder Stil-Dekorationen und sind plattform-
+    # abhaengig – deshalb ein Flaechenanteil statt "kein einziges Pixel".
+    MAX_WHITE_AREA_FRACTION = 0.10
+
     @staticmethod
     def _rgb(image: QImage, x: int, y: int) -> tuple[int, int, int]:
         colour = image.pixelColor(x, y)
         return (colour.red(), colour.green(), colour.blue())
+
+    @staticmethod
+    def _rect_inside(rect: QRect, image: QImage) -> bool:
+        return (
+            rect.width() > 0
+            and rect.height() > 0
+            and rect.x() >= 0
+            and rect.y() >= 0
+            and rect.x() + rect.width() <= image.width()
+            and rect.y() + rect.height() <= image.height()
+        )
+
+    def _white_fraction(self, image: QImage, rect: QRect) -> float:
+        """Anteil reinweisser Pixel im Bereich `rect` des Eltern-Bildes.
+
+        Bewusst aus dem KOMPOSITIERTEN Eltern-Bild gelesen: ein
+        `widget.grab()` auf ein Widget mit `background: transparent` malt
+        nichts und liefert einen uninitialisierten Backing-Store – auf
+        Ubuntu weiss, auf macOS nicht. Das hat genau diesen Test einmal
+        falsch rot werden lassen.
+        """
+        white = sum(
+            1
+            for x in range(rect.x(), rect.x() + rect.width())
+            for y in range(rect.y(), rect.y() + rect.height())
+            if self._rgb(image, x, y) == self.WHITE
+        )
+        return white / max(1, rect.width() * rect.height())
 
     def test_separator_pixels_are_not_white(self, qtbot: QtBot) -> None:
         app = QApplication.instance()
@@ -458,21 +492,23 @@ class TestToolbarChromeNotWhite:
             for action in toolbar.actions():
                 if not action.isSeparator():
                     continue
-                rect = action_rect = toolbar.actionGeometry(action)
-                if (
-                    rect.width() <= 0
-                    or rect.height() <= 0
-                    or rect.x() < 0
-                    or rect.y() < 0
-                    or rect.x() + rect.width() > image.width()
-                    or rect.y() + rect.height() > image.height()
-                ):
-                    continue  # nicht ausgelegt (Ueberlauf-Menue)
+                # `isVisible()` des Separator-Widgets ist das verlaessliche
+                # Ausgelegt-Signal. `actionGeometry()` liefert fuer Items im
+                # Ueberlauf-Menue das Sentinel-Rechteck QRect(0,0,100,30) –
+                # das liegt INNERHALB des Toolbar-Bildes und deckte auf
+                # Windows das weisse Haus-Icon des ersten Buttons ab
+                # (14 Falsch-Treffer).
+                separator = toolbar.widgetForAction(action)
+                if separator is None or not separator.isVisible():
+                    continue
+                rect = separator.geometry()
+                if not self._rect_inside(rect, image):
+                    continue
                 measured += 1
-                for x in range(action_rect.x(), action_rect.x() + action_rect.width()):
-                    for y in range(action_rect.y(), action_rect.y() + action_rect.height()):
+                for x in range(rect.x(), rect.x() + rect.width()):
+                    for y in range(rect.y(), rect.y() + rect.height()):
                         if self._rgb(image, x, y) == self.WHITE:
-                            offenders.append(f"({x},{y}) in {action_rect}")
+                            offenders.append(f"({x},{y}) in {rect}")
                             break
 
             assert measured, "kein einziger Separator konnte gemessen werden"
@@ -514,17 +550,14 @@ class TestToolbarChromeNotWhite:
                     "Qt-/Style-Kombination – nichts zu messen."
                 )
 
-            image = extension.grab().toImage()
-            corners = (
-                (0, 0),
-                (image.width() - 1, 0),
-                (0, image.height() - 1),
-                (image.width() - 1, image.height() - 1),
-            )
-            white_corners = [c for c in corners if self._rgb(image, *c) == self.WHITE]
-            assert not white_corners, (
-                f"Ueberlauf-Button hat reinweisse Eckpixel {white_corners} – "
-                "er faellt auf die generische QWidget-Regel zurueck."
+            image = toolbar.grab().toImage()
+            rect = extension.geometry()
+            if not self._rect_inside(rect, image):
+                pytest.skip("Ueberlauf-Button liegt ausserhalb des Toolbar-Bildes.")
+            fraction = self._white_fraction(image, rect)
+            assert fraction <= self.MAX_WHITE_AREA_FRACTION, (
+                f"Ueberlauf-Button ist zu {fraction:.0%} reinweiss – er faellt "
+                "auf die generische QWidget-Regel zurueck."
             )
             qtbot.wait(50)
         finally:
@@ -564,21 +597,22 @@ class TestToolbarChromeNotWhite:
 
             status = win.statusBar()
             assert status is not None
+            image = status.grab().toImage()
+            measured = 0
             offenders: list[str] = []
             for child in status.children():
                 if not isinstance(child, QWidget) or not child.isVisible():
                     continue
-                image = child.grab().toImage()
-                white = sum(
-                    1
-                    for x in range(image.width())
-                    for y in range(image.height())
-                    if self._rgb(image, x, y) == self.WHITE
-                )
-                if white:
+                rect = child.geometry()
+                if not self._rect_inside(rect, image):
+                    continue
+                measured += 1
+                fraction = self._white_fraction(image, rect)
+                if fraction > self.MAX_WHITE_AREA_FRACTION:
                     label = child.text() if isinstance(child, QLabel) else ""
-                    offenders.append(f"{type(child).__name__}({label!r}): {white} px")
+                    offenders.append(f"{type(child).__name__}({label!r}): {fraction:.0%}")
 
+            assert measured, "kein Statusbar-Widget konnte gemessen werden"
             assert not offenders, (
                 f"Statusbar-Widgets rendern reinweiss auf der #F4F4F4-Flaeche: {offenders}"
             )
