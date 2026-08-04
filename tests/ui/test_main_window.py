@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QRect, QSettings, QSize, Qt
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtGui import QImage
+from PyQt6.QtWidgets import QApplication, QLabel, QWidget
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.config import APP_NAME, APP_ORG
@@ -25,6 +26,7 @@ from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import DatasetRepo, EngagementRepo
 from sampling_tool.resources import package_resource
 from sampling_tool.ui._geometry import fit_to_available
+from sampling_tool.ui._scaling import load_scaled_stylesheet
 from sampling_tool.ui._window_state import _DESIRED_HEIGHT, _DESIRED_WIDTH, _int_or_none
 from sampling_tool.ui.main_window import MainWindow
 from sampling_tool.ui.recent import RecentEntry
@@ -385,6 +387,238 @@ class TestToolbarSpacerTransparent:
         rule = re.search(rf"QWidget#{re.escape(spacer.objectName())}\s*\{{([^}}]*)\}}", qss)
         assert rule is not None, "erwarte eine QSS-Regel für den Spacer-Objektnamen"
         assert re.search(r"background(-color)?:\s*transparent", rule.group(1))
+
+
+class TestToolbarChromeNotWhite:
+    """Sprint 71 / Befund 2: weisses Chrome in der Toolbar.
+
+    `TestToolbarSpacerTransparent` (Sprint 69/6) hat Separatoren per
+    `if not action.isSeparator()` EXPLIZIT ausgeschlossen – genau diese
+    Luecke schliesst diese Klasse.
+
+    Messung statt QSS-Kaskaden-Argumentation: das echte Stylesheet wird
+    global gesetzt, die Toolbar gerendert und Pixel gelesen.
+
+    Zwei Fallen, die bei der Erstellung dieser Tests aufgefallen sind und
+    beide zu still-gruenen Gates gefuehrt haetten:
+
+    1. Der weisse Separator-Streifen liegt NICHT auf dem geometrischen
+       Mittelpunkt des `actionGeometry`-Rechtecks, sondern zwei Pixel
+       daneben (Qt zeichnet eine geaetzte Linie: `#E8E8E8` bei +4,
+       `#FFFFFF` bei +5 eines 8px breiten Rechtecks). Ein Mittelpunkt-
+       Pixel-Test liest `#F8F8F8` und ist faelschlich gruen – deshalb
+       wird hier das GESAMTE Rechteck gescannt.
+    2. Der Ueberlauf-Button heisst in PyQt6 nicht `QToolBarExtension`;
+       `type(child).__name__` liefert `QToolButton`. Gesucht wird er
+       daher ueber seinen Qt-internen objectName `qt_toolbar_ext_button`.
+    """
+
+    WHITE = (255, 255, 255)
+
+    @pytest.fixture(autouse=True)
+    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Diese Tests bauen echte MainWindows und veraendern deren Groesse;
+        `closeEvent` -> `_window_state.save()` wuerde die Testgeometrie sonst
+        in die echten Prefs schreiben. Gleiches Muster wie
+        `TestWindowGeometryFitsScreen._isolated_qsettings`.
+        """
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+        monkeypatch.setattr(
+            "sampling_tool.ui.main_window.QSettings",
+            lambda organization, application: QSettings(
+                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
+            ),
+        )
+
+    # Ein weisser HINTERGRUND bedeckt den ueberwiegenden Teil eines Widgets
+    # (vor dem Fix: 67-100 % der Flaeche). Vereinzelte weisse Pixel stammen
+    # aus Glyph-Antialiasing oder Stil-Dekorationen und sind plattform-
+    # abhaengig – deshalb ein Flaechenanteil statt "kein einziges Pixel".
+    MAX_WHITE_AREA_FRACTION = 0.10
+
+    @staticmethod
+    def _rgb(image: QImage, x: int, y: int) -> tuple[int, int, int]:
+        colour = image.pixelColor(x, y)
+        return (colour.red(), colour.green(), colour.blue())
+
+    @staticmethod
+    def _rect_inside(rect: QRect, image: QImage) -> bool:
+        return (
+            rect.width() > 0
+            and rect.height() > 0
+            and rect.x() >= 0
+            and rect.y() >= 0
+            and rect.x() + rect.width() <= image.width()
+            and rect.y() + rect.height() <= image.height()
+        )
+
+    def _white_fraction(self, image: QImage, rect: QRect) -> float:
+        """Anteil reinweisser Pixel im Bereich `rect` des Eltern-Bildes.
+
+        Bewusst aus dem KOMPOSITIERTEN Eltern-Bild gelesen: ein
+        `widget.grab()` auf ein Widget mit `background: transparent` malt
+        nichts und liefert einen uninitialisierten Backing-Store – auf
+        Ubuntu weiss, auf macOS nicht. Das hat genau diesen Test einmal
+        falsch rot werden lassen.
+        """
+        white = sum(
+            1
+            for x in range(rect.x(), rect.x() + rect.width())
+            for y in range(rect.y(), rect.y() + rect.height())
+            if self._rgb(image, x, y) == self.WHITE
+        )
+        return white / max(1, rect.width() * rect.height())
+
+    def test_separator_pixels_are_not_white(self, qtbot: QtBot) -> None:
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        previous_stylesheet = app.styleSheet()
+        app.setStyleSheet(load_scaled_stylesheet(1.0))
+        try:
+            win = MainWindow()
+            qtbot.addWidget(win)
+            win.show()
+            qtbot.waitExposed(win)
+            # Breit genug, damit alle fuenf Separatoren wirklich ausgelegt
+            # sind (bei schmalem Fenster wandern sie ins Ueberlauf-Menue).
+            win.resize(2400, 800)
+            qtbot.wait(50)
+
+            toolbar = win._toolbar
+            image = toolbar.grab().toImage()
+            measured = 0
+            offenders: list[str] = []
+            for action in toolbar.actions():
+                if not action.isSeparator():
+                    continue
+                # `isVisible()` des Separator-Widgets ist das verlaessliche
+                # Ausgelegt-Signal. `actionGeometry()` liefert fuer Items im
+                # Ueberlauf-Menue das Sentinel-Rechteck QRect(0,0,100,30) –
+                # das liegt INNERHALB des Toolbar-Bildes und deckte auf
+                # Windows das weisse Haus-Icon des ersten Buttons ab
+                # (14 Falsch-Treffer).
+                separator = toolbar.widgetForAction(action)
+                if separator is None or not separator.isVisible():
+                    continue
+                rect = separator.geometry()
+                if not self._rect_inside(rect, image):
+                    continue
+                measured += 1
+                for x in range(rect.x(), rect.x() + rect.width()):
+                    for y in range(rect.y(), rect.y() + rect.height()):
+                        if self._rgb(image, x, y) == self.WHITE:
+                            offenders.append(f"({x},{y}) in {rect}")
+                            break
+
+            assert measured, "kein einziger Separator konnte gemessen werden"
+            assert not offenders, (
+                f"{len(offenders)} Separator-Pixel sind reinweiss (#FFFFFF) "
+                f"statt der Toolbar-Flaeche: {offenders[:5]}"
+            )
+            qtbot.wait(50)
+        finally:
+            app.setStyleSheet(previous_stylesheet)
+
+    def test_extension_button_is_not_white(self, qtbot: QtBot) -> None:
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        previous_stylesheet = app.styleSheet()
+        app.setStyleSheet(load_scaled_stylesheet(1.0))
+        try:
+            win = MainWindow()
+            qtbot.addWidget(win)
+            win.show()
+            qtbot.waitExposed(win)
+            win.resize(700, 700)  # erzwingt den Ueberlauf
+            qtbot.wait(50)
+
+            toolbar = win._toolbar
+            extension = None
+            for child in toolbar.children():
+                if not isinstance(child, QWidget):
+                    continue
+                if (
+                    child.objectName() == "qt_toolbar_ext_button"
+                    or type(child).__name__ == "QToolBarExtension"
+                ):
+                    extension = child
+                    break
+            if extension is None or not extension.isVisible():
+                pytest.skip(
+                    "Kein sichtbarer QToolBar-Ueberlauf-Button in dieser "
+                    "Qt-/Style-Kombination – nichts zu messen."
+                )
+
+            image = toolbar.grab().toImage()
+            rect = extension.geometry()
+            if not self._rect_inside(rect, image):
+                pytest.skip("Ueberlauf-Button liegt ausserhalb des Toolbar-Bildes.")
+            fraction = self._white_fraction(image, rect)
+            assert fraction <= self.MAX_WHITE_AREA_FRACTION, (
+                f"Ueberlauf-Button ist zu {fraction:.0%} reinweiss – er faellt "
+                "auf die generische QWidget-Regel zurueck."
+            )
+            qtbot.wait(50)
+        finally:
+            app.setStyleSheet(previous_stylesheet)
+
+    def test_statusbar_separator_is_transparent(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        status = win.statusBar()
+        assert status is not None
+        separators = [lbl for lbl in status.findChildren(QLabel) if lbl.text() == "│"]
+        assert separators, "keine Statusbar-Trennzeichen gefunden"
+        for label in separators:
+            assert "background: transparent" in label.styleSheet(), (
+                "Statusbar-Separator ohne transparenten Hintergrund – die "
+                f"generische QWidget-Regel malt ihn weiss: {label.styleSheet()!r}"
+            )
+
+    def test_statusbar_has_no_white_widgets(self, qtbot: QtBot) -> None:
+        """Nicht nur die Trennzeichen: auch die vier Statusfelder und der
+        QSizeGrip hatten keine eigene QSS-Regel und wurden von der
+        generischen QWidget-Regel weiss gemalt (gemessen: 4374 bzw. 289
+        weisse Pixel). Dieser Test misst die komplette Statusbar, statt –
+        wie der Test darueber – nur einen Stylesheet-String zu pruefen.
+        """
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        previous_stylesheet = app.styleSheet()
+        app.setStyleSheet(load_scaled_stylesheet(1.0))
+        try:
+            win = MainWindow()
+            qtbot.addWidget(win)
+            win.show()
+            qtbot.waitExposed(win)
+            win.resize(2400, 800)
+            qtbot.wait(50)
+
+            status = win.statusBar()
+            assert status is not None
+            image = status.grab().toImage()
+            measured = 0
+            offenders: list[str] = []
+            for child in status.children():
+                if not isinstance(child, QWidget) or not child.isVisible():
+                    continue
+                rect = child.geometry()
+                if not self._rect_inside(rect, image):
+                    continue
+                measured += 1
+                fraction = self._white_fraction(image, rect)
+                if fraction > self.MAX_WHITE_AREA_FRACTION:
+                    label = child.text() if isinstance(child, QLabel) else ""
+                    offenders.append(f"{type(child).__name__}({label!r}): {fraction:.0%}")
+
+            assert measured, "kein Statusbar-Widget konnte gemessen werden"
+            assert not offenders, (
+                f"Statusbar-Widgets rendern reinweiss auf der #F4F4F4-Flaeche: {offenders}"
+            )
+            qtbot.wait(50)
+        finally:
+            app.setStyleSheet(previous_stylesheet)
 
 
 class TestPanelVisibility:

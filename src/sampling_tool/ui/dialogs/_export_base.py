@@ -29,6 +29,17 @@ from sampling_tool.config import sanitize_export_filename_token
 
 DEFAULT_FILENAME_PATTERN: str = "{name}_ID{id}_BDO_{type}_{date}"
 
+# Sprint 71 / Befund 1: Hinweistexte als Konstanten, damit Tests sie
+# importieren statt die Literale zu wiederholen.
+HINT_MISSING_NAME: str = "Dateiname fehlt."
+HINT_MISSING_ID: str = "ID fehlt."
+HINT_NO_DIR: str = "Kein Zielordner gewählt – bitte „Ordner wählen…“ klicken."
+
+
+def hint_missing_dir(path: Path) -> str:
+    """Hinweis für einen gesetzten, aber nicht existierenden Zielordner."""
+    return f"Zielordner existiert nicht: {path} – bitte „Ordner wählen…“ klicken."
+
 
 class ExportTargetWidget(QWidget):
     """Wiederverwendbare rechte Spalte: Dateiname, ID, Zielordner, Vorschau."""
@@ -82,6 +93,16 @@ class ExportTargetWidget(QWidget):
         self._preview_label.setStyleSheet("color: #7F7F7F; font-family: monospace;")
         self._preview_label.setWordWrap(True)
         layout.addWidget(self._preview_label)
+
+        # Sprint 71 / Befund 1: sagt, WARUM der OK-Button grau ist. Inline
+        # gestylt wie die Geschwister-Labels – bewusst keine QSS-Regel, damit
+        # die Skalierungs-Gates (`test_scaling.py`) unberührt bleiben.
+        self._hint_label = QLabel("")
+        self._hint_label.setObjectName("exportTargetHint")
+        self._hint_label.setStyleSheet("color: #C62828; background: transparent;")
+        self._hint_label.setWordWrap(True)
+        self._hint_label.setVisible(False)
+        layout.addWidget(self._hint_label)
         layout.addStretch(1)
 
         # ---- Signals ----
@@ -90,6 +111,7 @@ class ExportTargetWidget(QWidget):
         self._dir_button.clicked.connect(self._choose_dir)
 
         self.update_preview()
+        self._update_hint()
 
     # ---- Public API ----------------------------------------------------
 
@@ -123,13 +145,25 @@ class ExportTargetWidget(QWidget):
         )
         return f"{body}{self._file_extension}"
 
-    def is_valid(self) -> bool:
-        """`True`, wenn Name, ID und Zielordner gesetzt sind."""
-        if not self.get_name() or not self.get_id():
-            return False
+    def validation_hint(self) -> str:
+        """Konkreter Grund, warum der Export (noch) nicht startbar ist.
+
+        Leerer String = gültig. Single Source of Truth – `is_valid()` leitet
+        sich davon ab, damit es keinen zweiten Prüfpfad gibt.
+        """
+        if not self.get_name():
+            return HINT_MISSING_NAME
+        if not self.get_id():
+            return HINT_MISSING_ID
         if self._output_dir is None:
-            return False
-        return self._output_dir.is_dir()
+            return HINT_NO_DIR
+        if not self._output_dir.is_dir():
+            return hint_missing_dir(self._output_dir)
+        return ""
+
+    def is_valid(self) -> bool:
+        """`True`, wenn Name, ID und ein existierender Zielordner gesetzt sind."""
+        return not self.validation_hint()
 
     def update_preview(self) -> None:
         """Aktualisiert das Vorschau-Label – wird intern nach Änderungen aufgerufen."""
@@ -140,12 +174,19 @@ class ExportTargetWidget(QWidget):
         self._output_dir = path
         self._dir_label.setText(str(path))
         self.update_preview()
+        self._update_hint()
         self.changed.emit()
 
     # ---- Slots ---------------------------------------------------------
 
+    def _update_hint(self) -> None:
+        hint = self.validation_hint()
+        self._hint_label.setText(hint)
+        self._hint_label.setVisible(bool(hint))
+
     def _on_field_changed(self) -> None:
         self.update_preview()
+        self._update_hint()
         self.changed.emit()
 
     def _choose_dir(self) -> None:

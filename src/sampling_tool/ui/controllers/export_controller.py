@@ -85,7 +85,7 @@ class ExportController:
         assert s.engagement.id is not None
 
         next_id = self._next_sample_id_for_export(s.dataset.id)
-        default_dir = s.default_export_dir()
+        default_dir = s.ensure_export_dir()
         dialog = self._factories.export_sample(
             s.window,
             s.dataset,
@@ -163,7 +163,7 @@ class ExportController:
             s.engagement,
             available_types,
             briefpapier is not None,
-            s.default_export_dir(),
+            s.ensure_export_dir(),
             s.settings.default_include_briefpapier,
             s.settings.default_include_statistics,
             s.settings.audit_export_offer_date_filter,
@@ -223,7 +223,7 @@ class ExportController:
         s = self.session
         assert s.engagement is not None
 
-        dialog = self._factories.excel_report(s.window, s.engagement, s.default_export_dir())
+        dialog = self._factories.excel_report(s.window, s.engagement, s.ensure_export_dir())
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         result = dialog.get_result()
@@ -270,7 +270,7 @@ class ExportController:
         s = self.session
         assert s.engagement is not None
 
-        dialog = self._factories.html_report(s.window, s.engagement, s.default_export_dir())
+        dialog = self._factories.html_report(s.window, s.engagement, s.ensure_export_dir())
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         result = dialog.get_result()

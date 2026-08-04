@@ -99,6 +99,25 @@ QWidget#toolbarSpacer {
     background: transparent;
 }
 
+/* Sprint 71/2: ungestylt zeichnet Qt eine geätzte Linie (#E8E8E8 + #FFFFFF)
+ * in das 8px breite Separator-Rechteck – der weiße Anteil war als heller
+ * Streifen auf der #F8F8F8-Toolbar sichtbar. Gemessen per Pixel-Scan des
+ * actionGeometry-Rechtecks, nicht über die QSS-Kaskade hergeleitet. */
+QToolBar::separator {
+    width: 1px;
+    background: #D9D9D9;
+    margin: 4px 6px;
+}
+
+/* Der »-Überlauf-Button. In Qt 6 ist er ein QToolButton und damit bereits
+ * von `QToolBar QToolButton` erfasst (gemessen: keine weißen Pixel) – die
+ * Regel bleibt als plattformübergreifende Absicherung stehen, weil sich
+ * nur der Offscreen-/Fusion-Stil hier lokal verifizieren lässt. */
+QToolBarExtension {
+    background: transparent;
+    border: none;
+}
+
 /* -------------------------------------------------------------------------
  * Buttons
  * ------------------------------------------------------------------------- */
@@ -246,6 +265,16 @@ QStatusBar {
 
 QStatusBar::item {
     border: 0px;
+}
+
+/* Sprint 71/2: die Statusfelder und der Größen-Anfasser haben keine eigene
+ * Regel und fielen damit auf die generische QWidget-Regel (Z. 9-15) zurück –
+ * gemessen 4374 weiße Pixel in den vier QLabels und ein komplett weißer
+ * QSizeGrip auf der #F4F4F4-Statusbar. Dieselbe Ursachenklasse wie der
+ * Toolbar-Spacer (Sprint 69/6) und die Toolbar-Separatoren. */
+QStatusBar QLabel,
+QStatusBar QSizeGrip {
+    background: transparent;
 }
 
 /* -------------------------------------------------------------------------
