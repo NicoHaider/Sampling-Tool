@@ -298,10 +298,33 @@ class WorkspaceSession:
         return get_default_briefpapier()
 
     def default_export_dir(self) -> Path:
-        """Default-Ordner für Exporte: <engagement-folder>/exports."""
+        """Default-Ordner für Exporte: <engagement-folder>/exports.
+
+        Reine Berechnung, bewusst OHNE Seiteneffekt – wer den Ordner
+        tatsächlich braucht (Export-Dialoge), nimmt `ensure_export_dir()`.
+        """
         if self.db is not None:
             return self.db.db_path.parent / EXPORT_DIR_NAME
         return Path.cwd() / EXPORT_DIR_NAME
+
+    def ensure_export_dir(self) -> Path | None:
+        """Wie `default_export_dir()`, legt den Ordner aber auch an.
+
+        Sprint 71 / Befund 1: `ExportTargetWidget.is_valid()` verlangt einen
+        existierenden Zielordner. Da `exports/` bis dahin von keinem Pfad
+        angelegt wurde (erst der atomare Writer NACH dem OK-Klick), war der
+        OK-Button in allen vier Export-Dialogen auf einem frischen Projekt
+        dauerhaft grau. Bei `OSError` (read-only Volume, fehlende Rechte)
+        liefert die Methode `None`; der Dialog öffnet dann ohne Vorbelegung
+        und sagt über den Hinweistext, was zu tun ist.
+        """
+        target = self.default_export_dir()
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            logger.exception("Export-Ordner konnte nicht angelegt werden: %s", target)
+            return None
+        return target
 
     # ---- Settings-Update ------------------------------------------------
 
