@@ -415,6 +415,22 @@ class TestToolbarChromeNotWhite:
 
     WHITE = (255, 255, 255)
 
+    @pytest.fixture(autouse=True)
+    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Diese Tests bauen echte MainWindows und veraendern deren Groesse;
+        `closeEvent` -> `_window_state.save()` wuerde die Testgeometrie sonst
+        in die echten Prefs schreiben. Gleiches Muster wie
+        `TestWindowGeometryFitsScreen._isolated_qsettings`.
+        """
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+        monkeypatch.setattr(
+            "sampling_tool.ui.main_window.QSettings",
+            lambda organization, application: QSettings(
+                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
+            ),
+        )
+
     @staticmethod
     def _rgb(image: QImage, x: int, y: int) -> tuple[int, int, int]:
         colour = image.pixelColor(x, y)
@@ -446,6 +462,8 @@ class TestToolbarChromeNotWhite:
                 if (
                     rect.width() <= 0
                     or rect.height() <= 0
+                    or rect.x() < 0
+                    or rect.y() < 0
                     or rect.x() + rect.width() > image.width()
                     or rect.y() + rect.height() > image.height()
                 ):
@@ -524,6 +542,49 @@ class TestToolbarChromeNotWhite:
                 "Statusbar-Separator ohne transparenten Hintergrund – die "
                 f"generische QWidget-Regel malt ihn weiss: {label.styleSheet()!r}"
             )
+
+    def test_statusbar_has_no_white_widgets(self, qtbot: QtBot) -> None:
+        """Nicht nur die Trennzeichen: auch die vier Statusfelder und der
+        QSizeGrip hatten keine eigene QSS-Regel und wurden von der
+        generischen QWidget-Regel weiss gemalt (gemessen: 4374 bzw. 289
+        weisse Pixel). Dieser Test misst die komplette Statusbar, statt –
+        wie der Test darueber – nur einen Stylesheet-String zu pruefen.
+        """
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        previous_stylesheet = app.styleSheet()
+        app.setStyleSheet(load_scaled_stylesheet(1.0))
+        try:
+            win = MainWindow()
+            qtbot.addWidget(win)
+            win.show()
+            qtbot.waitExposed(win)
+            win.resize(2400, 800)
+            qtbot.wait(50)
+
+            status = win.statusBar()
+            assert status is not None
+            offenders: list[str] = []
+            for child in status.children():
+                if not isinstance(child, QWidget) or not child.isVisible():
+                    continue
+                image = child.grab().toImage()
+                white = sum(
+                    1
+                    for x in range(image.width())
+                    for y in range(image.height())
+                    if self._rgb(image, x, y) == self.WHITE
+                )
+                if white:
+                    label = child.text() if isinstance(child, QLabel) else ""
+                    offenders.append(f"{type(child).__name__}({label!r}): {white} px")
+
+            assert not offenders, (
+                f"Statusbar-Widgets rendern reinweiss auf der #F4F4F4-Flaeche: {offenders}"
+            )
+            qtbot.wait(50)
+        finally:
+            app.setStyleSheet(previous_stylesheet)
 
 
 class TestPanelVisibility:

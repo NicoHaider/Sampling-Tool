@@ -1,4 +1,4 @@
-"""End-to-End-Demo: Engagement → Excel-Import → Sampling → Export → PDF.
+"""End-to-End-Demo: Engagement -> Excel-Import -> Sampling -> Export -> PDF.
 
 Aufruf:
     python scripts/demo_full_workflow.py
@@ -79,7 +79,7 @@ def main(demo_dir: Path = DEFAULT_DEMO_DIR) -> None:
     db_path = demo_dir / "engagement.db"
     db = Database(db_path)
     db.migrate()
-    print(f"    → {db_path} (Schema-Version {db.schema_version()})")
+    print(f"    -> {db_path} (Schema-Version {db.schema_version()})")
 
     step(2, "Engagement erstellen")
     engagement_repo = EngagementRepo(db.connect())
@@ -97,7 +97,7 @@ def main(demo_dir: Path = DEFAULT_DEMO_DIR) -> None:
         user_name="anna",
         engagement_id=engagement.id,
     )
-    print(f"    → Engagement #{engagement.id} für {engagement.client_name}")
+    print(f"    -> Engagement #{engagement.id} für {engagement.client_name}")
 
     step(3, "Quelldatei (Excel) generieren und importieren")
     source_xlsx = demo_dir / "source_data.xlsx"
@@ -115,7 +115,7 @@ def main(demo_dir: Path = DEFAULT_DEMO_DIR) -> None:
     # Sprint 11.5: die Compat-Properties sind weg, Stats liegen unter `.stats`
     # und sind erst nach vollem Verbrauch des Generators aussagekräftig.
     print(
-        f"    → {dataset.row_count} Zeilen, "
+        f"    -> {dataset.row_count} Zeilen, "
         f"{len(dataset.columns)} Spalten, "
         f"{result.stats.skipped_rows} übersprungen"
     )
@@ -133,7 +133,7 @@ def main(demo_dir: Path = DEFAULT_DEMO_DIR) -> None:
     )
     simple_id = SampleRepo(db.connect()).create_from_result(simple_result, dataset.id, "anna")
     audit_logger.log_sampling(simple_result, sample_id=simple_id, dataset_id=dataset.id)
-    print(f"    → Sample #{simple_id}, gezogen: {simple_result.actual_size} Zeilen")
+    print(f"    -> Sample #{simple_id}, gezogen: {simple_result.actual_size} Zeilen")
 
     step(5, "Stratified-Sampling (15 Zeilen, geschichtet nach Land)")
     strat_cfg = SampleConfig(
@@ -148,7 +148,7 @@ def main(demo_dir: Path = DEFAULT_DEMO_DIR) -> None:
     )
     strat_id = SampleRepo(db.connect()).create_from_result(strat_result, dataset.id, "anna")
     audit_logger.log_sampling(strat_result, sample_id=strat_id, dataset_id=dataset.id)
-    print(f"    → Sample #{strat_id}, gezogen: {strat_result.actual_size} Zeilen")
+    print(f"    -> Sample #{strat_id}, gezogen: {strat_result.actual_size} Zeilen")
 
     step(6, "Beide Samples nach Excel exportieren")
     exporter = ExcelExporter()
@@ -163,7 +163,7 @@ def main(demo_dir: Path = DEFAULT_DEMO_DIR) -> None:
         engagement=engagement,
     )
     audit_logger.log_export(simple_id, out_simple, simple_result.actual_size)
-    print(f"    → {out_simple.name}")
+    print(f"    -> {out_simple.name}")
 
     out_strat = exporter.export_sample(
         sample=strat_result,
@@ -176,7 +176,7 @@ def main(demo_dir: Path = DEFAULT_DEMO_DIR) -> None:
         engagement=engagement,
     )
     audit_logger.log_export(strat_id, out_strat, strat_result.actual_size)
-    print(f"    → {out_strat.name}")
+    print(f"    -> {out_strat.name}")
 
     step(7, "AuditTrail-PDF generieren")
     events = AuditRepo(db.connect()).list_for_engagement(engagement.id, limit=200)
@@ -185,10 +185,10 @@ def main(demo_dir: Path = DEFAULT_DEMO_DIR) -> None:
         events=events,
         output_path=demo_dir / "audit_trail.pdf",
     )
-    print(f"    → {pdf_path.name} ({len(events)} Events)")
+    print(f"    -> {pdf_path.name} ({len(events)} Events)")
 
     step(8, "Demo abgeschlossen")
-    print(f"    → Alle Artefakte unter: {demo_dir.resolve()}")
+    print(f"    -> Alle Artefakte unter: {demo_dir.resolve()}")
     db.close()
 
 

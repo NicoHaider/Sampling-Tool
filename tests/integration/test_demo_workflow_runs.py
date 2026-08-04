@@ -26,6 +26,8 @@ pytestmark = pytest.mark.integration
 class TestDemoFullWorkflowRuns:
     def test_demo_workflow_erzeugt_alle_artefakte(self, tmp_path: Path) -> None:
         output = tmp_path / "demo"
+        repo_demo_dir = REPO_ROOT / "demo_output"
+        repo_dir_existed_before = repo_demo_dir.exists()
         # Die Umgebung wird geerbt, nicht neu gebaut: ein gestripptes env hat
         # auf Windows kein `USERPROFILE`, womit `Path.home()` beim blossen
         # Import von `config` mit RuntimeError abbricht.
@@ -62,30 +64,30 @@ class TestDemoFullWorkflowRuns:
         assert "gezogen: 25 Zeilen" in result.stdout
         assert "gezogen: 15 Zeilen" in result.stdout
 
-    def test_demo_workflow_verschmutzt_das_repo_nicht(self, tmp_path: Path) -> None:
-        """`--output` lenkt wirklich um – im Repo-Root entsteht kein
-        `demo_output/`, wenn das Verzeichnis vorher nicht existierte."""
-        repo_demo_dir = REPO_ROOT / "demo_output"
-        existed_before = repo_demo_dir.exists()
-
-        output = tmp_path / "woanders"
-        env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(REPO_ROOT / "scripts" / "demo_full_workflow.py"),
-                "--output",
-                str(output),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            env=env,
-            cwd=REPO_ROOT,
-        )
-        assert result.returncode == 0, result.stderr
-        assert output.is_dir()
-        if not existed_before:
+        # `--output` lenkt wirklich um: kein `demo_output/` im Repo-Root.
+        if not repo_dir_existed_before:
             assert not repo_demo_dir.exists(), (
                 "--output wurde ignoriert, das Skript hat ins Repo geschrieben"
             )
+
+    def test_skript_ist_cp1252_kodierbar(self) -> None:
+        """Windows-CI-Gate: `subprocess.run(capture_output=True)` schreibt in
+        eine Pipe, die Python auf Windows mit der ANSI-Codepage (cp1252)
+        kodiert. Ein `→` im `print()` liess den Smoke-Test dort mit
+        `UnicodeEncodeError` abbrechen – auf macOS/Linux (UTF-8) unsichtbar.
+
+        Der Test prueft die Quelle statt der Laufzeit, damit er die
+        Regression auf JEDER Plattform faengt und nicht nur auf Windows.
+        """
+        script = (REPO_ROOT / "scripts" / "demo_full_workflow.py").read_text(encoding="utf-8")
+        offenders: dict[str, list[int]] = {}
+        for lineno, line in enumerate(script.splitlines(), start=1):
+            for char in line:
+                try:
+                    char.encode("cp1252")
+                except UnicodeEncodeError:
+                    offenders.setdefault(char, []).append(lineno)
+        assert not offenders, (
+            "Zeichen ausserhalb von cp1252 brechen die Windows-Konsole/-Pipe: "
+            f"{ {c: sorted(set(v)) for c, v in offenders.items()} }"
+        )

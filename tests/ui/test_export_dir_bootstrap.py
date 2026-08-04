@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QListWidget
 from pytestqt.qtbot import QtBot
 
@@ -73,6 +73,23 @@ def _reject_export_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
             f"sampling_tool.ui.dialogs.{module}.{cls}.exec",
             lambda _self: int(QDialog.DialogCode.Rejected),
         )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_qsettings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Diese Tests bauen echte MainWindows; `closeEvent` -> `_window_state.save()`
+    wuerde sonst in die echten Benutzer-Prefs schreiben. Gleiches Muster wie
+    `test_main_window.TestWindowGeometryFitsScreen._isolated_qsettings` –
+    bewusst kein HOME-Umbiegen (hat in Sprint 67 echte Prefs korrumpiert).
+    """
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    monkeypatch.setattr(
+        "sampling_tool.ui.main_window.QSettings",
+        lambda organization, application: QSettings(
+            QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
+        ),
+    )
 
 
 @pytest.fixture

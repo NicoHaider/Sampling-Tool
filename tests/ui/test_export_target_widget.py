@@ -129,11 +129,31 @@ class TestValidationHint:
         assert str(ghost) in hint
 
     def test_is_valid_matches_hint_for_all_states(self, qtbot: QtBot, tmp_path: Path) -> None:
-        """Paritäts-Test: in JEDEM Zustand gilt `is_valid() == (hint == "")`."""
+        """Paritäts-Test gegen die Sprint-70-Semantik.
+
+        Bewusst NICHT `is_valid() == (validation_hint() == "")` – das ist
+        seit dem Refactoring eine Tautologie (`is_valid` ist buchstäblich
+        `not validation_hint()`) und würde für jede beliebige Implementierung
+        halten. Verglichen wird stattdessen gegen eine lokale Kopie der
+        alten Bedingung: der Refactor darf die Wahrheitstabelle nicht
+        verändert haben.
+        """
+
+        def old_is_valid(widget: ExportTargetWidget) -> bool:
+            # Wortgleiche Kopie der Vor-Sprint-71-Implementierung.
+            if not widget.get_name() or not widget.get_id():
+                return False
+            if widget.get_output_dir() is None:
+                return False
+            output_dir = widget.get_output_dir()
+            assert output_dir is not None
+            return output_dir.is_dir()
+
         existing = tmp_path / "da"
         existing.mkdir()
         missing = tmp_path / "weg"
 
+        checked = 0
         for name in ("ACME", ""):
             for id_ in ("1", ""):
                 for directory in (None, missing, existing):
@@ -141,9 +161,14 @@ class TestValidationHint:
                     qtbot.addWidget(w)
                     if directory is not None:
                         w.set_output_dir(directory)
-                    assert w.is_valid() == (w.validation_hint() == ""), (
-                        f"Parität verletzt für name={name!r} id={id_!r} dir={directory!r}"
+                    checked += 1
+                    assert w.is_valid() == old_is_valid(w), (
+                        f"Semantik geändert für name={name!r} id={id_!r} dir={directory!r}: "
+                        f"neu={w.is_valid()} alt={old_is_valid(w)}"
                     )
+                    # Und der Hinweis muss zum Ergebnis passen.
+                    assert w.is_valid() == (w.validation_hint() == "")
+        assert checked == 12
 
     def test_hint_label_hidden_when_valid(self, qtbot: QtBot, tmp_path: Path) -> None:
         w = ExportTargetWidget(default_name="ACME", default_id="1", file_extension=".pdf")

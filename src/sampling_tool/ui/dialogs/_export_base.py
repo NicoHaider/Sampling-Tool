@@ -99,7 +99,7 @@ class ExportTargetWidget(QWidget):
         # die Skalierungs-Gates (`test_scaling.py`) unberührt bleiben.
         self._hint_label = QLabel("")
         self._hint_label.setObjectName("exportTargetHint")
-        self._hint_label.setStyleSheet("color: #C62828;")
+        self._hint_label.setStyleSheet("color: #C62828; background: transparent;")
         self._hint_label.setWordWrap(True)
         self._hint_label.setVisible(False)
         layout.addWidget(self._hint_label)

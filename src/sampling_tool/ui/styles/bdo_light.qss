@@ -267,6 +267,16 @@ QStatusBar::item {
     border: 0px;
 }
 
+/* Sprint 71/2: die Statusfelder und der Größen-Anfasser haben keine eigene
+ * Regel und fielen damit auf die generische QWidget-Regel (Z. 9-15) zurück –
+ * gemessen 4374 weiße Pixel in den vier QLabels und ein komplett weißer
+ * QSizeGrip auf der #F4F4F4-Statusbar. Dieselbe Ursachenklasse wie der
+ * Toolbar-Spacer (Sprint 69/6) und die Toolbar-Separatoren. */
+QStatusBar QLabel,
+QStatusBar QSizeGrip {
+    background: transparent;
+}
+
 /* -------------------------------------------------------------------------
  * Welcome-Screen
  * ------------------------------------------------------------------------- */

@@ -318,6 +318,13 @@ class WorkspaceSession:
         liefert die Methode `None`; der Dialog öffnet dann ohne Vorbelegung
         und sagt über den Hinweistext, was zu tun ist.
         """
+        if self.db is None:
+            # Ohne offenes Projekt wäre das Ziel `Path.cwd()/exports`. Das
+            # anzulegen hiesse, im Startverzeichnis der (ggf. gepackten) App
+            # Ordner zu erzeugen – der Getter darf das berechnen, angelegt
+            # wird es nicht. Alle vier Aufrufer sind ohnehin durch
+            # `has_engagement()` geschützt.
+            return None
         target = self.default_export_dir()
         try:
             target.mkdir(parents=True, exist_ok=True)
