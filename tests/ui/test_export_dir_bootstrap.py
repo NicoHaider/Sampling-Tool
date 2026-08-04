@@ -126,9 +126,7 @@ def fresh_db(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def session(window: MainWindow, recent_store: RecentEngagementsStore) -> Iterator[WorkspaceSession]:
-    s = WorkspaceSession(
-        window=window, settings=AppSettings.defaults(), recent_store=recent_store
-    )
+    s = WorkspaceSession(window=window, settings=AppSettings.defaults(), recent_store=recent_store)
     yield s
     if s.db is not None:
         s.db.close()
@@ -188,7 +186,7 @@ class TestExportDirBootstrap:
         controller = MainController(
             window,
             recent_store=recent_store,
-            audit_pdf_dialog_factory=_capture(default_audit_pdf_factory, box),  # type: ignore[arg-type]
+            audit_pdf_dialog_factory=_capture(default_audit_pdf_factory, box),
         )
         try:
             controller.engagement.handle_open_engagement(fresh_db)
@@ -209,7 +207,7 @@ class TestExportDirBootstrap:
         controller = MainController(
             window,
             recent_store=recent_store,
-            html_report_dialog_factory=_capture(default_html_report_factory, box),  # type: ignore[arg-type]
+            html_report_dialog_factory=_capture(default_html_report_factory, box),
         )
         try:
             controller.engagement.handle_open_engagement(fresh_db)
@@ -230,7 +228,7 @@ class TestExportDirBootstrap:
         controller = MainController(
             window,
             recent_store=recent_store,
-            excel_report_dialog_factory=_capture(default_excel_report_factory, box),  # type: ignore[arg-type]
+            excel_report_dialog_factory=_capture(default_excel_report_factory, box),
         )
         try:
             controller.engagement.handle_open_engagement(fresh_db)
@@ -251,7 +249,7 @@ class TestExportDirBootstrap:
         controller = MainController(
             window,
             recent_store=recent_store,
-            export_dialog_factory=_capture(default_export_factory, box),  # type: ignore[arg-type]
+            export_dialog_factory=_capture(default_export_factory, box),
         )
         try:
             controller.engagement.handle_open_engagement(fresh_db)

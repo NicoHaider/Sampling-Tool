@@ -6,9 +6,8 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from pytestqt.qtbot import QtBot
-
 from PyQt6.QtWidgets import QLabel
+from pytestqt.qtbot import QtBot
 
 from sampling_tool.ui.dialogs._export_base import (
     HINT_MISSING_ID,
@@ -138,9 +137,7 @@ class TestValidationHint:
         for name in ("ACME", ""):
             for id_ in ("1", ""):
                 for directory in (None, missing, existing):
-                    w = ExportTargetWidget(
-                        default_name=name, default_id=id_, file_extension=".pdf"
-                    )
+                    w = ExportTargetWidget(default_name=name, default_id=id_, file_extension=".pdf")
                     qtbot.addWidget(w)
                     if directory is not None:
                         w.set_output_dir(directory)
