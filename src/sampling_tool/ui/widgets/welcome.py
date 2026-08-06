@@ -8,6 +8,7 @@ als klickbare Karten.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Final
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QMouseEvent
@@ -25,6 +26,8 @@ from PyQt6.QtWidgets import (
 from sampling_tool.config import ENGAGEMENTS_DIR
 from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui.recent import RecentEntry
+
+_OUTER_MARGIN: Final[int] = 40
 
 
 class _RecentCard(QFrame):
@@ -81,9 +84,12 @@ class WelcomeScreen(QWidget):
         self._last_entries: list[RecentEntry] = []
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(40, 40, 40, 40)
+        outer.setContentsMargins(_OUTER_MARGIN, _OUTER_MARGIN, _OUTER_MARGIN, _OUTER_MARGIN)
         outer.setSpacing(24)
-        outer.addStretch(1)
+        # Sprint 70 / Befund A: kein Stretch mehr vor dem Kopf-Block – der
+        # Inhalt stand vorher vertikal zentriert, die Recent-Liste bekam den
+        # freien Platz am Fensterrand nicht. Die QScrollArea unten ist jetzt
+        # der einzige expandierende Posten.
 
         # Logo + Titel-Block
         head = QHBoxLayout()
@@ -140,14 +146,12 @@ class WelcomeScreen(QWidget):
         scroll.setWidget(self._recent_container)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        outer.addWidget(scroll, stretch=2)
+        outer.addWidget(scroll, stretch=1)
 
         self._empty_label = QLabel("Noch keine Projekte geöffnet.")
         self._empty_label.setStyleSheet("color: #B0B0B0; font-style: italic;")
         self._recent_layout.addWidget(self._empty_label)
         self._recent_layout.addStretch(1)
-
-        outer.addStretch(1)
 
     # ---- Public API -----------------------------------------------------
 

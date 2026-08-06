@@ -173,3 +173,28 @@ class TestCheckboxRadioIndicatorVisibility:
         #    Regeln (der Skalierungstest zählt jedes font-size-Vorkommen).
         indicator_section = qss[qss.index("Checkboxen & Radiobuttons") : qss.index("Splitter")]
         assert "font-size" not in indicator_section
+
+
+class TestRowNumberHeaderStyle:
+    """Sprint 70 / Befund B: automatische Zeilennummer visuell absetzen."""
+
+    def test_vertical_header_background_differs_from_table_background(self) -> None:
+        qss = _real_qss()
+        block = re.search(r"QHeaderView::section:vertical\s*\{([^}]*)\}", qss)
+        assert block is not None
+        bg_match = re.search(r"background-color:\s*(#[0-9A-Fa-f]{6})", block.group(1))
+        assert bg_match is not None
+        assert bg_match.group(1).upper() not in {"#FFFFFF", "#FAFAFA"}
+
+    def test_corner_label_rule_is_transparent(self) -> None:
+        qss = _real_qss()
+        block = re.search(r"QLabel#rowNumberCornerLabel\s*\{([^}]*)\}", qss)
+        assert block is not None
+        assert "background: transparent" in block.group(1)
+
+    def test_new_rules_contain_no_font_size(self) -> None:
+        qss = _real_qss()
+        for selector in ("QHeaderView::section:vertical", "QLabel#rowNumberCornerLabel"):
+            block = re.search(rf"{re.escape(selector)}\s*\{{([^}}]*)\}}", qss)
+            assert block is not None, f"erwarte eine Regel für {selector}"
+            assert "font-size" not in block.group(1)

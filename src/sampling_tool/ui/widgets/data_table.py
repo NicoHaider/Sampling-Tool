@@ -26,12 +26,12 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Sequence
 from datetime import date, datetime, time
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Final
 
 from PyQt6 import sip
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
-from PyQt6.QtGui import QBrush, QColor, QPainter, QPaintEvent
-from PyQt6.QtWidgets import QHeaderView, QTableView, QWidget
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QRect, Qt
+from PyQt6.QtGui import QBrush, QColor, QPainter, QPaintEvent, QResizeEvent
+from PyQt6.QtWidgets import QAbstractButton, QHeaderView, QLabel, QTableView, QWidget
 
 from sampling_tool.config import SAMPLE_HIGHLIGHT_ALPHA, SAMPLE_HIGHLIGHT_COLOR
 from sampling_tool.core.models import Dataset, DatasetRow
@@ -46,6 +46,13 @@ _MAX_COLUMN_WIDTH: int = 320
 _EMPTY_MESSAGE: str = "Keine Datensätze – Datei importieren"
 # Sprint 68 / Teil B1: Basiswert für die UI-Skalierung (`MainWindow.apply_ui_scale`).
 _DEFAULT_ROW_HEIGHT: int = 22
+
+# Sprint 70 / Befund B: SSOT für Label + Tooltip der automatischen Zeilennummer.
+ROW_NUMBER_CORNER_TEXT: Final[str] = "Zeile"
+ROW_NUMBER_HINT: Final[str] = (
+    "Automatisch vergebene Zeilennummer aus der Quelldatei – "
+    "nicht Teil des importierten Datensatzes."
+)
 
 
 class DatasetTableModel(QAbstractTableModel):
@@ -227,6 +234,10 @@ class DatasetTableModel(QAbstractTableModel):
         orientation: Qt.Orientation,
         role: int = Qt.ItemDataRole.DisplayRole,
     ) -> Any:
+        if role == Qt.ItemDataRole.ToolTipRole:
+            if orientation == Qt.Orientation.Vertical:
+                return ROW_NUMBER_HINT
+            return None
         if role != Qt.ItemDataRole.DisplayRole:
             return None
         if orientation == Qt.Orientation.Horizontal:
@@ -315,6 +326,34 @@ class DataTableView(QTableView):
         v_header.setDefaultSectionSize(_DEFAULT_ROW_HEIGHT)
         v_header.setVisible(True)
 
+        # Sprint 70 / Befund B: Eck-Label kennzeichnet die automatische
+        # Zeilennummer. `QAbstractButton.setText()` greift hier nicht – Qts
+        # `QTableCornerButton::paintEvent` baut eine `QStyleOptionHeader` ohne
+        # `text`, ein gesetzter Text würde nie gezeichnet.
+        #
+        # Hotfix zu PR #102: Das Label ist ein Overlay-Kind DIESER View und
+        # wird über den Eck-Bereich gelegt. Vorher hing ein `QVBoxLayout` samt
+        # `QLabel` an Qts internem `QTableCornerButton` – ein fremdes Layout
+        # auf einem Widget, das Qt selbst erzeugt, besitzt und im
+        # `QTableView`-Destruktor wieder abräumt. Auf Ubuntu führte das
+        # reproduzierbar zu „pure virtual method called" (SIGABRT) bzw.
+        # SIGSEGV beim Abbau der MainWindow-Tests; macOS und Windows blieben
+        # stumm. Der Tooltip auf dem Corner-Button ist unverdächtig – eine
+        # Property zu setzen ändert keine Ownership.
+        self._corner_label = QLabel(ROW_NUMBER_CORNER_TEXT, self)
+        self._corner_label.setObjectName("rowNumberCornerLabel")
+        self._corner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Klicks müssen weiterhin beim Corner-Button landen.
+        self._corner_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        corner = self.findChild(QAbstractButton)
+        if corner is not None:
+            corner.setToolTip(ROW_NUMBER_HINT)
+        # Dem Eckbereich folgen, wenn Header-Geometrien sich ändern
+        # (UI-Skalierung aus Sprint 68, Spalten-Autosizing).
+        h_header.geometriesChanged.connect(self._position_corner_label)
+        v_header.geometriesChanged.connect(self._position_corner_label)
+        self._position_corner_label()
+
     # ---- Public API -----------------------------------------------------
 
     def set_dataset(self, dataset: Dataset, repo: DatasetRepo) -> None:
@@ -378,6 +417,24 @@ class DataTableView(QTableView):
     def table_model(self) -> DatasetTableModel:
         """Direkter Zugriff auf das interne Model (für Tests)."""
         return self._model
+
+    def resizeEvent(self, e: QResizeEvent | None) -> None:  # noqa: N802
+        """Hält das Eck-Label auf dem Header-Eckbereich."""
+        super().resizeEvent(e)
+        self._position_corner_label()
+
+    def _position_corner_label(self) -> None:
+        """Legt das Eck-Label deckungsgleich über den Header-Eckbereich.
+
+        Overlay-Kind dieser View statt eines Kind-Widgets im Corner-Button –
+        siehe die Begründung im Konstruktor (Ubuntu-Crash aus PR #102).
+        """
+        h_header = self.horizontalHeader()
+        v_header = self.verticalHeader()
+        if h_header is None or v_header is None:
+            return
+        self._corner_label.setGeometry(QRect(0, 0, v_header.width(), h_header.height()))
+        self._corner_label.raise_()
 
     def paintEvent(self, e: QPaintEvent | None) -> None:  # noqa: N802
         """Zeichnet zusätzlich einen Empty-State-Hinweis, wenn keine Daten geladen sind."""
