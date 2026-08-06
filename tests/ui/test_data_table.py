@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QAbstractButton, QLabel
+from PyQt6.QtWidgets import QAbstractButton
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement
@@ -20,7 +20,6 @@ from sampling_tool.ui.widgets.data_table import (
     _MIN_COLUMN_WIDTH,
     HIGHLIGHT_ALPHA,
     HIGHLIGHT_COLOR,
-    ROW_NUMBER_CORNER_TEXT,
     ROW_NUMBER_HINT,
     DatasetTableModel,
     DataTableView,
@@ -500,13 +499,6 @@ class TestRowNumberAffordance:
         model.filter_to_row_ids([2, 4])
         assert model.headerData(0, Qt.Orientation.Vertical, Qt.ItemDataRole.DisplayRole) == "2"
         assert model.headerData(1, Qt.Orientation.Vertical, Qt.ItemDataRole.DisplayRole) == "4"
-
-    def test_corner_label_shows_row_text(self, qtbot: QtBot) -> None:
-        view = DataTableView()
-        qtbot.addWidget(view)
-        label = view.findChild(QLabel, "rowNumberCornerLabel")
-        assert label is not None
-        assert label.text() == ROW_NUMBER_CORNER_TEXT
 
     def test_corner_button_has_hint_tooltip(self, qtbot: QtBot) -> None:
         view = DataTableView()

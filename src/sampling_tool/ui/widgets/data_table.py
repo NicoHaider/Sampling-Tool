@@ -31,7 +31,7 @@ from typing import Any, ClassVar, Final
 from PyQt6 import sip
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PyQt6.QtGui import QBrush, QColor, QPainter, QPaintEvent
-from PyQt6.QtWidgets import QAbstractButton, QHeaderView, QLabel, QTableView, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QAbstractButton, QHeaderView, QLabel, QTableView, QWidget
 
 from sampling_tool.config import SAMPLE_HIGHLIGHT_ALPHA, SAMPLE_HIGHLIGHT_COLOR
 from sampling_tool.core.models import Dataset, DatasetRow
@@ -331,16 +331,13 @@ class DataTableView(QTableView):
         # `QTableCornerButton::paintEvent` baut eine `QStyleOptionHeader` ohne
         # `text`, ein gesetzter Text würde nie gezeichnet. Ein echtes
         # Kind-Widget in einem Layout auf dem Corner-Button umgeht das.
+        # PROBE (Wegwerf-Branch, NICHT mergen): Eck-Label-Block entfernt, um zu
+        # beweisen/widerlegen, dass er den Ubuntu-Segfault verursacht.
+        # Tooltip auf dem Corner-Button bleibt bewusst stehen.
         self._corner_label: QLabel | None = None
         corner = self.findChild(QAbstractButton)
         if corner is not None:
             corner.setToolTip(ROW_NUMBER_HINT)
-            corner_layout = QVBoxLayout(corner)
-            corner_layout.setContentsMargins(0, 0, 0, 0)
-            self._corner_label = QLabel(ROW_NUMBER_CORNER_TEXT, corner)
-            self._corner_label.setObjectName("rowNumberCornerLabel")
-            self._corner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            corner_layout.addWidget(self._corner_label)
 
     # ---- Public API -----------------------------------------------------
 
