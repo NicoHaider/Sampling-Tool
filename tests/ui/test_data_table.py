@@ -7,14 +7,14 @@ from datetime import date, datetime, time
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QAbstractButton, QLabel
+from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtWidgets import QAbstractButton, QApplication, QLabel
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import DatasetRepo, EngagementRepo
-from sampling_tool.ui._scaling import scaled_px
+from sampling_tool.ui._scaling import load_scaled_stylesheet, scaled_px
 from sampling_tool.ui.widgets.data_table import (
     _MAX_COLUMN_WIDTH,
     _MIN_COLUMN_WIDTH,
@@ -514,3 +514,117 @@ class TestRowNumberAffordance:
         corner = view.findChild(QAbstractButton)
         assert corner is not None
         assert corner.toolTip() == ROW_NUMBER_HINT
+
+    def test_corner_label_covers_corner_rect(
+        self, qtbot: QtBot, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        """Das Overlay deckt den Header-Eckbereich ab."""
+        db, eng_id = db_with_engagement
+        ds, repo = _make_dataset(db, eng_id, 20)
+        view = DataTableView()
+        qtbot.addWidget(view)
+        view.set_dataset(ds, repo)
+        view.resize(600, 400)
+        view.show()
+        qtbot.waitExposed(view)
+        qtbot.wait(30)
+
+        h_header = view.horizontalHeader()
+        v_header = view.verticalHeader()
+        assert h_header is not None
+        assert v_header is not None
+        label = view.findChild(QLabel, "rowNumberCornerLabel")
+        assert label is not None
+        assert label.geometry() == QRect(0, 0, v_header.width(), h_header.height())
+
+    def test_corner_label_follows_ui_scale(
+        self, qtbot: QtBot, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        """Bei UI-Groesse „Gross" waechst das Overlay mit dem Eckbereich mit.
+
+        Der Eckbereich haengt an Header-Breite/-Hoehe, und die wachsen ueber
+        die `font-size` des skalierten Stylesheets – `apply_ui_scale` allein
+        veraendert nur die Spaltenbreiten-Clamps. Ohne das global gesetzte
+        Stylesheet bliebe die Geometrie konstant und der Test waere still
+        gruen. Reproduziert daher den echten Pfad aus
+        `WorkspaceSession.apply_new_settings`: Stylesheet + `apply_ui_scale`.
+        """
+        db, eng_id = db_with_engagement
+        ds, repo = _make_dataset(db, eng_id, 20)
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        previous_stylesheet = app.styleSheet()
+        app.setStyleSheet(load_scaled_stylesheet(1.0))
+        try:
+            view = DataTableView()
+            qtbot.addWidget(view)
+            view.set_dataset(ds, repo)
+            view.resize(600, 400)
+            view.show()
+            qtbot.waitExposed(view)
+            qtbot.wait(30)
+
+            label = view.findChild(QLabel, "rowNumberCornerLabel")
+            assert label is not None
+            before = label.geometry()
+
+            factor = 1.3
+            app.setStyleSheet(load_scaled_stylesheet(factor))
+            view.set_row_height_px(scaled_px(22, factor))
+            view.apply_ui_scale(factor)
+            qtbot.wait(30)
+
+            h_header = view.horizontalHeader()
+            v_header = view.verticalHeader()
+            assert h_header is not None
+            assert v_header is not None
+            after = label.geometry()
+
+            assert after == QRect(0, 0, v_header.width(), h_header.height())
+            assert after.width() > before.width(), f"{after.width()} !> {before.width()}"
+            assert after.height() > before.height(), f"{after.height()} !> {before.height()}"
+        finally:
+            app.setStyleSheet(previous_stylesheet)
+
+    def test_corner_button_has_no_layout(self, qtbot: QtBot) -> None:
+        """Regressionswaechter fuer den Ubuntu-Segfault aus PR #102.
+
+        Sprint 70 hatte ein `QVBoxLayout` samt `QLabel` auf Qts internen
+        `QTableCornerButton` gesetzt – ein fremdes Layout auf einem Widget,
+        das Qt selbst erzeugt, besitzt und im `QTableView`-Destruktor wieder
+        abraeumt. Auf Ubuntu crashte der Prozess dadurch reproduzierbar mit
+        „pure virtual method called" (SIGABRT) bzw. SIGSEGV; macOS und
+        Windows blieben stumm. Das Eck-Label ist seither ein Overlay-Kind
+        der View. Dieser Test laesst den Fehler nie wieder zu.
+        """
+        view = DataTableView()
+        qtbot.addWidget(view)
+        corner = view.findChild(QAbstractButton)
+        assert corner is not None
+        assert corner.layout() is None, (
+            "Kein fremdes Layout auf Qts QTableCornerButton – siehe PR #102."
+        )
+        label = view.findChild(QLabel, "rowNumberCornerLabel")
+        assert label is not None
+        assert label.parent() is view, "Eck-Label muss Kind der View sein, nicht des Corner-Buttons"
+
+    def test_repeated_construction_and_destruction_is_clean(
+        self, qtbot: QtBot, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        """Teardown-Haertung: Ownership-Fehler sollen in CI auffallen.
+
+        Der Ubuntu-Crash trat erst beim Abbau vieler Views auf. Diese
+        Schleife erzeugt und zerstoert gezielt mehrfach hintereinander.
+        """
+        db, eng_id = db_with_engagement
+        ds, repo = _make_dataset(db, eng_id, 10)
+        for _ in range(12):
+            view = DataTableView()
+            view.set_dataset(ds, repo)
+            view.resize(400, 300)
+            view.show()
+            qtbot.waitExposed(view)
+            view.close()
+            view.deleteLater()
+            qtbot.wait(10)
+        qtbot.wait(60)

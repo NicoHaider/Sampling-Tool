@@ -29,9 +29,9 @@ from datetime import date, datetime, time
 from typing import Any, ClassVar, Final
 
 from PyQt6 import sip
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
-from PyQt6.QtGui import QBrush, QColor, QPainter, QPaintEvent
-from PyQt6.QtWidgets import QAbstractButton, QHeaderView, QLabel, QTableView, QVBoxLayout, QWidget
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QRect, Qt
+from PyQt6.QtGui import QBrush, QColor, QPainter, QPaintEvent, QResizeEvent
+from PyQt6.QtWidgets import QAbstractButton, QHeaderView, QLabel, QTableView, QWidget
 
 from sampling_tool.config import SAMPLE_HIGHLIGHT_ALPHA, SAMPLE_HIGHLIGHT_COLOR
 from sampling_tool.core.models import Dataset, DatasetRow
@@ -329,18 +329,30 @@ class DataTableView(QTableView):
         # Sprint 70 / Befund B: Eck-Label kennzeichnet die automatische
         # Zeilennummer. `QAbstractButton.setText()` greift hier nicht – Qts
         # `QTableCornerButton::paintEvent` baut eine `QStyleOptionHeader` ohne
-        # `text`, ein gesetzter Text würde nie gezeichnet. Ein echtes
-        # Kind-Widget in einem Layout auf dem Corner-Button umgeht das.
-        self._corner_label: QLabel | None = None
+        # `text`, ein gesetzter Text würde nie gezeichnet.
+        #
+        # Hotfix zu PR #102: Das Label ist ein Overlay-Kind DIESER View und
+        # wird über den Eck-Bereich gelegt. Vorher hing ein `QVBoxLayout` samt
+        # `QLabel` an Qts internem `QTableCornerButton` – ein fremdes Layout
+        # auf einem Widget, das Qt selbst erzeugt, besitzt und im
+        # `QTableView`-Destruktor wieder abräumt. Auf Ubuntu führte das
+        # reproduzierbar zu „pure virtual method called" (SIGABRT) bzw.
+        # SIGSEGV beim Abbau der MainWindow-Tests; macOS und Windows blieben
+        # stumm. Der Tooltip auf dem Corner-Button ist unverdächtig – eine
+        # Property zu setzen ändert keine Ownership.
+        self._corner_label = QLabel(ROW_NUMBER_CORNER_TEXT, self)
+        self._corner_label.setObjectName("rowNumberCornerLabel")
+        self._corner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Klicks müssen weiterhin beim Corner-Button landen.
+        self._corner_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         corner = self.findChild(QAbstractButton)
         if corner is not None:
             corner.setToolTip(ROW_NUMBER_HINT)
-            corner_layout = QVBoxLayout(corner)
-            corner_layout.setContentsMargins(0, 0, 0, 0)
-            self._corner_label = QLabel(ROW_NUMBER_CORNER_TEXT, corner)
-            self._corner_label.setObjectName("rowNumberCornerLabel")
-            self._corner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            corner_layout.addWidget(self._corner_label)
+        # Dem Eckbereich folgen, wenn Header-Geometrien sich ändern
+        # (UI-Skalierung aus Sprint 68, Spalten-Autosizing).
+        h_header.geometriesChanged.connect(self._position_corner_label)
+        v_header.geometriesChanged.connect(self._position_corner_label)
+        self._position_corner_label()
 
     # ---- Public API -----------------------------------------------------
 
@@ -405,6 +417,24 @@ class DataTableView(QTableView):
     def table_model(self) -> DatasetTableModel:
         """Direkter Zugriff auf das interne Model (für Tests)."""
         return self._model
+
+    def resizeEvent(self, e: QResizeEvent | None) -> None:  # noqa: N802
+        """Hält das Eck-Label auf dem Header-Eckbereich."""
+        super().resizeEvent(e)
+        self._position_corner_label()
+
+    def _position_corner_label(self) -> None:
+        """Legt das Eck-Label deckungsgleich über den Header-Eckbereich.
+
+        Overlay-Kind dieser View statt eines Kind-Widgets im Corner-Button –
+        siehe die Begründung im Konstruktor (Ubuntu-Crash aus PR #102).
+        """
+        h_header = self.horizontalHeader()
+        v_header = self.verticalHeader()
+        if h_header is None or v_header is None:
+            return
+        self._corner_label.setGeometry(QRect(0, 0, v_header.width(), h_header.height()))
+        self._corner_label.raise_()
 
     def paintEvent(self, e: QPaintEvent | None) -> None:  # noqa: N802
         """Zeichnet zusätzlich einen Empty-State-Hinweis, wenn keine Daten geladen sind."""
