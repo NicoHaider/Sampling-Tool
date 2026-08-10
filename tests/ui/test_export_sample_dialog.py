@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDialogButtonBox
+from PyQt6.QtWidgets import QDialogButtonBox, QLabel
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import Dataset
 from sampling_tool.io.exporter import ExcelExporter
-from sampling_tool.ui.dialogs._export_base import ExportTargetWidget
+from sampling_tool.ui.dialogs._export_base import HINT_NO_COLUMNS, ExportTargetWidget
 from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialog
 
 pytestmark = pytest.mark.ui
@@ -31,6 +31,12 @@ def _ok_enabled(dialog: ExportSampleDialog) -> bool:
     btn = box.button(QDialogButtonBox.StandardButton.Ok)
     assert btn is not None
     return bool(btn.isEnabled())
+
+
+def _hint_text(dialog: ExportSampleDialog) -> str:
+    label = dialog._target.findChild(QLabel, "exportTargetHint")
+    assert label is not None
+    return str(label.text())
 
 
 class TestExportSampleDialog:
@@ -120,6 +126,44 @@ class TestExportSampleDialogUsesTargetWidget:
         assert _ok_enabled(dialog) is True
         dialog._target.set_output_dir(tmp_path / "ghost")
         assert _ok_enabled(dialog) is False
+
+
+class TestSelectionHint:
+    """Sprint 72: „alle Spalten abgewählt" war ein stummer grauer OK-Button –
+    die Bedingung lag im Dialog, `validation_hint()` konnte sie nicht sehen."""
+
+    def test_hint_when_nothing_selected(self, qtbot: QtBot, tmp_path: Path) -> None:
+        dialog = ExportSampleDialog(_dataset(), default_id="1", default_output_dir=tmp_path)
+        qtbot.addWidget(dialog)
+        dialog._set_all_checked(False)
+        assert _hint_text(dialog) == HINT_NO_COLUMNS
+        assert _ok_enabled(dialog) is False
+
+    def test_hint_clears_when_selection_restored(self, qtbot: QtBot, tmp_path: Path) -> None:
+        dialog = ExportSampleDialog(_dataset(), default_id="1", default_output_dir=tmp_path)
+        qtbot.addWidget(dialog)
+        dialog._set_all_checked(False)
+        assert _hint_text(dialog) == HINT_NO_COLUMNS
+
+        first = dialog._column_list.item(0)
+        assert first is not None
+        first.setCheckState(Qt.CheckState.Checked)
+
+        assert _hint_text(dialog) == ""
+        assert _ok_enabled(dialog) is True
+
+    def test_bulk_suppression_leaves_no_stale_hint(self, qtbot: QtBot, tmp_path: Path) -> None:
+        """Die Sprint-34-Unterdrückung während „Alle abwählen/auswählen" darf
+        den Hinweis nicht auf einem veralteten Stand stehen lassen – nach dem
+        Bulk läuft genau ein `_update_state`, und der muss aufräumen."""
+        dialog = ExportSampleDialog(_dataset(), default_id="1", default_output_dir=tmp_path)
+        qtbot.addWidget(dialog)
+        dialog._set_all_checked(False)
+        assert _hint_text(dialog) == HINT_NO_COLUMNS
+
+        dialog._set_all_checked(True)
+        assert _hint_text(dialog) == ""
+        assert _ok_enabled(dialog) is True
 
 
 class TestBulkCheckSingleUpdate:

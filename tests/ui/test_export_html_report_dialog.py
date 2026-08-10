@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PyQt6.QtWidgets import QDialogButtonBox
+from PyQt6.QtWidgets import QDialogButtonBox, QLabel
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import Engagement
@@ -30,6 +30,35 @@ def _ok_enabled(dialog: ExportHtmlReportDialog) -> bool:
     btn = box.button(QDialogButtonBox.StandardButton.Ok)
     assert btn is not None
     return bool(btn.isEnabled())
+
+
+def _hint_text(dialog: ExportHtmlReportDialog) -> str:
+    label = dialog._target.findChild(QLabel, "exportTargetHint")
+    assert label is not None
+    return str(label.text())
+
+
+class TestSelectionHint:
+    """Sprint 72: dieser Dialog ist der einzige OHNE Auswahl-Bedingung.
+
+    Bewusst festgenagelt: kommt später eine dazu (z. B. „mindestens ein
+    Inhaltsblock"), fällt dieser Test auf und erzwingt einen Hinweistext,
+    statt wieder still einen grauen Button zu erzeugen.
+    """
+
+    def test_html_dialog_has_no_selection_hint(self, qtbot: QtBot, tmp_path: Path) -> None:
+        dialog = ExportHtmlReportDialog(_engagement(), default_output_dir=tmp_path)
+        qtbot.addWidget(dialog)
+        assert dialog._selection_hint() == ""
+
+        # Alle drei Inhalts-Toggles aus → weiterhin kein Hinweis, OK bleibt aktiv
+        # (ein Report ohne Zusatzblöcke ist ein gültiges Ergebnis).
+        dialog._cb_charts.setChecked(False)
+        dialog._cb_audit_trail.setChecked(False)
+        dialog._cb_samples.setChecked(False)
+
+        assert _hint_text(dialog) == ""
+        assert _ok_enabled(dialog) is True
 
 
 class TestExportHtmlReportDialog:

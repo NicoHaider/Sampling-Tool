@@ -6,10 +6,11 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDialogButtonBox
+from PyQt6.QtWidgets import QDialogButtonBox, QLabel
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import Engagement
+from sampling_tool.ui.dialogs._export_base import HINT_NO_SHEETS
 from sampling_tool.ui.dialogs.export_excel_report_dialog import (
     AVAILABLE_SHEETS,
     ExportExcelReportDialog,
@@ -34,6 +35,34 @@ def _ok_enabled(dialog: ExportExcelReportDialog) -> bool:
     btn = box.button(QDialogButtonBox.StandardButton.Ok)
     assert btn is not None
     return bool(btn.isEnabled())
+
+
+def _hint_text(dialog: ExportExcelReportDialog) -> str:
+    label = dialog._target.findChild(QLabel, "exportTargetHint")
+    assert label is not None
+    return str(label.text())
+
+
+class TestSelectionHint:
+    """Sprint 72: alle Blätter abwählen erklärt sich jetzt selbst."""
+
+    def test_hint_when_nothing_selected(self, qtbot: QtBot, tmp_path: Path) -> None:
+        dialog = ExportExcelReportDialog(_engagement(), default_output_dir=tmp_path)
+        qtbot.addWidget(dialog)
+        dialog._set_all_sheets(False)
+        assert _hint_text(dialog) == HINT_NO_SHEETS
+        assert _ok_enabled(dialog) is False
+
+    def test_hint_clears_when_selection_restored(self, qtbot: QtBot, tmp_path: Path) -> None:
+        dialog = ExportExcelReportDialog(_engagement(), default_output_dir=tmp_path)
+        qtbot.addWidget(dialog)
+        dialog._set_all_sheets(False)
+        assert _hint_text(dialog) == HINT_NO_SHEETS
+
+        dialog._select_only_overview()
+
+        assert _hint_text(dialog) == ""
+        assert _ok_enabled(dialog) is True
 
 
 class TestExportExcelReportDialog:
