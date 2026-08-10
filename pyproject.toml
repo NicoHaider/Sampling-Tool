@@ -54,7 +54,7 @@ dependencies = [
     # Post-Merge (pdf_report._merge_briefpapier_pdf) – beides parst
     # user-beschafftes, untrusted PDF-Material, deshalb hart auf die
     # GHSA-jm82-fx9c-mx94-Fix-Version gepinnt.
-    "pypdf>=6.13.3",
+    "pypdf>=6.15.0",
     # Sprint 47 / N-010: `briefpapier.validate_briefpapier` decodiert
     # Bild-Briefpapiere direkt zur Fail-Fast-Prüfung – bisher nur transitiv
     # über matplotlib/reportlab vorhanden, jetzt ein echter Laufzeit-Import.
