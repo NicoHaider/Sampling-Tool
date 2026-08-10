@@ -48,7 +48,11 @@ from sampling_tool.ui._dialog_sizing import (
     clamp_dialog_width_to_screen,
     content_min_width,
 )
-from sampling_tool.ui.dialogs._export_base import ExportTargetWidget
+from sampling_tool.ui.dialogs._export_base import (
+    HINT_NO_EVENT_TYPES,
+    ExportTargetWidget,
+    apply_validation,
+)
 
 # Sprint 69 / Bug 3: Rand des äußeren Layouts – eigene Konstante statt
 # zweimal hartcodierter `20`, weil die Mindestbreiten-Berechnung
@@ -313,12 +317,16 @@ class ExportAuditPdfDialog(QDialog):
                 result.add(item.text())
         return result
 
+    def _selection_hint(self) -> str:
+        """Dialogspezifischer Grund: mindestens ein Aktionstyp muss angehakt sein."""
+        return "" if self._selected_types() else HINT_NO_EVENT_TYPES
+
     def _update_state(self) -> None:
-        ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
-        if ok_btn is None:
-            return
-        valid = self._target.is_valid() and bool(self._selected_types())
-        ok_btn.setEnabled(valid)
+        apply_validation(
+            self._buttons.button(QDialogButtonBox.StandardButton.Ok),
+            self._target,
+            self._selection_hint(),
+        )
 
     def _on_accept(self) -> None:
         path = self._target.get_path()

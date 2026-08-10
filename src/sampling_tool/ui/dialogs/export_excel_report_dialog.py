@@ -24,7 +24,11 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.core.models import Engagement
-from sampling_tool.ui.dialogs._export_base import ExportTargetWidget
+from sampling_tool.ui.dialogs._export_base import (
+    HINT_NO_SHEETS,
+    ExportTargetWidget,
+    apply_validation,
+)
 
 AVAILABLE_SHEETS: tuple[str, ...] = ("Übersicht", "AuditTrail", "Samples", "Statistiken")
 
@@ -147,12 +151,16 @@ class ExportExcelReportDialog(QDialog):
                 result.add(item.text())
         return result
 
+    def _selection_hint(self) -> str:
+        """Dialogspezifischer Grund: mindestens ein Report-Blatt muss angehakt sein."""
+        return "" if self._selected_sheets() else HINT_NO_SHEETS
+
     def _update_state(self) -> None:
-        ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
-        if ok_btn is None:
-            return
-        valid = self._target.is_valid() and bool(self._selected_sheets())
-        ok_btn.setEnabled(valid)
+        apply_validation(
+            self._buttons.button(QDialogButtonBox.StandardButton.Ok),
+            self._target,
+            self._selection_hint(),
+        )
 
     def _on_accept(self) -> None:
         path = self._target.get_path()

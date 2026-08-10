@@ -2,21 +2,34 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
-from PyQt6.QtCore import QDate, Qt
-from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QScrollArea
+from PyQt6.QtCore import QDate, QSettings, Qt
+from PyQt6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QLabel, QScrollArea
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import AuditEvent, Engagement
 from sampling_tool.io.bdo_locations import companies, locations
+from sampling_tool.persistence.database import Database
+from sampling_tool.persistence.repositories import AuditRepo, EngagementRepo
 from sampling_tool.ui._scaling import load_scaled_stylesheet
+from sampling_tool.ui.controllers._factories import default_audit_pdf_factory
 from sampling_tool.ui.controllers.export_controller import filter_audit_events
+from sampling_tool.ui.controllers.main_controller import MainController
+from sampling_tool.ui.dialogs._export_base import (
+    HINT_NO_AUDIT_EVENTS,
+    HINT_NO_EVENT_TYPES,
+)
 from sampling_tool.ui.dialogs.export_audit_pdf_dialog import (
+    _DEFAULT_TYPES,
     ExportAuditPdfDialog,
 )
+from sampling_tool.ui.main_window import MainWindow
+from sampling_tool.ui.recent import RecentEngagementsStore
 
 pytestmark = pytest.mark.ui
 
@@ -37,6 +50,12 @@ def _ok_enabled(dialog: ExportAuditPdfDialog) -> bool:
     btn = box.button(QDialogButtonBox.StandardButton.Ok)
     assert btn is not None
     return bool(btn.isEnabled())
+
+
+def _hint_text(dialog: ExportAuditPdfDialog) -> str:
+    label = dialog._target.findChild(QLabel, "exportTargetHint")
+    assert label is not None
+    return str(label.text())
 
 
 class TestBdoCompanyLocationDropdowns:
@@ -229,6 +248,175 @@ class TestExportAuditPdfDialog:
         assert isinstance(result.date_to, date)
         assert result.use_briefpapier is True
         assert result.include_statistics is False
+
+
+class TestSelectionHint:
+    """Sprint 72: „Alle abwählen" erklärt sich jetzt selbst statt den
+    OK-Button stumm auszugrauen."""
+
+    def test_hint_when_nothing_selected(self, qtbot: QtBot, tmp_path: Path) -> None:
+        dialog = ExportAuditPdfDialog(
+            engagement=_engagement(),
+            event_types_available=["sampling", "import"],
+            briefpapier_available=True,
+            default_output_dir=tmp_path,
+        )
+        qtbot.addWidget(dialog)
+        dialog._set_all_types(False)
+        assert _hint_text(dialog) == HINT_NO_EVENT_TYPES
+        assert _ok_enabled(dialog) is False
+
+    def test_hint_clears_when_selection_restored(self, qtbot: QtBot, tmp_path: Path) -> None:
+        dialog = ExportAuditPdfDialog(
+            engagement=_engagement(),
+            event_types_available=["sampling", "import"],
+            briefpapier_available=True,
+            default_output_dir=tmp_path,
+        )
+        qtbot.addWidget(dialog)
+        dialog._set_all_types(False)
+        assert _hint_text(dialog) == HINT_NO_EVENT_TYPES
+
+        dialog._set_all_types(True)
+
+        assert _hint_text(dialog) == ""
+        assert _ok_enabled(dialog) is True
+
+
+class TestEmptyAuditTrail:
+    """Sprint 72 / §3.2 – der angeblich DAUERHAFT blockierte PDF-Dialog.
+
+    Der Sprint-71-PR meldete, ein Projekt ohne Audit-Ereignisse könne
+    dauerhaft in einen grauen OK-Button laufen, aus dem der User durch
+    Anhaken nicht herauskommt. Die Messung über den ECHTEN Controller-Pfad
+    widerlegt das: `handle_export_audit_pdf` reicht
+    `available_types = sorted({e.event_type for e in events})` durch, das ist
+    bei null Ereignissen `[]` – und genau dann greift der `_DEFAULT_TYPES`-
+    Fallback und hakt ALLE sieben Typen an. `_selected_types()` ist damit nie
+    leer, OK bleibt aktiv.
+
+    Der Zustand ist also NICHT erreichbar. `HINT_NO_AUDIT_EVENTS` bleibt als
+    benannter Zustand definiert, hat aber bewusst keinen Produktionspfad –
+    diese Klasse ist der Nachweis dafür, damit keine tote Bedingung ohne Test
+    zurückbleibt.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Echtes MainWindow → `closeEvent` würde sonst in die echten
+        Benutzer-Prefs schreiben. Gleiches Muster wie
+        `test_export_dir_bootstrap` – bewusst kein HOME-Umbiegen (hat in
+        Sprint 67 echte Prefs korrumpiert)."""
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+        monkeypatch.setattr(
+            "sampling_tool.ui.main_window.QSettings",
+            lambda organization, application: QSettings(
+                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
+            ),
+        )
+
+    @pytest.fixture(autouse=True)
+    def _reject_dialog(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Der Dialog ist modal – `exec()` würde headless blockieren. Geprüft
+        wird der Dialog-Zustand, nicht der Export."""
+        monkeypatch.setattr(
+            "sampling_tool.ui.dialogs.export_audit_pdf_dialog.ExportAuditPdfDialog.exec",
+            lambda _self: int(QDialog.DialogCode.Rejected),
+        )
+
+    @pytest.fixture
+    def empty_db(self, tmp_path: Path) -> Path:
+        """Projekt ohne jede Aktion: Engagement angelegt, sonst nichts."""
+        db_path = tmp_path / "projekt" / "engagement.db"
+        db_path.parent.mkdir(parents=True)
+        db = Database(db_path)
+        db.migrate()
+        EngagementRepo(db.connect()).get_or_create(
+            Engagement(
+                auditor_name="Anna",
+                auditor_position="Senior",
+                client_name="ACME",
+                audit_type="ISAE 3402",
+            )
+        )
+        db.close()
+        return db_path
+
+    @staticmethod
+    def _capture(factory: Callable[..., Any], box: list[Any]) -> Callable[..., Any]:
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
+            dialog = factory(*args, **kwargs)
+            box.append(dialog)
+            return dialog
+
+        return wrapped
+
+    def _open_dialog(
+        self, qtbot: QtBot, tmp_path: Path, empty_db: Path
+    ) -> tuple[ExportAuditPdfDialog, list[AuditEvent]]:
+        window = MainWindow()
+        qtbot.addWidget(window)
+        box: list[Any] = []
+        controller = MainController(
+            window,
+            recent_store=RecentEngagementsStore(path=tmp_path / "recent.json"),
+            audit_pdf_dialog_factory=self._capture(default_audit_pdf_factory, box),
+        )
+        try:
+            controller.engagement.handle_open_engagement(empty_db)
+            session = controller.session
+            assert session.db is not None
+            assert session.engagement is not None
+            assert session.engagement.id is not None
+            events = AuditRepo(session.db.connect()).list_for_engagement(
+                session.engagement.id, limit=10_000
+            )
+            controller.export.handle_export_audit_pdf()
+        finally:
+            controller.engagement.handle_close_engagement()
+        assert box, "Der AuditTrail-PDF-Dialog wurde nicht erzeugt"
+        dialog = box[0]
+        assert isinstance(dialog, ExportAuditPdfDialog)
+        return dialog, events
+
+    def test_fresh_project_really_has_no_audit_events(
+        self, qtbot: QtBot, tmp_path: Path, empty_db: Path
+    ) -> None:
+        """Vorbedingung der ganzen Klasse: der Zustand „null Ereignisse" ist
+        überhaupt erreichbar (auch das Öffnen selbst schreibt keinen Event)."""
+        _dialog, events = self._open_dialog(qtbot, tmp_path, empty_db)
+        assert events == []
+
+    def test_fallback_fills_and_checks_all_types(
+        self, qtbot: QtBot, tmp_path: Path, empty_db: Path
+    ) -> None:
+        """Gemessener Zustand: Liste GEFÜLLT und alles ANGEHAKT."""
+        dialog, _events = self._open_dialog(qtbot, tmp_path, empty_db)
+        assert dialog._types_list.count() == len(_DEFAULT_TYPES)
+        assert dialog._selected_types() == set(_DEFAULT_TYPES)
+        assert dialog._types_list.isEnabled() is True
+
+    def test_ok_is_not_blocked_on_empty_audit_trail(
+        self, qtbot: QtBot, tmp_path: Path, empty_db: Path
+    ) -> None:
+        """Der Kern des Nachweises: kein grauer Button, kein Hinweis."""
+        dialog, _events = self._open_dialog(qtbot, tmp_path, empty_db)
+        assert _hint_text(dialog) == ""
+        assert _ok_enabled(dialog) is True
+
+    def test_no_audit_events_hint_has_no_production_path(
+        self, qtbot: QtBot, tmp_path: Path, empty_db: Path
+    ) -> None:
+        """`HINT_NO_AUDIT_EVENTS` ist definiert, wird aber nie angezeigt.
+
+        Wird der Fallback je entfernt oder auf „unchecked" umgestellt, wird
+        der Zustand erreichbar – dann schlägt dieser Test fehl und erzwingt,
+        dass die Konstante verdrahtet (und die Liste deaktiviert) wird.
+        """
+        dialog, _events = self._open_dialog(qtbot, tmp_path, empty_db)
+        assert _hint_text(dialog) != HINT_NO_AUDIT_EVENTS
+        assert dialog._selection_hint() == ""
 
 
 def _event(event_type: str, day: int) -> AuditEvent:

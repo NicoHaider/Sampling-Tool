@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.core.models import Engagement
-from sampling_tool.ui.dialogs._export_base import ExportTargetWidget
+from sampling_tool.ui.dialogs._export_base import ExportTargetWidget, apply_validation
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,11 +111,20 @@ class ExportHtmlReportDialog(QDialog):
 
     # ---- intern --------------------------------------------------------
 
+    def _selection_hint(self) -> str:
+        """Dieser Dialog hat KEINE Auswahl-Bedingung – die drei Inhalts-Toggles
+        dürfen alle aus sein (dann entsteht ein Report ohne Zusatzblöcke, das
+        ist ein gültiges Ergebnis). Die Methode existiert trotzdem, damit alle
+        vier Dialoge dieselbe Naht haben; ein fünfter Grund wäre hier ein
+        Einzeiler. Festgenagelt in `test_html_dialog_has_no_selection_hint`."""
+        return ""
+
     def _update_state(self) -> None:
-        ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
-        if ok_btn is None:
-            return
-        ok_btn.setEnabled(self._target.is_valid())
+        apply_validation(
+            self._buttons.button(QDialogButtonBox.StandardButton.Ok),
+            self._target,
+            self._selection_hint(),
+        )
 
     def _on_accept(self) -> None:
         path = self._target.get_path()

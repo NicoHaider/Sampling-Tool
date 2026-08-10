@@ -16,6 +16,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
+    QAbstractButton,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -35,10 +36,46 @@ HINT_MISSING_NAME: str = "Dateiname fehlt."
 HINT_MISSING_ID: str = "ID fehlt."
 HINT_NO_DIR: str = "Kein Zielordner gewählt – bitte „Ordner wählen…“ klicken."
 
+# Sprint 72: dieselbe Rolle eine Ebene höher – Gründe, die NICHT im
+# `ExportTargetWidget` liegen, sondern in der dialogspezifischen Auswahl.
+HINT_NO_EVENT_TYPES: str = "Keine Ereignistypen gewählt – bitte mindestens einen anhaken."
+HINT_NO_SHEETS: str = "Keine Report-Blätter gewählt – bitte mindestens eines anhaken."
+HINT_NO_COLUMNS: str = "Keine Spalten gewählt – bitte mindestens eine anhaken."
+# Nicht erreichbarer Zustand (Sprint 72 / §3.2, empirisch gemessen): der
+# AuditTrail-PDF-Dialog fällt bei leerer `event_types_available` auf
+# `_DEFAULT_TYPES` zurück UND hakt alles an, d. h. ein Projekt ohne
+# Audit-Ereignisse blockiert den OK-Button nicht. Die Konstante bleibt als
+# benannter Zustand bestehen und ist per Nicht-Erreichbarkeits-Test in
+# `tests/ui/test_export_audit_pdf_dialog.py::TestEmptyAuditTrail` festgenagelt.
+HINT_NO_AUDIT_EVENTS: str = "Keine Audit-Ereignisse im Projekt – es gibt nichts zu exportieren."
+
 
 def hint_missing_dir(path: Path) -> str:
     """Hinweis für einen gesetzten, aber nicht existierenden Zielordner."""
     return f"Zielordner existiert nicht: {path} – bitte „Ordner wählen…“ klicken."
+
+
+def apply_validation(
+    ok_button: QAbstractButton | None,
+    target: ExportTargetWidget,
+    extra_hint: str = "",
+) -> str:
+    """Setzt Hinweistext und OK-Enablement aus EINER Quelle.
+
+    Reihenfolge: die Ziel-Validierung (Name/ID/Ordner) hat Vorrang, danach der
+    dialogspezifische Grund. Rückgabe = der wirksame Hinweis („" = alles gültig).
+
+    Sprint 72: der einzige Verdrahtungspunkt für alle vier Export-Dialoge.
+    Vorher hing das OK-Enablement zusätzlich an einer Auswahl, die
+    `validation_hint()` nicht sehen kann – abwählen machte den Button grau,
+    ohne dass irgendwo stand warum. Damit gilt ab jetzt hart: **OK ist genau
+    dann aktiv, wenn der Hinweistext leer ist.**
+    """
+    hint = target.validation_hint() or extra_hint
+    target.show_hint(hint)
+    if ok_button is not None:
+        ok_button.setEnabled(not hint)
+    return hint
 
 
 class ExportTargetWidget(QWidget):
@@ -169,6 +206,16 @@ class ExportTargetWidget(QWidget):
         """Aktualisiert das Vorschau-Label – wird intern nach Änderungen aufgerufen."""
         self._preview_label.setText(self.preview_filename())
 
+    def show_hint(self, text: str) -> None:
+        """Zeigt `text` im Hinweis-Label (leer = Label ausblenden).
+
+        Sprint 72: der Schreibzugang für `apply_validation`, damit der Dialog
+        auch seinen eigenen Auswahl-Grund in dasselbe Label schreiben kann –
+        bewusst ohne Callback vom Widget zurück in den Dialog.
+        """
+        self._hint_label.setText(text)
+        self._hint_label.setVisible(bool(text))
+
     def set_output_dir(self, path: Path) -> None:
         """Setzt den Zielordner programmatisch (z. B. für Tests)."""
         self._output_dir = path
@@ -180,9 +227,7 @@ class ExportTargetWidget(QWidget):
     # ---- Slots ---------------------------------------------------------
 
     def _update_hint(self) -> None:
-        hint = self.validation_hint()
-        self._hint_label.setText(hint)
-        self._hint_label.setVisible(bool(hint))
+        self.show_hint(self.validation_hint())
 
     def _on_field_changed(self) -> None:
         self.update_preview()

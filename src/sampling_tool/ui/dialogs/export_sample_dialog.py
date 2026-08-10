@@ -28,7 +28,11 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.core.models import Dataset
-from sampling_tool.ui.dialogs._export_base import ExportTargetWidget
+from sampling_tool.ui.dialogs._export_base import (
+    HINT_NO_COLUMNS,
+    ExportTargetWidget,
+    apply_validation,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,13 +162,21 @@ class ExportSampleDialog(QDialog):
                 result.append(item.text())
         return result
 
+    def _selection_hint(self) -> str:
+        """Dialogspezifischer Grund: mindestens eine Spalte muss angehakt sein."""
+        return "" if self._selected_columns() else HINT_NO_COLUMNS
+
     def _update_state(self) -> None:
+        # Sprint 34 / WP5: während „Alle auswählen/abwählen" bewusst nichts tun –
+        # der Endzustand wird danach genau einmal gesetzt (spart den O(N)-Scan
+        # pro Häkchen).
         if self._bulk_updating:
             return
-        ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
-        valid = bool(self._selected_columns()) and self._target.is_valid()
-        if ok_btn is not None:
-            ok_btn.setEnabled(valid)
+        apply_validation(
+            self._buttons.button(QDialogButtonBox.StandardButton.Ok),
+            self._target,
+            self._selection_hint(),
+        )
 
     def _on_accept(self) -> None:
         output_dir = self._target.get_output_dir()
