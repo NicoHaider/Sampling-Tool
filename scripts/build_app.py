@@ -19,6 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _script_io import force_utf8_stdout
+
 ROOT = Path(__file__).resolve().parent.parent
 APP_NAME = "Audit Sampling Tool"
 
@@ -98,6 +100,10 @@ def make_dmg() -> Path | None:
 
 
 def main() -> int:
+    # Muss vor jeder Ausgabe stehen – auch vor argparse, das Usage/Help selbst
+    # nach stderr druckt. Siehe scripts/_script_io.py.
+    force_utf8_stdout()
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--dmg",

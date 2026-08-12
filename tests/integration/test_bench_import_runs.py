@@ -20,11 +20,15 @@ def test_bench_import_quick_laeuft_durch(tmp_path: Path) -> None:
     """Mit `--quick` (1000 Zeilen, 1 Lauf) beide Formate <1 Minute."""
     # Umgebung erben (nicht neu bauen): ohne `USERPROFILE` bricht `Path.home()`
     # auf Windows schon beim Import von `config` mit RuntimeError ab.
-    # `PYTHONIOENCODING` erzwingt zusaetzlich UTF-8 im Kind: `bench_import.py`
-    # schreibt Kaesten-/Sigma-Zeichen (Σ → ─ └ ├) nach stdout, die sich in der
-    # Windows-ANSI-Codepage (cp1252) nicht kodieren lassen – bei umgeleitetem
-    # stdout stirbt das Skript sonst mit UnicodeEncodeError.
-    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "PYTHONIOENCODING": "utf-8"}
+    #
+    # Sprint 75 / Befund A: hier stand zusaetzlich `PYTHONIOENCODING=utf-8`, weil
+    # `bench_import.py` Kaesten-/Sigma-Zeichen (Σ → ─ └ ├) nach stdout schreibt,
+    # die cp1252 nicht kodieren kann – bei umgeleitetem stdout starb das Skript
+    # sonst mit UnicodeEncodeError. Das war eine Kruecke beim AUFRUFER; die
+    # Ursache sitzt jetzt im Skript selbst (`_script_io.force_utf8_stdout`).
+    # Die Kruecke ist bewusst entfernt: mit ihr wuerde dieser Test den Guard auf
+    # Windows-CI nie durchlaufen und der Fix waere ungeprueft.
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
     result = subprocess.run(
         [
             sys.executable,

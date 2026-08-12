@@ -79,6 +79,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "src"))
 
+from _script_io import force_utf8_stdout  # noqa: E402
 from python_calamine import CalamineWorkbook  # noqa: E402
 
 from sampling_tool.core.models import Dataset, Engagement  # noqa: E402
@@ -435,6 +436,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Muss vor jeder Ausgabe stehen: der Format-Report druckt Kästen-/Sigma-/
+    # Pfeil-Zeichen (├ ─ └ Σ →), die cp1252 nicht kodieren kann.
+    force_utf8_stdout()
+
     args = _parse_args(argv)
     rows = 1000 if args.quick else args.rows
     runs = 1 if args.quick else args.runs
