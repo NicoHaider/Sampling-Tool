@@ -16,6 +16,7 @@ Filter-Zeile oben:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar, Final
@@ -77,6 +78,17 @@ _SAMPLE_ID_ROLE: Final[int] = int(Qt.ItemDataRole.UserRole) + 2
 _EVENT_TYPE_ROLE: Final[int] = int(Qt.ItemDataRole.UserRole) + 3
 _USER_ROLE: Final[int] = int(Qt.ItemDataRole.UserRole) + 4
 _TIMESTAMP_ROLE: Final[int] = int(Qt.ItemDataRole.UserRole) + 5
+
+
+def _utc_now() -> datetime:
+    """Default-Uhr des Zeitraum-Filters.
+
+    Steht bewusst hier oben und nicht im Hilfen-Block am Dateiende: Python
+    wertet Default-Argumente beim Definieren der Funktion aus, und
+    `AuditTrailFilterProxy.__init__` nutzt diese Funktion als Default für
+    `now_provider`.
+    """
+    return datetime.now(UTC)
 
 
 class AuditTrailModel(QAbstractTableModel):
@@ -169,15 +181,30 @@ class AuditTrailFilterProxy(QSortFilterProxyModel):
     Qt escapet dort jedes Nicht-Wort-Zeichen (".csv" → "\\.csv",
     "ö" → "\\ö", auch Leerzeichen) – diese escapte Form kommt im Haystack
     nie vor, Suchen mit Umlauten/Punkten/Phrasen trafen deshalb nie.
+
+    Sprint 73: Der Zeitraum-Filter rechnet gegen eine injizierbare Uhr
+    (`now_provider`, Default `_utc_now`) statt direkt gegen `datetime.now`.
+    Tests frieren die Uhr ein und treffen damit Kalendergrenzen (Montag 00:00,
+    Monatserster, Jahreswechsel) deterministisch statt zufällig. Die
+    Filter-Semantik selbst ist unverändert.
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        now_provider: Callable[[], datetime] = _utc_now,
+    ) -> None:
         super().__init__(parent)
         self._action_filter: str | None = None
         self._user_filter: str | None = None
         self._range: str = _FILTER_ALL
         self._haystack_cache: list[str] = []
         self._search_needle: str = ""
+        # Injizierte Uhr statt Modul-Global: der Zeitraum-Filter rechnet gegen
+        # Kalendergrenzen (Wochen-/Monatsanfang), Tests müssen diese Grenzen
+        # deterministisch treffen können. Default = echte Wanduhr.
+        self._now_provider = now_provider
 
     # ---- Public API -----------------------------------------------------
 
@@ -240,7 +267,11 @@ class AuditTrailFilterProxy(QSortFilterProxyModel):
             return False
         if self._user_filter and evt.user_name != self._user_filter:
             return False
-        if not _in_range(evt.timestamp, self._range):
+        # Provider (nicht sein Ergebnis) durchreichen: `_in_range` ruft ihn erst
+        # nach dem "Alle"/kein-Timestamp-Early-Return. Sonst zahlte der
+        # ungefilterte Hot Path (20k Rows pro Tastenanschlag) einen
+        # Uhr-Aufruf je Zeile, den er heute nicht zahlt.
+        if not _in_range(evt.timestamp, self._range, self._now_provider):
             return False
 
         if self._search_needle:
@@ -304,7 +335,12 @@ class AuditTrailView(QWidget):
     # Treffer-Semantik unverändert (Proxy bleibt synchron).
     AUDIT_SEARCH_DEBOUNCE_MS: ClassVar[int] = 150
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        now_provider: Callable[[], datetime] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("AuditTrailView")
         outer = QVBoxLayout(self)
@@ -358,7 +394,10 @@ class AuditTrailView(QWidget):
         self._stack = QStackedWidget()
 
         self._model = AuditTrailModel(self)
-        self._proxy = AuditTrailFilterProxy(self)
+        self._proxy = AuditTrailFilterProxy(
+            self,
+            now_provider=_utc_now if now_provider is None else now_provider,
+        )
         self._proxy.setSourceModel(self._model)
 
         self._table = QTableView()
@@ -511,10 +550,22 @@ def _build_haystack(evt: AuditEvent) -> str:
     ).lower()
 
 
-def _in_range(ts: datetime | None, range_label: str) -> bool:
+def _in_range(
+    ts: datetime | None,
+    range_label: str,
+    now_provider: Callable[[], datetime] = _utc_now,
+) -> bool:
+    """Zeitraum-Filter gegen Kalendergrenzen (UTC).
+
+    Semantik unverändert seit Sprint 14:
+    - „Heute"       – gleicher UTC-Kalendertag (beidseitig).
+    - „Diese Woche" – ab Montag 00:00 UTC der laufenden Kalenderwoche,
+                      einseitig (keine Obergrenze). NICHT rollende 7 Tage.
+    - „Dieser Monat" – ab dem 1. des Monats 00:00 UTC, ebenfalls einseitig.
+    """
     if range_label == _FILTER_ALL or ts is None:
         return True
-    now = datetime.now(UTC)
+    now = now_provider()
     when = ensure_utc(ts)
     if range_label == _RANGE_TODAY:
         return when.date() == now.date()

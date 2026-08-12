@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Final
 
 import pytest
 from PyQt6.QtCore import QModelIndex, Qt
@@ -13,11 +14,57 @@ from sampling_tool.core.formatting import format_optional_timestamp
 from sampling_tool.core.models import AuditEvent
 from sampling_tool.ui.widgets import audit_trail_view
 from sampling_tool.ui.widgets.audit_trail_view import (
+    _FILTER_ALL,
+    _RANGE_MONTH,
+    _RANGE_TODAY,
+    _RANGE_WEEK,
     AuditTrailModel,
     AuditTrailView,
 )
 
 pytestmark = pytest.mark.ui
+
+# ---------------------------------------------------------------------------
+# Sprint 73: eingefrorene Testuhr
+# ---------------------------------------------------------------------------
+# Vorher rechneten Tests UND Produktionsfilter je gegen ihre eigene
+# `datetime.now(UTC)`. Der Zeitraum-Filter vergleicht aber gegen KALENDER-
+# grenzen (Montag 00:00, Monatserster) – in der ersten Stunde jedes Montags
+# lag ein "vor 1 Stunde"-Event damit in der Vorwoche und
+# `test_range_week_includes_yesterday_excludes_last_month` wurde auf allen drei
+# OS rot (PR #105).
+#
+# Anker: Mittwoch, Wochenmitte, Monatsmitte, Jahresmitte – maximal weit von
+# jeder Grenze entfernt. SSOT für alle zeitrelativen Zeitpunkte dieser Datei:
+# abgeleitet wird per `timedelta`/`replace`, NIE per zweitem Datums-Literal.
+FROZEN_NOW: Final = datetime(2026, 5, 13, 12, 0, tzinfo=UTC)
+
+# Montag 00:00 UTC der Woche, in der FROZEN_NOW liegt (= 2026-05-11).
+_WEEK_START: Final = (FROZEN_NOW - timedelta(days=FROZEN_NOW.weekday())).replace(
+    hour=0, minute=0, second=0, microsecond=0
+)
+
+# Grenz-Anker, alle von FROZEN_NOW abgeleitet.
+MONDAY_AFTER_MIDNIGHT: Final = _WEEK_START.replace(minute=30)  # Mo 2026-05-11 00:30
+WEDNESDAY_MIDDAY: Final = FROZEN_NOW  # Mi 2026-05-13 12:00
+SUNDAY_BEFORE_MIDNIGHT: Final = (_WEEK_START + timedelta(days=6)).replace(
+    hour=23, minute=30
+)  # So 2026-05-17 23:30
+NEW_YEAR_AFTER_MIDNIGHT: Final = FROZEN_NOW.replace(
+    month=1, day=1, hour=0, minute=30
+)  # Do 2026-01-01 00:30
+FIRST_OF_MONTH_AFTER_MIDNIGHT: Final = FROZEN_NOW.replace(
+    day=1, hour=0, minute=30
+)  # Fr 2026-05-01 00:30
+JUST_BEFORE_MIDNIGHT: Final = FROZEN_NOW.replace(hour=23, minute=59, second=30)
+
+# Wiederholungs-Gate (§5.4): derselbe Test an vier Kalender-Positionen.
+_WEEK_GATE_ANCHORS = [
+    pytest.param(MONDAY_AFTER_MIDNIGHT, id="montag-00-30"),
+    pytest.param(WEDNESDAY_MIDDAY, id="mittwoch-12-00"),
+    pytest.param(SUNDAY_BEFORE_MIDNIGHT, id="sonntag-23-30"),
+    pytest.param(NEW_YEAR_AFTER_MIDNIGHT, id="1-januar-00-30"),
+]
 
 
 def _make_event(
@@ -38,7 +85,7 @@ def _make_event(
         event_type=event_type,
         engagement_id=1,
         user_name=user,
-        timestamp=timestamp if timestamp is not None else datetime.now(UTC),
+        timestamp=timestamp if timestamp is not None else FROZEN_NOW,
         sample_id=sample_id,
         sample_size=sample_size,
         sample_percent=sample_percent,
@@ -50,11 +97,30 @@ def _make_event(
     )
 
 
-@pytest.fixture
-def view(qtbot: QtBot) -> AuditTrailView:
-    v = AuditTrailView()
+def _view_at(qtbot: QtBot, now: datetime) -> AuditTrailView:
+    """View mit auf `now` eingefrorener Uhr."""
+    v = AuditTrailView(now_provider=lambda: now)
     qtbot.addWidget(v)
     return v
+
+
+@pytest.fixture
+def view(qtbot: QtBot) -> AuditTrailView:
+    return _view_at(qtbot, FROZEN_NOW)
+
+
+def _set_range(view: AuditTrailView, label: str) -> None:
+    """Zeitraum-Filter über den echten UI-Pfad setzen (Combo → Slot → Proxy).
+
+    Das Assert ist der Schutz gegen einen stillen Fehlschlag: `findData` gibt
+    bei unbekanntem Label -1 zurück, `setCurrentIndex(-1)` liefert
+    `currentData() is None`, und der Slot fällt auf „Alle" zurück – der Filter
+    wäre dann wirkungslos, statt dass der Test es merkt (Sprint-72-Falle).
+    Die Labels kommen als Konstanten aus dem Widget-Modul, nicht als Literal.
+    """
+    idx = view._range_combo.findData(label)
+    assert idx >= 0, f"Zeitraum-Label {label!r} nicht in der ComboBox"
+    view._range_combo.setCurrentIndex(idx)
 
 
 def _search_via_ui(view: AuditTrailView, text: str) -> None:
@@ -129,12 +195,11 @@ class TestAuditTrailView:
 
     def test_range_filter_today(self, view: AuditTrailView) -> None:
         events = [
-            _make_event(event_id=1, timestamp=datetime.now(UTC)),
-            _make_event(event_id=2, timestamp=datetime.now(UTC) - timedelta(days=10)),
+            _make_event(event_id=1, timestamp=FROZEN_NOW),
+            _make_event(event_id=2, timestamp=FROZEN_NOW - timedelta(days=10)),
         ]
         view.set_events(events)
-        idx = view._range_combo.findData("Heute")
-        view._range_combo.setCurrentIndex(idx)
+        _set_range(view, _RANGE_TODAY)
         assert view.visible_row_count() == 1
 
     def test_search_filter_by_user(self, view: AuditTrailView) -> None:
@@ -181,42 +246,81 @@ class TestAuditTrailFilterProxyExtras:
     kombinierten Filtern und der Sortierung der „Größe"-Spalte (Spalte 4).
     """
 
-    def test_range_week_includes_yesterday_excludes_last_month(self, view: AuditTrailView) -> None:
-        now = datetime.now(UTC)
-        recent = _make_event(event_id=1, timestamp=now - timedelta(hours=1))
-        long_past = _make_event(event_id=2, timestamp=now - timedelta(days=60))
-        view.set_events([recent, long_past])
-        idx = view._range_combo.findData("Diese Woche")
-        view._range_combo.setCurrentIndex(idx)
-        # Das Event vor 60 Tagen liegt sicher außerhalb der aktuellen Woche.
-        assert view.visible_row_count() == 1
+    @pytest.mark.parametrize("anchor", _WEEK_GATE_ANCHORS)
+    def test_range_week_includes_current_week_excludes_last_month(
+        self, qtbot: QtBot, anchor: datetime
+    ) -> None:
+        """Wiederholungs-Gate (Sprint 73 / §5.4) für den Wochen-Filter.
+
+        Umbenannt: der Test hieß `…includes_yesterday…` und legte sein
+        „recent"-Event auf `now - 1h`. Eine Stunde ist nicht „gestern", und in
+        der ersten Stunde eines Montags fällt `now - 1h` auf Sonntag, also in
+        die VORwoche – genau das hat PR #105 auf allen drei OS rot gemacht.
+
+        Die Absicht des Tests („etwas aus dieser Woche ist drin, etwas von vor
+        60 Tagen nicht") ist ankerunabhängig, sobald das Event tatsächlich in
+        der laufenden Woche liegt. Der Grenzfall `now - 1h` ist nicht
+        weggefallen, sondern in
+        `test_range_week_one_hour_ago_is_deterministic_per_anchor` und
+        `TestRangeFilterBoundaries` explizit gepinnt.
+        """
+        view = _view_at(qtbot, anchor)
+        current = _make_event(event_id=1, timestamp=anchor)
+        long_past = _make_event(event_id=2, timestamp=anchor - timedelta(days=60))
+        view.set_events([current, long_past])
+        _set_range(view, _RANGE_WEEK)
+        assert _visible_event_ids(view) == [1]
+
+    @pytest.mark.parametrize(
+        ("anchor", "expected_ids"),
+        [
+            # Mo 00:30 → `now - 1h` ist So 23:30 und liegt VOR dem Wochenstart
+            # (Montag 00:00) → nicht sichtbar. Der PR-#105-Fall.
+            pytest.param(MONDAY_AFTER_MIDNIGHT, [], id="montag-00-30"),
+            pytest.param(WEDNESDAY_MIDDAY, [1], id="mittwoch-12-00"),
+            pytest.param(SUNDAY_BEFORE_MIDNIGHT, [1], id="sonntag-23-30"),
+            # 1. Januar 2026 ist ein Donnerstag; die Kalenderwoche beginnt am
+            # Mo 2025-12-29 → das Silvester-Event liegt noch drin.
+            pytest.param(NEW_YEAR_AFTER_MIDNIGHT, [1], id="1-januar-00-30"),
+        ],
+    )
+    def test_range_week_one_hour_ago_is_deterministic_per_anchor(
+        self, qtbot: QtBot, anchor: datetime, expected_ids: list[int]
+    ) -> None:
+        """Dieselbe `now - 1h`-Konstruktion wie vor Sprint 73, aber gepinnt.
+
+        Das Ergebnis hängt von der Position im Kalender ab – das ist die
+        Produktions-Semantik, nicht ein Fehler. Vorher war es eine Wette auf
+        den Ausführungszeitpunkt, jetzt ist es pro Anker festgeschrieben.
+        """
+        view = _view_at(qtbot, anchor)
+        view.set_events([_make_event(event_id=1, timestamp=anchor - timedelta(hours=1))])
+        _set_range(view, _RANGE_WEEK)
+        assert _visible_event_ids(view) == expected_ids
 
     def test_range_month_includes_today_excludes_two_months_ago(self, view: AuditTrailView) -> None:
-        now = datetime.now(UTC)
+        now = FROZEN_NOW
         today = _make_event(event_id=1, timestamp=now)
         old = _make_event(event_id=2, timestamp=now - timedelta(days=70))
         view.set_events([today, old])
-        idx = view._range_combo.findData("Dieser Monat")
-        view._range_combo.setCurrentIndex(idx)
+        _set_range(view, _RANGE_MONTH)
         assert view.visible_row_count() == 1
 
     def test_range_reset_to_alle_shows_all_events(self, view: AuditTrailView) -> None:
-        now = datetime.now(UTC)
+        now = FROZEN_NOW
         view.set_events(
             [
                 _make_event(event_id=1, timestamp=now),
                 _make_event(event_id=2, timestamp=now - timedelta(days=400)),
             ]
         )
-        idx_today = view._range_combo.findData("Heute")
-        view._range_combo.setCurrentIndex(idx_today)
+        _set_range(view, _RANGE_TODAY)
         assert view.visible_row_count() == 1
-        idx_all = view._range_combo.findData("Alle")
-        view._range_combo.setCurrentIndex(idx_all)
+        _set_range(view, _FILTER_ALL)
         assert view.visible_row_count() == 2
 
     def test_combined_action_user_range_filter(self, view: AuditTrailView) -> None:
-        now = datetime.now(UTC)
+        now = FROZEN_NOW
         events = [
             _make_event(event_type="sampling", user="anna", event_id=1, timestamp=now),
             _make_event(event_type="export", user="anna", event_id=2, timestamp=now),
@@ -231,7 +335,7 @@ class TestAuditTrailFilterProxyExtras:
         view.set_events(events)
         view._action_combo.setCurrentIndex(view._action_combo.findData("sampling"))
         view._user_combo.setCurrentIndex(view._user_combo.findData("anna"))
-        view._range_combo.setCurrentIndex(view._range_combo.findData("Heute"))
+        _set_range(view, _RANGE_TODAY)
         # Nur Event 1: sampling + anna + heute.
         assert view.visible_row_count() == 1
 
@@ -327,18 +431,157 @@ class TestAuditTrailFilterProxyExtras:
         assert first_size == "—"
 
     def test_naive_timestamp_is_treated_as_utc(self, view: AuditTrailView) -> None:
-        """Alte Daten ohne tzinfo (vor UTC-Adapter-Sprint) müssen filterbar bleiben."""
-        naive_today = datetime.now(UTC).replace(tzinfo=None)
+        """Alte Daten ohne tzinfo (vor UTC-Adapter-Sprint) müssen filterbar bleiben.
+
+        Sprint 73: vorher stand hier `in (0, 1)` – das musste die Unschärfe
+        zweier unabhängig laufender Uhren abfangen und hätte auch einen echten
+        Regress durchgelassen. Mit eingefrorener Uhr ist das Ergebnis exakt:
+        `ensure_utc` interpretiert das naive Datetime als UTC, es liegt damit
+        auf dem Kalendertag von FROZEN_NOW und ist sichtbar.
+        """
+        naive_today = FROZEN_NOW.replace(tzinfo=None)
         view.set_events([_make_event(event_id=1, timestamp=naive_today)])
-        view._range_combo.setCurrentIndex(view._range_combo.findData("Heute"))
-        # Darf nicht crashen; das naive Datetime wird als UTC interpretiert.
-        assert view.visible_row_count() in (0, 1)
+        _set_range(view, _RANGE_TODAY)
+        assert view.visible_row_count() == 1
 
     def test_correction_event_shows_arrow_in_action_column(self, view: AuditTrailView) -> None:
         view.set_events([_make_event(event_id=10, event_type="correction", corrects=7)])
         proxy = view.proxy()
         action_text = proxy.data(proxy.index(0, 1), Qt.ItemDataRole.DisplayRole)
         assert "→ #7" in action_text
+
+
+# ---------------------------------------------------------------------------
+# Sprint 73: Grenzwerte des Zeitraum-Filters
+# ---------------------------------------------------------------------------
+
+
+class TestRangeFilterBoundaries:
+    """Kalendergrenzen des Zeitraum-Filters – mit eingefrorener Uhr testbar.
+
+    Diese Fälle traten vorher nur zufällig auf (und dann als roter Check zur
+    Unzeit). Die Erwartungen pinnen, was `_in_range` TUT; die Semantik ist in
+    Sprint 73 unverändert geblieben:
+
+    - „Heute"        – gleicher UTC-Kalendertag, BEIDSEITIG begrenzt.
+    - „Diese Woche"  – ab Montag 00:00 UTC der laufenden Kalenderwoche,
+                       EINSEITIG (keine Obergrenze). Nicht rollende 7 Tage.
+    - „Dieser Monat" – ab dem 1. des Monats 00:00 UTC, ebenfalls einseitig.
+    """
+
+    def test_week_filter_at_monday_shortly_after_midnight(self, qtbot: QtBot) -> None:
+        """Uhr Mo 00:30, Event vor 1 h → So 23:30 → VORwoche → nicht sichtbar.
+
+        Genau dieser Fall hat PR #105 rot gemacht. Kein Fehler im Filter: die
+        Kalenderwoche beginnt am Montag um 00:00, „vor einer Stunde" liegt
+        davor.
+        """
+        view = _view_at(qtbot, MONDAY_AFTER_MIDNIGHT)
+        view.set_events(
+            [
+                _make_event(event_id=1, timestamp=MONDAY_AFTER_MIDNIGHT - timedelta(hours=1)),
+                _make_event(event_id=2, timestamp=MONDAY_AFTER_MIDNIGHT),
+            ]
+        )
+        _set_range(view, _RANGE_WEEK)
+        assert _visible_event_ids(view) == [2]
+
+    def test_week_filter_at_sunday_shortly_before_midnight(self, qtbot: QtBot) -> None:
+        """Uhr So 23:30 – letzte halbe Stunde der Woche.
+
+        Event vor 1 h liegt noch in der Woche. Das Event in 1 h liegt bereits
+        in der Folgewoche, ist aber TROTZDEM sichtbar: „Diese Woche" hat keine
+        Obergrenze (`when >= start`). Dieser Test hält diese Einseitigkeit
+        fest, damit sie nicht unbemerkt verloren geht.
+        """
+        view = _view_at(qtbot, SUNDAY_BEFORE_MIDNIGHT)
+        view.set_events(
+            [
+                _make_event(event_id=1, timestamp=SUNDAY_BEFORE_MIDNIGHT - timedelta(hours=1)),
+                _make_event(event_id=2, timestamp=SUNDAY_BEFORE_MIDNIGHT + timedelta(hours=1)),
+                _make_event(event_id=3, timestamp=SUNDAY_BEFORE_MIDNIGHT - timedelta(days=8)),
+            ]
+        )
+        _set_range(view, _RANGE_WEEK)
+        assert _visible_event_ids(view) == [1, 2]
+
+    def test_month_filter_on_first_day_of_month(self, qtbot: QtBot) -> None:
+        """Uhr 1. des Monats 00:30, Event am letzten Tag des Vormonats → raus."""
+        view = _view_at(qtbot, FIRST_OF_MONTH_AFTER_MIDNIGHT)
+        view.set_events(
+            [
+                _make_event(
+                    event_id=1, timestamp=FIRST_OF_MONTH_AFTER_MIDNIGHT - timedelta(days=1)
+                ),
+                _make_event(event_id=2, timestamp=FIRST_OF_MONTH_AFTER_MIDNIGHT),
+            ]
+        )
+        _set_range(view, _RANGE_MONTH)
+        assert _visible_event_ids(view) == [2]
+
+    def test_today_filter_shortly_before_midnight(self, qtbot: QtBot) -> None:
+        """Uhr 23:59:30. Event vor 1 min ist heute, Event in 1 min ist morgen.
+
+        Belegt die BEIDSEITIGE Begrenzung von „Heute" (Datumsvergleich, kein
+        `>=`): das Event 1 Minute in der Zukunft fällt auf den Folgetag und ist
+        damit draußen – anders als bei Woche/Monat.
+        """
+        view = _view_at(qtbot, JUST_BEFORE_MIDNIGHT)
+        view.set_events(
+            [
+                _make_event(event_id=1, timestamp=JUST_BEFORE_MIDNIGHT - timedelta(minutes=1)),
+                _make_event(event_id=2, timestamp=JUST_BEFORE_MIDNIGHT + timedelta(minutes=1)),
+            ]
+        )
+        _set_range(view, _RANGE_TODAY)
+        assert _visible_event_ids(view) == [1]
+
+    def test_year_boundary_week_filter(self, qtbot: QtBot) -> None:
+        """Uhr 1. Januar 00:30, Event am 31. Dezember des Vorjahres.
+
+        Kontraintuitiv, aber korrekt: der 1.1.2026 ist ein Donnerstag, seine
+        Kalenderwoche beginnt am Mo 29.12.2025 – das Silvester-Event ist in
+        „Diese Woche" also DRIN. In „Dieser Monat" ist es draußen, weil der
+        Monat am 1.1. um 00:00 beginnt. Der Jahreswechsel selbst spielt in der
+        Rechnung keine Rolle; sie kennt nur Wochen- und Monatsanfänge.
+        """
+        silvester = NEW_YEAR_AFTER_MIDNIGHT - timedelta(hours=1)
+        assert silvester.year == NEW_YEAR_AFTER_MIDNIGHT.year - 1
+
+        view = _view_at(qtbot, NEW_YEAR_AFTER_MIDNIGHT)
+        view.set_events(
+            [
+                _make_event(event_id=1, timestamp=silvester),
+                _make_event(event_id=2, timestamp=NEW_YEAR_AFTER_MIDNIGHT),
+            ]
+        )
+        _set_range(view, _RANGE_WEEK)
+        assert _visible_event_ids(view) == [1, 2]
+
+        _set_range(view, _RANGE_MONTH)
+        assert _visible_event_ids(view) == [2]
+
+        _set_range(view, _RANGE_TODAY)
+        assert _visible_event_ids(view) == [2]
+
+    def test_default_clock_is_the_real_wall_clock(self, qtbot: QtBot) -> None:
+        """Ohne `now_provider` bleibt der Produktionspfad an der Wanduhr.
+
+        Bewusst KEIN „Event jetzt ist unter Heute sichtbar"-Test: der würde
+        selbst wieder zwei Uhren vergleichen und um Mitternacht kippen – also
+        genau die Flakiness, die dieser Sprint entfernt. Stattdessen wird die
+        Default-Bindung direkt geprüft und dass `_utc_now` wirklich die
+        Wanduhr liest.
+        """
+        view = AuditTrailView()
+        qtbot.addWidget(view)
+        assert view.proxy()._now_provider is audit_trail_view._utc_now
+
+        before = datetime.now(UTC)
+        value = audit_trail_view._utc_now()
+        after = datetime.now(UTC)
+        assert before <= value <= after
+        assert value.tzinfo is UTC
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +715,9 @@ def _synthetic_events(count: int) -> list[AuditEvent]:
                 user=users[i % len(users)],
                 import_file=f"buchungen_{i}.csv" if i % 3 == 0 else None,
                 export_file=f"Sample_{i}_BDO.xlsx" if i % 3 == 1 else None,
-                timestamp=datetime(2026, 5, (i % 28) + 1, i % 24, 30, tzinfo=UTC),
+                # Von FROZEN_NOW abgeleitet statt zweitem Datums-Literal; ergibt
+                # dieselben Zeitstempel wie vor Sprint 73 (Mai 2026, Minute 30).
+                timestamp=FROZEN_NOW.replace(day=(i % 28) + 1, hour=i % 24, minute=30),
             )
         )
     return events
