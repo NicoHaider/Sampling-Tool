@@ -100,8 +100,10 @@ def make_dmg() -> Path | None:
 
 
 def main() -> int:
-    # Muss vor jeder Ausgabe stehen – auch vor argparse, das Usage/Help selbst
-    # nach stderr druckt. Siehe scripts/_script_io.py.
+    # Muss vor jeder Ausgabe stehen – insbesondere vor argparse: `--help` geht
+    # nach STDOUT (gemessen: 84 Byte stdout, 0 Byte stderr), und `description`
+    # ist hier `__doc__`. Ein Sonderzeichen im Modul-Docstring würde also schon
+    # `--help` töten, nicht erst den Build. Siehe scripts/_script_io.py.
     force_utf8_stdout()
 
     parser = argparse.ArgumentParser(description=__doc__)

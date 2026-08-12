@@ -270,6 +270,22 @@ jobs:
               ls -la "$name" >&2 || true
               exit 1
             fi
+
+            # `[ -s ]` prüft NUR „größer als 0 Byte". Gemessen: ein auf 40 Byte
+            # abgeschnittenes Zip kommt damit durch, bekommt eine Prüfsumme und
+            # überlebt sogar die `sha256sum -c`-Gegenprobe unten – die rehasht
+            # dieselben Bytes und beweist deshalb Lesbarkeit, nie Integrität.
+            # `unzip -t` prüft die CRCs wirklich; die Eintragszahl fängt zusätzlich
+            # das gültige, aber LEERE Archiv (Packaging lief, hat nichts gepackt).
+            if ! unzip -t -qq "$name/$name" >/dev/null 2>&1; then
+              echo "::error::Artefakt '$name/$name' ist kein intaktes Zip (unzip -t schlägt fehl)." >&2
+              exit 1
+            fi
+            entries=$(unzip -Z1 "$name/$name" 2>/dev/null | wc -l)
+            if [ "$entries" -eq 0 ]; then
+              echo "::error::Artefakt '$name/$name' ist ein leeres Zip (0 Einträge)." >&2
+              exit 1
+            fi
             # Aus dem Artefakt-Ordner heraus, damit die Prüfsummendatei bare
             # Basenames enthält: im Release liegen alle Assets flach nebeneinander.
             ( cd "$name" && sha256sum "$name" ) >> SHA256SUMS
@@ -277,8 +293,9 @@ jobs:
 
           # Positive Vollständigkeitsprüfung: die drei abgeschalteten Defaults
           # verhindern die BEKANNTEN Wege in eine unvollständige Prüfsummendatei,
-          # diese Prüfung auch die unbekannten (leeres Zip, kurze/kaputte Datei,
-          # null Artefakte).
+          # diese Prüfung auch die unbekannten (0-Byte-Datei, abgeschnittenes
+          # Zip, gültiges aber leeres Zip, null Artefakte, kurze/kaputte
+          # SHA256SUMS) – jeder dieser Fälle lokal gegen diesen Step-Body gemessen.
           #
           # GRENZE DIESER PRÜFUNG, ehrlich benannt: fehlt ein Artefakt-Ordner
           # KOMPLETT, schrumpft die abgeleitete Erwartungsliste mit – die Prüfung

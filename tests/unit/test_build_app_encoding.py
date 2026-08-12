@@ -58,21 +58,93 @@ def _script_files() -> list[Path]:
     return sorted(p for p in SCRIPTS_DIR.rglob("*.py") if "__pycache__" not in p.parts)
 
 
+def _called_name(func: ast.expr) -> str | None:
+    return func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+
+
+def _is_std_stream_write(func: ast.expr) -> bool:
+    """`sys.stdout.write` / `sys.stderr.write` – NICHT `f.write` auf eine Datei."""
+    return (
+        isinstance(func, ast.Attribute)
+        and func.attr == "write"
+        and isinstance(func.value, ast.Attribute)
+        and func.value.attr in {"stdout", "stderr"}
+    )
+
+
+# argparse druckt diese Texte selbst: `--help` geht nach STDOUT (gemessen),
+# die Usage bei einem Parse-Fehler nach stderr. Beides sind echte Ausgabekanäle.
+_ARGPARSE_TEXT_KWARGS = frozenset({"description", "epilog", "help", "usage", "prog", "metavar"})
+_ARGPARSE_FACTORIES = frozenset({"ArgumentParser", "add_argument", "add_parser", "add_subparsers"})
+
+
 def _printed_str_constants(tree: ast.AST) -> list[tuple[int, str]]:
-    """Alle `str`-Konstanten, die (auch in f-Strings) in einem `print()` landen."""
+    """Alle `str`-Werte, die dieses Modul nach stdout/stderr bringen kann.
+
+    Deckt bewusst mehr als `print("literal")` ab – drei Kanäle, die eine rein
+    lexikalische Suche strukturell nicht sehen kann und die in einer
+    Gegenprüfung mit gezielten Mutanten alle durchgerutscht sind:
+
+    1. `argparse`-Texte, insbesondere `description=__doc__` – dann zählt der
+       Modul-Docstring als gedruckt.
+    2. ein modulweiter Namenskonstant, der später über den Namen gedruckt wird
+       (`BANNER = "✓ fertig"` … `print(BANNER)`).
+    3. `sys.stdout.write(...)` / `sys.stderr.write(...)`.
+    """
+    module_doc = ast.get_docstring(tree) if isinstance(tree, ast.Module) else None
+    module_consts = _module_string_constants(tree)
+
     found: list[tuple[int, str]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        called = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
-        if called != "print":
-            continue
-        for arg in node.args:
-            for sub in ast.walk(arg):
-                if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
-                    found.append((getattr(sub, "lineno", node.lineno), sub.value))
+    for call in _calls(tree):
+        name = _called_name(call.func)
+        exprs: list[ast.expr] = []
+        if name == "print" or _is_std_stream_write(call.func):
+            exprs.extend(call.args)
+        if name in _ARGPARSE_FACTORIES:
+            exprs.extend(kw.value for kw in call.keywords if kw.arg in _ARGPARSE_TEXT_KWARGS)
+        for expr in exprs:
+            found.extend(_resolve_strings(expr, call.lineno, module_doc, module_consts))
     return found
+
+
+def _calls(tree: ast.AST) -> list[ast.Call]:
+    return [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+
+
+def _module_string_constants(tree: ast.AST) -> dict[str, str]:
+    """Modulweite `NAME = "literal"`-Zuweisungen – die indirekte Druckquelle."""
+    consts: dict[str, str] = {}
+    if not isinstance(tree, ast.Module):
+        return consts
+    for stmt in tree.body:
+        if not isinstance(stmt, ast.Assign) or not isinstance(stmt.value, ast.Constant):
+            continue
+        if not isinstance(stmt.value.value, str):
+            continue
+        for target in stmt.targets:
+            if isinstance(target, ast.Name):
+                consts[target.id] = stmt.value.value
+    return consts
+
+
+def _resolve_strings(
+    expr: ast.expr,
+    fallback_line: int,
+    module_doc: str | None,
+    module_consts: dict[str, str],
+) -> list[tuple[int, str]]:
+    """Literale, `__doc__` und modulweite Namenskonstanten unter `expr`."""
+    out: list[tuple[int, str]] = []
+    for sub in ast.walk(expr):
+        line = getattr(sub, "lineno", fallback_line)
+        if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+            out.append((line, sub.value))
+        elif isinstance(sub, ast.Name):
+            if sub.id == "__doc__" and module_doc:
+                out.append((line, module_doc))
+            elif sub.id in module_consts:
+                out.append((line, module_consts[sub.id]))
+    return out
 
 
 def _uncodable_printed_chars(tree: ast.AST) -> dict[str, list[int]]:

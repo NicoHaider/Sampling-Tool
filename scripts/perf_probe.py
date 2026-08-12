@@ -35,6 +35,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
+from _script_io import force_utf8_stdout
 from openpyxl import Workbook
 
 # Repository-Root in sys.path aufnehmen, damit das Script auch direkt
@@ -778,6 +779,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Vor jeder Ausgabe: Zeile 803 druckt `{exc!r}` eines beliebigen Fehlers.
+    # `repr()` escapt Nicht-ASCII NICHT, eine Exception-Message mit Sonderzeichen
+    # killt den Lauf also genau dort, wo er den Fehler dokumentieren soll.
+    force_utf8_stdout()
+
     args = _build_parser().parse_args(argv)
 
     # Single QApplication für alle Größen – wir brauchen sie nur, damit
