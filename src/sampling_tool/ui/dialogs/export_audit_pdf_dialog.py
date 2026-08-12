@@ -11,6 +11,7 @@ allen anderen Export-Dialogen via `ExportTargetWidget`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -36,6 +37,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sampling_tool.config import export_date_token, local_export_now
 from sampling_tool.core.models import Engagement
 from sampling_tool.io.bdo_locations import (
     companies,
@@ -105,11 +107,18 @@ class ExportAuditPdfDialog(QDialog):
         offer_date_filter: bool = False,
         default_company_key: str | None = None,
         default_location_key: str | None = None,
+        *,
+        now_provider: Callable[[], datetime] = local_export_now,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("AuditTrail-PDF exportieren")
         self.setModal(True)
 
+        # Sprint 74: EINE Uhr für diesen Dialog. Sie speist zwei Dinge mit
+        # unterschiedlicher Rolle, die bewusst NICHT zusammengelegt werden:
+        # den Dateinamen-Token (§2.4: Lokalzeit) und die Von/Bis-Vorbelegung
+        # des Zeitraum-Filters (Befund C, §4.3 – ein echter Grenzwert).
+        self._now = now_provider()
         self._result: ExportAuditPdfDialogResult | None = None
         self._briefpapier_available = briefpapier_available
         # Sprint 33 – Vorauswahl der beiden unabhängigen BDO-Dropdowns.
@@ -187,7 +196,13 @@ class ExportAuditPdfDialog(QDialog):
         if self._offer_date_filter:
             gb_range = QGroupBox("Zeitraum")
             range_layout = QVBoxLayout(gb_range)
-            today = QDate.currentDate()
+            # Sprint 74 / Befund C: der letzte Range-Filter, der noch direkt
+            # gegen die Wanduhr lief. `QDate.currentDate()` ist durch die
+            # EINE Uhr des Dialogs ersetzt – dieselbe Steuerbarkeit, die
+            # Sprint 73 dem Audit-Trail-Filter gegeben hat. Die Semantik
+            # (Vorbelegung „letzte 3 Monate bis heute", inkl. der
+            # Monatsende-Klemmung von `addMonths`) bleibt unverändert.
+            today = QDate(self._now.year, self._now.month, self._now.day)
 
             from_row = QHBoxLayout()
             self._from_date = QDateEdit()
@@ -291,10 +306,11 @@ class ExportAuditPdfDialog(QDialog):
     def _build_right(self, engagement: Engagement, default_output_dir: Path | None) -> QVBoxLayout:
         self._target = ExportTargetWidget(
             default_name=engagement.client_name,
-            default_id=datetime.now().strftime("%Y%m%d"),
+            default_id=export_date_token(self._now),
             file_extension=".pdf",
             type_token="audit_trail",
             default_output_dir=default_output_dir,
+            now_provider=lambda: self._now,
         )
         right = QVBoxLayout()
         right.addWidget(self._target)

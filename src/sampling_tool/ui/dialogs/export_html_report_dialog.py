@@ -7,6 +7,7 @@ entgegen.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sampling_tool.config import export_date_token, local_export_now
 from sampling_tool.core.models import Engagement
 from sampling_tool.ui.dialogs._export_base import ExportTargetWidget, apply_validation
 
@@ -43,6 +45,8 @@ class ExportHtmlReportDialog(QDialog):
         engagement: Engagement,
         parent: QWidget | None = None,
         default_output_dir: Path | None = None,
+        *,
+        now_provider: Callable[[], datetime] = local_export_now,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("HTML-Report exportieren")
@@ -78,12 +82,18 @@ class ExportHtmlReportDialog(QDialog):
         body.addLayout(left, stretch=2)
 
         # Rechts: Datei-Ziel.
+        # Sprint 74: EINE Uhr-Lesung für Dialog UND Widget. Vorher las
+        # `default_id` hier eine eigene Uhr und das `{date}`-Token im Widget
+        # eine zweite – im selben Dateinamen konnten zwei verschiedene Tage
+        # stehen (…_ID20260812_BDO_report_20260813.html).
+        now = now_provider()
         self._target = ExportTargetWidget(
             default_name=engagement.client_name,
-            default_id=datetime.now().strftime("%Y%m%d"),
+            default_id=export_date_token(now),
             file_extension=".html",
             type_token="report",
             default_output_dir=default_output_dir,
+            now_provider=lambda: now,
         )
         right = QVBoxLayout()
         right.addWidget(self._target)

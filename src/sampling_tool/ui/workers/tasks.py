@@ -28,6 +28,8 @@ from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import AuditRepo, DatasetRepo
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from sampling_tool.core.models import (
         AuditEvent,
         Dataset,
@@ -133,6 +135,9 @@ class SampleExportTask:
     custom_name: str
     custom_id: str
     engagement: Engagement
+    # Sprint 74 / §2.2: der Zeitpunkt aus dem Export-Dialog. `None` = der
+    # Writer liest selbst (Aufrufer ohne Dialog).
+    now: datetime | None = None
 
     def run(self, progress: ProgressReporter, cancellation: CancellationToken) -> Path:
         cancellation.raise_if_cancelled()
@@ -148,6 +153,7 @@ class SampleExportTask:
                 custom_name=self.custom_name,
                 custom_id=self.custom_id,
                 engagement=self.engagement,
+                now=self.now,
             )
         finally:
             db.close()
