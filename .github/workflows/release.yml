@@ -240,6 +240,11 @@ jobs:
         run: |
           set -euo pipefail
           export LC_ALL=C
+          # `download-artifact` legt `artifacts/` NICHT an, wenn der Lauf keine
+          # Artefakte hat. Ohne das `mkdir` stirbt der Step schon am `cd` mit
+          # „No such file or directory" – rot, aber ohne die aussagekräftige
+          # Meldung des Guards darunter.
+          mkdir -p artifacts
           cd artifacts
 
           # Erwartungsliste = die Build-Matrix, nicht ein zweites Mal getippt
@@ -252,11 +257,36 @@ jobs:
           # Glob statt `find -printf`/`mapfile`: beides ist GNU- bzw. bash-4-only
           # und damit lokal nicht gegenprüfbar. Matcht `*/` nichts, bleibt es
           # das Literal und der `-d`-Test filtert es weg.
-          bundles=()
+          #
+          # Nur die BUILD-Artefakte, nicht „alles in artifacts/": `download-artifact`
+          # ohne `name:`/`pattern:` lädt ALLE Artefakte des LAUFS. Beim Re-Run des
+          # `release`-Jobs liegt `sbom.cdx.json` aus Versuch 1 schon im Lauf (v4-
+          # Artefakte gehören dem Lauf, nicht dem Versuch) und stünde sonst als
+          # dritte Zeile in der veröffentlichten SHA256SUMS – gemessen. Nicht
+          # still übergehen, sondern protokollieren (§3: keine stummen Filter).
           for entry in */; do
             [ -d "$entry" ] || continue
-            bundles+=("${entry%/}")
+            case "${entry%/}" in
+              *.zip) ;;
+              *) echo "Hinweis: '${entry%/}' ist kein Build-Artefakt und wird nicht geprüft." ;;
+            esac
           done
+
+          # `sort -f` (case-insensitiv) ist hier lasttragend: der Glob sortiert
+          # unter LC_ALL=C das große 'W' (0x57) vor das kleine 'm' (0x6D) und
+          # hätte die Zeilenfolge der veröffentlichten SHA256SUMS von
+          # (macOS, Windows) auf (Windows, macOS) gekippt. Case-insensitiv bleibt
+          # die Datei byte-identisch zum Vor-Sprint-75-Stand (§2.5).
+          bundles=()
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            bundles+=("$name")
+          done < <(
+            for entry in */; do
+              [ -d "$entry" ] || continue
+              printf '%s\n' "${entry%/}"
+            done | grep -E '\.zip$' | LC_ALL=C sort -f
+          )
 
           if [ "${#bundles[@]}" -eq 0 ]; then
             echo "::error::Keine Build-Artefakte heruntergeladen – das Release wäre leer." >&2
@@ -345,12 +375,18 @@ jobs:
           echo "SHA256SUMS vollständig (${#bundles[@]} Artefakt(e)):"
           cat SHA256SUMS
 
+      # `overwrite: true`, weil der Default `false` diesen Job NICHT re-runnable
+      # macht: beim „Re-run failed jobs" existiert das Artefakt aus Versuch 1
+      # noch im Lauf und der Upload scheitert daran. Relevant, weil der
+      # Publish-Pfad noch nie erfolgreich gelaufen ist – der erste echte Tag
+      # braucht mit hoher Wahrscheinlichkeit genau diesen Re-Run.
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sbom.cdx.json
           path: sbom.cdx.json
           if-no-files-found: error
+          overwrite: true
           retention-days: 90
 
       # Sprint 75 / Befund B.3 – `fail_on_unmatched_files` ist ohne den Key
