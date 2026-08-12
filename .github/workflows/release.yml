@@ -186,11 +186,19 @@ jobs:
           7z a -tzip "../${{ matrix.artifact_name }}" AuditSamplingTool
         shell: bash
 
+      # Sprint 75 / Befund B.1 – der Weg in ein grünes, aber unvollständiges
+      # Release: ohne `if-no-files-found` ist der Default `warn`. Matcht `path`
+      # nichts (umbenanntes Zip, fehlgeschlagenes Packaging, geänderter
+      # `artifact_name`), lädt der Step NULL Dateien hoch und bleibt GRÜN.
+      # `error` ist die einzige nicht-zirkuläre Absicherung dagegen: sie macht
+      # den Build-Job rot, und weil `release` per `needs: build` ALLE
+      # Matrix-Legs verlangt, kommt es dann gar nicht erst zum Veröffentlichen.
       - name: Upload build artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_name }}
+          if-no-files-found: error
           retention-days: 7
 
   release:
@@ -216,13 +224,108 @@ jobs:
         with:
           path: artifacts
 
+      # Sprint 75 / Befund B.2 – `shell: bash` ist hier keine Kosmetik. Ohne den
+      # Key nutzt GitHub `bash -e {0}`, also OHNE `pipefail`; `sha256sum … | sed
+      # … > SHA256SUMS` nimmt dann den Exit-Code von `sed` (immer 0). Lokal
+      # gemessen mit dem alten Step-Body und einer fehlenden Datei: Exit 0,
+      # Step GRÜN, SHA256SUMS mit EINER statt ZWEI Zeilen. `set -euo pipefail`
+      # zusätzlich als Gürtel und Hosenträger – genau diese Default-Annahme war
+      # die Fehlerursache, sie darf nicht ein zweites Mal implizit bleiben.
+      #
+      # Der Step muss VOR dem SBOM-Upload stehen: die Erwartungsliste wird aus
+      # den heruntergeladenen Artefakt-Verzeichnissen abgeleitet, und zu diesem
+      # Zeitpunkt sind das genau die Build-Artefakte.
       - name: Generate SHA-256 checksums
+        shell: bash
         run: |
+          set -euo pipefail
+          export LC_ALL=C
           cd artifacts
-          sha256sum \
-            AuditSamplingTool-macOS.zip/AuditSamplingTool-macOS.zip \
-            AuditSamplingTool-Windows.zip/AuditSamplingTool-Windows.zip \
-            | sed -E 's#^([0-9a-f]+)  .*/([^/]+)$#\1  \2#' > SHA256SUMS
+
+          # Erwartungsliste = die Build-Matrix, nicht ein zweites Mal getippt
+          # (§2.4): `upload-artifact` legt jedes Artefakt unter
+          # `artifacts/<name>/` ab, und dessen `name:` ist die Matrix-Variable
+          # artifact_name. Die Verzeichnisnamen SIND also die Matrix-Werte.
+          # (Bewusst ohne Expression-Syntax geschrieben: im `release`-Job gibt es
+          # keine Matrix, ein Ausdruck darauf würde zu Leerstring expandieren und
+          # den Kommentar entkernen.)
+          # Glob statt `find -printf`/`mapfile`: beides ist GNU- bzw. bash-4-only
+          # und damit lokal nicht gegenprüfbar. Matcht `*/` nichts, bleibt es
+          # das Literal und der `-d`-Test filtert es weg.
+          bundles=()
+          for entry in */; do
+            [ -d "$entry" ] || continue
+            bundles+=("${entry%/}")
+          done
+
+          if [ "${#bundles[@]}" -eq 0 ]; then
+            echo "::error::Keine Build-Artefakte heruntergeladen – das Release wäre leer." >&2
+            exit 1
+          fi
+
+          : > SHA256SUMS
+          for name in "${bundles[@]}"; do
+            if [ ! -s "$name/$name" ]; then
+              echo "::error::Artefakt '$name/$name' fehlt oder ist leer." >&2
+              ls -la "$name" >&2 || true
+              exit 1
+            fi
+            # Aus dem Artefakt-Ordner heraus, damit die Prüfsummendatei bare
+            # Basenames enthält: im Release liegen alle Assets flach nebeneinander.
+            ( cd "$name" && sha256sum "$name" ) >> SHA256SUMS
+          done
+
+          # Positive Vollständigkeitsprüfung: die drei abgeschalteten Defaults
+          # verhindern die BEKANNTEN Wege in eine unvollständige Prüfsummendatei,
+          # diese Prüfung auch die unbekannten (leeres Zip, kurze/kaputte Datei,
+          # null Artefakte).
+          #
+          # GRENZE DIESER PRÜFUNG, ehrlich benannt: fehlt ein Artefakt-Ordner
+          # KOMPLETT, schrumpft die abgeleitete Erwartungsliste mit – die Prüfung
+          # ist an dieser Stelle zirkulär und bleibt grün. Gemessen, nicht
+          # vermutet. Diesen Fall deckt sie bewusst nicht ab, sondern:
+          #   1. `if-no-files-found: error` im Build-Job – ein Leg, das nichts
+          #      hochlädt, wird ROT, und `needs: build` verlangt ALLE Legs, also
+          #      läuft dieser Job dann gar nicht.
+          #   2. `fail_on_unmatched_files: true` am `Create Release`-Step – dessen
+          #      `files:`-Liste nennt beide Zips explizit und ist damit die
+          #      nicht-zirkuläre Erwartung zum Veröffentlichungszeitpunkt.
+          # Die drei Fixes ergänzen sich; keiner ersetzt einen anderen.
+          lines=$(wc -l < SHA256SUMS)
+          if [ "$lines" -ne "${#bundles[@]}" ]; then
+            echo "::error::SHA256SUMS hat $lines Zeile(n), erwartet ${#bundles[@]}." >&2
+            exit 1
+          fi
+          for name in "${bundles[@]}"; do
+            # Feldweise über Spaltenpositionen, nicht per Regex über den Namen:
+            # `AuditSamplingTool-macOS.zip` als Muster würde den Punkt als
+            # „beliebiges Zeichen" lesen. Keine Intervall-Ausdrücke, damit es
+            # auch unter mawk läuft.
+            if ! awk -v want="$name" '
+              {
+                hash = substr($0, 1, 64)
+                sep  = substr($0, 65, 2)
+                file = substr($0, 67)
+              }
+              hash ~ /^[0-9a-f]+$/ && length(hash) == 64 && sep == "  " && file == want { found = 1 }
+              END { exit !found }
+            ' SHA256SUMS; then
+              echo "::error::'${name}' fehlt in SHA256SUMS oder hat kein gültiges Format." >&2
+              exit 1
+            fi
+          done
+
+          # Gegenprobe mit dem Werkzeug, das auch der Empfänger benutzt: erst
+          # damit ist belegt, dass die veröffentlichte Datei wirklich prüfbar ist.
+          verify_dir="$(mktemp -d)"
+          for name in "${bundles[@]}"; do
+            cp "$name/$name" "$verify_dir/"
+          done
+          cp SHA256SUMS "$verify_dir/"
+          ( cd "$verify_dir" && sha256sum -c SHA256SUMS )
+          rm -rf "$verify_dir"
+
+          echo "SHA256SUMS vollständig (${#bundles[@]} Artefakt(e)):"
           cat SHA256SUMS
 
       - name: Upload SBOM artifact
@@ -230,8 +333,14 @@ jobs:
         with:
           name: sbom.cdx.json
           path: sbom.cdx.json
+          if-no-files-found: error
           retention-days: 90
 
+      # Sprint 75 / Befund B.3 – `fail_on_unmatched_files` ist ohne den Key
+      # `false`: ein Eintrag in `files:`, der nichts matcht, wird still
+      # übersprungen und das Release entsteht trotzdem. Diese Liste ist damit
+      # die dritte und letzte Stelle, an der eine fehlende Binärdatei bisher
+      # lautlos verschwinden konnte.
       - name: Create Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
@@ -240,6 +349,7 @@ jobs:
             artifacts/AuditSamplingTool-Windows.zip/AuditSamplingTool-Windows.zip
             artifacts/SHA256SUMS
             sbom.cdx.json
+          fail_on_unmatched_files: true
           generate_release_notes: true
           draft: true
           prerelease: false
