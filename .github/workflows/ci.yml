@@ -100,5 +100,8 @@ jobs:
       - name: Install dependencies (hash-checked from uv.lock)
         run: uv sync --locked --extra dev --python 3.13
 
+      - name: Kuenstlicher Fehlschlag (Positiv-Kontrolle Sprint 73, Wegwerf-Branch)
+        run: exit 1
+
       - name: pip-audit (dependency vulnerability scan)
         run: uv run pip-audit
