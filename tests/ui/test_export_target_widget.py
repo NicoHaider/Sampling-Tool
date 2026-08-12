@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from collections.abc import Callable
+from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Final
 
 import pytest
 from PyQt6.QtWidgets import QLabel
 from pytestqt.qtbot import QtBot
 
+from sampling_tool.config import (
+    EXPORT_FILENAME_PATTERN,
+    EXPORT_SUFFIX_SAMPLING,
+    EXPORT_TYPE_SAMPLING,
+    export_date_token,
+    local_export_now,
+)
 from sampling_tool.ui.dialogs._export_base import (
     HINT_MISSING_ID,
     HINT_MISSING_NAME,
@@ -18,6 +27,15 @@ from sampling_tool.ui.dialogs._export_base import (
 )
 
 pytestmark = pytest.mark.ui
+
+# Ein Anker pro Testdatei (Sprint 74 / §4.4), alle weiteren Zeitpunkte werden
+# per timedelta abgeleitet – kein zweites Datums-Literal daneben.
+FROZEN_NOW: Final = datetime(2026, 5, 13, 23, 59)
+
+# Europe/Vienna im Sommer als FESTER Offset statt `ZoneInfo("Europe/Vienna")`:
+# Windows liefert ohne das `tzdata`-Paket keine IANA-Zonen, und der Test soll
+# auf allen drei CI-Betriebssystemen identisch laufen.
+LOCAL_OFFSET: Final = timezone(timedelta(hours=2))
 
 
 class TestExportTargetWidget:
@@ -198,9 +216,177 @@ class TestExportSanitizerSingleSource:
     def test_widget_preview_matches_writer_for_tricky_tokens(self, qtbot: QtBot) -> None:
         from sampling_tool.io.exporter import ExcelExporter
 
+        # Sprint 74: BEIDE Seiten bekommen denselben Zeitpunkt übergeben.
+        # Vorher standen hier zwei unabhängige `datetime.now()`-Lesungen in
+        # einer Assertion – um Mitternacht flaky (§4.5).
         for name, id_ in [("Müller & Co", "1"), ("a/b:c*d", "2"), ("X" * 150, "3")]:
             w = ExportTargetWidget(
-                default_name=name, default_id=id_, file_extension=".xlsx", type_token="sampling"
+                default_name=name,
+                default_id=id_,
+                file_extension=EXPORT_SUFFIX_SAMPLING,
+                type_token=EXPORT_TYPE_SAMPLING,
+                now_provider=lambda: FROZEN_NOW,
             )
             qtbot.addWidget(w)
-            assert w.preview_filename() == ExcelExporter._build_filename(name, id_)
+            assert w.preview_filename() == ExcelExporter._build_filename(name, id_, w.now())
+
+
+def _ticking_provider(start: datetime = FROZEN_NOW) -> Callable[[], datetime]:
+    """Uhr, die bei JEDEM Aufruf einen Tag weiterspringt.
+
+    Simuliert den Tageswechsel zwischen Dialog-Öffnen und OK-Klick. Wer die
+    Uhr mehr als einmal liest, bekommt garantiert ein anderes Datum – genau
+    das macht Befund B sichtbar, statt auf eine echte Mitternacht zu warten.
+    """
+    ticks = iter(range(1_000))
+
+    def provider() -> datetime:
+        return start + timedelta(days=next(ticks))
+
+    return provider
+
+
+class TestPreviewMatchesWrittenName:
+    """Sprint 74 / Befund B – der Kern des Sprints.
+
+    Der Dateiname der geschriebenen Datei muss der Vorschau PER KONSTRUKTION
+    entsprechen, nicht per Zufall. Vorher liefen zwei unabhängige Uhren
+    (`_export_base.preview_filename` und `ExcelExporter._build_filename`),
+    die nur so lange übereinstimmten, wie kein Tageswechsel dazwischenlag.
+    """
+
+    def test_preview_is_stable_when_the_day_rolls_over(self, qtbot: QtBot) -> None:
+        """Die Vorschau darf die Uhr nicht bei jedem Aufruf neu lesen."""
+        w = ExportTargetWidget(
+            default_name="ACME",
+            default_id="42",
+            file_extension=EXPORT_SUFFIX_SAMPLING,
+            type_token=EXPORT_TYPE_SAMPLING,
+            now_provider=_ticking_provider(),
+        )
+        qtbot.addWidget(w)
+        first = w.preview_filename()
+        second = w.preview_filename()
+        third = w.preview_filename()
+        assert first == second == third, (
+            "preview_filename() liest die Uhr mehrfach – zwischen zwei "
+            "Aufrufen kann sich das Datum ändern."
+        )
+
+    def test_written_name_equals_preview_across_midnight(self, qtbot: QtBot) -> None:
+        """Vorschau == der Name, den `ExcelExporter` tatsächlich baut."""
+        from sampling_tool.io.exporter import ExcelExporter
+
+        w = ExportTargetWidget(
+            default_name="ACME",
+            default_id="42",
+            file_extension=EXPORT_SUFFIX_SAMPLING,
+            type_token=EXPORT_TYPE_SAMPLING,
+            now_provider=_ticking_provider(),
+        )
+        qtbot.addWidget(w)
+        preview = w.preview_filename()
+        # Der Controller reicht genau diesen Zeitpunkt an den Export-Task durch.
+        written = ExcelExporter._build_filename(w.get_name(), w.get_id(), w.now())
+        assert written == preview
+
+    def test_get_path_uses_the_same_clock_reading_as_the_label(
+        self, qtbot: QtBot, tmp_path: Path
+    ) -> None:
+        """Die drei Report-Dialoge schreiben nach `get_path()` – der Pfad muss
+        dem angezeigten Label entsprechen, auch wenn dazwischen ein Tag
+        vergeht."""
+        w = ExportTargetWidget(
+            default_name="ACME",
+            default_id="7",
+            file_extension=".pdf",
+            type_token="audit_trail",
+            now_provider=_ticking_provider(),
+        )
+        qtbot.addWidget(w)
+        w.set_output_dir(tmp_path)
+        label = w.findChild(QLabel, "exportTargetPreview")
+        assert label is not None
+        path = w.get_path()
+        assert path is not None
+        assert path.name == label.text()
+
+    def test_default_id_and_date_token_share_one_reading(self, qtbot: QtBot) -> None:
+        """Sprint 74: `default_id` der drei Report-Dialoge ist dasselbe Datum
+        wie der `{date}`-Token – vorher zwei unabhängige Uhren, die im selben
+        Dateinamen zwei verschiedene Tage stehen lassen konnten."""
+        from sampling_tool.core.models import Engagement
+        from sampling_tool.ui.dialogs.export_html_report_dialog import ExportHtmlReportDialog
+
+        engagement = Engagement(auditor_name="Anna", client_name="ACME", id=1)
+        dialog = ExportHtmlReportDialog(engagement, now_provider=_ticking_provider())
+        qtbot.addWidget(dialog)
+        name = dialog._target.preview_filename()
+        token = export_date_token(dialog._target.now())
+        assert name.count(token) == 2, (
+            f"ID- und Datums-Token müssen aus derselben Uhr stammen: {name!r}"
+        )
+
+
+class TestDateTokenSemantics:
+    """Sprint 74 / §2.4 – 🔒 der `{date}`-Token bleibt LOKALZEIT."""
+
+    def test_date_token_uses_local_time_not_utc(self) -> None:
+        """Ein Prüfer erwartet den Tag, an dem ER exportiert hat.
+
+        Auf UTC umzustellen sähe wie eine Verbesserung aus, würde aber in
+        Europe/Vienna (UTC+2) kurz nach Mitternacht den VORTAG in den
+        Dateinamen schreiben. Der Anker trägt hier bewusst einen expliziten
+        Offset, damit der Test auf Ubuntu/Windows/macOS identisch urteilt.
+        """
+        just_after_midnight_local = datetime(2026, 5, 14, 0, 30, tzinfo=LOCAL_OFFSET)
+
+        # Vorbedingung: derselbe Moment ist in UTC noch der Vortag. Ohne diese
+        # Zusicherung könnte der Test grün sein, ohne etwas zu unterscheiden.
+        assert just_after_midnight_local.astimezone(UTC).date() == date(2026, 5, 13)
+
+        assert export_date_token(just_after_midnight_local) == "20260514", (
+            "Der Datums-Token folgt der LOKALEN Kalendergrenze (§2.4). "
+            "Ein Wechsel auf UTC würde hier 20260513 liefern."
+        )
+
+    def test_default_clock_is_naive_local_wall_time(self) -> None:
+        """Die Default-Uhr ist `datetime.now()` ohne tz – kein `now(UTC)`.
+
+        Bewusst KEIN Vergleich zweier unabhängiger Uhr-Lesungen auf Gleichheit
+        (Sprint-73-Lehre, §4.5): geprüft wird die Einklammerung und die
+        Naivität des Werts.
+        """
+        before = datetime.now()
+        value = local_export_now()
+        after = datetime.now()
+        assert value.tzinfo is None, "UTC-Umstellung erkannt – §2.4 verletzt."
+        assert before <= value <= after
+
+    def test_widget_default_provider_is_the_shared_local_clock(self, qtbot: QtBot) -> None:
+        """Ohne `now_provider` hängt das Widget an der gemeinsamen Modul-Uhr."""
+        w = ExportTargetWidget(default_name="ACME", default_id="1", file_extension=".pdf")
+        qtbot.addWidget(w)
+        assert w.now_provider() is local_export_now
+
+
+class TestFilenamePatternIsSingleSource:
+    """Sprint 74 / §2.3 – das Pattern lebt in `config.py`, sonst nirgends."""
+
+    def test_export_base_has_no_own_pattern_literal(self) -> None:
+        import sampling_tool.ui.dialogs._export_base as export_base
+
+        assert export_base.DEFAULT_FILENAME_PATTERN is EXPORT_FILENAME_PATTERN
+
+    def test_exporter_has_no_own_template_literal(self) -> None:
+        import sampling_tool.io.exporter as exporter_module
+
+        assert not hasattr(exporter_module, "_FILENAME_TEMPLATE")
+
+    def test_pattern_renders_the_documented_scheme(self) -> None:
+        """Zeichengleichheit zum Bestandsverhalten (§6), gegen die Konstante
+        formatiert statt gegen ein wiederholtes Literal."""
+        body = EXPORT_FILENAME_PATTERN.format(
+            name="ACME", id="42", type=EXPORT_TYPE_SAMPLING, date="20260513"
+        )
+        assert f"{body}{EXPORT_SUFFIX_SAMPLING}" == "ACME_ID42_BDO_sampling_20260513.xlsx"

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Final
 from unittest.mock import patch
 
 import pytest
 from openpyxl import load_workbook
+from pytestqt.qtbot import QtBot
 
 from sampling_tool import __version__
 from sampling_tool.core.models import (
@@ -620,3 +622,102 @@ class TestExportFilenameByteIdentity:
         )
         assert out.name.startswith(f"{expected_name_id}_BDO_sampling_")
         assert out.name.endswith(".xlsx")
+
+
+# ---------------------------------------------------------------------------
+# Sprint 74 / Befund B – Vorschau == geschriebene Datei, per Konstruktion
+# ---------------------------------------------------------------------------
+
+EXPORT_FROZEN_NOW: Final = datetime(2026, 5, 13, 23, 59, 30)
+
+
+class TestWrittenFileMatchesDialogPreview:
+    """End-to-End über den ECHTEN Schreibpfad: der Dateiname auf der Platte
+    ist zeichengleich mit dem, was der Dialog als Vorschau angezeigt hat –
+    auch wenn zwischen Dialog-Öffnen und OK-Klick ein Tageswechsel liegt.
+
+    Vor Sprint 74 liefen hier zwei unabhängige Uhren (Widget-Vorschau und
+    `ExcelExporter._build_filename`); sie stimmten nur zufällig überein.
+    """
+
+    def test_file_on_disk_has_the_previewed_name(
+        self,
+        qtbot: QtBot,
+        exporter: ExcelExporter,
+        sample: SampleResult,
+        dataset: Dataset,
+        dataset_repo: DatasetRepo,
+        tmp_path: Path,
+    ) -> None:
+        from sampling_tool.config import EXPORT_SUFFIX_SAMPLING, EXPORT_TYPE_SAMPLING
+        from sampling_tool.ui.dialogs._export_base import ExportTargetWidget
+
+        ticks = iter(range(100))
+        widget = ExportTargetWidget(
+            default_name="Müller & Co",
+            default_id="7",
+            file_extension=EXPORT_SUFFIX_SAMPLING,
+            type_token=EXPORT_TYPE_SAMPLING,
+            # Uhr springt bei jedem Aufruf einen Tag weiter: wer zweimal
+            # liest, bekommt garantiert ein anderes Datum.
+            now_provider=lambda: EXPORT_FROZEN_NOW + timedelta(days=next(ticks)),
+        )
+        qtbot.addWidget(widget)
+        preview = widget.preview_filename()
+
+        written = exporter.export_sample(
+            sample=sample,
+            dataset=dataset,
+            dataset_repo=dataset_repo,
+            columns=["Name"],
+            output_dir=tmp_path,
+            custom_name=widget.get_name(),
+            custom_id=widget.get_id(),
+            now=widget.now(),
+        )
+
+        assert written.name == preview
+        assert written.exists()
+        assert [p.name for p in tmp_path.glob("*.xlsx")] == [preview]
+
+    def test_without_now_the_writer_reads_its_own_clock(
+        self,
+        exporter: ExcelExporter,
+        sample: SampleResult,
+        dataset: Dataset,
+        dataset_repo: DatasetRepo,
+        tmp_path: Path,
+    ) -> None:
+        """`now=None` ist der Bestandspfad für Aufrufer ohne Dialog
+        (z. B. `scripts/demo_full_workflow.py`) und muss weiter funktionieren."""
+        written = exporter.export_sample(
+            sample=sample,
+            dataset=dataset,
+            dataset_repo=dataset_repo,
+            columns=["Name"],
+            output_dir=tmp_path,
+            custom_name="X",
+            custom_id="1",
+        )
+        assert written.exists()
+        assert written.name == ExcelExporter._build_filename("X", "1", datetime.now())
+
+    def test_explicit_now_controls_the_date_token(
+        self,
+        exporter: ExcelExporter,
+        sample: SampleResult,
+        dataset: Dataset,
+        dataset_repo: DatasetRepo,
+        tmp_path: Path,
+    ) -> None:
+        written = exporter.export_sample(
+            sample=sample,
+            dataset=dataset,
+            dataset_repo=dataset_repo,
+            columns=["Name"],
+            output_dir=tmp_path,
+            custom_name="X",
+            custom_id="1",
+            now=EXPORT_FROZEN_NOW,
+        )
+        assert written.name == "X_ID1_BDO_sampling_20260513.xlsx"

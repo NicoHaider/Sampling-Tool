@@ -25,7 +25,15 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from sampling_tool import __version__
-from sampling_tool.config import BDO_RED, sanitize_export_filename_token
+from sampling_tool.config import (
+    BDO_RED,
+    EXPORT_FILENAME_PATTERN,
+    EXPORT_SUFFIX_SAMPLING,
+    EXPORT_TYPE_SAMPLING,
+    export_date_token,
+    local_export_now,
+    sanitize_export_filename_token,
+)
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement, SampleResult
 from sampling_tool.core.provenance import SamplingProvenance
 from sampling_tool.io._atomic import AtomicReplaceError, atomic_output
@@ -45,7 +53,6 @@ ProgressCallback = Callable[[int, int], None]
 _SHEET_DATA: Final[str] = "Sample"
 _SHEET_META: Final[str] = "Metadaten"
 _MAX_COLUMN_WIDTH: Final[int] = 50
-_FILENAME_TEMPLATE: Final[str] = "{name}_ID{id}_BDO_sampling_{date}.xlsx"
 
 
 class ExportError(ValueError):
@@ -68,11 +75,20 @@ class ExcelExporter:
         custom_name: str,
         custom_id: str,
         engagement: Engagement | None = None,
+        now: datetime | None = None,
     ) -> Path:
         """Exportiert die gezogenen Zeilen.
 
         Liefert den vollen Pfad zur erzeugten Datei zurück. Der Dateiname
-        folgt dem VBA-Schema `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
+        folgt dem VBA-Schema aus `config.EXPORT_FILENAME_PATTERN` (mit
+        `type`-Token `config.EXPORT_TYPE_SAMPLING`).
+
+        `now` ist der Zeitpunkt für den `{date}`-Token (Sprint 74 / §2.2).
+        Der Export-Dialog reicht genau den Zeitpunkt durch, aus dem er seine
+        Vorschau gebaut hat – damit heißt die geschriebene Datei per
+        Konstruktion wie die Vorschau und nicht nur dann, wenn zwischen
+        Dialog-Öffnen und OK-Klick kein Tageswechsel liegt. `None` bedeutet
+        „selbst lesen" und ist für Aufrufer ohne Dialog gedacht.
 
         Sprint-11.4-Streaming: statt einer voll materialisierten Row-Liste
         nimmt der Exporter das `DatasetRepo` entgegen und lädt sich
@@ -93,7 +109,7 @@ class ExcelExporter:
             else []
         )
 
-        filename = self._build_filename(custom_name, custom_id)
+        filename = self._build_filename(custom_name, custom_id, now)
         target = output_dir / filename
 
         wb = Workbook()
@@ -117,14 +133,26 @@ class ExcelExporter:
     # ---- Helpers --------------------------------------------------------
 
     @staticmethod
-    def _build_filename(custom_name: str, custom_id: str) -> str:
+    def _build_filename(custom_name: str, custom_id: str, now: datetime | None = None) -> str:
+        """Baut den Dateinamen aus dem gemeinsamen Pattern (`config.py`).
+
+        `now=None` liest die Uhr selbst – für Aufrufer ohne Dialog. Der
+        `or "sample"`-Fallback greift NACH dem Sanitizer und weicht damit vom
+        `or "export"`-Fallback der Vorschau ab (`_export_base.py`). Diese
+        Asymmetrie ist Bestandsverhalten und bleibt in Sprint 74 bewusst
+        unangetastet: sie ist nur bei leerem/whitespace-only Namen sichtbar,
+        und den blockiert der Dialog über `HINT_MISSING_NAME`, bevor der
+        Writer ihn je zu sehen bekommt.
+        """
         safe_name = sanitize_export_filename_token(custom_name) or "sample"
         safe_id = sanitize_export_filename_token(custom_id) or "0"
-        return _FILENAME_TEMPLATE.format(
+        body = EXPORT_FILENAME_PATTERN.format(
             name=safe_name,
             id=safe_id,
-            date=datetime.now().strftime("%Y%m%d"),
+            type=EXPORT_TYPE_SAMPLING,
+            date=export_date_token(now if now is not None else local_export_now()),
         )
+        return f"{body}{EXPORT_SUFFIX_SAMPLING}"
 
     @staticmethod
     def _validate(columns: list[str], dataset: Dataset) -> None:

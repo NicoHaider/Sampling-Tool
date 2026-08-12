@@ -11,6 +11,7 @@ zu aktualisieren.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -26,9 +27,17 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import sanitize_export_filename_token
+from sampling_tool.config import (
+    EXPORT_FILENAME_PATTERN,
+    export_date_token,
+    local_export_now,
+    sanitize_export_filename_token,
+)
 
-DEFAULT_FILENAME_PATTERN: str = "{name}_ID{id}_BDO_{type}_{date}"
+# Sprint 74 / §2.3: das Pattern lebt in `config.py`. Der Name hier bleibt als
+# Default-Argument von `ExportTargetWidget` erhalten, ist aber kein zweites
+# Literal mehr, sondern dieselbe Konstante.
+DEFAULT_FILENAME_PATTERN: str = EXPORT_FILENAME_PATTERN
 
 # Sprint 71 / Befund 1: Hinweistexte als Konstanten, damit Tests sie
 # importieren statt die Literale zu wiederholen.
@@ -79,7 +88,16 @@ def apply_validation(
 
 
 class ExportTargetWidget(QWidget):
-    """Wiederverwendbare rechte Spalte: Dateiname, ID, Zielordner, Vorschau."""
+    """Wiederverwendbare rechte Spalte: Dateiname, ID, Zielordner, Vorschau.
+
+    Sprint 74 / Befund B: Der Zeitpunkt für den `{date}`-Token wird GENAU
+    EINMAL bei der Konstruktion gelesen und danach gemerkt. Vorher las
+    `preview_filename()` die Wanduhr bei jedem Aufruf – schon zwischen zwei
+    Tastendrücken konnte sich der angezeigte Dateiname ändern, und der Writer
+    las noch eine dritte Uhr. Lief ein Export über einen Tageswechsel, hieß
+    die Datei anders als die Vorschau. Der gemerkte Zeitpunkt geht über
+    `now()` nach außen und wird bis in den Export-Task durchgereicht.
+    """
 
     changed = pyqtSignal()
 
@@ -92,12 +110,17 @@ class ExportTargetWidget(QWidget):
         type_token: str = "export",
         default_output_dir: Path | None = None,
         parent: QWidget | None = None,
+        *,
+        now_provider: Callable[[], datetime] = local_export_now,
     ) -> None:
         super().__init__(parent)
         self._file_extension = file_extension
         self._filename_pattern = filename_pattern
         self._type_token = type_token
         self._output_dir: Path | None = default_output_dir
+        # Die EINE Uhr-Lesung dieses Export-Vorgangs.
+        self._now_provider = now_provider
+        self._now = now_provider()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -127,6 +150,10 @@ class ExportTargetWidget(QWidget):
         layout.addSpacing(8)
         layout.addWidget(_caption("Vorschau Dateiname"))
         self._preview_label = QLabel("")
+        # Sprint 74: benannt, damit Tests das ANGEZEIGTE Label gegen den
+        # geschriebenen Pfad prüfen können statt gegen `preview_filename()`
+        # (das wäre eine Tautologie, keine Vorschau-Prüfung).
+        self._preview_label.setObjectName("exportTargetPreview")
         self._preview_label.setStyleSheet("color: #7F7F7F; font-family: monospace;")
         self._preview_label.setWordWrap(True)
         layout.addWidget(self._preview_label)
@@ -170,15 +197,36 @@ class ExportTargetWidget(QWidget):
             return None
         return self._output_dir / self.preview_filename()
 
+    def now(self) -> datetime:
+        """Der EINE Zeitpunkt dieses Export-Vorgangs (bei Konstruktion gelesen).
+
+        Aufrufer reichen ihn an den Writer weiter, damit die geschriebene
+        Datei per Konstruktion so heißt wie die Vorschau (Sprint 74 / §2.2).
+        """
+        return self._now
+
+    def now_provider(self) -> Callable[[], datetime]:
+        """Die injizierte Uhr – für Dialoge, die denselben Zeitpunkt brauchen."""
+        return self._now_provider
+
+    def date_token(self) -> str:
+        """`{date}`-Token dieses Export-Vorgangs."""
+        return export_date_token(self._now)
+
     def preview_filename(self) -> str:
-        """Aktueller Dateiname laut Pattern + Extension."""
+        """Aktueller Dateiname laut Pattern + Extension.
+
+        Liest die Uhr NICHT – der Zeitpunkt steht seit der Konstruktion fest
+        (Sprint 74). Zwei Aufrufe liefern denselben Namen, auch über
+        Mitternacht hinweg.
+        """
         name = sanitize_export_filename_token(self.get_name() or "export")
         sid = sanitize_export_filename_token(self.get_id() or "0")
         body = self._filename_pattern.format(
             name=name,
             id=sid,
             type=self._type_token,
-            date=datetime.now().strftime("%Y%m%d"),
+            date=self.date_token(),
         )
         return f"{body}{self._file_extension}"
 

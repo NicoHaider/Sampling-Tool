@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import base64
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -41,6 +41,17 @@ from sampling_tool.resources import shared_resource
 _DEFAULT_TEMPLATE_DIR: Final[Path] = shared_resource("templates")
 _DEFAULT_TEMPLATE_NAME: Final[str] = "audit_report.html"
 _HISTORY_DAYS: Final[int] = 30
+
+
+def _utc_now() -> datetime:
+    """Default-Uhr des rollenden 30-Tage-Fensters.
+
+    Steht bewusst hier oben und nicht im Hilfen-Block am Dateiende: Python
+    wertet Default-Argumente beim Definieren der Funktion aus, und
+    `HtmlReportGenerator.__init__` nutzt diese Funktion als Default für
+    `now_provider` (gleiche Reihenfolge wie in `ui/widgets/audit_trail_view.py`).
+    """
+    return datetime.now(UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,9 +88,23 @@ class _EventView:
 
 
 class HtmlReportGenerator:
-    """Rendert einen Engagement-HTML-Report (selbstständige Datei)."""
+    """Rendert einen Engagement-HTML-Report (selbstständige Datei).
 
-    def __init__(self, template_path: Path | None = None) -> None:
+    Sprint 74 / Befund D: Der Report rechnet gegen eine injizierbare Uhr
+    (`now_provider`, Default `_utc_now`) statt direkt gegen `datetime.now`.
+    Vorher konnte kein Test das rollende 30-Tage-Fenster der Sampling-Historie
+    dauerhaft treffen – ein Test mit gepinntem `drawn_at` lief mit
+    fortschreitendem Kalender aus dem Fenster heraus und prüfte danach
+    stillschweigend nichts mehr. Die 30-Tage-Semantik selbst ist unverändert.
+    """
+
+    def __init__(
+        self,
+        template_path: Path | None = None,
+        *,
+        now_provider: Callable[[], datetime] = _utc_now,
+    ) -> None:
+        self._now_provider = now_provider
         loader: BaseLoader
         if template_path is None:
             loader = FileSystemLoader(str(_DEFAULT_TEMPLATE_DIR))
@@ -124,8 +149,11 @@ class HtmlReportGenerator:
         except TemplateNotFound as exc:
             raise FileNotFoundError(f"Template '{self._template_name}' nicht gefunden.") from exc
 
+        # Eine Uhr pro Render-Vorgang: dasselbe „jetzt" begrenzt das
+        # Historien-Fenster und stempelt die Fußzeile.
+        now = self._now_provider()
         method_chart = _method_chart_base64(samples) if include_charts else None
-        history_chart = _history_chart_base64(samples) if include_charts else None
+        history_chart = _history_chart_base64(samples, now) if include_charts else None
         resolved_dataset_ids = dataset_ids_by_sample or {}
 
         ctx = {
@@ -145,7 +173,11 @@ class HtmlReportGenerator:
             "include_charts": include_charts,
             "include_audit_trail": include_audit_trail,
             "include_samples_table": include_samples_table,
-            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            # Aus DEMSELBEN Zeitpunkt wie das Historien-Fenster, in lokale
+            # Zeit gedreht. Ergebnis-String identisch zum vorherigen
+            # `datetime.now().strftime(...)` – nur eben nicht mehr eine
+            # zweite, unabhängige Ablesung.
+            "generated_at": now.astimezone().strftime("%Y-%m-%d %H:%M:%S"),
         }
         rendered = template.render(**ctx)
         with atomic_output(target) as tmp:
@@ -213,11 +245,17 @@ def _method_chart_base64(samples: list[SampleResult]) -> str | None:
     return base64.b64encode(raw).decode("ascii")
 
 
-def _history_chart_base64(samples: Iterable[SampleResult]) -> str | None:
+def _history_chart_base64(samples: Iterable[SampleResult], now: datetime) -> str | None:
+    """Sampling-Historie der letzten `_HISTORY_DAYS` Tage.
+
+    `now` kommt von außen (Sprint 74 / Befund D) – das Fenster ist damit in
+    Tests deterministisch treffbar. Semantik unverändert: halboffenes
+    Fenster `[now - 30 Tage, now]`, gerechnet auf UTC-Kalendertagen.
+    """
     samples_list = list(samples)
     if not samples_list:
         return None
-    today = datetime.now(UTC).date()
+    today = now.astimezone(UTC).date() if now.tzinfo is not None else now.date()
     bins: defaultdict[str, int] = defaultdict(int)
     for sample in samples_list:
         when = sample.drawn_at

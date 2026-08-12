@@ -11,7 +11,9 @@ allen anderen Export-Dialogen via `ExportTargetWidget`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
@@ -27,6 +29,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sampling_tool.config import (
+    EXPORT_SUFFIX_SAMPLING,
+    EXPORT_TYPE_SAMPLING,
+    local_export_now,
+)
 from sampling_tool.core.models import Dataset
 from sampling_tool.ui.dialogs._export_base import (
     HINT_NO_COLUMNS,
@@ -43,6 +50,11 @@ class ExportSampleDialogResult:
     custom_name: str
     custom_id: str
     output_dir: Path
+    # Sprint 74 / §2.2: der Zeitpunkt, aus dem die Vorschau gebaut wurde.
+    # Der Controller reicht ihn an den Export-Task durch, damit die
+    # geschriebene Datei denselben `{date}`-Token trägt. `None` = der Writer
+    # liest selbst (Bestands-Aufrufer ohne Dialog).
+    now: datetime | None = None
 
 
 class ExportSampleDialog(QDialog):
@@ -55,6 +67,8 @@ class ExportSampleDialog(QDialog):
         default_id: str = "",
         default_output_dir: Path | None = None,
         parent: QWidget | None = None,
+        *,
+        now_provider: Callable[[], datetime] = local_export_now,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Sample exportieren")
@@ -101,12 +115,16 @@ class ExportSampleDialog(QDialog):
         body.addLayout(left, stretch=2)
 
         # ---- rechte Spalte: gemeinsames ExportTargetWidget ----
+        # `type_token`/`file_extension` kommen aus `config.py`: genau dieses
+        # Paar muss mit dem Writer (`io/exporter.py`) übereinstimmen, damit
+        # die Vorschau dem geschriebenen Dateinamen entspricht (Sprint 74).
         self._target = ExportTargetWidget(
             default_name=default_name or dataset.name,
             default_id=default_id,
-            file_extension=".xlsx",
-            type_token="sampling",
+            file_extension=EXPORT_SUFFIX_SAMPLING,
+            type_token=EXPORT_TYPE_SAMPLING,
             default_output_dir=default_output_dir,
+            now_provider=now_provider,
         )
         right = QVBoxLayout()
         right.addWidget(self._target)
@@ -187,6 +205,8 @@ class ExportSampleDialog(QDialog):
             custom_name=self._target.get_name(),
             custom_id=self._target.get_id(),
             output_dir=output_dir,
+            # Derselbe Zeitpunkt, aus dem die Vorschau gebaut wurde.
+            now=self._target.now(),
         )
         self.accept()
 

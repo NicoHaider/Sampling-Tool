@@ -113,6 +113,11 @@ class ExportController:
             custom_name=result.custom_name,
             custom_id=result.custom_id,
             engagement=s.engagement,
+            # Sprint 74 / Befund B: derselbe Zeitpunkt, aus dem der Dialog
+            # seine Vorschau gebaut hat – sonst könnte der Writer bei einem
+            # Tageswechsel einen anderen {date}-Token schreiben, als der
+            # Auditor im Dialog gelesen hat.
+            now=result.now,
         )
         progress_dialog = TaskProgressDialog("Exportiere Sample…", s.window)
         try:

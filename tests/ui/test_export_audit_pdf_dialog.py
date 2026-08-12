@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 from PyQt6.QtCore import QDate, QSettings, Qt
@@ -537,3 +538,126 @@ class TestScrollFallback:
             assert dialog.minimumWidth() > 720
         finally:
             app.setStyleSheet(previous_stylesheet)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 74 / Befund C – der letzte Range-Filter an der Wanduhr
+# ---------------------------------------------------------------------------
+
+# Ein Anker, alle Grenzfälle davon abgeleitet. Bewusst LOKALE naive Zeit:
+# die Von/Bis-Vorbelegung ist ein Kalenderwert für den Prüfer, kein
+# UTC-Zeitstempel (dieselbe Semantik wie der Dateinamen-Token, §2.4).
+RANGE_FROZEN_NOW: Final = datetime(2026, 5, 13, 12, 0)
+
+
+def _dialog_at(qtbot: QtBot, now: datetime, tmp_path: Path) -> ExportAuditPdfDialog:
+    """Audit-PDF-Dialog mit auf `now` eingefrorener Uhr."""
+    dialog = ExportAuditPdfDialog(
+        engagement=_engagement(),
+        event_types_available=["sampling"],
+        briefpapier_available=True,
+        default_output_dir=tmp_path,
+        offer_date_filter=True,
+        now_provider=lambda: now,
+    )
+    qtbot.addWidget(dialog)
+    return dialog
+
+
+class TestDateRangePrefillIsControllable:
+    """Sprint 73 hat den Audit-Trail-Filter steuerbar gemacht; dieser hier war
+    übrig geblieben und lief weiter gegen `QDate.currentDate()`.
+
+    Fachlogik unverändert (§2.6): Vorbelegung bleibt „heute minus 3 Monate"
+    bis „heute", inklusive der Monatsende-Klemmung von `QDate.addMonths`.
+    Neu ist ausschließlich, dass ein Test die Uhr stellen kann.
+    """
+
+    def test_prefill_spans_the_last_three_months(self, qtbot: QtBot, tmp_path: Path) -> None:
+        dialog = _dialog_at(qtbot, RANGE_FROZEN_NOW, tmp_path)
+        assert dialog._to_date.date().toPyDate() == date(2026, 5, 13)
+        assert dialog._from_date.date().toPyDate() == date(2026, 2, 13)
+
+    def test_first_of_month(self, qtbot: QtBot, tmp_path: Path) -> None:
+        dialog = _dialog_at(
+            qtbot, RANGE_FROZEN_NOW.replace(month=6, day=1, hour=0, minute=30), tmp_path
+        )
+        assert dialog._to_date.date().toPyDate() == date(2026, 6, 1)
+        assert dialog._from_date.date().toPyDate() == date(2026, 3, 1)
+
+    def test_new_year_after_midnight_crosses_into_the_previous_year(
+        self, qtbot: QtBot, tmp_path: Path
+    ) -> None:
+        """1. Januar 00:30 – die Untergrenze muss ins Vorjahr zeigen."""
+        dialog = _dialog_at(
+            qtbot, RANGE_FROZEN_NOW.replace(month=1, day=1, hour=0, minute=30), tmp_path
+        )
+        assert dialog._to_date.date().toPyDate() == date(2026, 1, 1)
+        assert dialog._from_date.date().toPyDate() == date(2025, 10, 1)
+
+    def test_just_before_midnight_still_uses_the_current_day(
+        self, qtbot: QtBot, tmp_path: Path
+    ) -> None:
+        """23:59:30 – die Vorbelegung ist der laufende Tag, nicht der Folgetag."""
+        dialog = _dialog_at(
+            qtbot, RANGE_FROZEN_NOW.replace(hour=23, minute=59, second=30), tmp_path
+        )
+        assert dialog._to_date.date().toPyDate() == date(2026, 5, 13)
+
+    def test_month_end_clamping_is_preserved(self, qtbot: QtBot, tmp_path: Path) -> None:
+        """31. Mai minus 3 Monate = 28. Februar (kein 31. Februar).
+
+        `QDate.addMonths` klemmt auf das Monatsende. Das ist Bestandsverhalten
+        und wird hier festgenagelt, damit ein späterer Umbau auf
+        `timedelta`/`dateutil` die Semantik nicht still verändert.
+        """
+        dialog = _dialog_at(qtbot, RANGE_FROZEN_NOW.replace(month=5, day=31), tmp_path)
+        assert dialog._to_date.date().toPyDate() == date(2026, 5, 31)
+        assert dialog._from_date.date().toPyDate() == date(2026, 2, 28)
+
+    def test_leap_year_month_end_clamping(self, qtbot: QtBot, tmp_path: Path) -> None:
+        """Im Schaltjahr 2028 klemmt derselbe Fall auf den 29. Februar."""
+        dialog = _dialog_at(qtbot, RANGE_FROZEN_NOW.replace(year=2028, month=5, day=31), tmp_path)
+        assert dialog._from_date.date().toPyDate() == date(2028, 2, 29)
+
+    def test_prefilled_range_actually_filters(self, qtbot: QtBot, tmp_path: Path) -> None:
+        """Die Vorbelegung ist kein Deko-Wert: sie schneidet Events weg.
+
+        Verbindet Befund C mit `filter_audit_events` – der Grenze, an der der
+        Wert tatsächlich wirkt (export_controller.py).
+        """
+        dialog = _dialog_at(qtbot, RANGE_FROZEN_NOW, tmp_path)
+        dialog._on_accept()
+        result = dialog.get_result()
+        assert result is not None
+
+        template = _event("sampling", 1)
+        inside = replace(template, timestamp=datetime(2026, 4, 1, 9, 0, tzinfo=UTC), id=1)
+        too_old = replace(template, timestamp=datetime(2025, 12, 1, 9, 0, tzinfo=UTC), id=2)
+        in_future = replace(template, timestamp=datetime(2026, 9, 1, 9, 0, tzinfo=UTC), id=3)
+
+        filtered = filter_audit_events(
+            [inside, too_old, in_future], set(), result.date_from, result.date_to
+        )
+        assert [e.id for e in filtered] == [1], (
+            "Die Vorbelegung muss Events außerhalb von [heute-3M, heute] wegschneiden."
+        )
+
+    def test_default_clock_is_the_real_wall_clock(self, qtbot: QtBot, tmp_path: Path) -> None:
+        """Ohne `now_provider` hängt der Dialog an der gemeinsamen Modul-Uhr.
+
+        Bewusst KEIN Vergleich gegen ein zweites `QDate.currentDate()` –
+        das wären wieder zwei unabhängige Uhren in einer Assertion (§4.5).
+        """
+        dialog = ExportAuditPdfDialog(
+            engagement=_engagement(),
+            event_types_available=["sampling"],
+            briefpapier_available=True,
+            default_output_dir=tmp_path,
+            offer_date_filter=True,
+        )
+        qtbot.addWidget(dialog)
+        before = datetime.now()
+        after = datetime.now()
+        assert before.date() <= dialog._now.date() <= after.date()
+        assert dialog._now.tzinfo is None

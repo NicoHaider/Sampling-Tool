@@ -6,6 +6,7 @@ Bug-Mail-Adresse). Keine Logik, nur Konstanten.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Final
 
@@ -163,6 +164,58 @@ def sanitize_for_path(name: str) -> str:
     ):
         cleaned = f"{cleaned}_"
     return cleaned or "engagement"
+
+
+# ---------------------------------------------------------------------------
+# Export-Dateinamen (Sprint 74 / Befund B)
+# ---------------------------------------------------------------------------
+
+# EIN Pattern für alle Export-Dateinamen. Bis Sprint 74 stand es zweimal im
+# Code – einmal in `ui/dialogs/_export_base.py` für die Vorschau, einmal in
+# `io/exporter.py` für den Writer. Zwei Wahrheiten über dasselbe Format, die
+# nur so lange übereinstimmten, wie der `type`-Token des Sample-Exports
+# zufällig „sampling" hieß.
+#
+# Die Datei-Endung ist BEWUSST nicht Teil des Patterns: sie ist Sache des
+# Aufrufers (derselbe Berichtstyp wird als .xlsx und als .html exportiert).
+EXPORT_FILENAME_PATTERN: Final[str] = "{name}_ID{id}_BDO_{type}_{date}"
+
+# Typ-Token und Endung des Sample-Exports. Sie stehen hier zusammen, weil
+# genau dieses Paar zwischen Dialog (`ui/dialogs/export_sample_dialog.py`)
+# und Writer (`io/exporter.py`) übereinstimmen MUSS – nur beim Sample-Export
+# baut der Writer den Namen selbst, statt den Pfad des Dialogs zu übernehmen.
+EXPORT_TYPE_SAMPLING: Final[str] = "sampling"
+EXPORT_SUFFIX_SAMPLING: Final[str] = ".xlsx"
+
+# Format des `{date}`-Tokens.
+#
+# 🔒 LOKALZEIT, kein UTC – und das ist Absicht, kein übersehener Bug: ein
+# Prüfer erwartet im Dateinamen den Tag, an dem ER exportiert hat. Eine
+# Umstellung auf UTC würde in Europe/Vienna (UTC+2) kurz nach Mitternacht den
+# VORTAG in den Dateinamen schreiben – eine Regression, die wie eine
+# Verbesserung aussieht. Festgenagelt in
+# tests/ui/test_export_target_widget.py::TestDateTokenSemantics.
+EXPORT_DATE_TOKEN_FORMAT: Final[str] = "%Y%m%d"
+
+
+def export_date_token(now: datetime) -> str:
+    """`{date}`-Token eines Export-Dateinamens aus einem KONKRETEN Zeitpunkt.
+
+    Nimmt den Zeitpunkt entgegen, statt ihn selbst zu lesen – damit Vorschau
+    und geschriebene Datei per Konstruktion denselben Tag tragen und nicht
+    nur dann, wenn zwischen beiden Ablesungen kein Tageswechsel liegt.
+    """
+    return now.strftime(EXPORT_DATE_TOKEN_FORMAT)
+
+
+def local_export_now() -> datetime:
+    """Default-Uhr aller Export-Dateinamen (naive Lokalzeit, siehe §2.4).
+
+    Gemeinsame Modulfunktion statt eines Modul-globalen Patch-Punkts: die
+    Konsumenten nehmen sie als Default eines injizierbaren `now_provider`
+    entgegen (Muster aus Sprint 73, `ui/widgets/audit_trail_view.py`).
+    """
+    return datetime.now()
 
 
 def sanitize_export_filename_token(token: str) -> str:
