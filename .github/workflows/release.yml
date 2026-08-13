@@ -244,7 +244,9 @@ jobs:
             exit 1
           fi
 
-          rm -rf "$ROUNDTRIP"
+          # Aufräumen ist Kosmetik, keine Prüfung – mit `set -e` darf es den Step
+          # nicht nachträglich rot machen.
+          rm -rf "$ROUNDTRIP" || true
 
       - name: Package Windows .exe folder
         if: matrix.os == 'windows-latest'
@@ -315,7 +317,14 @@ jobs:
             Stop-Process -Id $proc.Id -Force
           }
 
-          Remove-Item -Recurse -Force $roundtrip
+          # Aufraeumen ist Kosmetik, keine Pruefung, und darf den Step deshalb
+          # NICHT rot machen. Auf Windows haelt der gerade beendete Prozess seine
+          # Datei-Handles noch einen Moment – dieselbe Familie wie der
+          # vorbestehende [WinError 32]-Skip in test_version_manager.py. Ohne
+          # `-ErrorAction SilentlyContinue` scheiterte der Step hier, NACH allen
+          # bestandenen Pruefungen (in Lauf 31690816438 genau so passiert).
+          Start-Sleep -Seconds 2
+          Remove-Item -Recurse -Force $roundtrip -ErrorAction SilentlyContinue
 
       # Sprint 75 / Befund B.1 – der Weg in ein grünes, aber unvollständiges
       # Release: ohne `if-no-files-found` ist der Default `warn`. Matcht `path`
