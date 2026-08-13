@@ -23,6 +23,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
+from _script_io import force_utf8_stdout
 from openpyxl import Workbook
 
 from sampling_tool.audit.logger import AuditLogger
@@ -71,6 +72,8 @@ def make_source_xlsx(path: Path, rows: int = 200) -> None:
 
 
 def main(demo_dir: Path = DEFAULT_DEMO_DIR) -> None:
+    force_utf8_stdout()
+
     if demo_dir.exists():
         shutil.rmtree(demo_dir)
     demo_dir.mkdir(parents=True)
@@ -204,4 +207,9 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
+    # Zweiter Aufruf mit Absicht: anders als in den uebrigen Skripten laeuft
+    # `parse_args()` hier VOR `main()`, und `--help` geht nach STDOUT. Ein Guard
+    # erst in `main()` kaeme fuer die argparse-Ausgabe zu spaet. Der Aufruf ist
+    # idempotent.
+    force_utf8_stdout()
     main(parse_args().output)

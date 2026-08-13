@@ -12,6 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _script_io import force_utf8_stdout
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -104,6 +105,12 @@ def build_icns(png_paths: dict[int, Path]) -> Path | None:
 
 
 def main() -> int:
+    # Eigener Aufruf, obwohl build_app.py den Guard schon setzt: dieses Skript
+    # laeuft als Subprozess (build_app.py:44), also in einem FRISCHEN
+    # Interpreter, der Encoding und Fehlerbehandlung neu aus der Pipe ableitet.
+    # Ein Guard im Parent wird nicht vererbt.
+    force_utf8_stdout()
+
     png_paths: dict[int, Path] = {}
     for size in SIZES:
         path = render_png(size)
