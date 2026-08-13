@@ -133,58 +133,189 @@ jobs:
       - name: Build
         run: uv run python scripts/build_app.py
 
-      - name: Frozen-Bundle-Smoke (macOS)
+      # Sprint 76 – Reihenfolge ist jetzt Build → Packen → Entpacken → Prüfen →
+      # Upload. Vorher lief der Smoke gegen `dist/`, also gegen das UNVERPACKTE
+      # Build-Ergebnis; die Symlink-Zerstörung durch `zip -r` passierte danach und
+      # war für jede bestehende Prüfung strukturell unerreichbar. Geprüft wurde X,
+      # ausgeliefert wurde Y.
+      # Bewusst nur EIN Smoke-Lauf je Plattform, auf dem Entpackten – ein
+      # zusätzlicher Lauf gegen `dist/` wäre wieder eine grüne Prüfung auf etwas,
+      # das niemand bekommt.
+      - name: Package macOS .app
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          # `-y` ist hier lasttragend: OHNE das Flag FOLGT `zip -r` den Symlinks,
+          # die PyInstaller im Bundle anlegt (Versions/Current, Resources,
+          # Binär-Alias), statt sie zu speichern. Am echten Bundle gemessen:
+          # 107 Symlinks -> 0, entpackt 3,90× so groß (478 MB statt 122 MB),
+          # das Zip selbst 196 MB statt 53 MB. Ein macOS-.app ist keine
+          # Ordnerhierarchie, sondern eine Struktur MIT Symlinks.
+          zip -q -r -y "../${{ matrix.artifact_name }}" "Audit Sampling Tool.app"
+          cd ..
+          echo "Artefakt gepackt: $(du -h "${{ matrix.artifact_name }}" | cut -f1)"
+
+      - name: Round-Trip-Smoke aus dem Artefakt (macOS)
         if: matrix.os == 'macos-latest'
         env:
           QT_QPA_PLATFORM: offscreen
+        shell: bash
         run: |
-          set -e
-          BIN="dist/Audit Sampling Tool.app/Contents/MacOS/AuditSamplingTool"
+          set -euo pipefail
+          APP="Audit Sampling Tool.app"
+          SRC="dist/$APP"
+          ROUNDTRIP="_roundtrip"
+          rm -rf "$ROUNDTRIP"
+          mkdir -p "$ROUNDTRIP"
+          unzip -q "${{ matrix.artifact_name }}" -d "$ROUNDTRIP"
+          OUT="$ROUNDTRIP/$APP"
+
+          if [ ! -d "$OUT" ]; then
+            echo "::error::Im Artefakt liegt kein '$APP'." >&2
+            ls -la "$ROUNDTRIP" >&2 || true
+            exit 1
+          fi
+
+          # --- Struktur 1: Symlink-Erhalt ---------------------------------
+          # Der Erwartungswert wird GEMESSEN, nicht als Konstante hingeschrieben –
+          # eine feste Zahl bricht beim nächsten PyInstaller-Update aus dem
+          # falschen Grund.
+          src_links=$(find "$SRC" -type l | wc -l | tr -d ' ')
+          out_links=$(find "$OUT" -type l | wc -l | tr -d ' ')
+          echo "Symlinks: dist=$src_links  entpacktes Artefakt=$out_links"
+
+          # Anti-Vakuum-Guard: hätte `dist/` keine Symlinks, wäre der Vergleich
+          # 0 == 0 und die Prüfung wirkungslos grün. Ein PyInstaller-.app hat welche.
+          if [ "$src_links" -eq 0 ]; then
+            echo "::error::dist/$APP enthält 0 Symlinks – unerwartet für ein PyInstaller-.app. Die Symlink-Prüfung wäre damit wirkungslos." >&2
+            exit 1
+          fi
+          if [ "$out_links" -ne "$src_links" ]; then
+            echo "::error::Symlinks gehen beim Packen verloren: dist=$src_links, Artefakt=$out_links. Das ausgelieferte Bundle ist nicht das gebaute." >&2
+            exit 1
+          fi
+
+          # --- Struktur 2: kein Aufblähen ---------------------------------
+          # Grobe Grenze mit Absicht: es geht um den Faktor 3–4 aus
+          # dereferenzierten Symlinks, nicht um Prozente.
+          src_kb=$(du -sk "$SRC" | awk '{print $1}')
+          out_kb=$(du -sk "$OUT" | awk '{print $1}')
+          limit=$(( src_kb * 3 / 2 ))
+          echo "Größe (KB): dist=$src_kb  Artefakt=$out_kb  Grenze=$limit"
+          if [ "$out_kb" -gt "$limit" ]; then
+            echo "::error::Entpacktes Artefakt ist aufgebläht: ${out_kb} KB gegen ${src_kb} KB in dist/ (Grenze ${limit} KB) – Hinweis auf dereferenzierte Symlinks." >&2
+            exit 1
+          fi
+
+          # --- Struktur 3: Bundle-Layout ---------------------------------
+          BIN="$OUT/Contents/MacOS/AuditSamplingTool"
+          if [ ! -f "$BIN" ]; then
+            echo "::error::'$BIN' fehlt im entpackten Artefakt." >&2
+            exit 1
+          fi
+          if [ ! -x "$BIN" ]; then
+            echo "::error::'$BIN' ist nach dem Round-Trip nicht ausführbar – Rechte gingen beim Packen verloren." >&2
+            exit 1
+          fi
+
+          # --- Smoke auf dem Entpackten ----------------------------------
           "$BIN" &
           PID=$!
           sleep 10
           if kill -0 "$PID" 2>/dev/null; then
-            echo "Bundle-Smoke OK: Prozess läuft nach 10s (kein Startup-/Import-Crash)."
+            echo "Round-Trip-Smoke OK: der Prozess startet AUS DEM ENTPACKTEN ARTEFAKT und läuft nach 10 s noch."
+            echo "  Belegt ist damit: kein Startup-/Import-Crash aus dem ausgelieferten Bundle."
+            echo "  NICHT belegt: dass MainWindow konstruiert wird (der Prozess steht im modalen"
+            echo "  FirstRunWizard), dass das .app auf einem echten Desktop startet, dass Gatekeeper"
+            echo "  es zulässt oder dass es bedienbar ist."
             kill "$PID"
             wait "$PID" 2>/dev/null || true
           else
+            # `set +e` um das `wait`: mit `set -e` bricht die Shell hier ab, bevor
+            # `STATUS` gelesen und die erklärende Meldung gedruckt wird. Genau dieser
+            # tote Diagnose-Zweig war Punkt 9 der Sprint-75-Restliste.
+            set +e
             wait "$PID"
             STATUS=$?
-            echo "Bundle-Smoke FAILED: Prozess ist vorzeitig beendet (exit $STATUS)."
+            set -e
+            echo "::error::Round-Trip-Smoke FAILED: der Prozess aus dem entpackten Artefakt ist vorzeitig beendet (exit $STATUS)." >&2
             exit 1
           fi
-        shell: bash
 
-      - name: Frozen-Bundle-Smoke (Windows)
-        if: matrix.os == 'windows-latest'
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: |
-          $exe = "dist\AuditSamplingTool\AuditSamplingTool.exe"
-          $proc = Start-Process -FilePath $exe -PassThru
-          Start-Sleep -Seconds 10
-          if ($proc.HasExited) {
-            Write-Host "Bundle-Smoke FAILED: Prozess ist vorzeitig beendet (exit $($proc.ExitCode))."
-            exit 1
-          } else {
-            Write-Host "Bundle-Smoke OK: Prozess laeuft nach 10s (kein Startup-/Import-Crash)."
-            Stop-Process -Id $proc.Id -Force
-          }
-        shell: pwsh
-
-      - name: Package macOS .app
-        if: matrix.os == 'macos-latest'
-        run: |
-          cd dist
-          zip -r "../${{ matrix.artifact_name }}" "Audit Sampling Tool.app"
-        shell: bash
+          rm -rf "$ROUNDTRIP"
 
       - name: Package Windows .exe folder
         if: matrix.os == 'windows-latest'
+        shell: bash
         run: |
+          set -euo pipefail
           cd dist
           7z a -tzip "../${{ matrix.artifact_name }}" AuditSamplingTool
-        shell: bash
+          cd ..
+          echo "Artefakt gepackt: $(du -h "${{ matrix.artifact_name }}" | cut -f1)"
+
+      - name: Round-Trip-Smoke aus dem Artefakt (Windows)
+        if: matrix.os == 'windows-latest'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $src = "dist\AuditSamplingTool"
+          $roundtrip = "_roundtrip"
+          if (Test-Path $roundtrip) { Remove-Item -Recurse -Force $roundtrip }
+          New-Item -ItemType Directory -Path $roundtrip | Out-Null
+          Expand-Archive -Path "${{ matrix.artifact_name }}" -DestinationPath $roundtrip
+          $out = Join-Path $roundtrip "AuditSamplingTool"
+
+          if (-not (Test-Path $out)) {
+            Write-Host "::error::Im Artefakt liegt kein 'AuditSamplingTool'-Ordner."
+            Get-ChildItem $roundtrip | Out-String | Write-Host
+            exit 1
+          }
+
+          # Reparse-Points/Symlinks: auf Windows legt PyInstaller normalerweise
+          # keine an, aber das wird GEMESSEN und nicht angenommen (§3.3). Sind es
+          # 0 zu 0, passiert die Pruefung trivial und dokumentiert die Tatsache.
+          $srcLinks = @(Get-ChildItem -Recurse -Force -Path $src | Where-Object { $_.LinkType }).Count
+          $outLinks = @(Get-ChildItem -Recurse -Force -Path $out | Where-Object { $_.LinkType }).Count
+          Write-Host "Reparse-Points/Symlinks: dist=$srcLinks  entpacktes Artefakt=$outLinks"
+          if ($outLinks -ne $srcLinks) {
+            Write-Host "::error::Reparse-Points gehen beim Packen verloren: dist=$srcLinks, Artefakt=$outLinks."
+            exit 1
+          }
+
+          $srcKb = [int](((Get-ChildItem -Recurse -Force -File $src | Measure-Object -Sum Length).Sum) / 1KB)
+          $outKb = [int](((Get-ChildItem -Recurse -Force -File $out | Measure-Object -Sum Length).Sum) / 1KB)
+          $limit = [int]($srcKb * 1.5)
+          Write-Host "Groesse (KB): dist=$srcKb  Artefakt=$outKb  Grenze=$limit"
+          if ($outKb -gt $limit) {
+            Write-Host "::error::Entpacktes Artefakt ist aufgeblaeht: $outKb KB gegen $srcKb KB in dist/ (Grenze $limit KB)."
+            exit 1
+          }
+
+          $exe = Join-Path $out "AuditSamplingTool.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Host "::error::'$exe' fehlt im entpackten Artefakt."
+            exit 1
+          }
+
+          $proc = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 10
+          if ($proc.HasExited) {
+            Write-Host "::error::Round-Trip-Smoke FAILED: der Prozess aus dem entpackten Artefakt ist vorzeitig beendet (exit $($proc.ExitCode))."
+            exit 1
+          } else {
+            Write-Host "Round-Trip-Smoke OK: der Prozess startet AUS DEM ENTPACKTEN ARTEFAKT und laeuft nach 10 s noch."
+            Write-Host "  Belegt ist damit: kein Startup-/Import-Crash aus dem ausgelieferten Bundle."
+            Write-Host "  NICHT belegt: dass MainWindow konstruiert wird (der Prozess steht im modalen"
+            Write-Host "  FirstRunWizard), dass die .exe auf einem echten Desktop startet oder bedienbar ist."
+            Stop-Process -Id $proc.Id -Force
+          }
+
+          Remove-Item -Recurse -Force $roundtrip
 
       # Sprint 75 / Befund B.1 – der Weg in ein grünes, aber unvollständiges
       # Release: ohne `if-no-files-found` ist der Default `warn`. Matcht `path`
