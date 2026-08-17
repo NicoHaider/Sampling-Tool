@@ -48,6 +48,10 @@ jobs:
         if: '!cancelled()'
         env:
           QT_QPA_PLATFORM: offscreen
+          # Sprint 77 / Befund #8 – schaltet den Testmengen-Wächter scharf (wie
+          # in ci.yml). Diese Zeile ist die EINZIGE Änderung an release.yml in
+          # Sprint 77: sie gehört zum Wächter, nicht zum Prüfgegenstand.
+          SAMPLING_TOOL_ENFORCE_TEST_FLOOR: "1"
         run: uv run pytest -q
 
       - name: Run ruff check

@@ -55,6 +55,12 @@ jobs:
         if: '!cancelled()'
         env:
           QT_QPA_PLATFORM: offscreen
+          # Sprint 77 / Befund #8 – schaltet den Testmengen-Wächter in
+          # tests/conftest.py scharf. Ohne die Variable ist der Hook bewusst ein
+          # No-Op, sonst schlüge jeder lokale Teil-Lauf (`pytest
+          # tests/ui/test_worker.py`) fehl und der Wächter würde zur Plage statt
+          # zum Netz. Er greift deshalb nur dort, wo die volle Suite läuft.
+          SAMPLING_TOOL_ENFORCE_TEST_FLOOR: "1"
         run: uv run pytest --cov=sampling_tool --cov-report=term
 
       - name: Run ruff check
@@ -102,3 +108,31 @@ jobs:
 
       - name: pip-audit (dependency vulnerability scan)
         run: uv run pip-audit
+
+  # Sprint 77 / Befund #4 – `ci.yml` läuft auf `pull_request`, `release.yml` nur
+  # auf Tags. Eine PR, die `release.yml` ändert, bekam bis hier drei grüne
+  # Checks, von denen KEINER eine Zeile der geänderten Datei ausführt. Die fünf
+  # offenen Dependabot-PRs sind genau dieser Fall.
+  #
+  # actionlint schließt die Hälfte davon: Syntax, Ausdrücke, Job-/Step-Struktur
+  # und – via shellcheck – die `run:`-Körper beider Dateien, auf JEDER PR.
+  # Die andere Hälfte, das ENTFERNEN einer Zusage, findet ein Linter prinzipiell
+  # nicht; dafür gibt es `tests/unit/test_workflow_policy.py`. Beide ergänzen
+  # sich, keiner ersetzt den anderen.
+  #
+  # Eigener Job nach dem Muster von `audit` (Sprint 73): als Step im `test`-Job
+  # verschluckte ein roter Lint den Testlauf oder umgekehrt.
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: actionlint (Workflow-Linter, inkl. shellcheck)
+        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
+        with:
+          # Auch die Linter-Version ist gepinnt, nicht nur die Action (Default
+          # wäre `latest`). Sonst könnte ein neues actionlint-Release die CI auf
+          # unverändertem Code rot machen – dieselbe Live-Quellen-Falle, die
+          # Sprint 73 beim Advisory-Stand in einen eigenen Job ausgelagert hat.
+          # 1.7.12 ist die Version, gegen die die Workflows lokal geprüft wurden.
+          version: "1.7.12"

@@ -80,6 +80,13 @@ dev = [
     # (CI + Release-Test-Gate), ersetzt das vorherige Ad-hoc-`pip install
     # pip-audit` in ci.yml.
     "pip-audit>=2.7",
+    # Sprint 77: `tests/_workflow_policy.py` prüft die Zusagen in
+    # ci.yml/release.yml über die GELADENE Struktur, nicht über Textzeilen –
+    # ein Regex-Gate auf dem Rohtext bräche bei jeder Umformatierung aus dem
+    # falschen Grund. types-PyYAML ist Pflicht, nicht Kosmetik: `mypy src
+    # tests` läuft strict, ein untypisierter `yaml`-Import bricht den Lauf.
+    "pyyaml>=6.0",
+    "types-PyYAML>=6.0",
 ]
 build = [
     "pyinstaller>=6.10",
@@ -216,3 +223,12 @@ exclude_lines = [
 ]
 show_missing = true
 skip_covered = false
+# Sprint 77 / Befund #8 – Absturzsicherung, keine Coverage-Jagd. Fällt eine
+# Testdatei still aus der Sammlung (Import-Fehler, Tippfehler im Dateinamen,
+# `collect_ignore`), bricht die Abdeckung ein, ohne dass ein einziger Test rot
+# wird. Gemessener Ist-Wert am 2026-08-17 (Sprint 77, voller Lauf): 92 %.
+# Der Wert steht bewusst mit Abstand darunter, damit normale Schwankung ihn
+# nicht auslöst. Bewusst hier und NICHT in `addopts` – eine Stelle, nicht zwei.
+# Nebenwirkung, die so gewollt ist: Teil-Läufe (`pytest tests/unit/test_rng.py`)
+# unterschreiten den Wert natürlich. Dafür gibt es `pytest --no-cov`.
+fail_under = 85
