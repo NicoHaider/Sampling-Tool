@@ -168,11 +168,13 @@ class TestTestFloorConstant:
     """
 
     def test_floor_keeps_a_meaningful_distance(self) -> None:
-        """Größenordnung: der gemessene Stand minus rund 2 %.
+        """Größenordnung: der zuletzt gemessene Stand minus einige Prozent.
 
         Zu nah dran, und jeder gelöschte Test wird zum Fehlalarm; zu weit weg,
-        und ein echter Sammel-Ausfall bleibt unbemerkt.
+        und ein echter Sammel-Ausfall bleibt unbemerkt. Die Zahl wird beim
+        bewussten Anheben des Floors mitgezogen – sie ist die Messung, gegen
+        die der Abstand gilt (Sprint 78: 1765 gesammelt, Floor 1700).
         """
-        measured_at_sprint_77 = 1642
-        assert measured_at_sprint_77 > TEST_FLOOR
-        assert int(measured_at_sprint_77 * 0.95) <= TEST_FLOOR
+        measured_at_last_sprint = 1765
+        assert measured_at_last_sprint > TEST_FLOOR
+        assert int(measured_at_last_sprint * 0.95) <= TEST_FLOOR
