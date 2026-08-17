@@ -34,6 +34,39 @@ from sampling_tool.persistence.repositories import (
     EngagementRepo,
     SampleRepo,
 )
+from tests._test_floor import ENFORCE_TEST_FLOOR_ENV, TEST_FLOOR, check_test_floor
+
+# ---------------------------------------------------------------------------
+# Testmengen-Wächter (Sprint 77 / Befund #8)
+# ---------------------------------------------------------------------------
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Schlägt an, wenn die volle Suite weniger Tests sammelt als der Floor.
+
+    Läuft NUR bei gesetzter `SAMPLING_TOOL_ENFORCE_TEST_FLOOR=1`, also
+    ausschließlich in den beiden Workflows – lokal bleibt der Hook ein No-Op,
+    damit Teil-Läufe nicht fehlschlagen.
+
+    `session.testscollected` ist bewusst die geprüfte Zahl: pytest setzt sie
+    NACH `pytest_collection_modifyitems` (`_pytest/main.py`), sie berücksichtigt
+    also auch Abwahl per `-k`/`-m`/`--deselect`.
+    """
+    if os.environ.get(ENFORCE_TEST_FLOOR_ENV) != "1":
+        return
+
+    problem = check_test_floor(session.testscollected, TEST_FLOOR)
+    if problem is None:
+        return
+
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is not None:
+        reporter.write_line("")
+        reporter.write_line(problem, red=True, bold=True)
+    # Einen bereits gesetzten, schwerwiegenderen Status (Abbruch, interner
+    # Fehler, Usage-Error) nicht überschreiben – nur den grünen Lauf kippen.
+    if session.exitstatus == pytest.ExitCode.OK:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 @pytest.fixture
