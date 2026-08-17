@@ -17,10 +17,30 @@ logger = logging.getLogger(__name__)
 
 def main() -> int:
     """Startet die Qt-Anwendung (MainWindow + Controller)."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QGuiApplication
     from PyQt6.QtWidgets import QApplication
 
     from sampling_tool.ui.controllers.main_controller import MainController
     from sampling_tool.ui.main_window import MainWindow
+
+    # Sprint 78 / B2 – schreibt den HEUTIGEN Qt-6-Default fest, ändert aber
+    # bewusst NICHTS am Erscheinungsbild. Gemessen mit Qt 6.11.0:
+    # `QGuiApplication.highDpiScaleFactorRoundingPolicy()` liefert ohne diese
+    # Zeile bereits `PassThrough`.
+    #
+    # `PassThrough` ist auch der gewünschte Wert: eine Windows-Skalierung von
+    # 125 % bleibt damit 1.25. `Round` würde daraus 1.0 machen – Fenster und
+    # Schriften auf jedem Rechner der Bestandsnutzer schlagartig kleiner. Die
+    # Zeile schützt genau davor, falls eine künftige Qt-Version den Default
+    # ändert.
+    #
+    # Die Reihenfolge ist lasttragend: NACH `QApplication(...)` gesetzt bleibt
+    # die Policy wirkungslos. Festgenagelt in
+    # `tests/ui/test_main_entry.py::TestHighDpiRoundingPolicy`.
+    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)

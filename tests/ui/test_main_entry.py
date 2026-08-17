@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import replace
 from pathlib import Path
 
@@ -55,3 +56,60 @@ class TestRunFirstRunWizard:
         assert out.first_run_completed is True
         assert out.engagements_dir == initial.engagements_dir
         assert out.default_auditor_name == "prev-user"
+
+
+class TestHighDpiRoundingPolicy:
+    """Die DPI-Rundungspolitik und – vor allem – ihre Reihenfolge (Sprint 78 / §2.6).
+
+    Gemessen mit Qt 6.11.0: ohne explizite Zeile liefert
+    `QGuiApplication.highDpiScaleFactorRoundingPolicy()` bereits `PassThrough`.
+    Die Zeile ändert also NICHTS am Erscheinungsbild – sie schreibt den heutigen
+    Default fest, damit eine künftige Qt-Version ihn nicht unbemerkt kippt.
+    `Round` würde aus einer Windows-Skalierung von 125 % ein 100 % machen und
+    Fenster wie Schriften auf jedem Bestandsrechner schrumpfen lassen.
+    """
+
+    def _main_source_lines(self) -> list[str]:
+        import sampling_tool.__main__ as entry
+
+        return inspect.getsource(entry.main).splitlines()
+
+    def _index_of(self, needle: str) -> int:
+        for index, line in enumerate(self._main_source_lines()):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if needle in stripped:
+                return index
+        raise AssertionError(f"{needle!r} kommt in main() nicht vor")
+
+    def test_policy_is_set_before_the_qapplication_is_created(self) -> None:
+        """Nach `QApplication(...)` gesetzt bleibt die Policy wirkungslos.
+
+        Deshalb ist die Reihenfolge festgenagelt: die Zeile darf nicht unter die
+        `QApplication`-Zeile rutschen.
+        """
+        policy_line = self._index_of("setHighDpiScaleFactorRoundingPolicy")
+        app_line = self._index_of("QApplication(sys.argv)")
+        assert policy_line < app_line, (
+            f"Policy-Zeile steht in Zeile {policy_line}, QApplication in {app_line} – "
+            "die Policy wirkt so nicht mehr."
+        )
+
+    def test_policy_is_pass_through(self) -> None:
+        """PassThrough ist der gemessene Qt-6.11-Default und der gewünschte Wert:
+        125 % Windows-Skalierung bleiben 1.25 statt auf 1.0 gerundet zu werden."""
+        source = "\n".join(self._main_source_lines())
+        assert "Qt.HighDpiScaleFactorRoundingPolicy.PassThrough" in source
+
+    def test_documented_default_still_matches_this_qt_version(self) -> None:
+        """Positiv-Kontrolle für die Begründung: sollte ein künftiges Qt den
+        Default ändern, wird dieser Test rot – und die Behauptung „ändert nichts"
+        muss dann neu geprüft werden, statt still falsch zu werden."""
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QGuiApplication
+
+        assert (
+            QGuiApplication.highDpiScaleFactorRoundingPolicy()
+            == Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )

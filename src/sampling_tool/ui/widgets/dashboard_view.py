@@ -17,7 +17,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Final
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import (
     QFrame,
@@ -35,12 +35,17 @@ from PyQt6.QtWidgets import (
 from sampling_tool.core.formatting import ensure_utc
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.ui._scaling import scaled_px
+from sampling_tool.ui._tile_layout import tile_columns, tile_rows
 from sampling_tool.ui.widgets.chart_renderer import (
     render_bar_chart,
     render_line_chart,
 )
 
-_TILE_COLUMNS: Final[int] = 3
+# Obergrenze, nicht mehr die feste Spaltenzahl (Sprint 78 / B2): bis Sprint 77
+# stand hier `_TILE_COLUMNS = 3` starr, und sechs Kacheln in drei Spalten
+# brauchen mehr logische Breite, als ein 13-Zoll-Gerät bei 125 % Windows-
+# Skalierung hat – der Nutzer bekam horizontales Scrollen statt Umbruch.
+_MAX_TILE_COLUMNS: Final[int] = 3
 _CHART_WIDTH: Final[int] = 360
 _CHART_HEIGHT: Final[int] = 160
 _RECENT_SAMPLE_LIMIT: Final[int] = 5
@@ -149,11 +154,11 @@ class DashboardView(QWidget):
 
         self._stack = QStackedWidget()
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._content = QWidget()
-        scroll.setWidget(self._content)
+        self._scroll.setWidget(self._content)
 
         self._grid = QGridLayout(self._content)
         self._grid.setContentsMargins(0, 0, 0, 0)
@@ -171,25 +176,42 @@ class DashboardView(QWidget):
             "Sampling-Historie (30 Tage)", ui_scale_factor=self._factor
         )
 
-        for index, tile in enumerate(
-            (
-                self._tile_datasets,
-                self._tile_samples,
-                self._tile_events,
-                self._tile_last_activity,
-                self._tile_recent_samples,
-                self._tile_history,
-            )
-        ):
-            row, col = divmod(index, _TILE_COLUMNS)
-            self._grid.addWidget(tile, row, col)
-        self._grid.setRowStretch(2, 1)
+        self._tiles: tuple[DashboardTile, ...] = (
+            self._tile_datasets,
+            self._tile_samples,
+            self._tile_events,
+            self._tile_last_activity,
+            self._tile_recent_samples,
+            self._tile_history,
+        )
+        # `_columns = 0` heißt "noch nie gelegt" – `_place_tiles` unten legt zum
+        # ersten Mal, danach wird nur noch bei echter Änderung neu gelegt (§2.8).
+        self._columns = 0
+        self._stretch_row: int | None = None
+        self._place_tiles(_MAX_TILE_COLUMNS)
 
-        self._stack.addWidget(scroll)
+        # Der Viewport meldet seine Größenänderungen selbst – siehe eventFilter.
+        viewport = self._scroll.viewport()
+        if viewport is not None:
+            viewport.installEventFilter(self)
+
+        self._stack.addWidget(self._scroll)
 
         self._empty_label = QLabel(
             "Projekt leer – starte mit einem Datei-Import, um Statistiken zu sehen."
         )
+        # Ohne Wortumbruch ist die Mindestbreite eines QLabel die VOLLE
+        # Textbreite. Dieses Label liegt im selben QStackedWidget wie das
+        # Kachelgitter, und ein QStackedWidget nimmt das Maximum über alle
+        # Seiten – die Textbreite wurde damit zur Mindestbreite des ganzen
+        # Dashboards und verhinderte genau das Schmalerwerden, um das es in
+        # diesem Sprint geht. Der Wert ist schrift- und plattformabhängig
+        # (offscreen/macOS 405 px, Windows deutlich mehr), weshalb der
+        # Kachel-Umbruch auf Windows in eine andere Spaltenzahl lief als auf
+        # macOS. Mit Wortumbruch sinkt die Mindestbreite auf das längste Wort
+        # (62 px gemessen); bei normaler Fensterbreite bleibt der Text
+        # einzeilig und das Erscheinungsbild unverändert.
+        self._empty_label.setWordWrap(True)
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setStyleSheet("color: #7F7F7F; font-style: italic; padding: 24px;")
         self._stack.addWidget(self._empty_label)
@@ -198,6 +220,106 @@ class DashboardView(QWidget):
 
         self._stack.setCurrentWidget(self._empty_label)
         self._render_default_body()
+
+    # ---- Kachel-Umbruch (Sprint 78 / B2) --------------------------------
+
+    def eventFilter(self, obj: QObject | None, event: QEvent | None) -> bool:  # noqa: N802
+        """Reagiert auf die Größenänderung des Scroll-Viewports.
+
+        Bewusst NICHT auf `resizeEvent` dieses Widgets: Qt legt versteckte
+        Widgets nicht aus, der Viewport hinkt der View-Breite dann hinterher
+        (gemessen: View 1600 px, Viewport noch 638 px). Ein Umbruch auf Basis
+        dieser veralteten Zahl legt die Kacheln zweimal – erst falsch, dann
+        korrigiert – und das ist genau das Flackern, das §2.8 verbietet.
+        Der Viewport ist die Größe, um die es geht; er meldet sich selbst, auch
+        wenn die Änderung von `show()` oder vom Splitter kommt.
+        """
+        if (
+            event is not None
+            and event.type() == QEvent.Type.Resize
+            and obj is self._scroll.viewport()
+        ):
+            self._apply_responsive_columns()
+        return super().eventFilter(obj, event)
+
+    def _apply_responsive_columns(self) -> None:
+        """Legt die Kacheln neu – aber nur, wenn sich die Spaltenzahl ändert.
+
+        §2.8: ein `resizeEvent`, das bei jedem Pixel alle Kacheln aus dem Grid
+        nimmt und neu einhängt, flackert sichtbar und kostet unnötig Zeit.
+        """
+        columns = self._responsive_columns()
+        if columns == self._columns:
+            return
+        self._place_tiles(columns)
+
+    def _responsive_columns(self) -> int:
+        viewport = self._scroll.viewport()
+        available = viewport.width() if viewport is not None else self.width()
+        left, _, right, _ = self._grid.getContentsMargins()
+        return tile_columns(
+            available_width=available,
+            tile_min_width=self._tile_min_width(),
+            spacing=self._grid.spacing(),
+            margins=left + right,
+            max_columns=_MAX_TILE_COLUMNS,
+        )
+
+    def _tile_min_width(self) -> int:
+        """Breite, die die breiteste Kachel wirklich braucht – gemessen, nicht geschätzt.
+
+        §2.10 verlangt, dass mit derselben Breite gerechnet wird, mit der die
+        Kachel tatsächlich gebaut wird. Der Wert wird deshalb bei den Kacheln
+        selbst erfragt statt aus `_CHART_WIDTH` abgeleitet: so stecken Rahmen,
+        Padding und – über die skalierten QSS-Schriftgrößen – die UI-Größe
+        automatisch mit drin, ohne einen zweiten Skalierungsweg einzuführen.
+
+        Bewusst das MAXIMUM über alle Kacheln: welche Kachel in welcher Spalte
+        landet, hängt von der Spaltenzahl ab, die hier gerade erst berechnet
+        wird. Nur ein zuordnungsunabhängiger Wert kann garantieren, dass keine
+        Kachel in ihrer Spalte überläuft.
+        """
+        widths = [tile.minimumSizeHint().width() for tile in self._tiles]
+        return max([*widths, 1])
+
+    def _place_tiles(self, columns: int) -> None:
+        """Hängt alle Kacheln in `columns` Spalten neu ins Grid."""
+        for tile in self._tiles:
+            self._grid.removeWidget(tile)
+        for index, tile in enumerate(self._tiles):
+            row, col = divmod(index, columns)
+            self._grid.addWidget(tile, row, col)
+
+        # §2.7: der Stretch der VORHER gedehnten Zeile muss zurückgenommen
+        # werden – sonst sammeln sich bei jedem Umbruch Stretch-Werte auf alten
+        # Zeilen an und das Gitter dehnt an mehreren Stellen gleichzeitig.
+        if self._stretch_row is not None:
+            self._grid.setRowStretch(self._stretch_row, 0)
+        last_row = tile_rows(len(self._tiles), columns) - 1
+        self._grid.setRowStretch(last_row, 1)
+        self._stretch_row = last_row
+
+        # Spalten jenseits der aktuellen Zahl dürfen keinen Platz mehr
+        # beanspruchen. 0 ist auch der Qt-Default – die Zeile ist damit für den
+        # 3-Spalten-Fall wirkungslos und hält die Sicherheitslinie aus §2.2.
+        for col in range(columns, _MAX_TILE_COLUMNS):
+            self._grid.setColumnStretch(col, 0)
+
+        self._columns = columns
+
+    def _chart_ratio(self) -> float:
+        """Device-Pixel-Ratio des Bildschirms, auf dem dieses Widget liegt.
+
+        Die einzige Stelle im Chart-Pfad, die einen echten Bildschirmwert liest.
+        Unter `QT_QPA_PLATFORM=offscreen` ist er immer 1.0 – genau deshalb ist
+        die Rechenlogik darüber (`io/charts.py`) parametrisiert und fragt nicht
+        selbst ab (§2.1).
+        """
+        return float(self.devicePixelRatioF())
+
+    def tile_columns_count(self) -> int:
+        """Aktuelle Spaltenzahl des Kachelgitters (Tests)."""
+        return self._columns
 
     # ---- Public API -----------------------------------------------------
 
@@ -222,6 +344,9 @@ class DashboardView(QWidget):
         self._render_last_activity_tile(audit_events)
         self._render_recent_samples_tile(samples)
         self._render_history_tile(samples)
+        # Der Kachel-Inhalt bestimmt die Mindestbreite – nach dem Füllen kann
+        # eine andere Spaltenzahl richtig sein als davor.
+        self._apply_responsive_columns()
 
     # ---- Renderer pro Kachel --------------------------------------------
 
@@ -243,7 +368,12 @@ class DashboardView(QWidget):
             labels = list(method_counts.keys())
             values = [float(method_counts[k]) for k in labels]
             pixmap = render_bar_chart(
-                labels, values, title="Methoden", width=_CHART_WIDTH, height=_CHART_HEIGHT
+                labels,
+                values,
+                title="Methoden",
+                width=_CHART_WIDTH,
+                height=_CHART_HEIGHT,
+                device_pixel_ratio=self._chart_ratio(),
             )
             chart_label = QLabel()
             chart_label.setPixmap(pixmap)
@@ -266,7 +396,12 @@ class DashboardView(QWidget):
             labels = [k for k, _ in top]
             values = [float(v) for _, v in top]
             pixmap = render_bar_chart(
-                labels, values, title="Top-Eventtypen", width=_CHART_WIDTH, height=_CHART_HEIGHT
+                labels,
+                values,
+                title="Top-Eventtypen",
+                width=_CHART_WIDTH,
+                height=_CHART_HEIGHT,
+                device_pixel_ratio=self._chart_ratio(),
             )
             chart_label = QLabel()
             chart_label.setPixmap(pixmap)
@@ -322,7 +457,12 @@ class DashboardView(QWidget):
             return
         labels, values = _samples_per_day(samples, _HISTORY_DAYS)
         pixmap = render_line_chart(
-            labels, values, title="Stichproben pro Tag", width=_CHART_WIDTH, height=_CHART_HEIGHT
+            labels,
+            values,
+            title="Stichproben pro Tag",
+            width=_CHART_WIDTH,
+            height=_CHART_HEIGHT,
+            device_pixel_ratio=self._chart_ratio(),
         )
         chart = QLabel()
         chart.setPixmap(pixmap)
@@ -331,14 +471,7 @@ class DashboardView(QWidget):
 
     def _render_default_body(self) -> None:
         """Leerer Zustand der Kacheln (vor dem ersten `set_data`)."""
-        for tile in (
-            self._tile_datasets,
-            self._tile_samples,
-            self._tile_events,
-            self._tile_last_activity,
-            self._tile_recent_samples,
-            self._tile_history,
-        ):
+        for tile in self._tiles:
             tile.set_body_widget(_muted_label("—"))
 
     # ---- Accessors (Tests) ----------------------------------------------
@@ -361,14 +494,7 @@ class DashboardView(QWidget):
     def set_ui_scale(self, factor: float) -> None:
         """Wendet einen neuen UI-Skalierungsfaktor sofort an (Sprint 68 / Teil B1)."""
         self._factor = factor
-        for tile in (
-            self._tile_datasets,
-            self._tile_samples,
-            self._tile_events,
-            self._tile_last_activity,
-            self._tile_recent_samples,
-            self._tile_history,
-        ):
+        for tile in self._tiles:
             tile.set_ui_scale(factor)
         if self._last_data is not None:
             self.set_data(*self._last_data)

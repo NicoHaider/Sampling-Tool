@@ -28,9 +28,13 @@ def render_bar_chart(
     title: str = "",
     width: int = _DEFAULT_WIDTH,
     height: int = _DEFAULT_HEIGHT,
+    device_pixel_ratio: float = 1.0,
 ) -> QPixmap:
     """Rendert ein Balkendiagramm als `QPixmap`."""
-    return _bytes_to_pixmap(render_bar_chart_bytes(labels, values, title, width, height))
+    return _bytes_to_pixmap(
+        render_bar_chart_bytes(labels, values, title, width, height, device_pixel_ratio),
+        device_pixel_ratio,
+    )
 
 
 def render_line_chart(
@@ -39,9 +43,13 @@ def render_line_chart(
     title: str = "",
     width: int = _DEFAULT_WIDTH,
     height: int = _DEFAULT_HEIGHT,
+    device_pixel_ratio: float = 1.0,
 ) -> QPixmap:
     """Rendert ein Liniendiagramm als `QPixmap`."""
-    return _bytes_to_pixmap(render_line_chart_bytes(labels, values, title, width, height))
+    return _bytes_to_pixmap(
+        render_line_chart_bytes(labels, values, title, width, height, device_pixel_ratio),
+        device_pixel_ratio,
+    )
 
 
 def render_pie_chart(
@@ -50,11 +58,27 @@ def render_pie_chart(
     title: str = "",
     width: int = _DEFAULT_WIDTH,
     height: int = _DEFAULT_HEIGHT,
+    device_pixel_ratio: float = 1.0,
 ) -> QPixmap:
     """Rendert ein Tortendiagramm als `QPixmap`."""
-    return _bytes_to_pixmap(render_pie_chart_bytes(labels, values, title, width, height))
+    return _bytes_to_pixmap(
+        render_pie_chart_bytes(labels, values, title, width, height, device_pixel_ratio),
+        device_pixel_ratio,
+    )
 
 
-def _bytes_to_pixmap(raw: bytes) -> QPixmap:
+def _bytes_to_pixmap(raw: bytes, device_pixel_ratio: float = 1.0) -> QPixmap:
+    """PNG-Bytes → `QPixmap` mit gesetztem Device-Pixel-Ratio.
+
+    Beides gehört zusammen (Sprint 78 / §2.5): ein Bild mit doppelten
+    Pixelmaßen OHNE gesetztes Ratio erscheint schlicht doppelt so groß – der
+    Schärfe-Fix wäre dann eine Layout-Regression. Erst das Ratio sagt Qt, dass
+    die zusätzlichen Pixel Auflösung sind und keine Größe.
+
+    Bei `1.0` ist `setDevicePixelRatio` ein No-Op und das Ergebnis unverändert
+    zum Stand vor Sprint 78.
+    """
     image = QImage.fromData(raw, "PNG")
-    return QPixmap.fromImage(image)
+    pixmap = QPixmap.fromImage(image)
+    pixmap.setDevicePixelRatio(device_pixel_ratio)
+    return pixmap

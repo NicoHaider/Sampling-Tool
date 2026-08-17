@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from PyQt6.QtWidgets import QApplication, QLabel
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import (
@@ -15,6 +16,7 @@ from sampling_tool.core.models import (
     SampleResult,
     SamplingMethod,
 )
+from sampling_tool.ui._tile_layout import tile_rows
 from sampling_tool.ui.widgets.dashboard_view import DashboardView, _ClickableSampleLabel
 
 pytestmark = pytest.mark.ui
@@ -62,6 +64,217 @@ def view(qtbot: QtBot) -> DashboardView:
     v = DashboardView()
     qtbot.addWidget(v)
     return v
+
+
+def _settle(view: DashboardView, width: int, qtbot: QtBot) -> None:
+    """Fenster auf `width` bringen und die Layout-Runde abwarten.
+
+    Das Widget MUSS sichtbar sein: Qt legt versteckte Widgets nicht aus, der
+    Scroll-Viewport hinkt dann der Fensterbreite hinterher (gemessen: Fenster
+    1600 px, Viewport noch 638 px) und der Umbruch rechnete mit einer Zahl, die
+    nichts mit dem Bildschirm zu tun hat.
+    """
+    view.resize(width, 800)
+    qtbot.waitUntil(lambda: view.isVisible(), timeout=2000)
+    QApplication.processEvents()
+
+
+def _occupied_rows(view: DashboardView) -> set[int]:
+    grid = view._grid
+    rows = set()
+    for index in range(grid.count()):
+        item = grid.itemAt(index)
+        if item is not None and item.widget() is not None:
+            rows.add(grid.getItemPosition(index)[0])
+    return rows
+
+
+def _stretched_rows(view: DashboardView) -> list[int]:
+    grid = view._grid
+    return [row for row in range(grid.rowCount()) if grid.rowStretch(row) != 0]
+
+
+@pytest.fixture
+def wide_view(qtbot: QtBot) -> DashboardView:
+    """Sichtbares Dashboard mit Daten – Ausgangslage für die Umbruch-Tests."""
+    v = DashboardView()
+    qtbot.addWidget(v)
+    v.resize(1600, 800)
+    v.show()
+    qtbot.waitExposed(v)
+    v.set_data(_engagement(), [_dataset()], [_sample(1)], [_event(1)])
+    QApplication.processEvents()
+    return v
+
+
+class TestTileWrapping:
+    """Kachel-Umbruch statt horizontalem Scrollen (Sprint 78 / B2)."""
+
+    def _width_for(self, view: DashboardView, columns: int) -> int:
+        """Fensterbreite, bei der `columns` Spalten sicher passen.
+
+        Aus der GEMESSENEN Kachel-Mindestbreite abgeleitet statt als
+        Pixel-Konstante hingeschrieben – die hängt an Fontmetriken und wäre auf
+        einer anderen Plattform aus dem falschen Grund rot.
+        """
+        tile = view._tile_min_width()
+        spacing = view._grid.spacing()
+        chrome = 80  # Fensterrand + Scrollbar-Reserve, großzügig
+        return columns * tile + (columns - 1) * spacing + chrome
+
+    def test_wide_window_shows_exactly_three_columns(
+        self, wide_view: DashboardView, qtbot: QtBot
+    ) -> None:
+        """🔒 Sicherheitslinie §2.2: wo drei Spalten passen, sind es genau drei."""
+        _settle(wide_view, self._width_for(wide_view, 3), qtbot)
+        assert wide_view.tile_columns_count() == 3
+
+    def test_narrow_window_wraps_instead_of_overflowing(
+        self, wide_view: DashboardView, qtbot: QtBot
+    ) -> None:
+        _settle(wide_view, self._width_for(wide_view, 2), qtbot)
+        assert wide_view.tile_columns_count() == 2
+
+    def test_very_narrow_window_falls_back_to_one_column(
+        self, wide_view: DashboardView, qtbot: QtBot
+    ) -> None:
+        _settle(wide_view, self._width_for(wide_view, 1), qtbot)
+        assert wide_view.tile_columns_count() == 1
+
+    def test_content_never_needs_more_width_than_the_viewport(
+        self, wide_view: DashboardView, qtbot: QtBot
+    ) -> None:
+        """Der eigentliche Zweck: kein horizontales Scrollen mehr.
+
+        Vor Sprint 78 verlangte das Gitter bei drei festen Spalten mehr Breite,
+        als der Viewport hatte – genau das war der Befund.
+        """
+        _settle(wide_view, self._width_for(wide_view, 1), qtbot)
+        viewport = wide_view._scroll.viewport()
+        assert viewport is not None
+        assert wide_view._content.minimumSizeHint().width() <= viewport.width()
+
+    def test_all_six_tiles_survive_every_wrap(self, wide_view: DashboardView, qtbot: QtBot) -> None:
+        """Keine Kachel darf beim Neu-Einhängen ihren Platz verlieren."""
+        for columns in (3, 2, 1, 2, 3):
+            _settle(wide_view, self._width_for(wide_view, columns), qtbot)
+            in_grid = {
+                wide_view._grid.itemAt(i).widget()  # type: ignore[union-attr]
+                for i in range(wide_view._grid.count())
+            }
+            for tile in wide_view._tiles:
+                assert tile in in_grid, f"Kachel fehlt bei {columns} Spalten"
+            assert wide_view._grid.count() == len(wide_view._tiles)
+
+
+class TestDashboardCanActuallyShrink:
+    """Der Umbruch nützt nichts, wenn das Fenster gar nicht schmaler werden kann.
+
+    Genau daran ist der erste CI-Lauf dieses Sprints auf Windows gescheitert
+    (`assert 2 == 1`): das Empty-State-Label lag ohne Wortumbruch im selben
+    `QStackedWidget` wie das Kachelgitter, und ein `QStackedWidget` nimmt als
+    Mindestgröße das Maximum über ALLE Seiten. Die volle Textbreite des Labels
+    war damit die Mindestbreite des ganzen Dashboards – schrift- und
+    plattformabhängig (offscreen/macOS 405 px, Windows deutlich mehr). Die
+    Fenster-Verkleinerung wurde abgeschnitten, und übrig blieb genug Platz für
+    zwei Spalten statt einer.
+
+    Diese Klasse prüft die Ursache direkt und damit auf jeder Plattform gleich –
+    im Gegensatz zu einem Test, der nur eine Spaltenzahl bei einer bestimmten
+    Pixelbreite behauptet.
+    """
+
+    def test_empty_state_label_wraps(self, view: DashboardView) -> None:
+        assert view._empty_label.wordWrap()
+
+    def test_empty_state_does_not_pin_the_dashboard_width(self, view: DashboardView) -> None:
+        """Das Dashboard muss schmaler werden können als eine einzelne Kachel."""
+        assert view.minimumSizeHint().width() < view._tile_min_width()
+
+    def test_requested_narrow_width_is_actually_applied(
+        self, wide_view: DashboardView, qtbot: QtBot
+    ) -> None:
+        """Ein `resize` unter die Mindestbreite wird von Qt abgeschnitten – dann
+        testet man den Zuschnitt und nicht den Umbruch."""
+        target = TestTileWrapping()._width_for(wide_view, 1)
+        _settle(wide_view, target, qtbot)
+        assert wide_view.width() == target
+
+    def test_empty_state_looks_unchanged_at_normal_width(
+        self, wide_view: DashboardView, qtbot: QtBot
+    ) -> None:
+        """Der Wortumbruch darf das Erscheinungsbild bei normaler Breite nicht ändern.
+
+        Verglichen wird gegen ein Referenz-Label OHNE Umbruch statt gegen eine
+        gerechnete Zeilenhöhe: das Label trägt `padding: 24px` aus dem
+        Stylesheet, eine Rechnung „eine Zeile = fontMetrics().height()" ginge
+        daran vorbei (gemessen: 63 px Gesamthöhe bei 15 px Zeilenhöhe).
+        """
+        label = wide_view._empty_label
+        referenz = QLabel(label.text())
+        referenz.setStyleSheet(label.styleSheet())
+        qtbot.addWidget(referenz)
+
+        assert label.heightForWidth(1200) == referenz.sizeHint().height()
+        # Gegenprobe: schmal MUSS er umbrechen, sonst prüft der Test nichts.
+        assert label.heightForWidth(300) > referenz.sizeHint().height()
+
+
+class TestRowStretch:
+    """§2.7: der Stretch muss der berechneten Zeilenzahl folgen."""
+
+    def _width_for(self, view: DashboardView, columns: int) -> int:
+        return TestTileWrapping()._width_for(view, columns)
+
+    def test_stretch_sits_on_the_last_occupied_row(
+        self, wide_view: DashboardView, qtbot: QtBot
+    ) -> None:
+        for columns in (3, 2, 1):
+            _settle(wide_view, self._width_for(wide_view, columns), qtbot)
+            stretched = _stretched_rows(wide_view)
+            assert stretched == [max(_occupied_rows(wide_view))], (
+                f"{columns} Spalten: Stretch auf {stretched}"
+            )
+
+    def test_no_stretch_accumulates_across_two_wraps(
+        self, wide_view: DashboardView, qtbot: QtBot
+    ) -> None:
+        """Zwei Umbrüche hintereinander dürfen keine Stretch-Werte auf alten
+        Zeilen zurücklassen – sonst dehnt das Gitter an mehreren Stellen."""
+        _settle(wide_view, self._width_for(wide_view, 3), qtbot)
+        _settle(wide_view, self._width_for(wide_view, 1), qtbot)
+        _settle(wide_view, self._width_for(wide_view, 2), qtbot)
+        assert len(_stretched_rows(wide_view)) == 1
+
+    def test_stretch_row_matches_the_pure_function(
+        self, wide_view: DashboardView, qtbot: QtBot
+    ) -> None:
+        for columns in (3, 2, 1):
+            _settle(wide_view, self._width_for(wide_view, columns), qtbot)
+            expected = tile_rows(len(wide_view._tiles), wide_view.tile_columns_count()) - 1
+            assert _stretched_rows(wide_view) == [expected]
+
+
+class TestRelayoutIsAvoidedWhenNothingChanges:
+    """§2.8: kein Neu-Einhängen, solange die Spaltenzahl gleich bleibt."""
+
+    def test_small_resize_within_a_column_step_does_not_relayout(
+        self, wide_view: DashboardView, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        base = TestTileWrapping()._width_for(wide_view, 3)
+        _settle(wide_view, base, qtbot)
+
+        calls: list[int] = []
+        original = wide_view._place_tiles
+
+        def _spy(columns: int) -> None:
+            calls.append(columns)
+            original(columns)
+
+        monkeypatch.setattr(wide_view, "_place_tiles", _spy)
+        for delta in range(0, 40, 4):
+            _settle(wide_view, base + delta, qtbot)
+        assert calls == [], f"Unnötiges Neu-Legen: {calls}"
 
 
 class TestDashboardView:

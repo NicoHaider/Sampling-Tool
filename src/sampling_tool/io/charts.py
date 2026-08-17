@@ -44,15 +44,16 @@ def render_bar_chart_bytes(
     title: str = "",
     width: int = _DEFAULT_WIDTH,
     height: int = _DEFAULT_HEIGHT,
+    scale: float = 1.0,
 ) -> bytes:
     """Rendert ein Balkendiagramm als PNG-Bytes."""
-    fig = _make_figure(width, height)
+    fig = _make_figure(width, height, scale)
     ax = fig.add_subplot(111)
     if labels:
         colors = [BDO_COLORS[i % len(BDO_COLORS)] for i in range(len(labels))]
         ax.bar(labels, values, color=colors)
     _style_axes(ax, title)
-    return _figure_to_bytes(fig)
+    return _figure_to_bytes(fig, scale)
 
 
 def render_line_chart_bytes(
@@ -61,9 +62,10 @@ def render_line_chart_bytes(
     title: str = "",
     width: int = _DEFAULT_WIDTH,
     height: int = _DEFAULT_HEIGHT,
+    scale: float = 1.0,
 ) -> bytes:
     """Rendert ein Liniendiagramm als PNG-Bytes."""
-    fig = _make_figure(width, height)
+    fig = _make_figure(width, height, scale)
     ax = fig.add_subplot(111)
     if labels:
         ax.plot(labels, values, color=BDO_RED, marker="o", linewidth=2.0)
@@ -73,7 +75,7 @@ def render_line_chart_bytes(
         for label in ax.get_xticklabels():
             label.set_rotation(45)
             label.set_horizontalalignment("right")
-    return _figure_to_bytes(fig)
+    return _figure_to_bytes(fig, scale)
 
 
 def render_pie_chart_bytes(
@@ -82,9 +84,10 @@ def render_pie_chart_bytes(
     title: str = "",
     width: int = _DEFAULT_WIDTH,
     height: int = _DEFAULT_HEIGHT,
+    scale: float = 1.0,
 ) -> bytes:
     """Rendert ein Tortendiagramm als PNG-Bytes."""
-    fig = _make_figure(width, height)
+    fig = _make_figure(width, height, scale)
     ax = fig.add_subplot(111)
     if labels and sum(values) > 0:
         colors = [BDO_COLORS[i % len(BDO_COLORS)] for i in range(len(labels))]
@@ -100,7 +103,7 @@ def render_pie_chart_bytes(
         ax.axis("equal")
     if title:
         ax.set_title(title, color=BDO_DARK_GREY, fontsize=10, fontweight="bold")
-    return _figure_to_bytes(fig)
+    return _figure_to_bytes(fig, scale)
 
 
 # ---------------------------------------------------------------------------
@@ -108,8 +111,30 @@ def render_pie_chart_bytes(
 # ---------------------------------------------------------------------------
 
 
-def _make_figure(width: int, height: int) -> Figure:
-    fig = Figure(figsize=(width / _DPI, height / _DPI), dpi=_DPI)
+def _effective_dpi(scale: float) -> float:
+    """Basis-DPI × `scale`.
+
+    🔒 Sicherheitslinie (Sprint 78 / §2.2): bei `scale == 1.0` ist das Ergebnis
+    `100.0` und die erzeugten PNG-Bytes sind **byte-identisch** zum Stand vor
+    Sprint 78 – gemessen, nicht angenommen (siehe
+    `TestChartScaleIsByteIdenticalAtOne`).
+    """
+    if scale <= 0:
+        return float(_DPI)
+    return _DPI * scale
+
+
+def _make_figure(width: int, height: int, scale: float = 1.0) -> Figure:
+    """Figure in LOGISCHER Größe, aber mit skalierter Auflösung.
+
+    `figsize` bleibt bewusst aus der logischen Größe am Basis-DPI berechnet und
+    wird NICHT mit `scale` multipliziert: Schriftgrößen stehen in pt
+    (`labelsize=8`, `fontsize=10`). Eine größere Leinwand bei gleicher pt-Größe
+    macht die Schrift **relativ kleiner** – das wäre ein Layout-Wechsel, keine
+    Schärfung. Nur die DPI zu erhöhen skaliert alles gleichmäßig und verdoppelt
+    die Pixelmaße exakt (Sprint 78 / §2.3).
+    """
+    fig = Figure(figsize=(width / _DPI, height / _DPI), dpi=_effective_dpi(scale))
     fig.patch.set_alpha(0.0)
     return fig
 
@@ -127,12 +152,19 @@ def _style_axes(ax: Any, title: str) -> None:
         ax.set_title(title, color=BDO_DARK_GREY, fontsize=10, fontweight="bold")
 
 
-def _figure_to_bytes(fig: Figure) -> bytes:
-    """Speichert die Figure in einen PNG-Buffer und schließt sie sauber."""
+def _figure_to_bytes(fig: Figure, scale: float = 1.0) -> bytes:
+    """Speichert die Figure in einen PNG-Buffer und schließt sie sauber.
+
+    `savefig(dpi=…)` muss denselben Faktor bekommen wie `Figure(dpi=…)` – sonst
+    rendert matplotlib die Leinwand in der einen und schreibt sie in der anderen
+    Auflösung.
+    """
     try:
         fig.tight_layout()
         buf = BytesIO()
-        fig.savefig(buf, format="png", dpi=_DPI, transparent=True, bbox_inches="tight")
+        fig.savefig(
+            buf, format="png", dpi=_effective_dpi(scale), transparent=True, bbox_inches="tight"
+        )
         return buf.getvalue()
     finally:
         plt.close(fig)

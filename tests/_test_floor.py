@@ -25,14 +25,16 @@ from __future__ import annotations
 #: `tests/_workflow_policy.py::check_test_floor_is_armed`.
 ENFORCE_TEST_FLOOR_ENV = "SAMPLING_TOOL_ENFORCE_TEST_FLOOR"
 
-#: Gemessen am 2026-08-17 (Sprint 77, Branch `fix/sprint-77-gruene-checks`,
-#: voller Lauf auf macOS): 1642 gesammelte Tests. Der Wert steht mit rund 2,6 %
-#: Abstand darunter, damit plattformbedingte Schwankung und normales
-#: Test-Hinzufügen ihn nie auslösen.
+#: Messreihe (voller Lauf auf macOS, jeweils am Sprint-Ende):
+#:   2026-08-17, Sprint 77: 1642 gesammelt → Floor 1600 (2,6 % Abstand)
+#:   2026-08-17, Sprint 78: 1765 gesammelt → Floor 1700 (3,7 % Abstand)
+#: Der Abstand hält plattformbedingte Schwankung und normales Test-Hinzufügen
+#: aus dem Wächter heraus; ein echter Sammel-Ausfall (eine Datei fällt raus)
+#: liegt deutlich darüber.
 #:
 #: NUR NACH OBEN ANPASSEN. Sinkt die gesammelte Zahl unter diesen Wert, ist das
 #: der Befund – nicht der Anlass, die Konstante zu senken.
-TEST_FLOOR = 1600
+TEST_FLOOR = 1700
 
 
 def check_test_floor(collected: int, floor: int) -> str | None:
