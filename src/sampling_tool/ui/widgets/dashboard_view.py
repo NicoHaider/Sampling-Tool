@@ -200,6 +200,18 @@ class DashboardView(QWidget):
         self._empty_label = QLabel(
             "Projekt leer – starte mit einem Datei-Import, um Statistiken zu sehen."
         )
+        # Ohne Wortumbruch ist die Mindestbreite eines QLabel die VOLLE
+        # Textbreite. Dieses Label liegt im selben QStackedWidget wie das
+        # Kachelgitter, und ein QStackedWidget nimmt das Maximum über alle
+        # Seiten – die Textbreite wurde damit zur Mindestbreite des ganzen
+        # Dashboards und verhinderte genau das Schmalerwerden, um das es in
+        # diesem Sprint geht. Der Wert ist schrift- und plattformabhängig
+        # (offscreen/macOS 405 px, Windows deutlich mehr), weshalb der
+        # Kachel-Umbruch auf Windows in eine andere Spaltenzahl lief als auf
+        # macOS. Mit Wortumbruch sinkt die Mindestbreite auf das längste Wort
+        # (62 px gemessen); bei normaler Fensterbreite bleibt der Text
+        # einzeilig und das Erscheinungsbild unverändert.
+        self._empty_label.setWordWrap(True)
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setStyleSheet("color: #7F7F7F; font-style: italic; padding: 24px;")
         self._stack.addWidget(self._empty_label)

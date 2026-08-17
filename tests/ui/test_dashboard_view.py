@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QLabel
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import (
@@ -165,6 +165,59 @@ class TestTileWrapping:
             for tile in wide_view._tiles:
                 assert tile in in_grid, f"Kachel fehlt bei {columns} Spalten"
             assert wide_view._grid.count() == len(wide_view._tiles)
+
+
+class TestDashboardCanActuallyShrink:
+    """Der Umbruch nützt nichts, wenn das Fenster gar nicht schmaler werden kann.
+
+    Genau daran ist der erste CI-Lauf dieses Sprints auf Windows gescheitert
+    (`assert 2 == 1`): das Empty-State-Label lag ohne Wortumbruch im selben
+    `QStackedWidget` wie das Kachelgitter, und ein `QStackedWidget` nimmt als
+    Mindestgröße das Maximum über ALLE Seiten. Die volle Textbreite des Labels
+    war damit die Mindestbreite des ganzen Dashboards – schrift- und
+    plattformabhängig (offscreen/macOS 405 px, Windows deutlich mehr). Die
+    Fenster-Verkleinerung wurde abgeschnitten, und übrig blieb genug Platz für
+    zwei Spalten statt einer.
+
+    Diese Klasse prüft die Ursache direkt und damit auf jeder Plattform gleich –
+    im Gegensatz zu einem Test, der nur eine Spaltenzahl bei einer bestimmten
+    Pixelbreite behauptet.
+    """
+
+    def test_empty_state_label_wraps(self, view: DashboardView) -> None:
+        assert view._empty_label.wordWrap()
+
+    def test_empty_state_does_not_pin_the_dashboard_width(self, view: DashboardView) -> None:
+        """Das Dashboard muss schmaler werden können als eine einzelne Kachel."""
+        assert view.minimumSizeHint().width() < view._tile_min_width()
+
+    def test_requested_narrow_width_is_actually_applied(
+        self, wide_view: DashboardView, qtbot: QtBot
+    ) -> None:
+        """Ein `resize` unter die Mindestbreite wird von Qt abgeschnitten – dann
+        testet man den Zuschnitt und nicht den Umbruch."""
+        target = TestTileWrapping()._width_for(wide_view, 1)
+        _settle(wide_view, target, qtbot)
+        assert wide_view.width() == target
+
+    def test_empty_state_looks_unchanged_at_normal_width(
+        self, wide_view: DashboardView, qtbot: QtBot
+    ) -> None:
+        """Der Wortumbruch darf das Erscheinungsbild bei normaler Breite nicht ändern.
+
+        Verglichen wird gegen ein Referenz-Label OHNE Umbruch statt gegen eine
+        gerechnete Zeilenhöhe: das Label trägt `padding: 24px` aus dem
+        Stylesheet, eine Rechnung „eine Zeile = fontMetrics().height()" ginge
+        daran vorbei (gemessen: 63 px Gesamthöhe bei 15 px Zeilenhöhe).
+        """
+        label = wide_view._empty_label
+        referenz = QLabel(label.text())
+        referenz.setStyleSheet(label.styleSheet())
+        qtbot.addWidget(referenz)
+
+        assert label.heightForWidth(1200) == referenz.sizeHint().height()
+        # Gegenprobe: schmal MUSS er umbrechen, sonst prüft der Test nichts.
+        assert label.heightForWidth(300) > referenz.sizeHint().height()
 
 
 class TestRowStretch:
