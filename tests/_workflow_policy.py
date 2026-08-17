@@ -604,14 +604,6 @@ def check_smoke_runs_on_the_packaged_artefact(workflow: Workflow, *, name: str) 
     return violations
 
 
-_RELEASE_ORDER = (
-    "actions/download-artifact",
-    "SHA256SUMS",
-    "actions/upload-artifact",
-    "softprops/action-gh-release",
-)
-
-
 def check_release_publishes_after_checksums(workflow: Workflow, *, name: str) -> list[str]:
     """Sprint 75: im Job `release` liegt die Prüfsummen-Erzeugung zwischen Download und Upload.
 
