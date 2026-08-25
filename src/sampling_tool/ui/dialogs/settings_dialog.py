@@ -39,7 +39,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import DEFAULT_BRIEFPAPIER, SEED_MAX
+from sampling_tool.config import BDO_GREY, DEFAULT_BRIEFPAPIER, SEED_MAX
 from sampling_tool.io.bdo_locations import (
     companies,
     default_company,
@@ -232,7 +232,7 @@ class SettingsDialog(QDialog):
         form.addRow("Projekt-Ordner", wrapper)
 
         language = QLabel("Sprache: Deutsch (weitere folgen)")
-        language.setStyleSheet("color: #7F7F7F;")
+        language.setStyleSheet(f"color: {BDO_GREY};")
         form.addRow(" ", language)
         outer.addLayout(form)
 
@@ -406,7 +406,7 @@ class SettingsDialog(QDialog):
             "Skaliert Schrift, Symbole und Zeilenhöhe. Wirkt sofort; einzelne "
             "Dialoge übernehmen die neue Größe beim nächsten Öffnen."
         )
-        self._ui_scale_hint.setStyleSheet("color: #7F7F7F;")
+        self._ui_scale_hint.setStyleSheet(f"color: {BDO_GREY};")
         form.addRow(" ", self._ui_scale_hint)
 
         # Sprint 27: Der Sampling-Seed wird ausschließlich hier geändert – im
@@ -437,7 +437,7 @@ class SettingsDialog(QDialog):
             f"Log-Datei: zentral unter {log_file_path()} (app-weit, nicht im "
             "Projekt-Ordner). Das Log-Level wirkt sofort, ohne Neustart."
         )
-        self._info_label.setStyleSheet("color: #7F7F7F;")
+        self._info_label.setStyleSheet(f"color: {BDO_GREY};")
         form.addRow(" ", self._info_label)
         outer.addLayout(form)
         outer.addStretch(1)

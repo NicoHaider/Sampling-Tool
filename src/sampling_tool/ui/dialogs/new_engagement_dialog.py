@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import DB_FILE_SUFFIX, ENGAGEMENTS_DIR, sanitize_for_path
+from sampling_tool.config import BDO_GREY, DB_FILE_SUFFIX, ENGAGEMENTS_DIR, sanitize_for_path
 from sampling_tool.core.models import Engagement
 
 AUDIT_TYPES: tuple[str, ...] = (
@@ -103,7 +103,7 @@ class NewEngagementDialog(QDialog):
             "Speicherort."
         )
         intro.setWordWrap(True)
-        intro.setStyleSheet("color: #7F7F7F;")
+        intro.setStyleSheet(f"color: {BDO_GREY};")
         outer.addWidget(intro)
 
         form = QFormLayout()

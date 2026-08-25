@@ -157,11 +157,10 @@ class TestValidateBriefpapier:
         """Die Pixel-Obergrenze muss VOR dem vollen Decode (`img.load()`)
         greifen – sonst schützt sie nicht vor dem teuren Decode selbst
         (Decompression-Bomb-artiges Verhalten)."""
-        pil_image = pytest.importorskip("PIL.Image")
-        from PIL import ImageFile
+        from PIL import Image, ImageFile
 
         big = tmp_path / "huge.png"
-        img = pil_image.new("RGB", (10, 10), color=(1, 2, 3))
+        img = Image.new("RGB", (10, 10), color=(1, 2, 3))
         img.save(big, format="PNG")
         monkeypatch.setattr(bp, "BRIEFPAPIER_MAX_IMAGE_PIXELS", 50)  # 10x10=100 > 50
 

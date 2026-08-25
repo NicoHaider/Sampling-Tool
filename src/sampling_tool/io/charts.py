@@ -78,34 +78,6 @@ def render_line_chart_bytes(
     return _figure_to_bytes(fig, scale)
 
 
-def render_pie_chart_bytes(
-    labels: list[str],
-    values: list[float],
-    title: str = "",
-    width: int = _DEFAULT_WIDTH,
-    height: int = _DEFAULT_HEIGHT,
-    scale: float = 1.0,
-) -> bytes:
-    """Rendert ein Tortendiagramm als PNG-Bytes."""
-    fig = _make_figure(width, height, scale)
-    ax = fig.add_subplot(111)
-    if labels and sum(values) > 0:
-        colors = [BDO_COLORS[i % len(BDO_COLORS)] for i in range(len(labels))]
-        ax.pie(
-            values,
-            labels=labels,
-            colors=colors,
-            autopct="%1.0f%%",
-            startangle=90,
-            textprops={"fontsize": 8, "color": BDO_DARK_GREY},
-            wedgeprops={"linewidth": 1, "edgecolor": "white"},
-        )
-        ax.axis("equal")
-    if title:
-        ax.set_title(title, color=BDO_DARK_GREY, fontsize=10, fontweight="bold")
-    return _figure_to_bytes(fig, scale)
-
-
 # ---------------------------------------------------------------------------
 # Hilfen
 # ---------------------------------------------------------------------------

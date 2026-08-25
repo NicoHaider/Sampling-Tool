@@ -27,10 +27,12 @@ Prüfung, die bloß in einem Docstring erwähnt wird, käme dort durch.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Final
 
 import pytest
 
+from sampling_tool import config
 from sampling_tool.ui._scaling import (
     UI_SCALE_LEVELS,
     scale_factor,
@@ -38,6 +40,7 @@ from sampling_tool.ui._scaling import (
     scaled_px,
 )
 from tests._styling_policy import (
+    FONTS_MODULE,
     HEX_LITERAL_CEILING,
     KNOWN_COLOR_CEILINGS,
     LOGO_SELECTOR,
@@ -49,6 +52,7 @@ from tests._styling_policy import (
     QssCheck,
     SourceCheck,
     check_blocks_are_flat,
+    check_font_sizes_are_derived_not_pinned,
     check_font_sizes_are_integer_px,
     check_hex_literals_do_not_grow,
     check_inline_font_sizes_are_scaled,
@@ -136,6 +140,16 @@ def without_logo_bounds(qss: str) -> str:
     return qss
 
 
+def with_appended_code(sources: dict[str, str], snippet: str) -> dict[str, str]:
+    """Hängt `snippet` an eine Datei an, die NICHT der Schrift-Helfer ist.
+
+    Der Helfer ist von der Zusage ausgenommen – eine Mutation dort würde nichts
+    auslösen und die Positiv-Kontrolle wäre still wertlos.
+    """
+    path = next(p for p in sorted(sources) if Path(p).name != FONTS_MODULE)
+    return {**sources, path: sources[path] + "\n" + snippet}
+
+
 def with_extra_hex(sources: dict[str, str], literal: str, times: int = 1) -> dict[str, str]:
     """`times` zusätzliche Hex-Literale in eine beliebige, stabile Datei schreiben."""
     path = sorted(sources)[0]
@@ -206,6 +220,23 @@ def source_mutations(
             ("eine neue Farbe", with_extra_hex(ui, "#123456")),
             (f"eine Farbe mehr, für die es {known_color} gibt", with_extra_hex(ui, known_color)),
         ],
+        check_font_sizes_are_derived_not_pinned: [
+            (
+                "Arithmetik auf pointSize()",
+                with_appended_code(package, "def _b(f):\n    f.setPointSize(f.pointSize() + 2)\n"),
+            ),
+            (
+                "Größen-Setter außerhalb des Helfers",
+                with_appended_code(package, "def _b(f):\n    f.setPixelSize(11)\n"),
+            ),
+            (
+                "Größe im QFont-Konstruktor",
+                with_appended_code(package, '_P = QFont("Helvetica", 9)\n'),
+            ),
+            # Fail loud statt fail open: eine nicht parsebare Datei wäre sonst
+            # still von der Zusage ausgenommen.
+            ("nicht parsebare Datei", with_appended_code(package, "def (:\n")),
+        ],
     }
 
 
@@ -246,6 +277,15 @@ class TestStylingGuarantees:
 
     def test_hex_literals_do_not_grow(self, ui: dict[str, str]) -> None:
         assert check_hex_literals_do_not_grow(ui) == []
+
+    def test_font_sizes_are_derived_not_pinned(self, package: dict[str, str]) -> None:
+        """Die achte Zusage (Sprint 80).
+
+        `setPointSize(pointSize() + 2)` auf einer per QSS in px gesetzten Schrift
+        ergibt eine 1-Punkt-Schrift – der Text verschwindet lautlos, bei jedem
+        Skalierungsfaktor. Genau das stand bis Sprint 79 in der Datentabelle.
+        """
+        assert check_font_sizes_are_derived_not_pinned(package) == []
 
     def test_every_promise_holds_at_once(
         self, qss: str, ui: dict[str, str], package: dict[str, str]
@@ -364,6 +404,24 @@ class TestPolicyChecksDetectViolations:
         assert check_sources_are_not_vacuous(ui) == []
         assert check_inline_font_sizes_are_scaled(package) == []
         assert check_hex_literals_do_not_grow(ui) == []
+        assert check_font_sizes_are_derived_not_pinned(package) == []
+
+    def test_bare_qfont_is_not_a_violation(self, package: dict[str, str]) -> None:
+        """Die Gegenrichtung der achten Zusage – und der Grund für ihren Zuschnitt.
+
+        Sprint 79 meldete `QFont()` auf Items als Verstoß. Gemessen ist das
+        Gegenteil richtig: ein parameterloses `QFont` trägt eine LEERE
+        resolve-Maske und überschreibt darum nichts – `QFont().resolve(basis)`
+        behält die Basisgröße. Eine Zusage „kein `QFont()`" hätte zwei korrekte
+        Stellen rot gemacht und den echten Fall (`pointSize()`-Arithmetik)
+        verfehlt. Dieser Test hält fest, dass sie es nicht tut.
+        """
+        path = next(p for p in sorted(package) if Path(p).name != FONTS_MODULE)
+        harmless = "\n_a = QFont()\n_b = QFont(_a)\n_c = QFont(widget.font())\n"
+        assert (
+            check_font_sizes_are_derived_not_pinned({**package, path: package[path] + harmless})
+            == []
+        )
 
     def test_hex_ratchet_allows_shrinking(self, ui: dict[str, str]) -> None:
         """Der Ratchet zeigt NACH UNTEN: Sprint 80 wird die 33 Literale ersetzen,
@@ -454,22 +512,40 @@ class TestMeasuredValues:
     """
 
     #: Gemessen 2026-08-25 auf `main` = d8417d3 (Sprint 78): 33 der 53 rohen
-    #: Literale sind eine Farbe, für die `config.py` schon eine Konstante hat.
-    #: Der Auftrag für Sprint 80 – und damit eine Zahl, die SINKEN soll.
-    REPLACEABLE_TODAY: Final[int] = 33
+    #: Literale waren eine Farbe, für die `config.py` schon eine Konstante hat.
+    #: Sprint 80 hat genau diese 33 ersetzt.
+    REPLACED_IN_SPRINT_80: Final[int] = 33
 
     def test_current_state_stays_under_the_ceiling(self, ui: dict[str, str]) -> None:
         assert sum(count_hex_literals(content) for content in ui.values()) <= HEX_LITERAL_CEILING
 
-    def test_known_colors_are_the_bulk_of_the_debt(self, ui: dict[str, str]) -> None:
-        """Die Literale mit vorhandener Konstante werden nicht mehr.
+    def test_known_colors_are_no_longer_raw_literals(self, ui: dict[str, str]) -> None:
+        """Die Schuld ist bezahlt – und die Anti-Vakuum-Sicherung zieht mit um.
 
-        `<=`, nicht `==`: Sprint 80 wird sie ersetzen, und ein Test, der dessen
-        Erfolg rot macht, wäre genau der Test, den danach jemand löscht.
+        Sprint 79 stand hier `0 < replaceable <= 33`. Die untere Schranke war
+        eine Sicherung gegen eine leere Messung, aber sie hing am FORTBESTAND der
+        Schuld: Sprint 80 tilgt sie, `replaceable` wird 0, und der Test wäre an
+        genau dem Erfolg zerbrochen, den er begleiten sollte.
+
+        Die Sicherung wandert deshalb dorthin, wo es jetzt etwas zu zählen gibt:
+        die Farben stehen nicht mehr roh im Code (`== 0`), sondern werden
+        symbolisch referenziert (`>= 33`). Über eine leere Dateimenge ist das
+        nicht mehr trivial erfüllt – die zweite Hälfte würde dann fehlschlagen.
         """
         histogram = hex_literal_histogram(ui)
-        replaceable = sum(histogram.get(color.upper(), 0) for color in KNOWN_COLOR_CEILINGS)
-        assert 0 < replaceable <= self.REPLACEABLE_TODAY
+        raw = sum(histogram.get(color.upper(), 0) for color in KNOWN_COLOR_CEILINGS)
+        assert raw == 0
+
+        # Die Namen kommen aus `config.py`, nicht als Literal – sonst stünde der
+        # SSOT im Produktionscode und wäre im Test wieder gebrochen (§7).
+        names = [
+            name
+            for name, value in vars(config).items()
+            if isinstance(value, str) and value in KNOWN_COLOR_CEILINGS
+        ]
+        assert names, "keine Farb-Konstante in config.py gefunden – die Prüfung wäre leer"
+        symbolic = sum(content.count(name) for content in ui.values() for name in names)
+        assert symbolic >= self.REPLACED_IN_SPRINT_80
 
     def test_anti_vacuum_floors_sit_well_below_reality(self, ui: dict[str, str]) -> None:
         """Die Anti-Vakuum-Grenzen fangen das Vakuum ab, nicht das Schrumpfen –

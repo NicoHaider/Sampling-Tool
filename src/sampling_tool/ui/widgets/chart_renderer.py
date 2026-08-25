@@ -12,11 +12,7 @@ from typing import Final
 
 from PyQt6.QtGui import QImage, QPixmap
 
-from sampling_tool.io.charts import (
-    render_bar_chart_bytes,
-    render_line_chart_bytes,
-    render_pie_chart_bytes,
-)
+from sampling_tool.io.charts import render_bar_chart_bytes, render_line_chart_bytes
 
 _DEFAULT_WIDTH: Final[int] = 400
 _DEFAULT_HEIGHT: Final[int] = 200
@@ -48,21 +44,6 @@ def render_line_chart(
     """Rendert ein Liniendiagramm als `QPixmap`."""
     return _bytes_to_pixmap(
         render_line_chart_bytes(labels, values, title, width, height, device_pixel_ratio),
-        device_pixel_ratio,
-    )
-
-
-def render_pie_chart(
-    labels: list[str],
-    values: list[float],
-    title: str = "",
-    width: int = _DEFAULT_WIDTH,
-    height: int = _DEFAULT_HEIGHT,
-    device_pixel_ratio: float = 1.0,
-) -> QPixmap:
-    """Rendert ein Tortendiagramm als `QPixmap`."""
-    return _bytes_to_pixmap(
-        render_pie_chart_bytes(labels, values, title, width, height, device_pixel_ratio),
         device_pixel_ratio,
     )
 

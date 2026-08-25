@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import ENGAGEMENTS_DIR
+from sampling_tool.config import BDO_DARK_GREY, BDO_GREY, ENGAGEMENTS_DIR
 from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui.recent import RecentEntry
 
@@ -53,12 +53,12 @@ class _RecentCard(QFrame):
 
         title = QLabel(entry.client_name)
         title.setStyleSheet(
-            f"font-weight: 700; font-size: {scaled_px(14, ui_scale_factor)}px; color: #333333;"
+            f"font-weight: 700; font-size: {scaled_px(14, ui_scale_factor)}px; color: {BDO_DARK_GREY};"
         )
         layout.addWidget(title)
 
         subtitle = QLabel(entry.audit_type or "—")
-        subtitle.setStyleSheet(f"color: #7F7F7F; font-size: {scaled_px(11, ui_scale_factor)}px;")
+        subtitle.setStyleSheet(f"color: {BDO_GREY}; font-size: {scaled_px(11, ui_scale_factor)}px;")
         layout.addWidget(subtitle)
 
         path_label = QLabel(str(entry.path))
@@ -134,7 +134,7 @@ class WelcomeScreen(QWidget):
 
         # Recent-Block
         recent_label = QLabel("Zuletzt geöffnet")
-        recent_label.setStyleSheet("color: #7F7F7F; font-weight: 700;")
+        recent_label.setStyleSheet(f"color: {BDO_GREY}; font-weight: 700;")
         outer.addWidget(recent_label)
 
         self._recent_container = QWidget()

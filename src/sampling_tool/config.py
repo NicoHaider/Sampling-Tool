@@ -34,6 +34,18 @@ SAMPLE_HIGHLIGHT_COLOR: Final[str] = "#28A745"
 SAMPLE_HIGHLIGHT_ALPHA: Final[int] = 90  # 0-255 (≈ 35 % Deckkraft)
 
 # ---------------------------------------------------------------------------
+# Semantische Farben – was sie BEDEUTEN, nicht wie sie aussehen
+# ---------------------------------------------------------------------------
+# Schriftfarbe für Labels, die den Anwender zum Handeln auffordern: ein Export,
+# der noch nicht startbar ist, eine ungültige Sampling-Eingabe, eine nicht
+# eindeutig erkannte Kopfzeile.
+#
+# Bewusst NICHT `BDO_RED`: das Marken-Rot trägt in dieser App die Marke – primäre
+# Buttons, jeder Tabellenkopf, das Logo, der Fokus-Rahmen. Eine Warnung in
+# derselben Farbe ist kein Signal mehr, sondern Dekoration (Sprint 80).
+WARNING_COLOR: Final[str] = "#C62828"
+
+# ---------------------------------------------------------------------------
 # Sampling-Defaults
 # ---------------------------------------------------------------------------
 DEFAULT_SAMPLE_SIZE: Final[int] = 25  # Branchenüblicher Default

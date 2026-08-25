@@ -33,21 +33,43 @@ def _sample(sample_id: int, size: int = 5) -> SampleResult:
 
 class TestNavigationSidebar:
     def test_set_engagement_renders_title(self, qtbot: QtBot) -> None:
+        """Prüft die Zusage, die der Name gibt: der Titel wird gerendert.
+
+        Bis Sprint 80 stand hier keine einzige Zusicherung – der Test konnte nur
+        über eine Exception rot werden. Beide `setText`-Aufrufe in
+        `set_engagement` hätten ersatzlos entfernt werden können, ohne dass er es
+        bemerkt, und kein anderer Test im Repo prüft den Titel.
+
+        Zugriff über `_engagement_title`: `NavigationSidebar` hat für die beiden
+        Engagement-Labels keinen Test-Accessor (anders als `datasets_widget()` /
+        `samples_widget()`), und dieser Sprint fasst dafür kein `src/` an.
+        Dasselbe Muster nutzt `test_main_window.py` für `_status_engagement`.
+        """
         sidebar = NavigationSidebar()
         qtbot.addWidget(sidebar)
-        sidebar.set_engagement(
-            Engagement(
-                auditor_name="Anna",
-                client_name="ACME GmbH",
-                auditor_position="Senior",
-                audit_type="ISAE 3402",
-            )
+        engagement = Engagement(
+            auditor_name="Anna",
+            client_name="ACME GmbH",
+            auditor_position="Senior",
+            audit_type="ISAE 3402",
         )
-        sidebar.set_datasets([])
-        sidebar.set_samples([])
-        # Direkter Zugriff über findChildren wäre overkill – wir akzeptieren
-        # den indirekten Beweis durch fehlerfreies Wiederbefüllen.
+        # Ausgangstexte merken statt als Literal prüfen: der Default-String hat
+        # keine Konstante, stünde hier also ein zweites Mal im Repo und würde
+        # den Test bei jeder Umformulierung grundlos rot machen (§7).
+        default_title = sidebar._engagement_title.text()
+        default_subtitle = sidebar._engagement_subtitle.text()
+
+        sidebar.set_engagement(engagement)
+        assert sidebar._engagement_title.text() == engagement.client_name
+        assert sidebar._engagement_title.text() != default_title
+        assert engagement.audit_type in sidebar._engagement_subtitle.text()
+        assert engagement.auditor_name in sidebar._engagement_subtitle.text()
+
+        # Der zweite Zweig von `set_engagement`: ohne diese Zusicherung bliebe
+        # ein Titel stehen, der zu keinem geladenen Projekt mehr gehört.
         sidebar.set_engagement(None)
+        assert sidebar._engagement_title.text() == default_title
+        assert sidebar._engagement_subtitle.text() == default_subtitle
 
     def test_set_datasets_populates_items(self, qtbot: QtBot) -> None:
         sidebar = NavigationSidebar()
