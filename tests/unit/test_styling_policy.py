@@ -120,6 +120,22 @@ def with_unscaled_font_size(sources: dict[str, str]) -> dict[str, str]:
     raise AssertionError("Unerreichbar – a_file_with_scaled_font_size hat gefiltert")
 
 
+def without_logo_bounds(qss: str) -> str:
+    """Alle min/max-Grenzwerte aus dem Logo-Block entfernen.
+
+    Jede der vier Ersetzungen läuft über `replaced` und schlägt einzeln fehl,
+    wenn sie ihren Anker verliert – eine stille No-Op-Ersetzung würde die
+    Mutation abschwächen, ohne dass jemand es merkt.
+
+    Die Anker enthalten bewusst KEIN `\\n`: sonst hinge die Positiv-Kontrolle an
+    den Zeilenenden des Checkouts (`.gitattributes` erzwingt hier zwar LF, aber
+    ein Test soll nicht von einer Einstellung woanders abhängen).
+    """
+    for bound in ("min-width", "min-height", "max-width", "max-height"):
+        qss = replaced(qss, f"{bound}: 120px;", "")
+    return qss
+
+
 def with_extra_hex(sources: dict[str, str], literal: str, times: int = 1) -> dict[str, str]:
     """`times` zusätzliche Hex-Literale in eine beliebige, stabile Datei schreiben."""
     path = sorted(sources)[0]
@@ -168,13 +184,7 @@ def qss_mutations(qss: str) -> dict[QssCheck, list[tuple[str, str]]]:
                     f"{LOGO_SELECTOR},\nQLabel#WelcomeBadge {{",
                 ),
             ),
-            (
-                "Grenzwerte ausgezogen",
-                replaced(qss, "    min-width: 120px;\n", "")
-                .replace("    min-height: 120px;\n", "")
-                .replace("    max-width: 120px;\n", "")
-                .replace("    max-height: 120px;\n", ""),
-            ),
+            ("Grenzwerte ausgezogen", without_logo_bounds(qss)),
         ],
     }
 

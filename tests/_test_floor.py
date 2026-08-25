@@ -55,8 +55,26 @@ TEST_FLOOR = 1700
 
 #: Zahl der AUSGEFÜHRTEN Tests (`gesammelt − übersprungen`), Sprint 79.
 #:
-#: PROVISORISCHER WERT – wird vor dem Merge aus dem echten CI-Lauf ersetzt.
-EXECUTED_FLOOR = 1600
+#: Gemessen im CI-Lauf 32843165645 (PR #119) am 2026-08-25, alle drei Plattformen
+#: gesammelt 1826:
+#:   Ubuntu   1826 gesammelt, 0 übersprungen → 1826 ausgeführt
+#:   macOS    1826 gesammelt, 0 übersprungen → 1826 ausgeführt
+#:   Windows  1826 gesammelt, 3 übersprungen → 1823 ausgeführt  ← die kleinste
+#:
+#: Der Floor gehört auf die STRIKTESTE Plattform, und das ist Windows: dort
+#: skippt `tests/unit/test_platform_imports.py` per `skipif` zwei Tests (völlig
+#: legitim – die Klasse prüft, dass das Paket OHNE pywin32 lädt), und
+#: `test_version_manager.py:449` kommt an eine offene Datei nicht heran
+#: (`WinError 32`). Eine auf macOS gemessene „0 Skips"-Zahl gilt dort nicht.
+#:
+#: 1823 − 2,4 % = 1780. Der Abstand deckt die Skip-Stellen ab, die heute NICHT
+#: auslösen, aber jederzeit könnten: die drei Symlink-Fälle (auf den
+#: Windows-Runnern derzeit verfügbar) und die zwei Toolbar-Geometrie-Fälle.
+#: Selbst wenn alle fünf zusätzlich griffen, bliebe der Lauf mit 1818 darüber.
+#:
+#: NUR NACH OBEN ANPASSEN. Sinkt die ausgeführte Zahl unter diesen Wert, ist das
+#: der Befund – nicht der Anlass, die Konstante zu senken.
+EXECUTED_FLOOR = 1780
 
 
 def check_test_floor(collected: int, floor: int) -> str | None:
