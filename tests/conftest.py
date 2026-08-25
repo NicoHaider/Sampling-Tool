@@ -34,19 +34,48 @@ from sampling_tool.persistence.repositories import (
     EngagementRepo,
     SampleRepo,
 )
-from tests._test_floor import ENFORCE_TEST_FLOOR_ENV, TEST_FLOOR, check_test_floor
+from tests._test_floor import (
+    ENFORCE_TEST_FLOOR_ENV,
+    EXECUTED_FLOOR,
+    TEST_FLOOR,
+    check_executed_floor,
+    check_test_floor,
+)
 
 # ---------------------------------------------------------------------------
-# Testmengen-Wächter (Sprint 77 / Befund #8)
+# Testmengen-Wächter (Sprint 77 / Befund #8) + Ausführungs-Wächter (Sprint 79)
 # ---------------------------------------------------------------------------
+
+#: nodeids der übersprungenen Tests dieser Session.
+#:
+#: Ein SET von nodeids, nicht ein Zähler über Reports: ein `skipif` meldet in der
+#: Setup-Phase, ein `pytest.skip()` im Testkörper in der Call-Phase (und liefert
+#: zusätzlich einen Teardown-Report). Ohne Dedup zählte dieselbe Ursache je nach
+#: Herkunft unterschiedlich, und die Kennzahl hinge daran, WIE ein Test
+#: übersprungen wird statt DASS er es wird.
+#:
+#: Modul-global statt `config.stash`, weil pro Prozess genau eine Session läuft –
+#: das Projekt nutzt kein pytest-xdist (geprüft: nur pytest-cov und pytest-qt).
+_skipped_nodeids: set[str] = set()
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    """Sammelt die übersprungenen Tests für den Ausführungs-Wächter.
+
+    `wasxfail` schließt `xfail`-Ergebnisse aus: ein erwartet fehlschlagender Test
+    liefert ebenfalls `report.skipped`, ist aber ausgeführt worden – ihn
+    mitzuzählen würde den Ausführungsstand kleinrechnen.
+    """
+    if report.skipped and not hasattr(report, "wasxfail"):
+        _skipped_nodeids.add(report.nodeid)
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """Schlägt an, wenn die volle Suite weniger Tests sammelt als der Floor.
+    """Schlägt an, wenn die volle Suite zu wenig sammelt ODER zu wenig ausführt.
 
     Läuft NUR bei gesetzter `SAMPLING_TOOL_ENFORCE_TEST_FLOOR=1`, also
-    ausschließlich in den beiden Workflows – lokal bleibt der Hook ein No-Op,
-    damit Teil-Läufe nicht fehlschlagen.
+    ausschließlich in den beiden Workflows – lokal bleiben beide Wächter ein
+    No-Op, damit Teil-Läufe nicht fehlschlagen.
 
     `session.testscollected` ist bewusst die geprüfte Zahl: pytest setzt sie
     NACH `pytest_collection_modifyitems` (`_pytest/main.py`), sie berücksichtigt
@@ -55,14 +84,32 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if os.environ.get(ENFORCE_TEST_FLOOR_ENV) != "1":
         return
 
-    problem = check_test_floor(session.testscollected, TEST_FLOOR)
-    if problem is None:
-        return
-
+    collected = session.testscollected
+    skipped = len(_skipped_nodeids)
     reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+
+    # Die Messung steht IMMER im Log, nicht nur im Verstoß-Fall: der Floor wird
+    # aus echten CI-Läufen abgelesen (Sprint 79 / §2.5), und dafür muss die Zahl
+    # je Plattform ohne Zusatzwerkzeug im Protokoll stehen.
     if reporter is not None:
         reporter.write_line("")
-        reporter.write_line(problem, red=True, bold=True)
+        reporter.write_line(
+            f"Testmengen-Wächter: {collected} gesammelt, {skipped} übersprungen, "
+            f"{collected - skipped} ausgeführt "
+            f"(Floors: {TEST_FLOOR} gesammelt / {EXECUTED_FLOOR} ausgeführt)."
+        )
+
+    problems = [
+        check_test_floor(collected, TEST_FLOOR),
+        check_executed_floor(collected, skipped, EXECUTED_FLOOR),
+    ]
+    failures = [problem for problem in problems if problem is not None]
+    if not failures:
+        return
+
+    if reporter is not None:
+        for problem in failures:
+            reporter.write_line(problem, red=True, bold=True)
     # Einen bereits gesetzten, schwerwiegenderen Status (Abbruch, interner
     # Fehler, Usage-Error) nicht überschreiben – nur den grünen Lauf kippen.
     if session.exitstatus == pytest.ExitCode.OK:
