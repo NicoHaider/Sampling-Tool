@@ -37,7 +37,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from sampling_tool.config import BDO_RED, DEFAULT_BRIEFPAPIER
+from sampling_tool.config import BDO_GREY, BDO_RED, DEFAULT_BRIEFPAPIER
 from sampling_tool.core.formatting import format_audit_details, format_event_timestamp
 from sampling_tool.core.models import AuditEvent, Engagement
 from sampling_tool.io._atomic import atomic_output
@@ -428,8 +428,12 @@ def _format_action_cell(
     if not details:
         return _format_cell(action_text, cell_style)
     detail_line = format_audit_details(details)
+    # Sprint 81: `BDO_GREY` statt des früheren #7F7F7F-Literals. Der Wert ist
+    # mitgewandert (4,00:1 → 5,33:1) – bei 7 pt auf Papier ist das die Stelle,
+    # an der ein zu heller Grauton am ehesten unlesbar wird.
     return Paragraph(
-        f"{_escape(action_text)}<br/><font color='#7F7F7F' size='7'>{_escape(detail_line)}</font>",
+        f"{_escape(action_text)}<br/>"
+        f"<font color='{BDO_GREY}' size='7'>{_escape(detail_line)}</font>",
         cell_style,
     )
 
