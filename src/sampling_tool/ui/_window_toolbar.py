@@ -89,10 +89,26 @@ def build_toolbar(window: MainWindow) -> None:
     toolbar.addAction(window._action_settings)
     toolbar.addAction(window._action_bug_report)
 
+    apply_short_toolbar_labels(window)
     apply_icon_only_style(toolbar, window)
 
     window._toolbar = toolbar
     window.addToolBar(toolbar)
+
+
+def apply_short_toolbar_labels(window: MainWindow) -> None:
+    """Kürzt die zwei längsten Toolbar-Beschriftungen (Sprint 81).
+
+    `QAction.iconText()` ist Qts dafür vorgesehener Weg: die Toolbar zeigt ihn,
+    das Menü zeigt weiter `text()`. „Excel-Report exportieren…" misst 205 px,
+    „Excel-Report" 131 – bei zwei Aktionen also rund 150 px, und die
+    Menü-Einträge bleiben ausformuliert.
+
+    Ohne Setter leitet Qt `iconText` aus `text` ab (nur `&` und Auslassungs-
+    punkte fallen weg) – die Kürzung muss also explizit sein.
+    """
+    window._action_excel_report.setIconText("Excel-Report")
+    window._action_html_report.setIconText("HTML-Report")
 
 
 def icon_only_actions(window: MainWindow) -> tuple[QAction, ...]:
