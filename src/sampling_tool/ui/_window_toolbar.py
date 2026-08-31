@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QAction, QKeySequence
-from PyQt6.QtWidgets import QSizePolicy, QStyle, QToolBar, QWidget
+from PyQt6.QtWidgets import QSizePolicy, QStyle, QToolBar, QToolButton, QWidget
 
 if TYPE_CHECKING:
     from sampling_tool.ui.main_window import MainWindow
@@ -89,5 +89,53 @@ def build_toolbar(window: MainWindow) -> None:
     toolbar.addAction(window._action_settings)
     toolbar.addAction(window._action_bug_report)
 
+    apply_icon_only_style(toolbar, window)
+
     window._toolbar = toolbar
     window.addToolBar(toolbar)
+
+
+def icon_only_actions(window: MainWindow) -> tuple[QAction, ...]:
+    """Die Aktionen, die in der Toolbar ohne Text auskommen (Sprint 81).
+
+    Kriterium ist nicht „unwichtig", sondern **eindeutiges Symbol + vorhandener
+    Tooltip**: ein Haus, ein Zurücksetzen-Pfeil, zwei Richtungspfeile, ein
+    Zahnrad-Ersatz und ein Warndreieck sind ohne Beschriftung lesbar. Die
+    Export-Aktionen bleiben bewusst beschriftet – „Excel-Report" und
+    „HTML-Report" unterscheiden sich in Qts Standard-Pixmaps kaum.
+    """
+    return (
+        window._action_switch_engagement,
+        window._action_reset_sampling,
+        window._action_undo,
+        window._action_redo,
+        window._action_settings,
+        window._action_bug_report,
+    )
+
+
+def apply_icon_only_style(toolbar: QToolBar, window: MainWindow) -> None:
+    """Nimmt sechs Toolbar-Buttons den Text – je Button, nicht toolbar-weit.
+
+    Bei 1536 px logischer Breite (13-Zoll-Lenovo, Windows 125 %) lagen vier der
+    zwölf Haupt-Aktionen hinter dem `»`-Überlaufmenü: Sample exportieren,
+    AuditTrail-PDF, Excel-Report, HTML-Report – also die gesamte Export-Gruppe.
+    Wer exportieren wollte, musste ein Menü öffnen, das aussieht wie ein
+    Zeichen.
+
+    `toolbar.setToolButtonStyle` wäre toolbar-weit und würde auch den
+    Text-Aktionen die Beschriftung nehmen. Deshalb pro `QToolButton` über
+    `widgetForAction` – das setzt voraus, dass die Aktion bereits in der
+    Toolbar hängt.
+
+    Ein Button ohne Icon behält seinen Text: `standardIcon` hängt am
+    Plattform-Stil, und `style()` kann `None` liefern. Ohne diese Bedingung
+    entstünde dort ein leerer, unbeschrifteter Knopf – schlechter als ein
+    Überlaufmenü.
+    """
+    for action in icon_only_actions(window):
+        if action.icon().isNull():
+            continue
+        button = toolbar.widgetForAction(action)
+        if isinstance(button, QToolButton):
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
