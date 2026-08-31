@@ -12,7 +12,7 @@ from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QDialog
 from pytestqt.qtbot import QtBot
 
-from sampling_tool.config import APP_NAME, APP_ORG
+from sampling_tool.config import APP_NAME, APP_ORG, METHOD_LABELS
 from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
@@ -56,12 +56,14 @@ def _sample(sample_id: int, size: int = 3) -> SampleResult:
     )
 
 
-def _legacy_label(sample: SampleResult, idx: int = 1) -> str:
-    """Das bisherige Sample-Label-Format (Regressions-Referenz)."""
-    return (
-        f"#{idx} · {sample.config.method.value} · n={sample.actual_size} "
-        f"(seed {sample.config.seed})"
-    )
+def _base_label(sample: SampleResult, idx: int = 1) -> str:
+    """Das Sample-Label OHNE ID-Anhang (Regressions-Referenz).
+
+    Sprint 81: der Seed ist raus (er steht im Tooltip) und die Methode steht
+    deutsch da statt als Roh-Enum. Die ID-Logik selbst – was additiv angehängt
+    wird und wann – ist davon unberührt, und genau das prüfen die Tests unten.
+    """
+    return f"#{idx} · {METHOD_LABELS[sample.config.method.value]} · n={sample.actual_size}"
 
 
 class TestFormatSampleIdValues:
@@ -115,8 +117,8 @@ class TestIdColumnSelectionAndDisplay:
         item = sidebar.samples_widget().item(0)
         assert item is not None
         text = item.text()
-        # Legacy-Anteil bleibt, IDs werden additiv angehängt.
-        assert _legacy_label(sample) in text
+        # Basis-Anteil bleibt, IDs werden additiv angehängt.
+        assert _base_label(sample) in text
         assert f"IDs: {ids_text}" in text
 
     def test_sidebar_hides_ids_when_toggle_off(self, qtbot: QtBot) -> None:
@@ -131,19 +133,19 @@ class TestIdColumnSelectionAndDisplay:
         )
         item = sidebar.samples_widget().item(0)
         assert item is not None
-        # Toggle aus → exakt das bisherige Label, keine IDs.
-        assert item.text() == _legacy_label(sample)
+        # Toggle aus → das Basis-Label, keine IDs.
+        assert item.text() == _base_label(sample)
         assert "IDs:" not in item.text()
 
-    def test_no_id_column_keeps_legacy_label(self, qtbot: QtBot) -> None:
+    def test_no_id_column_keeps_base_label(self, qtbot: QtBot) -> None:
         sidebar = NavigationSidebar()
         qtbot.addWidget(sidebar)
         sample = _sample(5)
-        # Keine ID-Spalte gewählt → unverändertes Label (auch mit Toggle an).
+        # Keine ID-Spalte gewählt → Basis-Label (auch mit Toggle an).
         sidebar.set_samples([sample], show_sample_id_column=True)
         item = sidebar.samples_widget().item(0)
         assert item is not None
-        assert item.text() == _legacy_label(sample)
+        assert item.text() == _base_label(sample)
         assert "IDs:" not in item.text()
 
 
@@ -225,7 +227,7 @@ class TestIdColumnEndToEnd:
         assert "IDs:" in _samples_item_text(win)
         ctrl.engagement.handle_close_engagement()
 
-    def test_no_column_chosen_shows_legacy_label(self, qtbot: QtBot, tmp_path: Path) -> None:
+    def test_no_column_chosen_shows_base_label(self, qtbot: QtBot, tmp_path: Path) -> None:
         db_path, ds_id = _populated_db(tmp_path)
         win = MainWindow()
         qtbot.addWidget(win)

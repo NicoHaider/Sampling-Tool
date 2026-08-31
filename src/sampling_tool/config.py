@@ -69,6 +69,27 @@ SAMPLE_HIGHLIGHT_ALPHA: Final[int] = 90  # 0-255 (≈ 35 % Deckkraft)
 WARNING_COLOR: Final[str] = "#C62828"
 
 # ---------------------------------------------------------------------------
+# Anzeige-Namen der Sampling-Methoden (Sprint 81)
+# ---------------------------------------------------------------------------
+# EINE Quelle für die deutschen Methodennamen. Bis Sprint 80 standen sie
+# zweimal im Code – als `dict` in `ui/main_window.py` für die Statusbar und als
+# `list[tuple]` in `ui/dialogs/template_manager_dialog.py` für das Dropdown –,
+# und die Sidebar zeigte stattdessen den ROH-Enum-Wert (`simple`,
+# `stratified`). Das Ergebnis war zwei Sprachen für dasselbe Feld, zwei Zeilen
+# voneinander entfernt auf demselben Bildschirm: die Sidebar sagte „simple", die
+# Statusbar darunter „Einfach".
+#
+# Schlüssel ist der Enum-WERT (`SamplingMethod.SIMPLE.value`), nicht das
+# Enum-Objekt: `config.py` steht unter `core/` in der Layer-Ordnung und darf
+# `core.models` nicht importieren. Die Aufrufer, die das Enum haben, indizieren
+# über `.value`.
+METHOD_LABELS: Final[dict[str, str]] = {
+    "simple": "Einfach",
+    "cluster": "Cluster",
+    "stratified": "Geschichtet",
+}
+
+# ---------------------------------------------------------------------------
 # Sampling-Defaults
 # ---------------------------------------------------------------------------
 DEFAULT_SAMPLE_SIZE: Final[int] = 25  # Branchenüblicher Default

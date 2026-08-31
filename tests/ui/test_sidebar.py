@@ -112,15 +112,34 @@ class TestNavigationSidebar:
         assert blocker.args == [99]
 
     def test_sample_label_includes_method_and_size(self, qtbot: QtBot) -> None:
+        """Sprint 81: Nummer, Methode, Umfang – mehr braucht eine Auswahlliste nicht."""
         sidebar = NavigationSidebar()
         qtbot.addWidget(sidebar)
         sidebar.set_samples([_sample(1, size=42)])
         item = sidebar.samples_widget().item(0)
         assert item is not None
         text = item.text()
-        assert "simple" in text
         assert "n=42" in text
-        assert "seed 1" in text
+        # Deutscher Anzeige-Name, nicht der Roh-Enum: die Statusbar sagt für
+        # dieselbe Stichprobe „Einfach", zwei Zeilen tiefer auf demselben Schirm.
+        assert "Einfach" in text
+        assert "simple" not in text
+
+    def test_sample_label_does_not_carry_the_seed(self, qtbot: QtBot) -> None:
+        """Sprint 81: der Seed gehört nicht in eine Navigationsliste.
+
+        Er stand am ENDE eines Labels, das bei 296 px Sidebar-Breite ohnehin
+        elidiert wurde – also war er dort ohnehin meist unsichtbar. Erreichbar
+        bleibt er im Tooltip und an den drei Stellen, an denen er gebraucht
+        wird: Statusbar, AuditTrail-Spalte, Excel-/PDF-Report.
+        """
+        sidebar = NavigationSidebar()
+        qtbot.addWidget(sidebar)
+        sidebar.set_samples([_sample(1, size=42)])
+        item = sidebar.samples_widget().item(0)
+        assert item is not None
+        assert "seed" not in item.text().lower()
+        assert "Seed 1" in item.toolTip()
 
     def test_sample_items_have_full_text_tooltip(self, qtbot: QtBot) -> None:
         """Sprint 69 / Bug 5: Sidebar-Breite < Label-Länge → Qt elidiert den
@@ -136,12 +155,13 @@ class TestNavigationSidebar:
         second = sidebar.samples_widget().item(1)
         assert first is not None
         assert second is not None
-        # Vor jeglicher Aktiv-Markierung ist Tooltip == sichtbarer Text.
-        assert first.toolTip() == first.text()
-        assert second.toolTip() == second.text()
+        # Vor jeglicher Aktiv-Markierung beginnt der Tooltip mit dem sichtbaren
+        # Text; seit Sprint 81 kommt der Seed in einer zweiten Zeile dazu.
+        assert first.toolTip().startswith(first.text())
+        assert second.toolTip().startswith(second.text())
         for tip in (first.toolTip(), second.toolTip()):
-            assert "simple" in tip
-            assert "seed 1" in tip
+            assert "Einfach" in tip
+            assert "Seed 1" in tip
         assert "n=42" in first.toolTip()
         assert "n=7" in second.toolTip()
 
@@ -151,11 +171,13 @@ class TestNavigationSidebar:
         # Entscheidung bewusst NICHT im Tooltip dupliziert wird, siehe
         # `NavigationSidebar.set_samples`-Docstring).
         sidebar.set_active_sample(2)
-        assert first.toolTip() == first.text()
+        first_line, _, seed_line = second.toolTip().partition("\n")
+        assert first.toolTip().startswith(first.text())
         assert second.text().startswith("●")
-        assert second.toolTip() in second.text()
-        assert "n=7" in second.toolTip()
-        assert "seed 1" in second.toolTip()
+        assert not first_line.startswith("●"), "Das Aktiv-Präfix ist im Tooltip dupliziert."
+        assert first_line in second.text()
+        assert "n=7" in first_line
+        assert seed_line == "Seed 1"
 
     def test_clear_samples_empties_list(self, qtbot: QtBot) -> None:
         sidebar = NavigationSidebar()
