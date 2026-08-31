@@ -23,10 +23,33 @@ APP_ORG_DOMAIN: Final[str] = "bdo.at"
 # BDO Corporate-Identity – Farb-Palette (Hex-Codes)
 # Wird in den Stylesheets unter ui/styles/*.qss referenziert.
 # ---------------------------------------------------------------------------
-BDO_RED: Final[str] = "#E81A3B"  # Primärfarbe (Logo-Rot)
-BDO_DARK_GREY: Final[str] = "#333333"  # Haupt-Schriftfarbe
-BDO_GREY: Final[str] = "#7F7F7F"  # sekundärer Text
+BDO_RED: Final[str] = "#E81A3B"  # FLÄCHE: Buttons, Tabellenkopf, Logo, Fokus
+
+# Sprint 81: das Marken-Rot als SCHRIFTFARBE. Kein neuer Wert – dieser Ton steht
+# bereits 10× in `bdo_light.qss` als Hover-/Pressed-/Auswahl-Zustand. Als
+# Textfarbe ist `BDO_RED` mit 4,52:1 nur 0,02 über der AA-Grenze und damit
+# fragil; dieser Ton liegt bei 7,8:1. Die Trennung ist der Punkt: rot GEFÜLLT
+# und rot GESCHRIEBEN sind zwei Rollen, nicht eine Farbe.
+BDO_RED_INK: Final[str] = "#A41229"
+
+BDO_DARK_GREY: Final[str] = "#333333"  # Primärtext                    12,6:1
+BDO_GREY: Final[str] = "#6B6B6B"  # Sekundärtext (war #7F7F7F)          5,3:1
 BDO_LIGHT_GREY: Final[str] = "#D9D9D9"  # Trennlinien, Borders
+
+# Sprint 81: NUR für deaktivierte Steuerelemente. Bis Sprint 80 trug #B0B0B0
+# zwei Bedeutungen – „deaktiviert" UND „Leerzustand". Die zweite ist echte
+# Information (2,2:1 auf Weiß, faktisch unlesbar) und liegt seither auf
+# `BDO_GREY`; die erste ist von WCAG ausdrücklich ausgenommen und darf hell
+# bleiben. Ein Wert, eine Bedeutung.
+BDO_DISABLED: Final[str] = "#B0B0B0"
+
+# Sprint 81: drei Flächen-Stufen mit klarer Zuständigkeit statt sechs
+# zufälligen (#F5F5F5, #F4F4F4, #EEEEEE, #E4E4E4, #F8F8F8, #FAFAFA standen
+# nebeneinander, ohne dass ein Unterschied eine Bedeutung trug).
+SURFACE_CHROME: Final[str] = "#F8F8F8"  # Menü, Toolbar, Statusbar
+SURFACE_DATA: Final[str] = "#FAFAFA"  # Sidebar, Wechselzeile
+SURFACE_HOVER: Final[str] = "#F4F4F4"  # Hover, Scrollbar-Rinne, Zeilennummern
+SURFACE_SELECTED: Final[str] = "#FFE6E6"  # Auswahl – überall dieselbe Sprache
 
 # Hintergrund-Farbe für markierte Sample-Zeilen in der Tabelle.
 # Kräftiges Grün mit moderater Deckkraft, damit Text lesbar bleibt.

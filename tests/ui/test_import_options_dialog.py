@@ -6,10 +6,12 @@ from pathlib import Path
 
 import pytest
 from openpyxl import Workbook
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QDialog, QDialogButtonBox
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.io.importer import ExcelImporter
+from sampling_tool.config import SURFACE_SELECTED
 from sampling_tool.ui.dialogs.import_options_dialog import (
     ImportOptionsDialog,
     ImportOptionsResult,
@@ -256,9 +258,11 @@ class TestHeaderRowClick:
         dialog._preview_table.cellClicked.emit(1, 0)
         assert dialog._header_spin.value() == 2
         # Geklickte Zeile ist als Kopfzeile hervorgehoben (Header-Hint-Background).
+        # Sprint 81: geprüft wird die ABSICHT – die erkannte Kopfzeile trägt die
+        # app-weite Auswahl-Farbe – nicht ein nachgetippter Hex-Wert.
         item = dialog._preview_table.item(1, 0)
         assert item is not None
-        assert item.background().color().name() == "#eeeeee"
+        assert item.background().color().name() == QColor(SURFACE_SELECTED).name()
 
     def test_click_vertical_header_sets_header_spin(
         self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter

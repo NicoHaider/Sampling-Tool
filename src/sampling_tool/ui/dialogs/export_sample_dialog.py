@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.config import (
+    BDO_DARK_GREY,
     EXPORT_SUFFIX_SAMPLING,
     EXPORT_TYPE_SAMPLING,
     local_export_now,
@@ -218,5 +219,5 @@ class ExportSampleDialog(QDialog):
 
 def _caption(text: str) -> QLabel:
     label = QLabel(text)
-    label.setStyleSheet("color: #555555; font-weight: 600;")
+    label.setStyleSheet(f"color: {BDO_DARK_GREY}; font-weight: 600;")
     return label

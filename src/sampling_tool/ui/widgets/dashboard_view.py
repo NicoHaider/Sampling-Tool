@@ -32,7 +32,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import BDO_DARK_GREY, BDO_GREY, BDO_LIGHT_GREY, BDO_RED
+from sampling_tool.config import (
+    BDO_DARK_GREY,
+    BDO_GREY,
+    BDO_LIGHT_GREY,
+    BDO_RED,
+    BDO_RED_INK,
+    SURFACE_HOVER,
+)
 from sampling_tool.core.formatting import ensure_utc
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.ui._scaling import scaled_px
@@ -118,7 +125,7 @@ class _ClickableSampleLabel(QLabel):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
             f"QLabel {{ color: {BDO_DARK_GREY}; padding: 4px; }}"
-            f"QLabel:hover {{ background-color: #F5F5F5; color: {BDO_RED}; }}"
+            f"QLabel:hover {{ background-color: {SURFACE_HOVER}; color: {BDO_RED_INK}; }}"
         )
 
     def mousePressEvent(self, event: QMouseEvent | None) -> None:  # noqa: N802
@@ -524,7 +531,7 @@ def _big_number_label(value: int, label: str, factor: float = 1.0) -> QWidget:
 
 def _muted_label(text: str) -> QLabel:
     label = QLabel(text)
-    label.setStyleSheet("color: #B0B0B0; font-style: italic;")
+    label.setStyleSheet(f"color: {BDO_GREY}; font-style: italic;")
     label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     return label
 

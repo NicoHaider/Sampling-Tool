@@ -506,6 +506,6 @@ class MainWindow(QMainWindow):
 def _separator() -> QLabel:
     label = QLabel("│")
     # Sprint 71/2: ohne `background: transparent` malt die generische
-    # QWidget-Regel das Label weiß auf die #F4F4F4-Statusbar.
+    # QWidget-Regel das Label weiß auf die Statusbar-Fläche (SURFACE_CHROME).
     label.setStyleSheet(f"color: {BDO_LIGHT_GREY}; padding: 0 6px; background: transparent;")
     return label

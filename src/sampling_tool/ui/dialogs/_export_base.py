@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.config import (
-    BDO_GREY,
+    BDO_DARK_GREY,
     EXPORT_FILENAME_PATTERN,
     WARNING_COLOR,
     export_date_token,
@@ -141,7 +141,7 @@ class ExportTargetWidget(QWidget):
         self._dir_label = QLabel(
             str(self._output_dir) if self._output_dir is not None else "(noch nicht gewählt)"
         )
-        self._dir_label.setStyleSheet("color: #555555;")
+        self._dir_label.setStyleSheet(f"color: {BDO_DARK_GREY};")
         self._dir_label.setWordWrap(True)
         self._dir_button = QPushButton("Ordner wählen…")
         self._dir_button.setProperty("secondary", True)
@@ -156,7 +156,10 @@ class ExportTargetWidget(QWidget):
         # geschriebenen Pfad prüfen können statt gegen `preview_filename()`
         # (das wäre eine Tautologie, keine Vorschau-Prüfung).
         self._preview_label.setObjectName("exportTargetPreview")
-        self._preview_label.setStyleSheet(f"color: {BDO_GREY}; font-family: monospace;")
+        # Sprint 81: Primärtext, nicht Sekundärtext. Diese Zeile ist die
+        # wichtigste Kontrollinformation des Dialogs – der Prüfer liest gegen,
+        # wie die Datei heißen wird. Sie war der schwächste Text darin.
+        self._preview_label.setStyleSheet(f"color: {BDO_DARK_GREY}; font-family: monospace;")
         self._preview_label.setWordWrap(True)
         layout.addWidget(self._preview_label)
 
@@ -298,5 +301,5 @@ class ExportTargetWidget(QWidget):
 
 def _caption(text: str) -> QLabel:
     label = QLabel(text)
-    label.setStyleSheet("color: #555555; font-weight: 600;")
+    label.setStyleSheet(f"color: {BDO_DARK_GREY}; font-weight: 600;")
     return label

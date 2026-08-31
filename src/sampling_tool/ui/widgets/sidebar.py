@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sampling_tool.config import BDO_GREY
 from sampling_tool.core.models import Dataset, Engagement, SampleResult
 
 _DATASET_ID_ROLE = int(Qt.ItemDataRole.UserRole)
@@ -289,6 +290,6 @@ def _section_label(text: str) -> QLabel:
 def _empty_hint(text: str) -> QLabel:
     """Graues Sub-Label – wird unter den Sektions-Headern angezeigt, wenn leer."""
     label = QLabel(text)
-    label.setStyleSheet("color: #B0B0B0; font-style: italic; padding: 4px 8px;")
+    label.setStyleSheet(f"color: {BDO_GREY}; font-style: italic; padding: 4px 8px;")
     label.setProperty("emptyHint", True)
     return label

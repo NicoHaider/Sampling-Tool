@@ -62,7 +62,9 @@ class _RecentCard(QFrame):
         layout.addWidget(subtitle)
 
         path_label = QLabel(str(entry.path))
-        path_label.setStyleSheet(f"color: #B0B0B0; font-size: {scaled_px(10, ui_scale_factor)}px;")
+        path_label.setStyleSheet(
+            f"color: {BDO_GREY}; font-size: {scaled_px(10, ui_scale_factor)}px;"
+        )
         path_label.setWordWrap(True)
         layout.addWidget(path_label)
 
@@ -149,7 +151,7 @@ class WelcomeScreen(QWidget):
         outer.addWidget(scroll, stretch=1)
 
         self._empty_label = QLabel("Noch keine Projekte geöffnet.")
-        self._empty_label.setStyleSheet("color: #B0B0B0; font-style: italic;")
+        self._empty_label.setStyleSheet(f"color: {BDO_GREY}; font-style: italic;")
         self._recent_layout.addWidget(self._empty_label)
         self._recent_layout.addStretch(1)
 
