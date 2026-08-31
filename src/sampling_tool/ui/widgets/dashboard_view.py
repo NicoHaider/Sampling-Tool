@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sampling_tool.config import BDO_DARK_GREY, BDO_GREY, BDO_LIGHT_GREY, BDO_RED
 from sampling_tool.core.formatting import ensure_utc
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.ui._scaling import scaled_px
@@ -63,7 +64,7 @@ class DashboardTile(QFrame):
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.setStyleSheet(
-            "QFrame#DashboardTile { background-color: white; border: 1px solid #D9D9D9; "
+            f"QFrame#DashboardTile {{ background-color: white; border: 1px solid {BDO_LIGHT_GREY}; "
             "border-radius: 6px; padding: 8px; }"
         )
 
@@ -73,7 +74,7 @@ class DashboardTile(QFrame):
 
         self._title_label = QLabel(title)
         self._title_label.setStyleSheet(
-            f"font-weight: 700; color: #333333; font-size: {scaled_px(12, ui_scale_factor)}px; "
+            f"font-weight: 700; color: {BDO_DARK_GREY}; font-size: {scaled_px(12, ui_scale_factor)}px; "
             "text-transform: uppercase;"
         )
         layout.addWidget(self._title_label)
@@ -101,7 +102,7 @@ class DashboardTile(QFrame):
     def set_ui_scale(self, factor: float) -> None:
         """Skaliert den Kachel-Titel neu (Sprint 68 / Teil B1)."""
         self._title_label.setStyleSheet(
-            f"font-weight: 700; color: #333333; font-size: {scaled_px(12, factor)}px; "
+            f"font-weight: 700; color: {BDO_DARK_GREY}; font-size: {scaled_px(12, factor)}px; "
             "text-transform: uppercase;"
         )
 
@@ -116,8 +117,8 @@ class _ClickableSampleLabel(QLabel):
         self._sample_id = sample_id
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
-            "QLabel { color: #333333; padding: 4px; }"
-            "QLabel:hover { background-color: #F5F5F5; color: #E81A3B; }"
+            f"QLabel {{ color: {BDO_DARK_GREY}; padding: 4px; }}"
+            f"QLabel:hover {{ background-color: #F5F5F5; color: {BDO_RED}; }}"
         )
 
     def mousePressEvent(self, event: QMouseEvent | None) -> None:  # noqa: N802
@@ -213,7 +214,7 @@ class DashboardView(QWidget):
         # einzeilig und das Erscheinungsbild unverändert.
         self._empty_label.setWordWrap(True)
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_label.setStyleSheet("color: #7F7F7F; font-style: italic; padding: 24px;")
+        self._empty_label.setStyleSheet(f"color: {BDO_GREY}; font-style: italic; padding: 24px;")
         self._stack.addWidget(self._empty_label)
 
         outer.addWidget(self._stack, stretch=1)
@@ -423,10 +424,10 @@ class DashboardView(QWidget):
         layout.setSpacing(2)
         absolute_label = QLabel(absolute)
         absolute_label.setStyleSheet(
-            f"font-size: {scaled_px(16, self._factor)}px; font-weight: 700; color: #333333;"
+            f"font-size: {scaled_px(16, self._factor)}px; font-weight: 700; color: {BDO_DARK_GREY};"
         )
         relative_label = QLabel(relative)
-        relative_label.setStyleSheet("color: #7F7F7F;")
+        relative_label.setStyleSheet(f"color: {BDO_GREY};")
         layout.addWidget(absolute_label)
         layout.addWidget(relative_label)
         self._tile_last_activity.set_body_widget(container)
@@ -511,9 +512,11 @@ def _big_number_label(value: int, label: str, factor: float = 1.0) -> QWidget:
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(0)
     number = QLabel(str(value))
-    number.setStyleSheet(f"font-size: {scaled_px(28, factor)}px; font-weight: 800; color: #E81A3B;")
+    number.setStyleSheet(
+        f"font-size: {scaled_px(28, factor)}px; font-weight: 800; color: {BDO_RED};"
+    )
     sub = QLabel(label)
-    sub.setStyleSheet("color: #7F7F7F;")
+    sub.setStyleSheet(f"color: {BDO_GREY};")
     layout.addWidget(number)
     layout.addWidget(sub)
     return box

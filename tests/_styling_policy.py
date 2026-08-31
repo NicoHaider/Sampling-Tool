@@ -33,12 +33,19 @@ Eigenschaft aufgeben will, liest dort zuerst, was daran hängt.
 
 from __future__ import annotations
 
+import ast
 import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Final, TypeAlias
 
-from sampling_tool.config import BDO_DARK_GREY, BDO_GREY, BDO_LIGHT_GREY, BDO_RED
+from sampling_tool.config import (
+    BDO_DARK_GREY,
+    BDO_GREY,
+    BDO_LIGHT_GREY,
+    BDO_RED,
+    WARNING_COLOR,
+)
 from sampling_tool.resources import package_resource
 
 # Die Muster, die `scale_stylesheet` tatsächlich anwendet – importiert, nicht
@@ -63,6 +70,19 @@ LOGO_SELECTOR: Final[str] = "QLabel#LogoPlaceholder"
 #: Prüfung einen Verstoß – laut und sofort, nicht still.
 SCALING_MODULE: Final[str] = "_scaling.py"
 
+#: `_fonts.py` ist die einzige Stelle, die eine QFont-GRÖSSE setzen darf –
+#: gespiegelt zu `SCALING_MODULE` für `font-size:` im Stylesheet. Wird das Modul
+#: umbenannt, schlägt die Zusage an, statt die Ausnahme still zu verlieren.
+FONTS_MODULE: Final[str] = "_fonts.py"
+
+#: Größen-Setter auf einer `QFont`. Nur im Helfer erlaubt.
+_FONT_SIZE_SETTERS: Final[frozenset[str]] = frozenset(
+    {"setPointSize", "setPointSizeF", "setPixelSize"}
+)
+
+#: Größen-Abfragen, auf denen gerechnet zu werden pflegt – und genau dort bricht es.
+_FONT_SIZE_GETTERS: Final[frozenset[str]] = frozenset({"pointSize", "pointSizeF", "pixelSize"})
+
 #: Anti-Vakuum-Grenzen. Eine Prüfung über einer leeren Menge ist keine Prüfung:
 #: „alle font-size sind ganzzahlig" ist über null Deklarationen trivial wahr.
 #: Die Zahlen liegen bewusst WEIT unter dem Ist-Stand – sie fangen das Vakuum ab,
@@ -71,22 +91,36 @@ MIN_QSS_BLOCKS: Final[int] = 30  # gemessen 2026-08-25: 61
 MIN_UI_SOURCE_FILES: Final[int] = 25  # gemessen 2026-08-25: 50
 
 #: Obergrenze roher Hex-Literale in `ui/**/*.py` – ein Ratchet NACH UNTEN.
-#: Der Wert darf sinken (Sprint 80 wird das tun), nie steigen: jede neue Farbe
-#: direkt im Code statt über eine Konstante macht die Palette wieder zu etwas,
-#: das an 53 Stellen gleichzeitig geändert werden müsste.
+#: Der Wert darf sinken, nie steigen: jede neue Farbe direkt im Code statt über
+#: eine Konstante macht die Palette wieder zu etwas, das an vielen Stellen
+#: gleichzeitig geändert werden müsste.
 #:
-#: Gemessen 2026-08-25 (Sprint 79), `src/sampling_tool/ui/**/*.py`: 53.
-HEX_LITERAL_CEILING: Final[int] = 53
+#: Sprint 79 maß 53. Sprint 80 hat die 33 Literale mit vorhandener Konstante
+#: ersetzt und drei Warn-Labels auf `WARNING_COLOR` gelegt: 53 − 33 − 3 = 17.
+#:
+#: 17 ist der Boden, den reine Konstanten-Ersetzung erreichen kann. Die
+#: verbleibenden Literale sind eine DESIGN-Frage, keine Mechanik (fünf Grautöne,
+#: drei fast identische Off-Whites) – und eines davon, `#F4F4F4` in
+#: `main_window.py`, steht in einem KOMMENTAR: die Prüfung zählt den rohen
+#: Dateiinhalt ohne Kommentar-Entfernung, eine Konstante kann es also gar nicht
+#: ersetzen. Wer unter 17 will, muss dort den Text ändern.
+#:
+#: Gemessen 2026-08-25 (Sprint 80), `src/sampling_tool/ui/**/*.py`: 17.
+HEX_LITERAL_CEILING: Final[int] = 17
 
-#: Je Farbe, für die es in `config.py` bereits eine Konstante gibt. Einzeln, damit
-#: ein Anstieg bei einer Farbe auffällt und nicht nur in der Summe – 19 → 20 bei
+#: Je Farbe, für die es in `config.py` eine Konstante gibt. Einzeln, damit ein
+#: Anstieg bei einer Farbe auffällt und nicht nur in der Summe – 19 → 20 bei
 #: gleichzeitigem 7 → 6 wäre in der Gesamtzahl unsichtbar.
-#: Gemessen 2026-08-25 (Sprint 79).
+#:
+#: Seit Sprint 80 stehen alle auf **0**: für diese Farben ist ein rohes Literal
+#: im Code kein „noch nicht aufgeräumt" mehr, sondern ein Rückschritt.
+#: Gemessen 2026-08-25 (Sprint 80).
 KNOWN_COLOR_CEILINGS: Final[dict[str, int]] = {
-    BDO_GREY: 19,
-    BDO_DARK_GREY: 7,
-    BDO_RED: 4,
-    BDO_LIGHT_GREY: 3,
+    BDO_GREY: 0,
+    BDO_DARK_GREY: 0,
+    BDO_RED: 0,
+    BDO_LIGHT_GREY: 0,
+    WARNING_COLOR: 0,
 }
 
 #: `#RRGGBB`; die Lookahead-Grenze verhindert, dass die ersten sechs Stellen einer
@@ -381,12 +415,13 @@ def check_hex_literals_do_not_grow(sources: dict[str, str]) -> list[str]:
     """Sprint 79: die Zahl roher Hex-Literale in `ui/**/*.py` steigt nicht.
 
     Ein Ratchet NACH UNTEN, gespiegelt zum Testmengen-Wächter: der Wert darf
-    sinken, nie steigen. Heute stehen 53 Farben direkt im Code, 33 davon mit einer
-    bereits vorhandenen Konstante in `config.py`. Dieser Sprint räumt das nicht
-    auf – er hält nur fest, dass es nicht mehr wird.
+    sinken, nie steigen. Sprint 79 hat bei 53 festgehalten, dass es nicht mehr
+    wird; Sprint 80 hat die 33 Literale mit vorhandener Konstante ersetzt und
+    steht bei 17.
 
-    Zusätzlich je bekannter Farbe eine eigene Grenze: 19 → 20 bei gleichzeitigem
-    7 → 6 wäre in der Gesamtzahl unsichtbar.
+    Zusätzlich je bekannter Farbe eine eigene Grenze – seit Sprint 80 durchweg 0:
+    ein Anstieg bei einer Farbe wäre in der Gesamtzahl sonst unsichtbar
+    (19 → 20 bei gleichzeitigem 7 → 6).
     """
     violations = []
     total = sum(count_hex_literals(content) for content in sources.values())
@@ -407,6 +442,83 @@ def check_hex_literals_do_not_grow(sources: dict[str, str]) -> list[str]:
                 f"{ceiling} – für genau diese Farbe gibt es bereits eine Konstante in "
                 f"config.py (Sprint 79)."
             )
+    return violations
+
+
+def check_font_sizes_are_derived_not_pinned(sources: dict[str, str]) -> list[str]:
+    """Sprint 80: eine Schriftgröße wird abgeleitet, nie in der falschen Einheit gepinnt.
+
+    Qt speichert eine Größe ENTWEDER in Punkt ODER in Pixel; die jeweils andere
+    Abfrage liefert `-1`. `bdo_light.qss` deklariert `font-size: <n>px`, also ist
+    auf jeder gestylten Widget-Schrift `pointSize() == -1` – und
+    `setPointSize(pointSize() + 2)` ergibt eine 1-Punkt-Schrift. Der Text
+    verschwindet, ohne Fehlermeldung, bei JEDEM Skalierungsfaktor, auch bei 1,0.
+
+    Genau das stand von Sprint 1 bis 79 unbemerkt in der Datentabelle: der
+    Empty-State-Hinweis rendert gemessene 21 Tintenpixel statt lesbarem Text, an
+    allen drei UI-Größen gleich. Kein Test hat es gesehen, weil im ganzen Repo
+    keiner eine Schrift konstruiert oder prüft.
+
+    Drei Wege, dieselbe Größe zu pinnen – alle drei werden gemeldet:
+
+    1. Arithmetik auf `pointSize()`/`pixelSize()` – der gemessene Fall.
+    2. Ein Größen-Setter außerhalb von `_fonts.py`.
+    3. `QFont("Helvetica", 9)` – Größe über den Konstruktor.
+
+    Die drei Stellen, die Sprint 79 als Verstoß gemeldet hat
+    (`import_options_dialog.py`, `sidebar.py`), sind BEWUSST nicht erfasst: ein
+    parameterloses `QFont()` trägt eine leere resolve-Maske und überschreibt
+    nichts – gemessen an `QFont().resolve(base)`, das die Basisgröße behält.
+    Eine Zusage „kein `QFont()`" hätte dort zwei Falsch-Positive und den echten
+    Fall verfehlt.
+    """
+    violations = []
+    for path, content in sorted(sources.items()):
+        name = Path(path).name
+        try:
+            tree = ast.parse(content)
+        except SyntaxError as exc:
+            # Fail loud, nicht fail open: eine Datei, die nicht parst, wäre sonst
+            # still von der Zusage ausgenommen.
+            violations.append(
+                f"{path}: nicht parsebar ({exc.msg}) – die Zusage kann hier nicht gelten."
+            )
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.BinOp) and name != FONTS_MODULE:
+                for side in (node.left, node.right):
+                    if (
+                        isinstance(side, ast.Call)
+                        and isinstance(side.func, ast.Attribute)
+                        and side.func.attr in _FONT_SIZE_GETTERS
+                    ):
+                        violations.append(
+                            f"{path} Zeile {node.lineno}: Arithmetik auf "
+                            f"{side.func.attr}() – liefert -1, sobald die Größe in der "
+                            f"anderen Einheit gesetzt ist (bei uns immer px aus der QSS). "
+                            f"Über `_fonts.relative_font` ableiten (Sprint 80)."
+                        )
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _FONT_SIZE_SETTERS
+                and name != FONTS_MODULE
+            ):
+                violations.append(
+                    f"{path} Zeile {node.lineno}: {node.func.attr}() außerhalb von "
+                    f"{FONTS_MODULE} – Schriftgrößen werden dort abgeleitet, damit die "
+                    f"Einheit an einer Stelle richtig ist (Sprint 80)."
+                )
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "QFont"
+                and len(node.args) >= 2
+            ):
+                violations.append(
+                    f"{path} Zeile {node.lineno}: QFont(...) mit Größe im Konstruktor – "
+                    f"pinnt die Größe absolut und ignoriert die UI-Größe (Sprint 80)."
+                )
     return violations
 
 
@@ -432,6 +544,7 @@ SOURCE_CHECKS: Final[tuple[SourceCheck, ...]] = (
     check_sources_are_not_vacuous,
     check_inline_font_sizes_are_scaled,
     check_hex_literals_do_not_grow,
+    check_font_sizes_are_derived_not_pinned,
 )
 
 #: `True` = die Prüfung braucht das ganze Paket, `False` = nur `ui/`.
@@ -439,6 +552,9 @@ SOURCE_CHECK_NEEDS_PACKAGE: Final[dict[str, bool]] = {
     check_sources_are_not_vacuous.__name__: False,
     check_inline_font_sizes_are_scaled.__name__: True,
     check_hex_literals_do_not_grow.__name__: False,
+    # Paket-Scope: eine Schrift kann auch außerhalb von `ui/` gebaut werden, und
+    # genau dort schaut niemand hin. Dieselbe Begründung wie bei `scaled_px`.
+    check_font_sizes_are_derived_not_pinned.__name__: True,
 }
 
 

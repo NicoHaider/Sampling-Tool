@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool import __version__
-from sampling_tool.config import APP_NAME
+from sampling_tool.config import APP_NAME, BDO_DARK_GREY, BDO_GREY, BDO_LIGHT_GREY, BDO_RED
 from sampling_tool.logging_setup import log_file_path
 from sampling_tool.ui._scaling import scaled_px
 
@@ -115,10 +115,10 @@ class AboutDialog(QDialog):
         text = QVBoxLayout()
         title = QLabel(APP_NAME)
         title.setStyleSheet(
-            f"font-size: {scaled_px(22, ui_scale_factor)}px; font-weight: 800; color: #E81A3B;"
+            f"font-size: {scaled_px(22, ui_scale_factor)}px; font-weight: 800; color: {BDO_RED};"
         )
         version = QLabel(f"Version {__version__}")
-        version.setStyleSheet("color: #7F7F7F;")
+        version.setStyleSheet(f"color: {BDO_GREY};")
         description = QLabel(
             "Unterstützt reproduzierbare, dokumentierte Audit-Stichproben "
             "für ISAE-3402-Prüfungen.\n\n"
@@ -142,30 +142,30 @@ class AboutDialog(QDialog):
         self._log_path_label = QLabel(f"Log-Datei: {log_file_path()}")
         self._log_path_label.setWordWrap(True)
         self._log_path_label.setStyleSheet(
-            f"color: #7F7F7F; font-size: {scaled_px(11, ui_scale_factor)}px;"
+            f"color: {BDO_GREY}; font-size: {scaled_px(11, ui_scale_factor)}px;"
         )
         outer.addWidget(self._log_path_label)
 
         # Changelog-Block – Trenner + Liste der letzten Releases.
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("color: #D9D9D9;")
+        divider.setStyleSheet(f"color: {BDO_LIGHT_GREY};")
         outer.addWidget(divider)
 
         changelog_title = QLabel("Was gibt es Neues")
         changelog_title.setStyleSheet(
-            f"font-weight: 700; color: #333333; font-size: {scaled_px(13, ui_scale_factor)}px; "
+            f"font-weight: 700; color: {BDO_DARK_GREY}; font-size: {scaled_px(13, ui_scale_factor)}px; "
             "padding-top: 4px;"
         )
         outer.addWidget(changelog_title)
 
         for changelog_version, items in CHANGELOG[:3]:
             version_label = QLabel(changelog_version)
-            version_label.setStyleSheet("font-weight: 700; color: #E81A3B; padding-top: 6px;")
+            version_label.setStyleSheet(f"font-weight: 700; color: {BDO_RED}; padding-top: 6px;")
             outer.addWidget(version_label)
             bullets = QLabel("\n".join(f"• {entry}" for entry in items))
             bullets.setWordWrap(True)
-            bullets.setStyleSheet("color: #333333; padding-left: 6px;")
+            bullets.setStyleSheet(f"color: {BDO_DARK_GREY}; padding-left: 6px;")
             outer.addWidget(bullets)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)

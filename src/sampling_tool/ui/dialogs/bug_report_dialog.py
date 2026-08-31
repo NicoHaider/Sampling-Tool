@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool import __version__
-from sampling_tool.config import APP_NAME, BUG_REPORT_EMAIL, BUG_REPORT_SUBJECT_PREFIX
+from sampling_tool.config import APP_NAME, BDO_GREY, BUG_REPORT_EMAIL, BUG_REPORT_SUBJECT_PREFIX
 from sampling_tool.logging_setup import log_file_path
 
 _LOG_TAIL_LINES: Final[int] = 50
@@ -102,7 +102,7 @@ class BugReportDialog(QDialog):
             "wird die System-Mail-App mit vorausgefüllten Feldern geöffnet."
         )
         intro.setWordWrap(True)
-        intro.setStyleSheet("color: #7F7F7F;")
+        intro.setStyleSheet(f"color: {BDO_GREY};")
         outer.addWidget(intro)
 
         self._did = _make_field("Was hast du gemacht?", outer)

@@ -28,7 +28,9 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.config import (
+    BDO_GREY,
     EXPORT_FILENAME_PATTERN,
+    WARNING_COLOR,
     export_date_token,
     local_export_now,
     sanitize_export_filename_token,
@@ -154,7 +156,7 @@ class ExportTargetWidget(QWidget):
         # geschriebenen Pfad prüfen können statt gegen `preview_filename()`
         # (das wäre eine Tautologie, keine Vorschau-Prüfung).
         self._preview_label.setObjectName("exportTargetPreview")
-        self._preview_label.setStyleSheet("color: #7F7F7F; font-family: monospace;")
+        self._preview_label.setStyleSheet(f"color: {BDO_GREY}; font-family: monospace;")
         self._preview_label.setWordWrap(True)
         layout.addWidget(self._preview_label)
 
@@ -163,7 +165,7 @@ class ExportTargetWidget(QWidget):
         # die Skalierungs-Gates (`test_scaling.py`) unberührt bleiben.
         self._hint_label = QLabel("")
         self._hint_label.setObjectName("exportTargetHint")
-        self._hint_label.setStyleSheet("color: #C62828; background: transparent;")
+        self._hint_label.setStyleSheet(f"color: {WARNING_COLOR}; background: transparent;")
         self._hint_label.setWordWrap(True)
         self._hint_label.setVisible(False)
         layout.addWidget(self._hint_label)

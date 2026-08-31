@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sampling_tool.config import BDO_GREY
 from sampling_tool.core.formatting import ensure_utc, format_optional_timestamp
 from sampling_tool.core.models import AuditEvent
 
@@ -416,7 +417,7 @@ class AuditTrailView(QWidget):
 
         self._empty_label = QLabel("Noch keine Audit-Events – starte mit einem Import oder Sample.")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_label.setStyleSheet("color: #7F7F7F; font-style: italic; padding: 24px;")
+        self._empty_label.setStyleSheet(f"color: {BDO_GREY}; font-style: italic; padding: 24px;")
         self._stack.addWidget(self._empty_label)
 
         outer.addWidget(self._stack, stretch=1)

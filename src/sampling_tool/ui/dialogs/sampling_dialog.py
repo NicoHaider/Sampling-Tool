@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -42,10 +42,12 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.config import (
+    BDO_GREY,
     DEFAULT_SAMPLE_SIZE,
     MIN_SAMPLE_SIZE,
     SEED_MAX,
     SEED_MIN,
+    WARNING_COLOR,
 )
 from sampling_tool.core.models import (
     Dataset,
@@ -86,6 +88,9 @@ _OUTER_MARGIN: Final[int] = 20
 # `content_min_width` in `_dialog_sizing.py` – Wechselwirkung zwischen
 # horizontalem und vertikalem Scrollbalken).
 _WIDTH_SAFETY_BUFFER: Final[int] = 8
+#: LOGISCHE Kantenlänge des Mode-Hint-Icons. Bleibt logisch: die Device-Pixel
+#: kommen über das Ratio dazu, nicht über diese Zahl (Sprint 78 / §2.5).
+_HINT_ICON_PX: Final[int] = 14
 
 # Sprint 36: Vergleichsoperatoren des Spaltenfilters. Der sichtbare Label-Text
 # steht im Combo, das `FilterOperator`-Member als `userData`.
@@ -277,7 +282,7 @@ class SamplingDialog(QDialog):
             "Daten ist das Ergebnis bit-genau reproduzierbar (ISAE-3402)."
         )
         intro.setWordWrap(True)
-        intro.setStyleSheet("color: #7F7F7F;")
+        intro.setStyleSheet(f"color: {BDO_GREY};")
         outer.addWidget(intro)
 
         # ---- Vorlagen (Sprint 32) ----
@@ -339,7 +344,7 @@ class SamplingDialog(QDialog):
         size_layout.addWidget(self._size_spin)
         self._lbl_size_hint = QLabel()
         self._lbl_size_hint.setStyleSheet(
-            f"color: #7F7F7F; font-size: {scaled_px(11, self._factor)}px;"
+            f"color: {BDO_GREY}; font-size: {scaled_px(11, self._factor)}px;"
         )
         size_layout.addWidget(self._lbl_size_hint)
         form.addRow("Stichprobengröße *", size_box)
@@ -445,7 +450,7 @@ class SamplingDialog(QDialog):
             "bit-genau gleiche Stichprobe."
         )
         seed_hint = QLabel("in den Einstellungen änderbar")
-        seed_hint.setStyleSheet(f"color: #7F7F7F; font-size: {scaled_px(11, self._factor)}px;")
+        seed_hint.setStyleSheet(f"color: {BDO_GREY}; font-size: {scaled_px(11, self._factor)}px;")
         seed_row.addWidget(self._seed_spin, stretch=1)
         seed_row.addWidget(seed_hint)
         seed_widget = QWidget()
@@ -458,7 +463,7 @@ class SamplingDialog(QDialog):
 
         # ---- Validierungs-Label ----
         self._error_label = QLabel("")
-        self._error_label.setStyleSheet("color: #C62828;")
+        self._error_label.setStyleSheet(f"color: {WARNING_COLOR};")
         self._error_label.setWordWrap(True)
         outer.addWidget(self._error_label)
 
@@ -487,6 +492,16 @@ class SamplingDialog(QDialog):
         dialog_layout.addWidget(scroll, stretch=1)
         dialog_layout.addLayout(footer)
 
+    def _icon_ratio(self) -> float:
+        """Device-Pixel-Ratio des Bildschirms, auf dem dieser Dialog liegt.
+
+        Die einzige Stelle im Mode-Hint-Pfad, die einen echten Bildschirmwert
+        liest – analog zu `DashboardView._chart_ratio` (Sprint 78 / §2.1). Unter
+        `QT_QPA_PLATFORM=offscreen` ist der Wert immer 1.0, deshalb ist er ein
+        Parameter und keine Abfrage im Rechenweg.
+        """
+        return float(self.devicePixelRatioF())
+
     def _build_mode_hint(self) -> QWidget:
         """Diskreter Hinweis unten links: 'Einfach-Modus' mit Erklär-Tooltip."""
         hint = QWidget()
@@ -498,9 +513,13 @@ class SamplingDialog(QDialog):
         style = self.style()
         if style is not None:
             icon = style.standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation)
-            icon_lbl.setPixmap(icon.pixmap(14, 14))
+            # Sprint 78 / §2.5, hier über die Qt-6-Überladung: die LOGISCHE Größe
+            # bleibt `_HINT_ICON_PX`, das Ratio sagt Qt, dass die zusätzlichen
+            # Pixel Auflösung sind und keine Größe. Ohne das skaliert Qt ein
+            # 14-px-Raster hoch, obwohl das Icon eine 32-px-Quelle mitbringt.
+            icon_lbl.setPixmap(icon.pixmap(QSize(_HINT_ICON_PX, _HINT_ICON_PX), self._icon_ratio()))
         text_lbl = QLabel("Einfach-Modus")
-        text_lbl.setStyleSheet(f"color: #7F7F7F; font-size: {scaled_px(11, self._factor)}px;")
+        text_lbl.setStyleSheet(f"color: {BDO_GREY}; font-size: {scaled_px(11, self._factor)}px;")
 
         tooltip = (
             "Im Einfach-Modus sind erweiterte Sampling-Methoden (Cluster, "

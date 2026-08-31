@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import QAbstractButton, QHeaderView, QLabel, QTableView, QW
 from sampling_tool.config import SAMPLE_HIGHLIGHT_ALPHA, SAMPLE_HIGHLIGHT_COLOR
 from sampling_tool.core.models import Dataset, DatasetRow
 from sampling_tool.persistence.repositories import DatasetRepo
+from sampling_tool.ui._fonts import relative_font
 from sampling_tool.ui._scaling import scaled_px
 
 HIGHLIGHT_COLOR: str = SAMPLE_HIGHLIGHT_COLOR
@@ -44,6 +45,11 @@ HIGHLIGHT_ALPHA: int = SAMPLE_HIGHLIGHT_ALPHA
 _MIN_COLUMN_WIDTH: int = 60
 _MAX_COLUMN_WIDTH: int = 320
 _EMPTY_MESSAGE: str = "Keine Datensätze – Datei importieren"
+#: Der Empty-State-Hinweis steht eine Stufe größer als der Tabelleninhalt.
+#: RELATIV, nicht absolut: bei der Default-Schrift (13px) ergibt das die 15px,
+#: die das ursprüngliche `pointSize() + 2` gemeint – aber nie erreicht – hat
+#: (siehe `_fonts.relative_font`).
+_EMPTY_MESSAGE_FONT_SCALE: float = 1.15
 # Sprint 68 / Teil B1: Basiswert für die UI-Skalierung (`MainWindow.apply_ui_scale`).
 _DEFAULT_ROW_HEIGHT: int = 22
 
@@ -465,10 +471,9 @@ class DataTableView(QTableView):
             return
         try:
             painter.setPen(QColor("#B0B0B0"))
-            font = painter.font()
-            font.setPointSize(font.pointSize() + 2)
-            font.setItalic(True)
-            painter.setFont(font)
+            painter.setFont(
+                relative_font(painter.font(), scale=_EMPTY_MESSAGE_FONT_SCALE, italic=True)
+            )
             painter.drawText(
                 viewport.rect(),
                 int(Qt.AlignmentFlag.AlignCenter),

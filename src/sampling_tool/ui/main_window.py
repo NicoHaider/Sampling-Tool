@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import APP_NAME, APP_ORG, ENGAGEMENTS_DIR
+from sampling_tool.config import APP_NAME, APP_ORG, BDO_LIGHT_GREY, ENGAGEMENTS_DIR
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.persistence.repositories import DatasetRepo
 from sampling_tool.ui._scaling import scaled_px
@@ -507,5 +507,5 @@ def _separator() -> QLabel:
     label = QLabel("│")
     # Sprint 71/2: ohne `background: transparent` malt die generische
     # QWidget-Regel das Label weiß auf die #F4F4F4-Statusbar.
-    label.setStyleSheet("color: #D9D9D9; padding: 0 6px; background: transparent;")
+    label.setStyleSheet(f"color: {BDO_LIGHT_GREY}; padding: 0 6px; background: transparent;")
     return label

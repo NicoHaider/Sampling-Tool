@@ -1,4 +1,10 @@
-"""Integration: AuditTrailPDF – Audit-Events → PDF mit optionalem Briefpapier."""
+"""Integration: AuditTrailPDF – Audit-Events → PDF mit optionalem Briefpapier.
+
+`pypdf` und `pillow` werden hart importiert, nicht über `pytest.importorskip`:
+beide stehen in `[project.dependencies]`, ein Skip könnte hier also nie legitim
+auslösen – er würde nur eine kaputte Installation verdecken, und zwar für diese
+ganze Datei auf einmal (Sprint 80 / §4.2).
+"""
 
 from __future__ import annotations
 
@@ -8,14 +14,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from PIL import Image
+from pypdf import PdfReader
 from reportlab.platypus import SimpleDocTemplate
 
 from sampling_tool.core.models import AuditEvent, Engagement
 from sampling_tool.io.bdo_locations import company_by_key, location_by_key
 from sampling_tool.io.pdf_report import AuditTrailPDF
-
-pypdf = pytest.importorskip("pypdf", reason="pypdf wird für die Inhalts-Prüfung gebraucht")
-PdfReader = pypdf.PdfReader
 
 
 @pytest.fixture
@@ -66,9 +71,8 @@ def events() -> list[AuditEvent]:
 @pytest.fixture
 def briefpapier_png(tmp_path: Path) -> Path:
     """Echtes 200x280 PNG (per Pillow erzeugt) – simuliert ein DIN-A4-Briefpapier."""
-    pil_image = pytest.importorskip("PIL.Image")
     path = tmp_path / "briefpapier.png"
-    img = pil_image.new("RGB", (200, 280), color=(245, 245, 245))
+    img = Image.new("RGB", (200, 280), color=(245, 245, 245))
     img.save(path, format="PNG")
     return path
 

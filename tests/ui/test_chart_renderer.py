@@ -11,11 +11,7 @@ import matplotlib.pyplot as plt
 import pytest
 from PyQt6.QtGui import QPixmap
 
-from sampling_tool.ui.widgets.chart_renderer import (
-    render_bar_chart,
-    render_line_chart,
-    render_pie_chart,
-)
+from sampling_tool.ui.widgets.chart_renderer import render_bar_chart, render_line_chart
 
 pytestmark = pytest.mark.ui
 
@@ -38,18 +34,12 @@ def test_line_chart_returns_non_empty_pixmap(qtbot: object) -> None:
     assert not pixmap.isNull()
 
 
-def test_pie_chart_returns_non_empty_pixmap(qtbot: object) -> None:
-    pixmap = render_pie_chart(["simple", "cluster"], [4.0, 2.0], "Methoden")
-    assert not pixmap.isNull()
-
-
 def test_repeated_render_does_not_leak_figures(qtbot: object) -> None:
     """Viele Renders hintereinander dürfen keine offenen Figures hinterlassen."""
     plt.close("all")
     for _ in range(20):
         render_bar_chart(["A", "B"], [1.0, 2.0])
         render_line_chart(["A", "B"], [1.0, 2.0])
-        render_pie_chart(["A", "B"], [1.0, 2.0])
     assert plt.get_fignums() == []
 
 
@@ -102,8 +92,8 @@ class TestDevicePixelRatio:
             einfach.deviceIndependentSize().height(), abs=self.TOLERANCE_PX
         )
 
-    def test_all_three_renderers_carry_the_ratio(self, qtbot: object) -> None:
-        for render in (render_bar_chart, render_line_chart, render_pie_chart):
+    def test_both_renderers_carry_the_ratio(self, qtbot: object) -> None:
+        for render in (render_bar_chart, render_line_chart):
             pixmap = render(["A", "B"], [1.0, 2.0], "Test", 360, 160, 2.0)
             assert pixmap.devicePixelRatio() == 2.0, render.__name__
             assert not pixmap.isNull(), render.__name__

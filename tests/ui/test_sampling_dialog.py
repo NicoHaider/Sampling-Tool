@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 import pytest
-from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QLineEdit, QScrollArea
+from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QLabel, QLineEdit, QScrollArea
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import (
@@ -22,6 +22,7 @@ from sampling_tool.core.models import (
 from sampling_tool.core.presets import SamplingPreset
 from sampling_tool.ui._scaling import load_scaled_stylesheet
 from sampling_tool.ui.dialogs.sampling_dialog import (
+    _HINT_ICON_PX,
     NO_FILTER_LABEL,
     SamplingDialog,
     _parse_filter_threshold,
@@ -206,6 +207,28 @@ class TestSamplingDialogSimpleMode:
         dialog = SamplingDialog(*_make_dataset(), features=_ALL)
         qtbot.addWidget(dialog)
         assert not hasattr(dialog, "_mode_hint")
+
+    def test_mode_hint_icon_traegt_das_device_pixel_ratio(self, qtbot: QtBot) -> None:
+        """Sprint 80 (Übernahme aus 78): das Icon friert kein 14-px-Raster ein.
+
+        Unter `QT_QPA_PLATFORM=offscreen` ist das Ratio immer 1.0 – ein Test auf
+        „2.0" wäre hier nicht ausführbar. Prüfbar und aussagekräftig ist die
+        Kopplung: die Pixmap trägt GENAU das Ratio des Dialogs, und ihre
+        logische Größe bleibt die angeforderte. Vorher lieferte
+        `icon.pixmap(14, 14)` eine Pixmap mit fest 1.0, egal auf welchem Schirm.
+        """
+        dialog = SamplingDialog(*_make_dataset(), features=_NONE)
+        qtbot.addWidget(dialog)
+        icons = [
+            lbl.pixmap()
+            for lbl in dialog._mode_hint.findChildren(QLabel)
+            if not lbl.pixmap().isNull()
+        ]
+        assert icons, "kein Icon im Mode-Hint gefunden – die Prüfung wäre leer"
+        for pixmap in icons:
+            assert pixmap.devicePixelRatio() == dialog._icon_ratio()
+            assert pixmap.deviceIndependentSize().width() == pytest.approx(_HINT_ICON_PX)
+            assert pixmap.deviceIndependentSize().height() == pytest.approx(_HINT_ICON_PX)
 
     def test_simple_mode_seed_ist_vorbefuellt(self, qtbot: QtBot) -> None:
         # Sprint 9.6: Seed wird beim Öffnen mit Zufalls-Wert gefüllt.

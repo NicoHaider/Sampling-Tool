@@ -14,21 +14,17 @@ import sys
 import matplotlib.pyplot as plt
 import pytest
 
-from sampling_tool.io.charts import (
-    BDO_COLORS,
-    render_bar_chart_bytes,
-    render_line_chart_bytes,
-    render_pie_chart_bytes,
-)
+from sampling_tool.io.charts import BDO_COLORS, render_bar_chart_bytes, render_line_chart_bytes
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
-#: Alle drei Renderer mit identischer Signatur – die Scale-Zusagen gelten für
-#: jeden, nicht nur für den, der zufällig getestet wird.
+#: Beide Renderer mit identischer Signatur – die Scale-Zusagen gelten für jeden,
+#: nicht nur für den, der zufällig getestet wird. (Sprint 80: der dritte, `pie`,
+#: ist entfallen – er hatte nie einen Produktions-Aufrufer, und ein Drittel
+#: dieser Zusage bewachte damit nichts, was ausgeliefert wird.)
 _RENDERERS = (
     ("bar", render_bar_chart_bytes),
     ("line", render_line_chart_bytes),
-    ("pie", render_pie_chart_bytes),
 )
 
 
@@ -55,21 +51,10 @@ class TestChartBytesValidPng:
         raw = render_line_chart_bytes(["x", "y", "z"], [1.0, 2.0, 3.0], "Trend")
         assert raw[:8] == _PNG_MAGIC
 
-    def test_render_pie_chart_bytes_produces_valid_png(self) -> None:
-        raw = render_pie_chart_bytes(["a", "b", "c"], [1.0, 2.0, 3.0], "Verteilung")
-        assert raw[:8] == _PNG_MAGIC
-
 
 class TestChartBytesEdgeCases:
     def test_render_bar_chart_bytes_with_empty_labels_does_not_crash(self) -> None:
         raw = render_bar_chart_bytes([], [], "leer")
-        assert raw[:8] == _PNG_MAGIC
-
-    def test_render_pie_chart_bytes_with_zero_sum_does_not_crash(self) -> None:
-        """Pie-Chart mit lauter Null-Values: Zeichnen wird übersprungen,
-        aber die Figure muss trotzdem ein gültiges PNG produzieren (sonst
-        crasht der HTML-/Excel-Report bei degenerierten Statistiken)."""
-        raw = render_pie_chart_bytes(["a", "b"], [0.0, 0.0], "alles null")
         assert raw[:8] == _PNG_MAGIC
 
     def test_render_line_chart_bytes_long_labels_does_not_crash(self) -> None:
@@ -86,7 +71,6 @@ class TestChartBytesEdgeCases:
         for _ in range(20):
             render_bar_chart_bytes(["A", "B"], [1.0, 2.0])
             render_line_chart_bytes(["A", "B"], [1.0, 2.0])
-            render_pie_chart_bytes(["A", "B"], [1.0, 2.0])
         assert plt.get_fignums() == []
 
 
@@ -198,7 +182,6 @@ class TestBdoColors:
         for name in (
             "render_bar_chart_bytes",
             "render_line_chart_bytes",
-            "render_pie_chart_bytes",
             "BDO_COLORS",
         ):
             assert hasattr(mod, name), f"io.charts fehlt: {name}"

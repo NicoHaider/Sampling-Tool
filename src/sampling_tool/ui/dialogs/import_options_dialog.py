@@ -32,14 +32,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import SUPPORTED_CSV_SUFFIXES
+from sampling_tool.config import SUPPORTED_CSV_SUFFIXES, WARNING_COLOR
 from sampling_tool.io.importer import ExcelImporter, SheetInfo, SheetPreview
 
 # Erkannte Header-Zeile bekommt einen dezenten Grau-Hintergrund.
 _HEADER_HINT_BG = QColor("#EEEEEE")
-# BDO-Rot für die "ambiguous"-Warnung. Bewusst keine Style-Import-
-# Abhängigkeit – Konstante reicht.
-_AMBIGUOUS_RED = "#D6001C"
 # Anzahl Vorschauzeilen – muss zur Importer-Default-`max_rows` passen.
 _PREVIEW_MAX_ROWS = 20
 
@@ -342,7 +339,7 @@ class ImportOptionsDialog(QDialog):
             self._confidence_label.setText(
                 "Header-Zeile konnte nicht eindeutig erkannt werden. Bitte manuell prüfen."
             )
-            self._confidence_label.setStyleSheet(f"color: {_AMBIGUOUS_RED}; font-weight: 600;")
+            self._confidence_label.setStyleSheet(f"color: {WARNING_COLOR}; font-weight: 600;")
 
     # ---- Validierung ---------------------------------------------------
 
