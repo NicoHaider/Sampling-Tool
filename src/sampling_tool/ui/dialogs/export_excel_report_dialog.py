@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 from sampling_tool.config import export_date_token, local_export_now
 from sampling_tool.core.models import Engagement
+from sampling_tool.ui._dialog_buttons import mark_secondary_buttons, set_accept_text
 from sampling_tool.ui.dialogs._export_base import (
     HINT_NO_SHEETS,
     ExportTargetWidget,
@@ -116,6 +117,10 @@ class ExportExcelReportDialog(QDialog):
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
+        # Sprint 81: ein Verb sagt, was passiert – so wie der Import-Dialog es
+        # seit Sprint 16 macht. „OK" beschreibt keine Handlung.
+        set_accept_text(self._buttons, "Exportieren")
+        mark_secondary_buttons(self._buttons)
         outer.addWidget(self._buttons)
 
         # ---- Signals ----

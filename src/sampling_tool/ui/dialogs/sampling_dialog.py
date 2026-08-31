@@ -44,6 +44,7 @@ from PyQt6.QtWidgets import (
 from sampling_tool.config import (
     BDO_GREY,
     DEFAULT_SAMPLE_SIZE,
+    METHOD_LABELS,
     MIN_SAMPLE_SIZE,
     SEED_MAX,
     SEED_MIN,
@@ -58,6 +59,7 @@ from sampling_tool.core.models import (
     StratifyMode,
 )
 from sampling_tool.core.presets import SamplingPreset
+from sampling_tool.ui._dialog_buttons import mark_secondary_buttons
 from sampling_tool.ui._dialog_sizing import (
     clamp_dialog_height_to_screen,
     clamp_dialog_width_to_screen,
@@ -313,16 +315,18 @@ class SamplingDialog(QDialog):
             method_box = QGroupBox("Methode")
             method_layout = QHBoxLayout(method_box)
             self._method_group = QButtonGroup(self)
-            self._radio_simple = QRadioButton("Einfach")
+            self._radio_simple = QRadioButton(METHOD_LABELS[SamplingMethod.SIMPLE.value])
             self._radio_simple.setChecked(True)
             self._method_group.addButton(self._radio_simple)
             method_layout.addWidget(self._radio_simple)
             if self._show_cluster:
-                self._radio_cluster = QRadioButton("Cluster")
+                self._radio_cluster = QRadioButton(METHOD_LABELS[SamplingMethod.CLUSTER.value])
                 self._method_group.addButton(self._radio_cluster)
                 method_layout.addWidget(self._radio_cluster)
             if self._show_stratified:
-                self._radio_stratified = QRadioButton("Geschichtet")
+                self._radio_stratified = QRadioButton(
+                    METHOD_LABELS[SamplingMethod.STRATIFIED.value]
+                )
                 self._method_group.addButton(self._radio_stratified)
                 method_layout.addWidget(self._radio_stratified)
             method_layout.addStretch(1)
@@ -474,6 +478,7 @@ class SamplingDialog(QDialog):
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
+        mark_secondary_buttons(self._buttons)
         footer = QHBoxLayout()
         if not self._features.any_advanced:
             self._mode_hint = self._build_mode_hint()

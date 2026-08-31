@@ -25,7 +25,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import APP_NAME, APP_ORG, BDO_LIGHT_GREY, ENGAGEMENTS_DIR
+from sampling_tool.config import (
+    APP_NAME,
+    APP_ORG,
+    BDO_LIGHT_GREY,
+    ENGAGEMENTS_DIR,
+    METHOD_LABELS,
+)
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.persistence.repositories import DatasetRepo
 from sampling_tool.ui._scaling import scaled_px
@@ -45,13 +51,6 @@ from sampling_tool.ui.widgets.dashboard_view import DashboardView
 from sampling_tool.ui.widgets.data_table import _DEFAULT_ROW_HEIGHT, DataTableView
 from sampling_tool.ui.widgets.sidebar import NavigationSidebar
 from sampling_tool.ui.widgets.welcome import WelcomeScreen
-
-# Deutsche Anzeige-Namen der Sampling-Methoden für die Statusbar.
-_METHOD_LABELS: dict[str, str] = {
-    "simple": "Einfach",
-    "cluster": "Cluster",
-    "stratified": "Geschichtet",
-}
 
 
 class MainWindow(QMainWindow):
@@ -297,7 +296,7 @@ class MainWindow(QMainWindow):
         if sample is None or sample.id is None:
             self._status_sample.setText("Aktive Stichprobe: keine")
             return
-        method_label = _METHOD_LABELS.get(sample.config.method.value, sample.config.method.value)
+        method_label = METHOD_LABELS.get(sample.config.method.value, sample.config.method.value)
         text = (
             f"Aktive Stichprobe: #{sample.id} ({method_label}, "
             f"{sample.actual_size}/{sample.population_size})"
@@ -506,6 +505,6 @@ class MainWindow(QMainWindow):
 def _separator() -> QLabel:
     label = QLabel("│")
     # Sprint 71/2: ohne `background: transparent` malt die generische
-    # QWidget-Regel das Label weiß auf die #F4F4F4-Statusbar.
+    # QWidget-Regel das Label weiß auf die Statusbar-Fläche (SURFACE_CHROME).
     label.setStyleSheet(f"color: {BDO_LIGHT_GREY}; padding: 0 6px; background: transparent;")
     return label

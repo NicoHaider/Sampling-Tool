@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 from sampling_tool import __version__
 from sampling_tool.config import APP_NAME, BDO_DARK_GREY, BDO_GREY, BDO_LIGHT_GREY, BDO_RED
 from sampling_tool.logging_setup import log_file_path
+from sampling_tool.ui._dialog_buttons import mark_secondary_buttons
 from sampling_tool.ui._scaling import scaled_px
 
 REPO_URL: str = "https://github.com/NicoHaider/Sampling-Tool"
@@ -169,6 +170,7 @@ class AboutDialog(QDialog):
             outer.addWidget(bullets)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        mark_secondary_buttons(buttons)
         buttons.accepted.connect(self.accept)
         outer.addWidget(buttons)
 

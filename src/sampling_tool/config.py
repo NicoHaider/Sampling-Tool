@@ -23,10 +23,56 @@ APP_ORG_DOMAIN: Final[str] = "bdo.at"
 # BDO Corporate-Identity – Farb-Palette (Hex-Codes)
 # Wird in den Stylesheets unter ui/styles/*.qss referenziert.
 # ---------------------------------------------------------------------------
-BDO_RED: Final[str] = "#E81A3B"  # Primärfarbe (Logo-Rot)
-BDO_DARK_GREY: Final[str] = "#333333"  # Haupt-Schriftfarbe
-BDO_GREY: Final[str] = "#7F7F7F"  # sekundärer Text
+BDO_RED: Final[str] = "#E81A3B"  # FLÄCHE: Buttons, Tabellenkopf, Logo, Fokus
+
+# Sprint 81: das Marken-Rot als SCHRIFTFARBE. Kein neuer Wert – dieser Ton steht
+# bereits 10× in `bdo_light.qss` als Hover-/Pressed-/Auswahl-Zustand. Als
+# Textfarbe ist `BDO_RED` mit 4,52:1 nur 0,02 über der AA-Grenze und damit
+# fragil; dieser Ton liegt bei 7,8:1. Die Trennung ist der Punkt: rot GEFÜLLT
+# und rot GESCHRIEBEN sind zwei Rollen, nicht eine Farbe.
+BDO_RED_INK: Final[str] = "#A41229"
+
+BDO_DARK_GREY: Final[str] = "#333333"  # Primärtext                    12,6:1
+BDO_GREY: Final[str] = "#6B6B6B"  # Sekundärtext (war #7F7F7F)          5,3:1
 BDO_LIGHT_GREY: Final[str] = "#D9D9D9"  # Trennlinien, Borders
+
+# Sprint 81: NUR für deaktivierte Steuerelemente. Bis Sprint 80 trug #B0B0B0
+# zwei Bedeutungen – „deaktiviert" UND „Leerzustand". Die zweite ist echte
+# Information (2,2:1 auf Weiß, faktisch unlesbar) und liegt seither auf
+# `BDO_GREY`; die erste ist von WCAG ausdrücklich ausgenommen und darf hell
+# bleiben. Ein Wert, eine Bedeutung.
+BDO_DISABLED: Final[str] = "#B0B0B0"
+
+# Sprint 81: drei Flächen-Stufen mit klarer Zuständigkeit statt sechs
+# zufälligen (#F5F5F5, #F4F4F4, #EEEEEE, #E4E4E4, #F8F8F8, #FAFAFA standen
+# nebeneinander, ohne dass ein Unterschied eine Bedeutung trug).
+SURFACE_CHROME: Final[str] = "#F8F8F8"  # Menü, Toolbar, Statusbar
+SURFACE_DATA: Final[str] = "#FAFAFA"  # Sidebar, Wechselzeile
+SURFACE_HOVER: Final[str] = "#F4F4F4"  # Hover, Scrollbar-Rinne, Zeilennummern
+SURFACE_SELECTED: Final[str] = "#FFE6E6"  # Auswahl – überall dieselbe Sprache
+
+
+def excel_argb(hex_color: str, alpha: str = "FF") -> str:
+    """`#RRGGBB` → `AARRGGBB` für openpyxl-Farbwerte (Sprint 81).
+
+    openpyxl erwartet ARGB ohne `#`. Bis Sprint 80 stand das Marken-Rot deshalb
+    ein fünftes Mal im Projekt, als vier `"FFE81A3B"`-Literale in
+    `io/multi_report_exporter.py`. Das war die gefährlichste der fünf Stellen:
+    ein Suchen nach `#E81A3B` findet sie nicht, ein Ändern von `BDO_RED` wäre
+    dort also stillschweigend nicht durchgeschlagen – der Excel-Report hätte
+    weiter das alte Rot getragen, ohne dass ein Test etwas merkt.
+
+    Ein bereits achtstelliger Wert wird unverändert durchgereicht (er trägt
+    seinen Alpha-Kanal schon); alles andere ist ein Tippfehler und wirft, statt
+    eine Farbe zu erfinden, die openpyxl dann kommentarlos verwirft.
+    """
+    value = hex_color.lstrip("#").upper()
+    if len(value) == 8:
+        return value
+    if len(value) == 6:
+        return f"{alpha.upper()}{value}"
+    raise ValueError(f"Unerwartetes Farbformat: {hex_color}")
+
 
 # Hintergrund-Farbe für markierte Sample-Zeilen in der Tabelle.
 # Kräftiges Grün mit moderater Deckkraft, damit Text lesbar bleibt.
@@ -44,6 +90,27 @@ SAMPLE_HIGHLIGHT_ALPHA: Final[int] = 90  # 0-255 (≈ 35 % Deckkraft)
 # Buttons, jeder Tabellenkopf, das Logo, der Fokus-Rahmen. Eine Warnung in
 # derselben Farbe ist kein Signal mehr, sondern Dekoration (Sprint 80).
 WARNING_COLOR: Final[str] = "#C62828"
+
+# ---------------------------------------------------------------------------
+# Anzeige-Namen der Sampling-Methoden (Sprint 81)
+# ---------------------------------------------------------------------------
+# EINE Quelle für die deutschen Methodennamen. Bis Sprint 80 standen sie
+# zweimal im Code – als `dict` in `ui/main_window.py` für die Statusbar und als
+# `list[tuple]` in `ui/dialogs/template_manager_dialog.py` für das Dropdown –,
+# und die Sidebar zeigte stattdessen den ROH-Enum-Wert (`simple`,
+# `stratified`). Das Ergebnis war zwei Sprachen für dasselbe Feld, zwei Zeilen
+# voneinander entfernt auf demselben Bildschirm: die Sidebar sagte „simple", die
+# Statusbar darunter „Einfach".
+#
+# Schlüssel ist der Enum-WERT (`SamplingMethod.SIMPLE.value`), nicht das
+# Enum-Objekt: `config.py` steht unter `core/` in der Layer-Ordnung und darf
+# `core.models` nicht importieren. Die Aufrufer, die das Enum haben, indizieren
+# über `.value`.
+METHOD_LABELS: Final[dict[str, str]] = {
+    "simple": "Einfach",
+    "cluster": "Cluster",
+    "stratified": "Geschichtet",
+}
 
 # ---------------------------------------------------------------------------
 # Sampling-Defaults

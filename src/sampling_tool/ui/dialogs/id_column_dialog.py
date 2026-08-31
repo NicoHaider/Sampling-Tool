@@ -20,6 +20,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sampling_tool.ui._dialog_buttons import mark_secondary_buttons
+
 _NONE_LABEL = "Keine"
 
 
@@ -62,6 +64,7 @@ class IdColumnDialog(QDialog):
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
+        mark_secondary_buttons(buttons)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)

@@ -41,9 +41,15 @@ from typing import Final, TypeAlias
 
 from sampling_tool.config import (
     BDO_DARK_GREY,
+    BDO_DISABLED,
     BDO_GREY,
     BDO_LIGHT_GREY,
     BDO_RED,
+    BDO_RED_INK,
+    SURFACE_CHROME,
+    SURFACE_DATA,
+    SURFACE_HOVER,
+    SURFACE_SELECTED,
     WARNING_COLOR,
 )
 from sampling_tool.resources import package_resource
@@ -98,15 +104,22 @@ MIN_UI_SOURCE_FILES: Final[int] = 25  # gemessen 2026-08-25: 50
 #: Sprint 79 maß 53. Sprint 80 hat die 33 Literale mit vorhandener Konstante
 #: ersetzt und drei Warn-Labels auf `WARNING_COLOR` gelegt: 53 − 33 − 3 = 17.
 #:
-#: 17 ist der Boden, den reine Konstanten-Ersetzung erreichen kann. Die
-#: verbleibenden Literale sind eine DESIGN-Frage, keine Mechanik (fünf Grautöne,
-#: drei fast identische Off-Whites) – und eines davon, `#F4F4F4` in
-#: `main_window.py`, steht in einem KOMMENTAR: die Prüfung zählt den rohen
-#: Dateiinhalt ohne Kommentar-Entfernung, eine Konstante kann es also gar nicht
-#: ersetzen. Wer unter 17 will, muss dort den Text ändern.
+#: 17 war der Boden, den reine Konstanten-Ersetzung erreichen konnte; die
+#: verbleibenden waren eine DESIGN-Frage, keine Mechanik (fünf Grautöne, drei
+#: fast identische Off-Whites). Sprint 81 hat sie beantwortet: die Grautöne
+#: liegen auf drei Rollen (Primär-/Sekundärtext, Deaktiviert), die Off-Whites
+#: auf drei Flächen-Stufen (`SURFACE_CHROME`/`_DATA`/`_HOVER`). Damit haben
+#: alle 17 eine Konstante – auch das eine, das in einem KOMMENTAR stand
+#: (`main_window.py`): die Prüfung zählt den rohen Dateiinhalt ohne
+#: Kommentar-Entfernung, dort musste der Text selbst geändert werden.
 #:
-#: Gemessen 2026-08-25 (Sprint 80), `src/sampling_tool/ui/**/*.py`: 17.
-HEX_LITERAL_CEILING: Final[int] = 17
+#: **0 ist die Endstufe dieses Ratchets.** Es gibt keine Farbe mehr in
+#: `ui/**/*.py`, für die es keine Konstante gäbe – jede neue ist ab hier ein
+#: Rückschritt, nicht ein „noch nicht aufgeräumt". Wer eine BRAUCHT, legt sie
+#: in `config.py` an; das ist die ganze Aussage dieser Zahl.
+#:
+#: Gemessen 2026-08-31 (Sprint 81), `src/sampling_tool/ui/**/*.py`: 0.
+HEX_LITERAL_CEILING: Final[int] = 0
 
 #: Je Farbe, für die es in `config.py` eine Konstante gibt. Einzeln, damit ein
 #: Anstieg bei einer Farbe auffällt und nicht nur in der Summe – 19 → 20 bei
@@ -114,13 +127,26 @@ HEX_LITERAL_CEILING: Final[int] = 17
 #:
 #: Seit Sprint 80 stehen alle auf **0**: für diese Farben ist ein rohes Literal
 #: im Code kein „noch nicht aufgeräumt" mehr, sondern ein Rückschritt.
-#: Gemessen 2026-08-25 (Sprint 80).
+#:
+#: Sprint 81 nimmt die sechs neuen Konstanten dazu. Sie sind der eigentliche
+#: Grund, warum die Gesamtzahl auf 0 fallen konnte, und ohne Eintrag hier wären
+#: genau sie die Farben, für die ein rohes Literal wieder unbemerkt einreißen
+#: dürfte – die Gesamtgrenze allein deckt das nicht ab, sie deckt nur die Summe.
+#: Der Schlüssel ist der WERT: dass `BDO_GREY` von #7F7F7F auf #6B6B6B gewandert
+#: ist, zieht diese Prüfung automatisch mit.
+#: Gemessen 2026-08-31 (Sprint 81).
 KNOWN_COLOR_CEILINGS: Final[dict[str, int]] = {
     BDO_GREY: 0,
     BDO_DARK_GREY: 0,
     BDO_RED: 0,
+    BDO_RED_INK: 0,
     BDO_LIGHT_GREY: 0,
+    BDO_DISABLED: 0,
     WARNING_COLOR: 0,
+    SURFACE_CHROME: 0,
+    SURFACE_DATA: 0,
+    SURFACE_HOVER: 0,
+    SURFACE_SELECTED: 0,
 }
 
 #: `#RRGGBB`; die Lookahead-Grenze verhindert, dass die ersten sechs Stellen einer

@@ -48,6 +48,7 @@ from sampling_tool.io.bdo_locations import (
 )
 from sampling_tool.io.briefpapier import validate_briefpapier
 from sampling_tool.logging_setup import log_file_path
+from sampling_tool.ui._dialog_buttons import mark_secondary, mark_secondary_buttons
 from sampling_tool.ui._dialog_sizing import (
     clamp_dialog_height_to_screen,
     clamp_dialog_width_to_screen,
@@ -139,6 +140,9 @@ class SettingsDialog(QDialog):
         # Reset-Button (links) + OK/Cancel (rechts).
         button_row = QHBoxLayout()
         self._reset_button = QPushButton("Auf Default zurücksetzen")
+        # Sprint 81: die destruktivste Aktion des Dialogs war die auffälligste
+        # auf dem Bildschirm. Sie bleibt erreichbar, hört aber auf zu rufen.
+        mark_secondary(self._reset_button)
         self._reset_button.clicked.connect(self._on_reset_defaults)
         button_row.addWidget(self._reset_button)
         button_row.addStretch(1)
@@ -146,6 +150,7 @@ class SettingsDialog(QDialog):
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
+        mark_secondary_buttons(self._buttons)
         self._buttons.accepted.connect(self._on_accept)
         self._buttons.rejected.connect(self.reject)
         button_row.addWidget(self._buttons)
@@ -223,6 +228,7 @@ class SettingsDialog(QDialog):
 
         self._engagements_dir = QLineEdit(str(current.engagements_dir))
         browse = QPushButton("Auswählen…")
+        mark_secondary(browse)
         browse.clicked.connect(self._on_browse_engagements_dir)
         row = QHBoxLayout()
         row.addWidget(self._engagements_dir)
@@ -319,6 +325,7 @@ class SettingsDialog(QDialog):
         )
         self._custom_briefpapier.setPlaceholderText("Pfad zu PNG/JPG/PDF…")
         browse_briefpapier = QPushButton("Auswählen…")
+        mark_secondary(browse_briefpapier)
         browse_briefpapier.clicked.connect(self._on_browse_briefpapier)
         path_row.addWidget(self._custom_briefpapier)
         path_row.addWidget(browse_briefpapier)
@@ -327,6 +334,7 @@ class SettingsDialog(QDialog):
         group_layout.addWidget(path_wrapper)
 
         preview_button = QPushButton("Vorschau anzeigen")
+        mark_secondary(preview_button)
         preview_button.clicked.connect(self._on_preview_briefpapier)
         group_layout.addWidget(preview_button)
         self._preview_button = preview_button

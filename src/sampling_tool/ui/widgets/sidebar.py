@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sampling_tool.config import BDO_GREY, METHOD_LABELS
 from sampling_tool.core.models import Dataset, Engagement, SampleResult
 
 _DATASET_ID_ROLE = int(Qt.ItemDataRole.UserRole)
@@ -158,11 +159,28 @@ class NavigationSidebar(QFrame):
         bleibt das Label bit-genau das bisherige Format. Die ID-Werte werden
         vom Controller hineingereicht (die Sidebar kennt nur Domain-Modelle).
 
-        Sprint 69 / Bug 5: das Label (v.a. mit angehängten IDs) ist oft breiter
-        als die Sidebar – Qt elidiert den `QListWidgetItem`-Text dann ohne
-        erkennbaren Rest. Deshalb bekommt jedes Item zusätzlich den vollen
-        Label-Text als Tooltip (`setToolTip`), unabhängig von der aktuellen
-        Sidebar-Breite. Der Tooltip trägt bewusst das bullet-lose Basis-Label
+        Sprint 81 – der Seed verlässt das Label. Es lautete
+        `#3 · simple · n=25 (seed 412873945)`, optional plus `· IDs: …`: bis zu
+        60 Zeichen in einer 296 px breiten Liste. Das war nicht knapp, das war
+        strukturell zu lang, und Qt elidiert rechts – weg fiel also genau das,
+        was hinten stand. Sprint 69 hat dafür einen Tooltip nachgezogen; das war
+        ein Pflaster.
+
+        Der Seed gehört nicht in eine Navigationsliste. Er steht an den drei
+        Stellen, an denen er gebraucht wird: Statusbar (aktive Stichprobe),
+        AuditTrail (eigene Spalte), Excel- und PDF-Report. Hier wählt der Prüfer
+        eine Stichprobe aus – dafür reichen Nummer, Methode und Umfang. Im
+        Tooltip bleibt er erreichbar.
+
+        Die Methode steht jetzt deutsch da (`METHOD_LABELS`), nicht mehr als
+        Roh-Enum: die Statusbar zwei Zeilen tiefer sagte „Einfach", während die
+        Sidebar „simple" sagte – zwei Sprachen für dasselbe Feld.
+
+        Sprint 69 / Bug 5: das Label (v.a. mit angehängten IDs) kann weiter
+        breiter sein als die Sidebar – Qt elidiert den `QListWidgetItem`-Text
+        dann ohne erkennbaren Rest. Deshalb bekommt jedes Item zusätzlich den
+        vollen Label-Text als Tooltip (`setToolTip`), unabhängig von der
+        aktuellen Sidebar-Breite. Der Tooltip trägt bewusst das bullet-lose Basis-Label
         (identisch zu `_SAMPLE_LABEL_ROLE`) statt des ggf. mit `_ACTIVE_PREFIX`
         versehenen sichtbaren Texts: das „● "-Präfix ist reine Aktiv-Markierung
         (zusätzlich durch Fettschrift redundant kodiert) und steht am Anfang,
@@ -174,10 +192,8 @@ class NavigationSidebar(QFrame):
         self._samples_list.clear()
         show_ids = show_sample_id_column and bool(id_column) and id_values_by_sample is not None
         for idx, sample in enumerate(samples, start=1):
-            label = (
-                f"#{idx} · {sample.config.method.value} · n={sample.actual_size} "
-                f"(seed {sample.config.seed})"
-            )
+            method = METHOD_LABELS.get(sample.config.method.value, sample.config.method.value)
+            label = f"#{idx} · {method} · n={sample.actual_size}"
             if show_ids and sample.id is not None:
                 assert id_values_by_sample is not None
                 ids_text = id_values_by_sample.get(sample.id)
@@ -187,7 +203,7 @@ class NavigationSidebar(QFrame):
             sample_id = sample.id if sample.id is not None else -1
             item.setData(_SAMPLE_ID_ROLE, sample_id)
             item.setData(_SAMPLE_LABEL_ROLE, label)
-            item.setToolTip(label)
+            item.setToolTip(f"{label}\nSeed {sample.config.seed}")
             self._samples_list.addItem(item)
         self._samples_empty.setVisible(not samples)
 
@@ -289,6 +305,6 @@ def _section_label(text: str) -> QLabel:
 def _empty_hint(text: str) -> QLabel:
     """Graues Sub-Label – wird unter den Sektions-Headern angezeigt, wenn leer."""
     label = QLabel(text)
-    label.setStyleSheet("color: #B0B0B0; font-style: italic; padding: 4px 8px;")
+    label.setStyleSheet(f"color: {BDO_GREY}; font-style: italic; padding: 4px 8px;")
     label.setProperty("emptyHint", True)
     return label

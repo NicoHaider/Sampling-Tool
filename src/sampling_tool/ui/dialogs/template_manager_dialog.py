@@ -43,19 +43,29 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import BDO_GREY, DEFAULT_SAMPLE_SIZE, MIN_SAMPLE_SIZE
+from sampling_tool.config import (
+    BDO_GREY,
+    DEFAULT_SAMPLE_SIZE,
+    METHOD_LABELS,
+    MIN_SAMPLE_SIZE,
+)
 from sampling_tool.core.models import SamplingMethod, StratifyMode
 from sampling_tool.core.presets import SamplingPreset
+from sampling_tool.ui._dialog_buttons import mark_secondary_buttons
 from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui.preset_store import PresetStore
 
 _SPINBOX_MAX: Final[int] = 2_147_483_647
 
-_METHOD_LABELS: Final[list[tuple[str, SamplingMethod]]] = [
-    ("Einfach", SamplingMethod.SIMPLE),
-    ("Cluster", SamplingMethod.CLUSTER),
-    ("Geschichtet", SamplingMethod.STRATIFIED),
-]
+# Reihenfolge des Dropdowns – bewusst explizit und nicht die dict-Reihenfolge
+# von `METHOD_LABELS`: die Beschriftung ist geteilt, die Sortierung im Dialog
+# ist eine UI-Entscheidung. Die deutschen Namen stehen seit Sprint 81 nur noch
+# in `config.METHOD_LABELS`.
+_METHOD_ORDER: Final[tuple[SamplingMethod, ...]] = (
+    SamplingMethod.SIMPLE,
+    SamplingMethod.CLUSTER,
+    SamplingMethod.STRATIFIED,
+)
 
 _STRATIFY_LABELS: Final[list[tuple[str, StratifyMode]]] = [
     ("Proportional", StratifyMode.PROPORTIONAL),
@@ -138,8 +148,8 @@ class TemplateManagerDialog(QDialog):
         form.setSpacing(8)
 
         self._edit_method = QComboBox()
-        for label, method in _METHOD_LABELS:
-            self._edit_method.addItem(label, userData=method)
+        for method in _METHOD_ORDER:
+            self._edit_method.addItem(METHOD_LABELS[method.value], userData=method)
         form.addRow("Methode", self._edit_method)
 
         self._edit_size = QSpinBox()
@@ -184,6 +194,7 @@ class TemplateManagerDialog(QDialog):
         outer.addLayout(body)
 
         self._buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        mark_secondary_buttons(self._buttons)
         outer.addWidget(self._buttons)
 
     def _wire_signals(self) -> None:

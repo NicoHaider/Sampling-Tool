@@ -25,8 +25,15 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool import __version__
-from sampling_tool.config import APP_NAME, BDO_GREY, BUG_REPORT_EMAIL, BUG_REPORT_SUBJECT_PREFIX
+from sampling_tool.config import (
+    APP_NAME,
+    BDO_DARK_GREY,
+    BDO_GREY,
+    BUG_REPORT_EMAIL,
+    BUG_REPORT_SUBJECT_PREFIX,
+)
 from sampling_tool.logging_setup import log_file_path
+from sampling_tool.ui._dialog_buttons import mark_secondary_buttons
 
 _LOG_TAIL_LINES: Final[int] = 50
 
@@ -125,6 +132,9 @@ class BugReportDialog(QDialog):
         self._send_button = self._buttons.addButton(
             "E-Mail vorbereiten", QDialogButtonBox.ButtonRole.AcceptRole
         )
+        # NACH addButton: der Helfer sieht nur, was in der Box schon drin ist.
+        # „E-Mail vorbereiten" trägt AcceptRole und bleibt damit der eine rote.
+        mark_secondary_buttons(self._buttons)
         outer.addWidget(self._buttons)
 
         self._buttons.accepted.connect(self._on_accept)
@@ -183,7 +193,7 @@ def open_mailto(url: QUrl) -> bool:
 
 def _make_field(label: str, layout: QVBoxLayout) -> QPlainTextEdit:
     caption = QLabel(label)
-    caption.setStyleSheet("color: #555555; font-weight: 600;")
+    caption.setStyleSheet(f"color: {BDO_DARK_GREY}; font-weight: 600;")
     layout.addWidget(caption)
     edit = QPlainTextEdit()
     edit.setFixedHeight(70)

@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
 from sampling_tool.config import BDO_GREY
 from sampling_tool.core.formatting import ensure_utc, format_optional_timestamp
 from sampling_tool.core.models import AuditEvent
+from sampling_tool.ui._dialog_buttons import mark_secondary
 
 _COLUMNS: Final[tuple[str, ...]] = (
     "Zeitstempel",
@@ -386,6 +387,9 @@ class AuditTrailView(QWidget):
         filter_row.addWidget(self._range_combo, stretch=1)
 
         self._refresh_button = QPushButton("Aktualisieren")
+        # Sprint 81: siehe DashboardView – neu zeichnen ist keine erzeugende
+        # Aktion, und auf dieser Ansicht liegen drei rote Kopfleisten übereinander.
+        mark_secondary(self._refresh_button)
         self._refresh_button.clicked.connect(self.refresh_requested.emit)
         filter_row.addWidget(self._refresh_button)
 

@@ -33,7 +33,7 @@ from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QRect, Qt
 from PyQt6.QtGui import QBrush, QColor, QPainter, QPaintEvent, QResizeEvent
 from PyQt6.QtWidgets import QAbstractButton, QHeaderView, QLabel, QTableView, QWidget
 
-from sampling_tool.config import SAMPLE_HIGHLIGHT_ALPHA, SAMPLE_HIGHLIGHT_COLOR
+from sampling_tool.config import BDO_GREY, SAMPLE_HIGHLIGHT_ALPHA, SAMPLE_HIGHLIGHT_COLOR
 from sampling_tool.core.models import Dataset, DatasetRow
 from sampling_tool.persistence.repositories import DatasetRepo
 from sampling_tool.ui._fonts import relative_font
@@ -470,7 +470,7 @@ class DataTableView(QTableView):
         except RuntimeError:
             return
         try:
-            painter.setPen(QColor("#B0B0B0"))
+            painter.setPen(QColor(BDO_GREY))
             painter.setFont(
                 relative_font(painter.font(), scale=_EMPTY_MESSAGE_FONT_SCALE, italic=True)
             )

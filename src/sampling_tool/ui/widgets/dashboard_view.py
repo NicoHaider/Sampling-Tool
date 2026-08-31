@@ -32,9 +32,16 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import BDO_DARK_GREY, BDO_GREY, BDO_LIGHT_GREY, BDO_RED
+from sampling_tool.config import (
+    BDO_DARK_GREY,
+    BDO_GREY,
+    BDO_LIGHT_GREY,
+    BDO_RED_INK,
+    SURFACE_HOVER,
+)
 from sampling_tool.core.formatting import ensure_utc
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
+from sampling_tool.ui._dialog_buttons import mark_secondary
 from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui._tile_layout import tile_columns, tile_rows
 from sampling_tool.ui.widgets.chart_renderer import (
@@ -118,7 +125,7 @@ class _ClickableSampleLabel(QLabel):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
             f"QLabel {{ color: {BDO_DARK_GREY}; padding: 4px; }}"
-            f"QLabel:hover {{ background-color: #F5F5F5; color: {BDO_RED}; }}"
+            f"QLabel:hover {{ background-color: {SURFACE_HOVER}; color: {BDO_RED_INK}; }}"
         )
 
     def mousePressEvent(self, event: QMouseEvent | None) -> None:  # noqa: N802
@@ -149,6 +156,11 @@ class DashboardView(QWidget):
         head_row = QHBoxLayout()
         head_row.addStretch(1)
         self._refresh_button = QPushButton("Aktualisieren")
+        # Sprint 81: „Aktualisieren" zeichnet nur neu, was schon da ist – es
+        # erzeugt nichts. Rot bleibt den Aktionen vorbehalten, die etwas
+        # erzeugen; im Hauptfenster konkurrierte dieser Button sonst mit den
+        # roten Tabellenköpfen direkt darüber.
+        mark_secondary(self._refresh_button)
         self._refresh_button.clicked.connect(self.refresh_requested.emit)
         head_row.addWidget(self._refresh_button)
         outer.addLayout(head_row)
@@ -512,8 +524,12 @@ def _big_number_label(value: int, label: str, factor: float = 1.0) -> QWidget:
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(0)
     number = QLabel(str(value))
+    # Sprint 81: Primärtext statt Marken-Rot. Die drei Kennzahlen zählen nur
+    # (Datensätze, Stichproben, Events) – sie bestehen als Großtext mühelos,
+    # lasen sich in Rot aber wie Alarme. Rot bleibt der Marke und den Aktionen
+    # vorbehalten, die etwas erzeugen; die Größe trägt die Betonung schon.
     number.setStyleSheet(
-        f"font-size: {scaled_px(28, factor)}px; font-weight: 800; color: {BDO_RED};"
+        f"font-size: {scaled_px(28, factor)}px; font-weight: 800; color: {BDO_DARK_GREY};"
     )
     sub = QLabel(label)
     sub.setStyleSheet(f"color: {BDO_GREY};")
@@ -524,7 +540,7 @@ def _big_number_label(value: int, label: str, factor: float = 1.0) -> QWidget:
 
 def _muted_label(text: str) -> QLabel:
     label = QLabel(text)
-    label.setStyleSheet("color: #B0B0B0; font-style: italic;")
+    label.setStyleSheet(f"color: {BDO_GREY}; font-style: italic;")
     label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     return label
 

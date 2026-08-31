@@ -26,6 +26,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sampling_tool.ui._dialog_buttons import mark_secondary
+
 
 class DuplicateEngagementChoice(IntEnum):
     """Ergebnis des `DuplicateEngagementDialog`."""
@@ -72,6 +74,10 @@ class DuplicateEngagementDialog(QDialog):
         self._open_btn.clicked.connect(self._on_open_existing)
 
         self._rename_btn = QPushButton("Anderen Namen wählen")
+        # Sprint 81: von den vier Wegen bleibt genau einer rot – der empfohlene
+        # (`_open_btn`, auch der Default). Die drei anderen sind Alternativen
+        # bzw. Rückweg und tragen dieselbe leise Anmutung wie „Überschreiben".
+        mark_secondary(self._rename_btn)
         self._rename_btn.clicked.connect(self._on_rename)
 
         self._overwrite_btn = QPushButton("Überschreiben (mit Backup)")
@@ -85,6 +91,7 @@ class DuplicateEngagementDialog(QDialog):
         self._overwrite_btn.clicked.connect(self._on_overwrite)
 
         self._cancel_btn = QPushButton("Abbrechen")
+        mark_secondary(self._cancel_btn)
         self._cancel_btn.clicked.connect(self._on_cancel)
 
         # Reihenfolge links→rechts: Abbrechen, Anderen Namen wählen,

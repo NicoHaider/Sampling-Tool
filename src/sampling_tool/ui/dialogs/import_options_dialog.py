@@ -32,11 +32,22 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import SUPPORTED_CSV_SUFFIXES, WARNING_COLOR
+from sampling_tool.config import (
+    BDO_DARK_GREY,
+    BDO_GREY,
+    SUPPORTED_CSV_SUFFIXES,
+    SURFACE_SELECTED,
+    WARNING_COLOR,
+)
 from sampling_tool.io.importer import ExcelImporter, SheetInfo, SheetPreview
+from sampling_tool.ui._dialog_buttons import mark_secondary_buttons, set_accept_text
 
-# Erkannte Header-Zeile bekommt einen dezenten Grau-Hintergrund.
-_HEADER_HINT_BG = QColor("#EEEEEE")
+# Die erkannte Kopfzeile ist eine AUSWAHL, keine Fläche – Sprint 81. Bis dahin
+# stand hier ein eigener Off-White-Ton: auf der `SURFACE_DATA`-Wechselzeile
+# waren das vier Helligkeitsstufen Unterschied und praktisch unsichtbar, die
+# Information trug allein die Fettschrift. `SURFACE_SELECTED` ist auf Weiß UND
+# auf der Wechselzeile sichtbar – dieselbe Sprache wie jede andere Auswahl.
+_HEADER_HINT_BG = QColor(SURFACE_SELECTED)
 # Anzahl Vorschauzeilen – muss zur Importer-Default-`max_rows` passen.
 _PREVIEW_MAX_ROWS = 20
 
@@ -127,7 +138,7 @@ class ImportOptionsDialog(QDialog):
         click_hint = QLabel(
             "Tipp: Zeile in der Vorschau anklicken, um sie als Kopfzeile zu wählen."
         )
-        click_hint.setStyleSheet("color: #999999; font-style: italic;")
+        click_hint.setStyleSheet(f"color: {BDO_GREY}; font-style: italic;")
         outer.addWidget(click_hint)
 
         self._confidence_label = QLabel("")
@@ -138,9 +149,8 @@ class ImportOptionsDialog(QDialog):
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
-        if ok_btn is not None:
-            ok_btn.setText("Importieren")
+        set_accept_text(self._buttons, "Importieren")
+        mark_secondary_buttons(self._buttons)
         outer.addWidget(self._buttons)
 
         # ---- Signals ---------------------------------------------------
@@ -323,18 +333,18 @@ class ImportOptionsDialog(QDialog):
                 "Keine Kopfzeile – alle Zeilen werden als Daten importiert "
                 "(Spaltennamen: Spalte 1, Spalte 2, …)."
             )
-            self._confidence_label.setStyleSheet("color: #777777;")
+            self._confidence_label.setStyleSheet(f"color: {BDO_GREY};")
             return
         confidence = self._current_preview.confidence
         if confidence == "high":
             self._confidence_label.setText("Header automatisch erkannt.")
-            self._confidence_label.setStyleSheet("color: #777777;")
+            self._confidence_label.setStyleSheet(f"color: {BDO_GREY};")
         elif confidence == "low":
             detected = self._current_preview.detected_header_row
             self._confidence_label.setText(
                 f"Header in Zeile {detected + 1 if detected is not None else 1} erkannt."
             )
-            self._confidence_label.setStyleSheet("color: #777777;")
+            self._confidence_label.setStyleSheet(f"color: {BDO_GREY};")
         else:
             self._confidence_label.setText(
                 "Header-Zeile konnte nicht eindeutig erkannt werden. Bitte manuell prüfen."
@@ -381,7 +391,7 @@ class ImportOptionsDialog(QDialog):
 
 def _caption(text: str) -> QLabel:
     label = QLabel(text)
-    label.setStyleSheet("color: #555555; font-weight: 600;")
+    label.setStyleSheet(f"color: {BDO_DARK_GREY}; font-weight: 600;")
     label.setAlignment(Qt.AlignmentFlag.AlignLeft)
     return label
 

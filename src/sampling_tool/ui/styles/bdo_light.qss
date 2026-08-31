@@ -185,13 +185,17 @@ QHeaderView::section {
     border-right: 1px solid #A41229;
 }
 
-/* Sprint 70 / Befund B: deutlich abgesetzt von der weißen/#FAFAFA-Datenfläche,
- * damit die automatische Zeilennummer nicht für importierte Daten gehalten wird. */
+/* Sprint 70 / Befund B: abgesetzt von der weißen/#FAFAFA-Datenfläche, damit die
+ * automatische Zeilennummer nicht für importierte Daten gehalten wird. Die
+ * Begründung gilt weiter – Sprint 81 macht die Fläche nur leiser: absetzen
+ * heißt nicht konkurrieren, und der Trennstrich leistet die Abgrenzung schon.
+ * #E4E4E4/#C9C9C9 waren zwei Werte, die sonst nirgends in der Palette
+ * vorkamen. */
 QHeaderView::section:vertical {
-    background-color: #E4E4E4;
+    background-color: #F4F4F4;
     color: #6B6B6B;
-    border-right: 1px solid #C9C9C9;
-    border-bottom: 1px solid #D9D9D9;
+    border-right: 1px solid #D9D9D9;
+    border-bottom: 1px solid #ECECEC;
 }
 
 QTableCornerButton::section {
@@ -242,7 +246,7 @@ QFrame#Sidebar {
 }
 
 QLabel[sectionHeader="true"] {
-    color: #7F7F7F;
+    color: #6B6B6B;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 1px;
@@ -258,7 +262,7 @@ QLabel[engagementTitle="true"] {
 }
 
 QLabel[engagementSubtitle="true"] {
-    color: #7F7F7F;
+    color: #6B6B6B;
     font-size: 11px;
     padding: 0 12px 8px 12px;
 }
@@ -266,9 +270,12 @@ QLabel[engagementSubtitle="true"] {
 /* -------------------------------------------------------------------------
  * Statusbar
  * ------------------------------------------------------------------------- */
+/* Sprint 81: dieselbe Fläche wie Menü- und Toolbar. Das Fenster bekommt damit
+ * einen durchgehenden Rahmen statt drei verschiedener Grautöne, und der
+ * Statusbar-Text steht auf dem Primärtext-Wert statt auf einem eigenen. */
 QStatusBar {
-    background-color: #F4F4F4;
-    color: #3A3A3A;
+    background-color: #F8F8F8;
+    color: #333333;
     border-top: 1px solid #D9D9D9;
     padding: 4px 8px;
 }
@@ -309,7 +316,7 @@ QLabel#WelcomeTitle {
 }
 
 QLabel#WelcomeSubtitle {
-    color: #7F7F7F;
+    color: #6B6B6B;
     font-size: 14px;
 }
 
@@ -380,6 +387,60 @@ QRadioButton::indicator:unchecked {
 
 QRadioButton::indicator:unchecked {
     border-radius: 8px;
+}
+
+/* -------------------------------------------------------------------------
+ * Untere Tab-Leiste (AuditTrail / Dashboard)
+ *
+ * Sprint 81: bis hierher hatte `QTabWidget#LowerTabs` in dieser Datei keine
+ * einzige Regel. Qt zeichnete die Leiste deshalb nativ – auf Windows anders
+ * als auf macOS, und in beiden Fällen anders als der Rest des Fensters. Sie war
+ * das einzige Element im Hauptfenster, dessen Aussehen nicht im Repository
+ * stand.
+ *
+ * Unterstreichung statt gezeichneter Reiter: ein Reiter braucht vier Farbwerte
+ * und einen Rahmentrick, damit der aktive mit der Inhaltsfläche verschmilzt –
+ * genau die Stelle, an der Qt-Stylesheets plattformabhängig brechen. Eine
+ * flache Leiste mit 2-px-Akzent braucht drei Werte, die alle schon in der
+ * Palette stehen, und verhält sich auf allen drei Zielplattformen gleich.
+ *
+ * Der aktive Tab trägt dieselbe Auswahl-Sprache wie Sidebar und Menü.
+ * ------------------------------------------------------------------------- */
+QTabWidget#LowerTabs::pane {
+    border: 1px solid #D9D9D9;
+    background: #FFFFFF;
+}
+
+/* Die QTabBar ist nur so breit wie ihre Reiter – rechts daneben liegt das
+ * QTabWidget selbst und fiel auf die generische QWidget-Regel (Z. 9-15) zurück,
+ * also auf Weiß. Gemessen: die Leiste endete nach 194 px mitten im Fenster.
+ * Diese Regel färbt den Rest des Streifens; die Inhaltsfläche darunter bleibt
+ * weiß, weil ::pane sie überdeckt. Dieselbe Ursachenklasse wie der
+ * Toolbar-Spacer (Sprint 69/6) und die Statusbar-Widgets (Sprint 71/2). */
+QTabWidget#LowerTabs {
+    background: #F8F8F8;
+}
+
+QTabWidget#LowerTabs QTabBar {
+    background: #F8F8F8;
+}
+
+QTabWidget#LowerTabs QTabBar::tab {
+    background: transparent;
+    color: #6B6B6B;
+    padding: 8px 16px;
+    border: 0px;
+    border-bottom: 2px solid transparent;
+}
+
+QTabWidget#LowerTabs QTabBar::tab:hover {
+    color: #333333;
+}
+
+QTabWidget#LowerTabs QTabBar::tab:selected {
+    color: #A41229;
+    font-weight: 600;
+    border-bottom: 2px solid #E81A3B;
 }
 
 /* -------------------------------------------------------------------------
