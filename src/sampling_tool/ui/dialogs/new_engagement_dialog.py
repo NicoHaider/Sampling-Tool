@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
 
 from sampling_tool.config import BDO_GREY, DB_FILE_SUFFIX, ENGAGEMENTS_DIR, sanitize_for_path
 from sampling_tool.core.models import Engagement
+from sampling_tool.ui._dialog_buttons import mark_secondary_buttons, set_accept_text
 
 AUDIT_TYPES: tuple[str, ...] = (
     "ISAE 3402 Typ 2",
@@ -119,9 +120,8 @@ class NewEngagementDialog(QDialog):
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
-        if ok_btn is not None:
-            ok_btn.setText("Speicherort wählen…")
+        set_accept_text(self._buttons, "Speicherort wählen…")
+        mark_secondary_buttons(self._buttons)
         self._buttons.accepted.connect(self._on_accept)
         self._buttons.rejected.connect(self.reject)
         outer.addWidget(self._buttons)

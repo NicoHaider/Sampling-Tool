@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
 from sampling_tool.config import BDO_GREY, DEFAULT_SAMPLE_SIZE, MIN_SAMPLE_SIZE
 from sampling_tool.core.models import SamplingMethod, StratifyMode
 from sampling_tool.core.presets import SamplingPreset
+from sampling_tool.ui._dialog_buttons import mark_secondary_buttons
 from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui.preset_store import PresetStore
 
@@ -184,6 +185,7 @@ class TemplateManagerDialog(QDialog):
         outer.addLayout(body)
 
         self._buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        mark_secondary_buttons(self._buttons)
         outer.addWidget(self._buttons)
 
     def _wire_signals(self) -> None:

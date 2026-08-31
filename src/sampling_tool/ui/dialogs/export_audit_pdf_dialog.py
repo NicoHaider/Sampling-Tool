@@ -45,6 +45,7 @@ from sampling_tool.io.bdo_locations import (
     default_location,
     locations,
 )
+from sampling_tool.ui._dialog_buttons import mark_secondary_buttons, set_accept_text
 from sampling_tool.ui._dialog_sizing import (
     clamp_dialog_height_to_screen,
     clamp_dialog_width_to_screen,
@@ -158,6 +159,10 @@ class ExportAuditPdfDialog(QDialog):
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
+        # Sprint 81: ein Verb sagt, was passiert – so wie der Import-Dialog es
+        # seit Sprint 16 macht. „OK" beschreibt keine Handlung.
+        set_accept_text(self._buttons, "Exportieren")
+        mark_secondary_buttons(self._buttons)
         outer.addWidget(self._buttons)
 
         # ---- Signals ----

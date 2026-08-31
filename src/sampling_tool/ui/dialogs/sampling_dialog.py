@@ -58,6 +58,7 @@ from sampling_tool.core.models import (
     StratifyMode,
 )
 from sampling_tool.core.presets import SamplingPreset
+from sampling_tool.ui._dialog_buttons import mark_secondary_buttons
 from sampling_tool.ui._dialog_sizing import (
     clamp_dialog_height_to_screen,
     clamp_dialog_width_to_screen,
@@ -474,6 +475,7 @@ class SamplingDialog(QDialog):
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
+        mark_secondary_buttons(self._buttons)
         footer = QHBoxLayout()
         if not self._features.any_advanced:
             self._mode_hint = self._build_mode_hint()

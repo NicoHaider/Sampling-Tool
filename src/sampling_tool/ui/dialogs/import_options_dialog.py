@@ -40,6 +40,7 @@ from sampling_tool.config import (
     WARNING_COLOR,
 )
 from sampling_tool.io.importer import ExcelImporter, SheetInfo, SheetPreview
+from sampling_tool.ui._dialog_buttons import mark_secondary_buttons, set_accept_text
 
 # Die erkannte Kopfzeile ist eine AUSWAHL, keine Fläche – Sprint 81. Bis dahin
 # stand hier ein eigener Off-White-Ton: auf der `SURFACE_DATA`-Wechselzeile
@@ -148,9 +149,8 @@ class ImportOptionsDialog(QDialog):
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
-        if ok_btn is not None:
-            ok_btn.setText("Importieren")
+        set_accept_text(self._buttons, "Importieren")
+        mark_secondary_buttons(self._buttons)
         outer.addWidget(self._buttons)
 
         # ---- Signals ---------------------------------------------------

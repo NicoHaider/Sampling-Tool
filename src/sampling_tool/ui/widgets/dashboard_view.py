@@ -42,6 +42,7 @@ from sampling_tool.config import (
 )
 from sampling_tool.core.formatting import ensure_utc
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
+from sampling_tool.ui._dialog_buttons import mark_secondary
 from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui._tile_layout import tile_columns, tile_rows
 from sampling_tool.ui.widgets.chart_renderer import (
@@ -156,6 +157,11 @@ class DashboardView(QWidget):
         head_row = QHBoxLayout()
         head_row.addStretch(1)
         self._refresh_button = QPushButton("Aktualisieren")
+        # Sprint 81: „Aktualisieren" zeichnet nur neu, was schon da ist – es
+        # erzeugt nichts. Rot bleibt den Aktionen vorbehalten, die etwas
+        # erzeugen; im Hauptfenster konkurrierte dieser Button sonst mit den
+        # roten Tabellenköpfen direkt darüber.
+        mark_secondary(self._refresh_button)
         self._refresh_button.clicked.connect(self.refresh_requested.emit)
         head_row.addWidget(self._refresh_button)
         outer.addLayout(head_row)

@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 
 from sampling_tool import config
 from sampling_tool.config import BDO_GREY
+from sampling_tool.ui._dialog_buttons import mark_secondary
 from sampling_tool.ui._scaling import scaled_px
 
 
@@ -62,6 +63,13 @@ class FirstRunWizard(QWizard):
         self.setButtonText(QWizard.WizardButton.BackButton, "Zurück")
         self.setButtonText(QWizard.WizardButton.FinishButton, "Fertig")
         self.setButtonText(QWizard.WizardButton.CancelButton, "Abbrechen")
+
+        # Sprint 81: „Weiter"/„Fertig" führen vorwärts und bleiben rot. Zurück
+        # und Abbrechen sind Rückwege. Das ist der allererste Bildschirm, den
+        # ein neuer Anwender sieht – drei gleich laute Buttons sagen ihm nicht,
+        # wo es weitergeht.
+        mark_secondary(self.button(QWizard.WizardButton.BackButton))
+        mark_secondary(self.button(QWizard.WizardButton.CancelButton))
 
     def result_data(self) -> FirstRunResult:
         return FirstRunResult(
@@ -101,6 +109,7 @@ class _FolderPage(QWizardPage):
         row = QHBoxLayout()
         self._line_edit = QLineEdit(str(config.ENGAGEMENTS_DIR))
         self._browse_btn = QPushButton("Durchsuchen…")
+        mark_secondary(self._browse_btn)
         self._browse_btn.clicked.connect(self._on_browse_clicked)
         row.addWidget(self._line_edit, 1)
         row.addWidget(self._browse_btn)

@@ -10,8 +10,8 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QDialog, QDialogButtonBox
 from pytestqt.qtbot import QtBot
 
-from sampling_tool.io.importer import ExcelImporter
 from sampling_tool.config import SURFACE_SELECTED
+from sampling_tool.io.importer import ExcelImporter
 from sampling_tool.ui.dialogs.import_options_dialog import (
     ImportOptionsDialog,
     ImportOptionsResult,
