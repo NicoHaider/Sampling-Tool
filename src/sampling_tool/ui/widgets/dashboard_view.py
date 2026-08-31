@@ -36,7 +36,6 @@ from sampling_tool.config import (
     BDO_DARK_GREY,
     BDO_GREY,
     BDO_LIGHT_GREY,
-    BDO_RED,
     BDO_RED_INK,
     SURFACE_HOVER,
 )
@@ -525,8 +524,12 @@ def _big_number_label(value: int, label: str, factor: float = 1.0) -> QWidget:
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(0)
     number = QLabel(str(value))
+    # Sprint 81: Primärtext statt Marken-Rot. Die drei Kennzahlen zählen nur
+    # (Datensätze, Stichproben, Events) – sie bestehen als Großtext mühelos,
+    # lasen sich in Rot aber wie Alarme. Rot bleibt der Marke und den Aktionen
+    # vorbehalten, die etwas erzeugen; die Größe trägt die Betonung schon.
     number.setStyleSheet(
-        f"font-size: {scaled_px(28, factor)}px; font-weight: 800; color: {BDO_RED};"
+        f"font-size: {scaled_px(28, factor)}px; font-weight: 800; color: {BDO_DARK_GREY};"
     )
     sub = QLabel(label)
     sub.setStyleSheet(f"color: {BDO_GREY};")

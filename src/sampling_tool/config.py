@@ -51,6 +51,29 @@ SURFACE_DATA: Final[str] = "#FAFAFA"  # Sidebar, Wechselzeile
 SURFACE_HOVER: Final[str] = "#F4F4F4"  # Hover, Scrollbar-Rinne, Zeilennummern
 SURFACE_SELECTED: Final[str] = "#FFE6E6"  # Auswahl – überall dieselbe Sprache
 
+
+def excel_argb(hex_color: str, alpha: str = "FF") -> str:
+    """`#RRGGBB` → `AARRGGBB` für openpyxl-Farbwerte (Sprint 81).
+
+    openpyxl erwartet ARGB ohne `#`. Bis Sprint 80 stand das Marken-Rot deshalb
+    ein fünftes Mal im Projekt, als vier `"FFE81A3B"`-Literale in
+    `io/multi_report_exporter.py`. Das war die gefährlichste der fünf Stellen:
+    ein Suchen nach `#E81A3B` findet sie nicht, ein Ändern von `BDO_RED` wäre
+    dort also stillschweigend nicht durchgeschlagen – der Excel-Report hätte
+    weiter das alte Rot getragen, ohne dass ein Test etwas merkt.
+
+    Ein bereits achtstelliger Wert wird unverändert durchgereicht (er trägt
+    seinen Alpha-Kanal schon); alles andere ist ein Tippfehler und wirft, statt
+    eine Farbe zu erfinden, die openpyxl dann kommentarlos verwirft.
+    """
+    value = hex_color.lstrip("#").upper()
+    if len(value) == 8:
+        return value
+    if len(value) == 6:
+        return f"{alpha.upper()}{value}"
+    raise ValueError(f"Unerwartetes Farbformat: {hex_color}")
+
+
 # Hintergrund-Farbe für markierte Sample-Zeilen in der Tabelle.
 # Kräftiges Grün mit moderater Deckkraft, damit Text lesbar bleibt.
 SAMPLE_HIGHLIGHT_COLOR: Final[str] = "#28A745"

@@ -30,6 +30,7 @@ from sampling_tool.config import (
     EXPORT_FILENAME_PATTERN,
     EXPORT_SUFFIX_SAMPLING,
     EXPORT_TYPE_SAMPLING,
+    excel_argb,
     export_date_token,
     local_export_now,
     sanitize_export_filename_token,
@@ -176,8 +177,8 @@ class ExcelExporter:
         ws.title = _SHEET_DATA
 
         header_fill = PatternFill(
-            start_color=_to_argb(BDO_RED),
-            end_color=_to_argb(BDO_RED),
+            start_color=excel_argb(BDO_RED),
+            end_color=excel_argb(BDO_RED),
             fill_type="solid",
         )
         header_font = Font(bold=True, color="FFFFFFFF")
@@ -257,13 +258,3 @@ class ExcelExporter:
 # ---------------------------------------------------------------------------
 # Hilfen
 # ---------------------------------------------------------------------------
-
-
-def _to_argb(hex_color: str) -> str:
-    """Wandelt `#RRGGBB` in ein 8-stelliges ARGB-Hex (mit FF-Alpha) für openpyxl."""
-    s = hex_color.lstrip("#").upper()
-    if len(s) == 6:
-        return f"FF{s}"
-    if len(s) == 8:
-        return s
-    raise ValueError(f"Unerwartetes Farbformat: {hex_color}")

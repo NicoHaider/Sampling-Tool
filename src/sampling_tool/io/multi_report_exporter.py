@@ -33,6 +33,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
 from sampling_tool import __version__
+from sampling_tool.config import BDO_RED, excel_argb
 from sampling_tool.core.formatting import format_audit_details, format_optional_timestamp
 from sampling_tool.core.models import (
     AuditEvent,
@@ -47,7 +48,9 @@ from sampling_tool.io._xlsx_util import autosize_columns as autosize_columns
 from sampling_tool.io.charts import render_bar_chart_bytes
 from sampling_tool.io.exporter import ExportError
 
-_HEADER_FILL: Final = PatternFill(start_color="FFE81A3B", end_color="FFE81A3B", fill_type="solid")
+_HEADER_FILL: Final = PatternFill(
+    start_color=excel_argb(BDO_RED), end_color=excel_argb(BDO_RED), fill_type="solid"
+)
 _HEADER_FONT: Final = Font(bold=True, color="FFFFFFFF")
 _HEADER_ALIGN: Final = Alignment(vertical="center", horizontal="left")
 
@@ -139,7 +142,7 @@ class MultiSheetReportExporter:
         ws.title = "1. Übersicht"
         ws.append(["BDO Audit Sampling Tool – Projekt-Bericht"])
         title_cell = ws.cell(row=1, column=1)
-        title_cell.font = Font(bold=True, size=14, color="FFE81A3B")
+        title_cell.font = Font(bold=True, size=14, color=excel_argb(BDO_RED))
         ws.append([])
 
         meta_rows: list[tuple[str, Any]] = [
@@ -155,7 +158,7 @@ class MultiSheetReportExporter:
 
         ws.append([])
         ws.append(["Statistiken"])
-        ws.cell(row=ws.max_row, column=1).font = Font(bold=True, color="FFE81A3B")
+        ws.cell(row=ws.max_row, column=1).font = Font(bold=True, color=excel_argb(BDO_RED))
         ws.append(["Datasets", len(datasets)])
         ws.append(["Samples", len(samples)])
         ws.append(["Audit-Events", len(audit_events)])
