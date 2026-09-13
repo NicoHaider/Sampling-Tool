@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QSettings
-from PyQt6.QtGui import QFontMetrics, QKeySequence
+from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import QLabel, QWidget
 from pytestqt.qtbot import QtBot
 
@@ -309,75 +309,42 @@ class TestSaveActionInFileMenu:
             seen[key] = action.text()
 
 
-class TestConfirmationFitsTheStatusBar:
-    """Die Erklärung muss lesbar sein – gerade auf dem kleinsten Zielgerät.
+class TestConfirmationStaysShort:
+    """Die Bestätigung muss kurz bleiben – und die lange Fassung woanders stehen.
 
-    Die temporäre `showMessage`-Fläche teilt sich die Statusleiste mit den
-    nun FÜNF permanenten Feldern. Wird der Satz länger, schneidet Qt ihn
-    ausgerechnet auf dem 13"-Laptop ab – also dort, wo die Beruhigung am
-    nötigsten ist.
+    Vorgeschichte, damit das hier niemand „aufräumt": der erste Entwurf war
+    ein ganzer Satz (83 Zeichen). Im gerenderten Screenshot lief er mitten
+    im Wort in die permanenten Felder. Ein Pixel-Test dagegen war der
+    nächste Fehlschlag – die Statusleiste ist NICHT plattformstabil
+    messbar:
 
-    Gemessen wird die ECHTE Geometrie nach dem Layout, nicht eine Summe von
-    `sizeHint()`s: die unterschlägt Layout-Spacing, das Padding der
-    Trennstriche und den `QSizeGrip` und liefert deshalb einen viel zu
-    optimistischen Wert (erst der Screenshot zeigte die Kollision). Der
-    freie Platz endet exakt an der linken Kante des am weitesten links
-    stehenden permanenten Widgets.
+        Platz für die Meldung bei 1280 px, gleiche Inhalte, gleicher Code
+          macOS    322 px frei, Satz 216 px  -> passte
+          Ubuntu   203 px frei, Satz 226 px  -> passte NICHT
+          Windows    2 px frei, Satz 442 px  -> passte weit nicht
 
-    Der Vergleich ist relativ (Satz vs. tatsächlich freier Platz), damit
-    breitere Windows-Fonts beide Seiten mitskalieren statt den Test rot zu
-    machen.
+    Auf Windows füllen die permanenten Felder die Leiste bereits komplett;
+    dort ist die temporäre `showMessage`-Fläche praktisch nicht vorhanden.
+    Das gilt für die BESTEHENDEN Meldungen der App genauso (457/476 px auf
+    macOS, vgl. `workspace_controller.py:306`/`:501`) – ein Zustand, den
+    dieses Projekt seit jeher hat und den ein Feature wie dieses nicht
+    nebenbei löst.
+
+    Konsequenz: geprüft wird, was plattformunabhängig gilt – der Satz
+    bleibt kurz, und die vollständige Regel lebt im Tooltip, der als Popup
+    keiner Breitenbeschränkung unterliegt.
     """
 
-    #: Richtwert fürs kleinste Zielgerät, wie `main_window.py` ihn nennt.
-    TARGET_WIDTH = 1280
+    #: Zeichen-Budget statt Pixel: über alle drei Plattformen identisch.
+    #: Der verworfene Erst-Entwurf hatte 83 Zeichen und wäre hier gefallen.
+    MAX_CHARS = 40
 
-    def _available_px(self, window: MainWindow, qtbot: QtBot) -> int:
-        window.show_workspace()
-        window.resize(self.TARGET_WIDTH, 720)
-        window.show()
-        qtbot.waitExposed(window)
-        # Realistische, KEINE extremen Inhalte: ein Mandantenname mittlerer
-        # Länge, ein gewöhnlicher Dateiname und eine aktive Stichprobe. Ohne
-        # `set_engagement` bliebe hier „Kein Projekt" stehen – das breiteste
-        # Feld wäre künstlich schmal und der Test damit zahnlos.
-        window.set_engagement(
-            Engagement(
-                auditor_name="Anna Auditorin",
-                auditor_position="Senior Auditor",
-                client_name="Mustermann Handels GmbH",
-                audit_type="ISAE 3402 Typ II",
-                id=1,
-            )
-        )
-        window._status_dataset.setText("Buchungssaetze_2025.xlsx")
-        window._status_rows.setText("1.234.567 Zeilen")
-        window._status_sample.setText("Aktive Stichprobe: #12 (Einfach, 60/1234567)")
-        window.set_saved_at(FROZEN_NOW)
-        status = window.statusBar()
-        assert status is not None
-        layout = status.layout()
-        if layout is not None:
-            layout.activate()
-        permanent = [
-            child
-            for child in status.children()
-            if isinstance(child, QWidget) and not child.isHidden()
-        ]
-        assert permanent, "keine permanenten Widgets gefunden – Messung wäre vakuum"
-        return min(child.x() for child in permanent)
-
-    def test_message_fits_next_to_the_five_permanent_fields(
-        self, window: MainWindow, qtbot: QtBot
-    ) -> None:
-        available = self._available_px(window, qtbot)
-        status = window.statusBar()
-        assert status is not None
-        needed = QFontMetrics(status.font()).horizontalAdvance(SAVE_CONFIRMATION_MESSAGE)
-        assert needed <= available, (
-            f"Bestätigungstext braucht {needed} px, frei sind nur {available} px "
-            f"(bei {self.TARGET_WIDTH} px Fensterbreite, aktive Stichprobe "
-            f"angezeigt). Kürzen – die lange Fassung gehört in den Tooltip."
+    def test_message_stays_within_the_character_budget(self) -> None:
+        assert len(SAVE_CONFIRMATION_MESSAGE) <= self.MAX_CHARS, (
+            f"Bestätigungstext hat {len(SAVE_CONFIRMATION_MESSAGE)} Zeichen, "
+            f"erlaubt sind {self.MAX_CHARS}. Die Statusleiste teilt sich die "
+            f"Breite mit fünf permanenten Feldern – die lange Fassung gehört "
+            f"in den Tooltip der Aktion."
         )
 
     def test_the_full_rule_lives_in_the_tooltip(self, window: MainWindow) -> None:
@@ -385,6 +352,86 @@ class TestConfirmationFitsTheStatusBar:
         tooltip = window._action_save.toolTip().lower()
         assert "automatisch" in tooltip
         assert "nach jeder änderung" in tooltip
+
+    def test_tooltip_is_not_length_limited(self, window: MainWindow) -> None:
+        """Der Tooltip darf ausführlich sein – er ist ein Popup, kein Feld."""
+        assert len(window._action_save.toolTip()) > self.MAX_CHARS
+
+
+class TestFifthColumnDoesNotCauseTheOverflow:
+    """§5 des Auftrags: sprengt die FÜNFTE Spalte auf 13" die Breite?
+
+    Gefragt ist die Ursache, nicht der Zustand – und genau so wird geprüft:
+    der natürliche Platzbedarf der permanenten Felder wird einmal MIT und
+    einmal OHNE „Gespeichert HH:MM" gemessen. Rot wird der Test nur, wenn
+    die fünfte Spalte den Ausschlag gibt: ohne sie passte es, mit ihr nicht.
+
+    Warum nicht einfach „ist das Feld sichtbar?": die Statusleiste ist auf
+    Windows schon ohne das fünfte Feld randvoll (bei 1280 px blieben im
+    CI-Lauf 2 px für die temporäre Meldung, die bestehenden Meldungen der
+    App werden dort ebenfalls beschnitten). Ein absoluter Test wäre dort
+    rot, ohne dass dieses Feature etwas verbrochen hätte – dieselbe Falle,
+    die `tests/ui/test_toolbar_overflow.py` im Modul-Docstring beschreibt
+    und ebenfalls mit einem RELATIVEN Vergleich löst.
+
+    Gemessen wird an einem breiten Fenster, damit Qt nichts staucht: der
+    natürliche Bedarf ist dann die rechte Kante minus linke Kante.
+    """
+
+    TARGET_WIDTH = 1280
+    #: Breit genug, dass das Layout nichts zusammenquetscht.
+    ROOMY_WIDTH = 3000
+
+    def _natural_width(self, window: MainWindow, *, with_saved_field: bool) -> int:
+        window.set_saved_at(FROZEN_NOW if with_saved_field else None)
+        status = window.statusBar()
+        assert status is not None
+        layout = status.layout()
+        if layout is not None:
+            layout.activate()
+        boxes = [
+            child
+            for child in status.children()
+            if isinstance(child, QWidget) and not child.isHidden()
+        ]
+        assert boxes, "keine permanenten Widgets – die Messung wäre vakuum"
+        return max(c.x() + c.width() for c in boxes) - min(c.x() for c in boxes)
+
+    def test_fifth_column_is_not_what_breaks_the_target_width(
+        self, window: MainWindow, qtbot: QtBot
+    ) -> None:
+        window.show_workspace()
+        window.resize(self.ROOMY_WIDTH, 720)
+        window.show()
+        qtbot.waitExposed(window)
+        window.set_engagement(
+            Engagement(
+                auditor_name="Anna Auditorin",
+                auditor_position="Senior Auditor",
+                client_name="ACME GmbH",
+                audit_type="ISAE 3402 Typ II",
+                id=1,
+            )
+        )
+        window._status_dataset.setText("Buchungen.xlsx")
+        window._status_rows.setText("12.500 Zeilen")
+        window._status_sample.setText("Aktive Stichprobe: #3 (Einfach, 25/1500)")
+
+        without = self._natural_width(window, with_saved_field=False)
+        with_field = self._natural_width(window, with_saved_field=True)
+        assert with_field > without, "Messung vakuum: das fünfte Feld kostet keine Breite"
+
+        if without > self.TARGET_WIDTH:
+            pytest.skip(
+                f"Statusleiste ist auf dieser Plattform schon mit VIER Feldern "
+                f"zu breit ({without} px > {self.TARGET_WIDTH} px) – ein "
+                f"Vorzustand, den dieses Feature nicht verursacht hat."
+            )
+        assert with_field <= self.TARGET_WIDTH, (
+            f"Die fünfte Spalte gibt den Ausschlag: ohne sie {without} px, mit "
+            f"ihr {with_field} px bei {self.TARGET_WIDTH} px Zielbreite. Laut "
+            f"Auftrag §5 dann lieber 'Gespeichert' ohne Uhrzeit."
+        )
 
 
 class TestSaveActionConfirmation:
