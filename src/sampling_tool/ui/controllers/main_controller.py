@@ -160,6 +160,10 @@ class MainController:
         w.new_engagement_requested.connect(self.engagement.handle_new_engagement)
         w.open_engagement_requested.connect(self.engagement.handle_open_engagement)
         w.close_engagement_requested.connect(self.engagement.handle_close_engagement_requested)
+        # Wie `audit_refresh_requested` unten: direkt auf die Session, weil der
+        # Schreibpunkt (`persist_state`) dort liegt und kein Sub-Controller
+        # etwas beizutragen hat.
+        w.save_requested.connect(self.session.handle_save_requested)
         # Workspace-Mutationen
         w.import_excel_requested.connect(self.workspace.handle_import_excel)
         w.clear_loaded_datasets_requested.connect(self.workspace.handle_clear_loaded_datasets)

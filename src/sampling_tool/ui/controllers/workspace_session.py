@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import getpass
 import logging
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from sampling_tool.config import APP_NAME, EXPORT_DIR_NAME
+from sampling_tool.config import APP_NAME, EXPORT_DIR_NAME, local_export_now
 from sampling_tool.core.models import (
     AuditEvent,
     Dataset,
@@ -54,6 +56,20 @@ logger = logging.getLogger(__name__)
 # statt 4× hardcoded `limit=10_000` im Sub-Controller-Set.
 AUDIT_EVENT_DISPLAY_LIMIT: int = 10_000
 
+#: Rückmeldung auf „Datei → Speichern" (Strg+S). Zwei bewusste Entscheidungen:
+#:
+#: * „Bereits gespeichert" statt „Gespeichert": ein Zustand, keine Tat. Der
+#:   Text behauptet nicht, der Klick hätte das Speichern bewirkt – genau
+#:   dieser Eindruck soll ja gerade nicht entstehen.
+#: * So kurz, weil die temporäre Meldung sich die Statuszeile mit den nun FÜNF
+#:   permanenten Feldern teilt. Gemessen (offscreen, 1280 px = 13"-Zielgerät,
+#:   aktive Stichprobe angezeigt): dafür bleiben ~268 px. Die vollständige
+#:   Regel („speichert automatisch nach jeder Änderung") steht deshalb im
+#:   Tooltip der Aktion – ein Popup ohne Breitenlimit –, nicht hier, wo sie
+#:   ausgerechnet auf dem kleinsten Gerät abgeschnitten würde.
+#:   Festgenagelt in `tests/ui/test_saved_indicator.py`.
+SAVE_CONFIRMATION_MESSAGE: str = "Bereits gespeichert – automatisch."
+
 
 class WorkspaceSession:
     """Zentraler State + Glue-Methoden für die Sub-Controller.
@@ -69,11 +85,18 @@ class WorkspaceSession:
         window: MainWindow,
         settings: AppSettings,
         recent_store: RecentEngagementsStore,
+        now_provider: Callable[[], datetime] = local_export_now,
     ) -> None:
         # Externe Refs
         self.window = window
         self.settings = settings
         self.recent_store = recent_store
+        # Uhr der „Gespeichert HH:MM"-Statusanzeige. Bewusst die gemeinsame
+        # Modul-Uhr aus `config` (Sprint 74) statt eines zweiten
+        # `datetime.now()` – im Projekt gilt: eine Uhr, eine Quelle. Injizierbar,
+        # damit Tests gegen eine FESTE Uhr prüfen können, statt zwei
+        # unabhängige Ablesungen zu vergleichen.
+        self._now_provider = now_provider
 
         # Session-State (alle Default leer)
         self.db: Database | None = None
@@ -128,6 +151,23 @@ class WorkspaceSession:
             active_sample_id=self.active_sample_id,
             filter_active=self.filter_active_sample_id is not None,
         )
+        # Erst NACH dem erfolgreichen Schreiben: die beiden Früh-Ausstiege oben
+        # (`restoring_state`, kein Engagement) dürfen die Anzeige nicht
+        # bewegen – auch nicht zurücksetzen. Diese eine Stelle bedient alle
+        # elf Aufrufer; die Aufrufstellen selbst bleiben unangetastet.
+        self.window.set_saved_at(self._now_provider())
+
+    def handle_save_requested(self) -> None:
+        """„Datei → Speichern" (Strg+S): schreibt und erklärt den Reflex weg.
+
+        Der Aufruf schreibt tatsächlich – die Rückmeldung ist also keine
+        Lüge. Sie ergänzt nur, dass die Speicherung ohnehin nach jeder
+        Änderung läuft und der Griff zu Strg+S nicht nötig war.
+        """
+        self.persist_state()
+        status = self.window.statusBar()
+        if status is not None:
+            status.showMessage(SAVE_CONFIRMATION_MESSAGE, 5000)
 
     # ---- Refresh-Pfade --------------------------------------------------
 

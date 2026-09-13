@@ -8,6 +8,7 @@ laufen ausschließlich im Controller.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import QSettings, QSize, pyqtSignal
@@ -52,6 +53,10 @@ from sampling_tool.ui.widgets.data_table import _DEFAULT_ROW_HEIGHT, DataTableVi
 from sampling_tool.ui.widgets.sidebar import NavigationSidebar
 from sampling_tool.ui.widgets.welcome import WelcomeScreen
 
+#: Zeitformat der „Gespeichert"-Statusanzeige. Bewusst OHNE Sekunden: das Feld
+#: ist eine Beruhigung („deine Arbeit liegt in der Datei"), keine Messung.
+_SAVED_AT_FORMAT = "%H:%M"
+
 
 class MainWindow(QMainWindow):
     """Top-Level-Fenster mit Welcome- und Workspace-Ansicht."""
@@ -59,6 +64,10 @@ class MainWindow(QMainWindow):
     new_engagement_requested = pyqtSignal()
     open_engagement_requested = pyqtSignal(Path)
     close_engagement_requested = pyqtSignal()
+    # „Datei → Speichern" (Strg+S). Die App kennt keinen ungespeicherten
+    # Zustand – die Aktion bedient den Reflex, schreibt trotzdem wirklich und
+    # erklärt in der Statuszeile, dass der Griff nicht nötig war.
+    save_requested = pyqtSignal()
     import_excel_requested = pyqtSignal()
     # Sprint 31 – „Datensätze aus Ansicht entfernen": reiner Ansichts-Reset
     # (kein DB-Delete). Siehe WorkspaceController.handle_clear_loaded_datasets.
@@ -101,6 +110,7 @@ class MainWindow(QMainWindow):
     _action_new: QAction
     _action_open: QAction
     _action_close: QAction
+    _action_save: QAction
     _action_settings: QAction
     _action_import: QAction
     _action_clear_datasets: QAction
@@ -176,6 +186,13 @@ class MainWindow(QMainWindow):
         self._status_dataset = QLabel("Kein Dataset")
         self._status_rows = QLabel("0 Zeilen")
         self._status_sample = QLabel("—")
+        # Fünftes Feld – macht die ohnehin laufende Speicherung sichtbar.
+        # Trennstrich und Label werden bis zum ersten Schreiben ausgeblendet
+        # (`set_saved_at(None)` aus `show_welcome()`): ein leeres Feld hinter
+        # einem Trennstrich sähe nach Fehler aus, und genau den Eindruck soll
+        # die Anzeige beseitigen, nicht erzeugen.
+        self._status_saved = QLabel("")
+        self._status_saved_separator = _separator()
         status = QStatusBar()
         status.addPermanentWidget(self._status_engagement)
         status.addPermanentWidget(_separator())
@@ -184,6 +201,8 @@ class MainWindow(QMainWindow):
         status.addPermanentWidget(self._status_rows)
         status.addPermanentWidget(_separator())
         status.addPermanentWidget(self._status_sample)
+        status.addPermanentWidget(self._status_saved_separator)
+        status.addPermanentWidget(self._status_saved)
         self.setStatusBar(status)
 
         # ---- Menü + Toolbar ----
@@ -202,6 +221,8 @@ class MainWindow(QMainWindow):
         self._status_dataset.setText("Kein Dataset")
         self._status_rows.setText("0 Zeilen")
         self.set_active_sample_label(None)
+        # Ohne offenes Projekt gibt es keinen Speicherstand zu zeigen.
+        self.set_saved_at(None)
 
     def show_workspace(self) -> None:
         """Wechselt zur Arbeitsansicht (Sidebar + Tabelle)."""
@@ -304,6 +325,23 @@ class MainWindow(QMainWindow):
         if filtered:
             text += " – gefiltert"
         self._status_sample.setText(text)
+
+    def set_saved_at(self, moment: datetime | None) -> None:
+        """Zeigt, wann zuletzt in die Projektdatei geschrieben wurde.
+
+        Einziger Aufrufer im Produktivpfad ist `WorkspaceSession.persist_state()`
+        – und zwar erst NACH dem erfolgreichen `upsert`. Die Anzeige behauptet
+        damit nie einen Schreibvorgang, den es nicht gab.
+
+        Den Zeitpunkt bringt der Aufrufer mit; das Fenster liest KEINE eigene
+        Uhr (Sprint 74: eine Uhr, eine Quelle – der injizierbare
+        `now_provider` der Session). `None` blendet das Feld samt Trennstrich
+        wieder aus – der Zustand ohne offenes Projekt.
+        """
+        text = "" if moment is None else f"Gespeichert {moment.strftime(_SAVED_AT_FORMAT)}"
+        self._status_saved.setText(text)
+        self._status_saved.setVisible(bool(text))
+        self._status_saved_separator.setVisible(bool(text))
 
     def clear_active_sample(self) -> None:
         """Entfernt die aktive-Stichprobe-Markierung aus Sidebar + Statusbar."""
@@ -452,6 +490,7 @@ class MainWindow(QMainWindow):
         """Steuert die menu/toolbar-Aktionen, die nur mit offenem Engagement Sinn ergeben."""
         for action in (
             self._action_close,
+            self._action_save,
             self._action_import,
             self._action_clear_datasets,
             self._action_export_pdf,

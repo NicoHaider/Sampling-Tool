@@ -101,6 +101,7 @@ class HelpController:
                 "<tr><td><b>Cmd/Ctrl+N</b></td><td>Neues Projekt</td></tr>"
                 "<tr><td><b>Cmd/Ctrl+O</b></td><td>Projekt öffnen</td></tr>"
                 "<tr><td><b>Cmd/Ctrl+I</b></td><td>Datei importieren</td></tr>"
+                "<tr><td><b>Cmd/Ctrl+S</b></td><td>Speichern (passiert automatisch)</td></tr>"
                 "<tr><td><b>Cmd/Ctrl+W</b></td><td>Projekt schließen</td></tr>"
                 "<tr><td><b>Cmd/Ctrl+,</b></td><td>Einstellungen</td></tr>"
                 "<tr><td><b>Cmd/Ctrl+Q</b></td><td>Beenden</td></tr>"
