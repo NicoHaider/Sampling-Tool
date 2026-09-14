@@ -50,6 +50,25 @@ def build_menu(window: MainWindow) -> None:
     window._recent_menu = recent_menu
     window._recent_menu.setEnabled(False)
 
+    # „Speichern" für den Muskelgedächtnis-Reflex. Die App speichert nach
+    # jeder Änderung automatisch (SQLite im Autocommit, `persist_state()` an
+    # elf Aufrufstellen) – es gibt also nichts nachzuholen. Auf Strg+S gar
+    # nicht zu reagieren fühlt sich aber kaputt an, deshalb schreibt die
+    # Aktion wirklich und die Statuszeile erklärt, dass es nicht nötig war.
+    window._action_save = QAction("Speichern", window)
+    window._action_save.setShortcut(QKeySequence.StandardKey.Save)
+    # Die vollständige Regel steht im Tooltip, nicht in der Statuszeilen-
+    # Meldung: ein Tooltip ist ein Popup ohne Breitenlimit, die Statuszeile
+    # teilt sich die Breite mit den vier permanenten Statusfeldern, die auf
+    # Windows schon 1162 der 1280 px des 13"-Zielgeräts belegen.
+    window._action_save.setToolTip(
+        "Dieses Projekt speichert automatisch nach jeder Änderung – "
+        "ein Speichern von Hand ist nicht nötig"
+    )
+    window._action_save.setStatusTip("Schreibt den aktuellen Stand in die Projektdatei")
+    window._action_save.triggered.connect(window.save_requested.emit)
+    file_menu.addAction(window._action_save)
+
     file_menu.addSeparator()
     style = window.style()
     window._action_close = QAction("Projekt schließen", window)

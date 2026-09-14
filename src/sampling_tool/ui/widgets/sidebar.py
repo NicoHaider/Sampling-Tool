@@ -13,6 +13,7 @@ Glue-Logik zum Repo läuft im `MainController`.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -34,6 +35,10 @@ _DATASET_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 _SAMPLE_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 _SAMPLE_LABEL_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 _ACTIVE_PREFIX: str = "● "
+#: Zeitformat der „Gespeichert"-Anzeige im Engagement-Block. Bewusst OHNE
+#: Sekunden: das Feld ist eine Beruhigung („deine Arbeit liegt in der Datei"),
+#: keine Messung.
+_SAVED_AT_FORMAT: str = "%H:%M"
 _SIDEBAR_WIDTH: int = 296
 # Sprint 67 / Teil A: Sidebar war zuvor `setFixedWidth` – der äußere
 # Splitter (Sidebar | Workspace) war dadurch faktisch nicht bedienbar.
@@ -93,8 +98,25 @@ class NavigationSidebar(QFrame):
         self._engagement_subtitle.setProperty("engagementSubtitle", True)
         self._engagement_subtitle.setWordWrap(True)
 
+        # „Gespeichert HH:MM" – macht die ohnehin laufende Speicherung sichtbar.
+        # Steht hier statt in der Statusleiste: dort brauchen die vier
+        # bestehenden Felder auf Windows bereits 1162 von 1280 px, ein fünftes
+        # Feld hat gemessen 1433 px ergeben und wäre abgeschnitten worden.
+        #
+        # Bewusst dieselbe `engagementSubtitle`-Property wie die Zeile darüber:
+        # kein neuer QSS-Block, kein neues Farb-Literal, garantiert konsistent
+        # – und leise, wie es sich für eine Beruhigung gehört.
+        # `setWordWrap` ist NICHT kosmetisch: ein QLabel ohne Umbruch zieht die
+        # Mindestbreite seines Containers hoch, und die Sidebar darf auf
+        # 180 px schrumpfen (`_SIDEBAR_MIN_WIDTH`).
+        self._engagement_saved = QLabel("")
+        self._engagement_saved.setProperty("engagementSubtitle", True)
+        self._engagement_saved.setWordWrap(True)
+        self._engagement_saved.setVisible(False)
+
         layout.addWidget(self._engagement_title)
         layout.addWidget(self._engagement_subtitle)
+        layout.addWidget(self._engagement_saved)
 
         # Datasets
         layout.addWidget(_section_label("Datensätze"))
@@ -132,6 +154,20 @@ class NavigationSidebar(QFrame):
         self._engagement_title.setText(engagement.client_name)
         parts = [p for p in (engagement.audit_type, engagement.auditor_name) if p]
         self._engagement_subtitle.setText(" · ".join(parts))
+
+    def set_saved_at(self, moment: datetime | None) -> None:
+        """Zeigt, wann zuletzt in die Projektdatei geschrieben wurde.
+
+        Den Zeitpunkt bringt der Aufrufer mit; die Sidebar liest KEINE eigene
+        Uhr (Sprint 74: eine Uhr, eine Quelle – der injizierbare
+        `now_provider` der Session). `None` blendet die Zeile wieder aus –
+        der Zustand ohne offenes Projekt und vor dem ersten Schreiben. Ein
+        leerer Platzhalter stünde sonst da wie ein Fehler, und genau den
+        Eindruck soll die Anzeige beseitigen.
+        """
+        text = "" if moment is None else f"Gespeichert {moment.strftime(_SAVED_AT_FORMAT)}"
+        self._engagement_saved.setText(text)
+        self._engagement_saved.setVisible(bool(text))
 
     def set_datasets(self, datasets: list[Dataset]) -> None:
         """Befüllt die Dataset-Liste – Auswahl wird zurückgesetzt."""
