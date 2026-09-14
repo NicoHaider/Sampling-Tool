@@ -59,7 +59,8 @@ def build_menu(window: MainWindow) -> None:
     window._action_save.setShortcut(QKeySequence.StandardKey.Save)
     # Die vollständige Regel steht im Tooltip, nicht in der Statuszeilen-
     # Meldung: ein Tooltip ist ein Popup ohne Breitenlimit, die Statuszeile
-    # teilt sich die Breite mit fünf permanenten Feldern.
+    # teilt sich die Breite mit den vier permanenten Statusfeldern, die auf
+    # Windows schon 1162 der 1280 px des 13"-Zielgeräts belegen.
     window._action_save.setToolTip(
         "Dieses Projekt speichert automatisch nach jeder Änderung – "
         "ein Speichern von Hand ist nicht nötig"

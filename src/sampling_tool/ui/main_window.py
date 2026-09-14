@@ -53,10 +53,6 @@ from sampling_tool.ui.widgets.data_table import _DEFAULT_ROW_HEIGHT, DataTableVi
 from sampling_tool.ui.widgets.sidebar import NavigationSidebar
 from sampling_tool.ui.widgets.welcome import WelcomeScreen
 
-#: Zeitformat der „Gespeichert"-Statusanzeige. Bewusst OHNE Sekunden: das Feld
-#: ist eine Beruhigung („deine Arbeit liegt in der Datei"), keine Messung.
-_SAVED_AT_FORMAT = "%H:%M"
-
 
 class MainWindow(QMainWindow):
     """Top-Level-Fenster mit Welcome- und Workspace-Ansicht."""
@@ -186,13 +182,6 @@ class MainWindow(QMainWindow):
         self._status_dataset = QLabel("Kein Dataset")
         self._status_rows = QLabel("0 Zeilen")
         self._status_sample = QLabel("—")
-        # Fünftes Feld – macht die ohnehin laufende Speicherung sichtbar.
-        # Trennstrich und Label werden bis zum ersten Schreiben ausgeblendet
-        # (`set_saved_at(None)` aus `show_welcome()`): ein leeres Feld hinter
-        # einem Trennstrich sähe nach Fehler aus, und genau den Eindruck soll
-        # die Anzeige beseitigen, nicht erzeugen.
-        self._status_saved = QLabel("")
-        self._status_saved_separator = _separator()
         status = QStatusBar()
         status.addPermanentWidget(self._status_engagement)
         status.addPermanentWidget(_separator())
@@ -201,8 +190,6 @@ class MainWindow(QMainWindow):
         status.addPermanentWidget(self._status_rows)
         status.addPermanentWidget(_separator())
         status.addPermanentWidget(self._status_sample)
-        status.addPermanentWidget(self._status_saved_separator)
-        status.addPermanentWidget(self._status_saved)
         self.setStatusBar(status)
 
         # ---- Menü + Toolbar ----
@@ -327,21 +314,22 @@ class MainWindow(QMainWindow):
         self._status_sample.setText(text)
 
     def set_saved_at(self, moment: datetime | None) -> None:
-        """Zeigt, wann zuletzt in die Projektdatei geschrieben wurde.
+        """Zeigt im Sidebar-Engagement-Block, wann zuletzt geschrieben wurde.
 
         Einziger Aufrufer im Produktivpfad ist `WorkspaceSession.persist_state()`
         – und zwar erst NACH dem erfolgreichen `upsert`. Die Anzeige behauptet
         damit nie einen Schreibvorgang, den es nicht gab.
 
+        Die Anzeige sitzt in der Sidebar, nicht in der Statusleiste: dort
+        brauchen die vier bestehenden Felder auf Windows schon 1162 von
+        1280 px, ein fünftes Feld kam gemessen auf 1433 px und wäre auf dem
+        13"-Zielgerät abgeschnitten worden (auch ohne Uhrzeit).
+
         Den Zeitpunkt bringt der Aufrufer mit; das Fenster liest KEINE eigene
         Uhr (Sprint 74: eine Uhr, eine Quelle – der injizierbare
-        `now_provider` der Session). `None` blendet das Feld samt Trennstrich
-        wieder aus – der Zustand ohne offenes Projekt.
+        `now_provider` der Session). `None` blendet die Zeile wieder aus.
         """
-        text = "" if moment is None else f"Gespeichert {moment.strftime(_SAVED_AT_FORMAT)}"
-        self._status_saved.setText(text)
-        self._status_saved.setVisible(bool(text))
-        self._status_saved_separator.setVisible(bool(text))
+        self._sidebar.set_saved_at(moment)
 
     def clear_active_sample(self) -> None:
         """Entfernt die aktive-Stichprobe-Markierung aus Sidebar + Statusbar."""

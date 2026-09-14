@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 from PyQt6.QtCore import QSettings
 from PyQt6.QtGui import QKeySequence
-from PyQt6.QtWidgets import QLabel, QWidget
+from PyQt6.QtWidgets import QLabel
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import Engagement
@@ -40,6 +40,7 @@ from sampling_tool.ui.controllers.workspace_session import (
 from sampling_tool.ui.main_window import MainWindow
 from sampling_tool.ui.recent import RecentEngagementsStore
 from sampling_tool.ui.settings_store import AppSettings
+from sampling_tool.ui.widgets.sidebar import _SIDEBAR_WIDTH
 
 pytestmark = pytest.mark.ui
 
@@ -127,7 +128,8 @@ def session(
 
 
 def _saved_label(window: MainWindow) -> QLabel:
-    return window._status_saved
+    """Die „Gespeichert HH:MM"-Zeile im Engagement-Block der Sidebar."""
+    return window._sidebar._engagement_saved
 
 
 # ---------------------------------------------------------------------------
@@ -145,16 +147,21 @@ class TestIndicatorStartsEmpty:
         """Weder „—" noch „nie" noch „unbekannt" – das sähe nach Fehler aus."""
         assert _saved_label(window).text().strip() == ""
 
-    def test_label_and_its_separator_are_hidden_before_any_write(self, window: MainWindow) -> None:
-        """Ein leeres Feld zwischen zwei Trennstrichen sähe kaputt aus."""
+    def test_label_is_hidden_before_any_write(self, window: MainWindow) -> None:
+        """Eine leere Zeile im Engagement-Block sähe nach Fehler aus."""
         window.show_workspace()
-        assert window._status_saved.isHidden()
-        assert window._status_saved_separator.isHidden()
+        assert _saved_label(window).isHidden()
 
-    def test_indicator_is_a_permanent_statusbar_widget(self, window: MainWindow) -> None:
+    def test_indicator_lives_in_the_sidebar_engagement_block(self, window: MainWindow) -> None:
+        """Nicht in der Statusleiste – die ist auf Windows bereits voll."""
+        assert _saved_label(window) in window._sidebar.findChildren(QLabel)
+
+    def test_statusbar_keeps_its_four_permanent_fields(self, window: MainWindow) -> None:
+        """Die Statusleiste bleibt unangetastet: kein fünftes Feld."""
         status = window.statusBar()
         assert status is not None
-        assert window._status_saved in status.findChildren(QLabel)
+        texts = [lbl for lbl in status.findChildren(QLabel) if lbl.text() != "│"]
+        assert len(texts) == 4
 
 
 # ---------------------------------------------------------------------------
@@ -169,11 +176,10 @@ class TestPersistStateUpdatesIndicator:
         session.persist_state()
         assert _saved_label(session.window).text() == "Gespeichert 14:32"
 
-    def test_persist_state_shows_label_and_separator(self, session: WorkspaceSession) -> None:
+    def test_persist_state_reveals_the_label(self, session: WorkspaceSession) -> None:
         session.window.show_workspace()
         session.persist_state()
-        assert not session.window._status_saved.isHidden()
-        assert not session.window._status_saved_separator.isHidden()
+        assert not _saved_label(session.window).isHidden()
 
     def test_time_has_no_seconds(self, session: WorkspaceSession) -> None:
         """Beruhigung, keine Messung – die 9 Sekunden aus FROZEN_NOW fehlen."""
@@ -343,7 +349,8 @@ class TestConfirmationStaysShort:
         assert len(SAVE_CONFIRMATION_MESSAGE) <= self.MAX_CHARS, (
             f"Bestätigungstext hat {len(SAVE_CONFIRMATION_MESSAGE)} Zeichen, "
             f"erlaubt sind {self.MAX_CHARS}. Die Statusleiste teilt sich die "
-            f"Breite mit fünf permanenten Feldern – die lange Fassung gehört "
+            f"Breite mit den vier permanenten Statusfeldern – die lange "
+            f"Fassung gehört "
             f"in den Tooltip der Aktion."
         )
 
@@ -358,79 +365,62 @@ class TestConfirmationStaysShort:
         assert len(window._action_save.toolTip()) > self.MAX_CHARS
 
 
-class TestFifthColumnDoesNotCauseTheOverflow:
-    """§5 des Auftrags: sprengt die FÜNFTE Spalte auf 13" die Breite?
+class TestSidebarStaysNarrow:
+    """Die Zeile darf die Sidebar nicht breiter zwingen.
 
-    Gefragt ist die Ursache, nicht der Zustand – und genau so wird geprüft:
-    der natürliche Platzbedarf der permanenten Felder wird einmal MIT und
-    einmal OHNE „Gespeichert HH:MM" gemessen. Rot wird der Test nur, wenn
-    die fünfte Spalte den Ausschlag gibt: ohne sie passte es, mit ihr nicht.
+    Vorgeschichte: die Anzeige sass zuerst als FUENFTES Feld in der
+    Statusleiste. Der CI-Lauf hat das widerlegt – gemessen bei 1280 px
+    (13"-Zielgeraet) mit bewusst bescheidenen Inhalten:
 
-    Warum nicht einfach „ist das Feld sichtbar?": die Statusleiste ist auf
-    Windows schon ohne das fünfte Feld randvoll (bei 1280 px blieben im
-    CI-Lauf 2 px für die temporäre Meldung, die bestehenden Meldungen der
-    App werden dort ebenfalls beschnitten). Ein absoluter Test wäre dort
-    rot, ohne dass dieses Feature etwas verbrochen hätte – dieselbe Falle,
-    die `tests/ui/test_toolbar_overflow.py` im Modul-Docstring beschreibt
-    und ebenfalls mit einem RELATIVEN Vergleich löst.
+        macOS     4 Felder  613 px -> 5 Felder  763 px   passt
+        Windows   4 Felder 1162 px -> 5 Felder 1433 px   UEBERLAUF
 
-    Gemessen wird an einem breiten Fenster, damit Qt nichts staucht: der
-    natürliche Bedarf ist dann die rechte Kante minus linke Kante.
+    Auf Windows brauchen die vier bestehenden Felder bereits 91 % der
+    Breite; auch „Gespeichert" ohne Uhrzeit haette dort nicht gepasst
+    (~1363 px). Deshalb steht die Zeile jetzt im Engagement-Block der
+    Sidebar – und darf DORT keinen neuen Breiten-Zwang erzeugen.
+
+    Die Falle heisst `setWordWrap`: ein QLabel ohne Umbruch zieht die
+    Mindestbreite seines Containers auf seine eigene Textbreite hoch. Die
+    Sidebar darf aber bis `_SIDEBAR_MIN_WIDTH` (180 px) schrumpfen, und
+    auf Windows ist der Text fast doppelt so breit wie auf macOS.
     """
 
-    TARGET_WIDTH = 1280
-    #: Breit genug, dass das Layout nichts zusammenquetscht.
-    ROOMY_WIDTH = 3000
+    def test_label_wraps_so_it_cannot_pin_the_minimum_width(self, window: MainWindow) -> None:
+        assert _saved_label(window).wordWrap(), (
+            "Ohne setWordWrap zwingt die Zeile die Sidebar auf ihre Textbreite "
+            "– plattformabhaengig und auf Windows am schlimmsten."
+        )
 
-    def _natural_width(self, window: MainWindow, *, with_saved_field: bool) -> int:
-        window.set_saved_at(FROZEN_NOW if with_saved_field else None)
-        status = window.statusBar()
-        assert status is not None
-        layout = status.layout()
-        if layout is not None:
-            layout.activate()
-        boxes = [
-            child
-            for child in status.children()
-            if isinstance(child, QWidget) and not child.isHidden()
-        ]
-        assert boxes, "keine permanenten Widgets – die Messung wäre vakuum"
-        return max(c.x() + c.width() for c in boxes) - min(c.x() for c in boxes)
-
-    def test_fifth_column_is_not_what_breaks_the_target_width(
+    def test_showing_the_label_does_not_widen_the_sidebar(
         self, window: MainWindow, qtbot: QtBot
     ) -> None:
         window.show_workspace()
-        window.resize(self.ROOMY_WIDTH, 720)
         window.show()
         qtbot.waitExposed(window)
-        window.set_engagement(
-            Engagement(
-                auditor_name="Anna Auditorin",
-                auditor_position="Senior Auditor",
-                client_name="ACME GmbH",
-                audit_type="ISAE 3402 Typ II",
-                id=1,
-            )
+        sidebar = window._sidebar
+        before = sidebar.minimumSizeHint().width()
+        window.set_saved_at(FROZEN_NOW)
+        layout = sidebar.layout()
+        if layout is not None:
+            layout.activate()
+        after = sidebar.minimumSizeHint().width()
+        assert not _saved_label(window).isHidden(), "Messung vakuum: Zeile unsichtbar"
+        assert after <= before, (
+            f"Die Zeile hebt die Mindestbreite der Sidebar von {before} px auf "
+            f"{after} px – genau das sollte der Wortumbruch verhindern."
         )
-        window._status_dataset.setText("Buchungen.xlsx")
-        window._status_rows.setText("12.500 Zeilen")
-        window._status_sample.setText("Aktive Stichprobe: #3 (Einfach, 25/1500)")
 
-        without = self._natural_width(window, with_saved_field=False)
-        with_field = self._natural_width(window, with_saved_field=True)
-        assert with_field > without, "Messung vakuum: das fünfte Feld kostet keine Breite"
-
-        if without > self.TARGET_WIDTH:
-            pytest.skip(
-                f"Statusleiste ist auf dieser Plattform schon mit VIER Feldern "
-                f"zu breit ({without} px > {self.TARGET_WIDTH} px) – ein "
-                f"Vorzustand, den dieses Feature nicht verursacht hat."
-            )
-        assert with_field <= self.TARGET_WIDTH, (
-            f"Die fünfte Spalte gibt den Ausschlag: ohne sie {without} px, mit "
-            f"ihr {with_field} px bei {self.TARGET_WIDTH} px Zielbreite. Laut "
-            f"Auftrag §5 dann lieber 'Gespeichert' ohne Uhrzeit."
+    def test_label_fits_the_default_sidebar_width(self, window: MainWindow, qtbot: QtBot) -> None:
+        """Bei Default-Breite steht die Zeile auf EINER Zeile, ohne Umbruch."""
+        window.show_workspace()
+        window.show()
+        qtbot.waitExposed(window)
+        window.set_saved_at(FROZEN_NOW)
+        label = _saved_label(window)
+        assert label.sizeHint().width() <= _SIDEBAR_WIDTH, (
+            f"{label.text()!r} braucht {label.sizeHint().width()} px, die "
+            f"Sidebar ist standardmaessig {_SIDEBAR_WIDTH} px breit."
         )
 
 

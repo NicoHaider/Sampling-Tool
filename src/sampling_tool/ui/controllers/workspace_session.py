@@ -61,12 +61,14 @@ AUDIT_EVENT_DISPLAY_LIMIT: int = 10_000
 #: * „Bereits gespeichert" statt „Gespeichert": ein Zustand, keine Tat. Der
 #:   Text behauptet nicht, der Klick hätte das Speichern bewirkt – genau
 #:   dieser Eindruck soll ja gerade nicht entstehen.
-#: * So kurz, weil die temporäre Meldung sich die Statuszeile mit den nun FÜNF
-#:   permanenten Feldern teilt. Gemessen (offscreen, 1280 px = 13"-Zielgerät,
-#:   aktive Stichprobe angezeigt): dafür bleiben ~268 px. Die vollständige
-#:   Regel („speichert automatisch nach jeder Änderung") steht deshalb im
-#:   Tooltip der Aktion – ein Popup ohne Breitenlimit –, nicht hier, wo sie
-#:   ausgerechnet auf dem kleinsten Gerät abgeschnitten würde.
+#: * So kurz, weil die temporäre Meldung sich die Statuszeile mit den vier
+#:   permanenten Feldern teilt und dort wenig Platz bleibt. Im CI gemessen
+#:   (1280 px = 13"-Zielgerät, bescheidene Inhalte): macOS 613 px belegt,
+#:   Windows 1162 px – dort also ~118 px Rest, und Windows rendert denselben
+#:   Satz fast doppelt so breit. Die vollständige Regel („speichert
+#:   automatisch nach jeder Änderung") steht deshalb im Tooltip der Aktion –
+#:   ein Popup ohne Breitenlimit –, nicht hier, wo sie ausgerechnet auf dem
+#:   kleinsten Gerät abgeschnitten würde.
 #:   Festgenagelt in `tests/ui/test_saved_indicator.py`.
 SAVE_CONFIRMATION_MESSAGE: str = "Bereits gespeichert – automatisch."
 
