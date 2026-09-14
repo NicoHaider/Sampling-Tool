@@ -383,21 +383,21 @@ class TestTestFloorConstant:
         Zu nah dran, und jeder gelöschte Test wird zum Fehlalarm; zu weit weg,
         und ein echter Sammel-Ausfall bleibt unbemerkt. Die Zahl wird beim
         bewussten Anheben des Floors mitgezogen – sie ist die Messung, gegen
-        die der Abstand gilt (Sprint 78: 1765 gesammelt, Floor 1700).
+        die der Abstand gilt („Speichern sichtbar": 1897 gesammelt, Floor 1850).
         """
-        measured_at_last_sprint = 1765
+        measured_at_last_sprint = 1897
         assert measured_at_last_sprint > TEST_FLOOR
         assert int(measured_at_last_sprint * 0.95) <= TEST_FLOOR
 
     def test_executed_floor_keeps_a_meaningful_distance(self) -> None:
         """Dieselbe Größenordnung, aber gemessen auf der striktesten Plattform.
 
-        Die Zahl ist Windows aus CI-Lauf 32843165645 (1826 gesammelt, 3
-        übersprungen). Auf macOS und Ubuntu liefen 1826 – wer den Floor dort
+        Die Zahl ist Windows aus CI-Lauf 34844348281 (1897 gesammelt, 3
+        übersprungen). Auf macOS und Ubuntu liefen 1897 – wer den Floor dort
         misst, setzt ihn drei Tests zu hoch und macht den nächsten
         Windows-Lauf rot.
         """
-        measured_on_windows = 1823
+        measured_on_windows = 1894
         assert measured_on_windows > EXECUTED_FLOOR
         assert int(measured_on_windows * 0.95) <= EXECUTED_FLOOR
 
@@ -410,5 +410,5 @@ class TestTestFloorConstant:
         anderen rot – die Sprint-78-Lehre: nicht mit knapper Reserve an eine
         plattformabhängige Grenze legen.
         """
-        measured_on_windows, measured_elsewhere = 1823, 1826
+        measured_on_windows, measured_elsewhere = 1894, 1897
         assert measured_elsewhere - measured_on_windows < measured_on_windows - EXECUTED_FLOOR

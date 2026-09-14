@@ -45,21 +45,24 @@ ENFORCE_TEST_FLOOR_ENV = "SAMPLING_TOOL_ENFORCE_TEST_FLOOR"
 #: Messreihe (voller Lauf auf macOS, jeweils am Sprint-Ende):
 #:   2026-08-17, Sprint 77: 1642 gesammelt → Floor 1600 (2,6 % Abstand)
 #:   2026-08-17, Sprint 78: 1765 gesammelt → Floor 1700 (3,7 % Abstand)
+#:   2026-09-14, „Speichern sichtbar": 1897 gesammelt → Floor 1850 (2,5 %
+#:     Abstand). Gemessen im grünen CI-Lauf 34844348281 (PR #122); alle drei
+#:     Plattformen sammeln identisch 1897.
 #: Der Abstand hält plattformbedingte Schwankung und normales Test-Hinzufügen
 #: aus dem Wächter heraus; ein echter Sammel-Ausfall (eine Datei fällt raus)
 #: liegt deutlich darüber.
 #:
 #: NUR NACH OBEN ANPASSEN. Sinkt die gesammelte Zahl unter diesen Wert, ist das
 #: der Befund – nicht der Anlass, die Konstante zu senken.
-TEST_FLOOR = 1700
+TEST_FLOOR = 1850
 
 #: Zahl der AUSGEFÜHRTEN Tests (`gesammelt − übersprungen`), Sprint 79.
 #:
-#: Gemessen im CI-Lauf 32843165645 (PR #119) am 2026-08-25, alle drei Plattformen
-#: gesammelt 1826:
-#:   Ubuntu   1826 gesammelt, 0 übersprungen → 1826 ausgeführt
-#:   macOS    1826 gesammelt, 0 übersprungen → 1826 ausgeführt
-#:   Windows  1826 gesammelt, 3 übersprungen → 1823 ausgeführt  ← die kleinste
+#: Gemessen im CI-Lauf 34844348281 (PR #122) am 2026-09-14, alle drei Plattformen
+#: gesammelt 1897:
+#:   Ubuntu   1897 gesammelt, 0 übersprungen → 1897 ausgeführt
+#:   macOS    1897 gesammelt, 0 übersprungen → 1897 ausgeführt
+#:   Windows  1897 gesammelt, 3 übersprungen → 1894 ausgeführt  ← die kleinste
 #:
 #: Der Floor gehört auf die STRIKTESTE Plattform, und das ist Windows: dort
 #: skippt `tests/unit/test_platform_imports.py` per `skipif` zwei Tests (völlig
@@ -67,14 +70,14 @@ TEST_FLOOR = 1700
 #: `test_version_manager.py:449` kommt an eine offene Datei nicht heran
 #: (`WinError 32`). Eine auf macOS gemessene „0 Skips"-Zahl gilt dort nicht.
 #:
-#: 1823 − 2,4 % = 1780. Der Abstand deckt die Skip-Stellen ab, die heute NICHT
+#: 1894 − 2,6 % = 1845. Der Abstand deckt die Skip-Stellen ab, die heute NICHT
 #: auslösen, aber jederzeit könnten: die drei Symlink-Fälle (auf den
 #: Windows-Runnern derzeit verfügbar) und die zwei Toolbar-Geometrie-Fälle.
-#: Selbst wenn alle fünf zusätzlich griffen, bliebe der Lauf mit 1818 darüber.
+#: Selbst wenn alle fünf zusätzlich griffen, bliebe der Lauf mit 1889 darüber.
 #:
 #: NUR NACH OBEN ANPASSEN. Sinkt die ausgeführte Zahl unter diesen Wert, ist das
 #: der Befund – nicht der Anlass, die Konstante zu senken.
-EXECUTED_FLOOR = 1780
+EXECUTED_FLOOR = 1845
 
 
 def check_test_floor(collected: int, floor: int) -> str | None:
