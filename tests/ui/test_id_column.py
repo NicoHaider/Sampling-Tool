@@ -186,9 +186,9 @@ def _populated_db(tmp_path: Path) -> tuple[Path, int]:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=5, seed=42),
             selected_row_ids=(1, 2, 3, 4, 5),
             population_size=10,
+            created_by="tester",
         ),
         ds.id,
-        "tester",
     )
     db.close()
     return db_path, ds.id

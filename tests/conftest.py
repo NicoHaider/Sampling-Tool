@@ -159,8 +159,10 @@ def sample_id(db: Database, dataset_id: int) -> int:
     `samples.id`. Wird von Audit- und Undo-Tests genutzt, deren FKs auf
     `samples(id)` greifen."""
     cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=1)
-    result = SampleResult(config=cfg, selected_row_ids=(1,), population_size=1)
-    return SampleRepo(db.connect()).create_from_result(result, dataset_id, "test")
+    result = SampleResult(
+        config=cfg, selected_row_ids=(1,), population_size=1, created_by="test"
+    )
+    return SampleRepo(db.connect()).create_from_result(result, dataset_id)
 
 
 # ---------------------------------------------------------------------------

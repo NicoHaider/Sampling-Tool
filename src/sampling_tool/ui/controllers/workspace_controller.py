@@ -395,15 +395,18 @@ class WorkspaceController:
         parent_sample_id = (
             s.sample.id if s.sample is not None and parent_relation is not None else None
         )
+        # Sprint 83 / C: `created_by` VOR dem Persistieren setzen – dasselbe
+        # Objekt speist DB-Zeile, Audit-Event, Sidebar und Sample-Export.
         sample_result = replace(
-            sample_result, parent_sample_id=parent_sample_id, parent_relation=parent_relation
+            sample_result,
+            parent_sample_id=parent_sample_id,
+            parent_relation=parent_relation,
+            created_by=s.user_name(),
         )
 
         try:
             with s.db.session() as conn:
-                sample_id = SampleRepo(conn).create_from_result(
-                    sample_result, s.dataset.id, s.user_name()
-                )
+                sample_id = SampleRepo(conn).create_from_result(sample_result, s.dataset.id)
                 stored = replace(sample_result, id=sample_id)
                 AuditLogger(AuditRepo(conn), s.user_name(), s.engagement.id).log_sampling(
                     stored, sample_id, dataset_id

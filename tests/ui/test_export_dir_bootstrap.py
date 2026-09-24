@@ -133,9 +133,9 @@ def fresh_db(tmp_path: Path) -> Path:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=42),
             selected_row_ids=(2, 4),
             population_size=5,
+            created_by="tester",
         ),
         dataset.id,
-        "tester",
     )
     db.close()
     return db_path
