@@ -14,6 +14,7 @@ from sampling_tool.core.models import (
     DatasetRow,
     Engagement,
     FilterOperator,
+    ParentRelation,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -477,3 +478,74 @@ class TestAuditRepo:
         loaded = repo.list_for_engagement(engagement_id)[0]
         assert loaded.details == details
         assert loaded.id == evt.id
+
+
+# ===========================================================================
+# Sprint 83 – Migration 006: Import-Herkunft + Ableitung
+# ===========================================================================
+
+
+class TestDatasetImportProvenanceRoundtrip:
+    def test_source_sheet_and_header_row_roundtrip(
+        self, db: Database, engagement_id: int
+    ) -> None:
+        repo = DatasetRepo(db.connect())
+        dataset = Dataset(
+            name="Mappe (Buchungen)",
+            columns=("Col1", "Country"),
+            source_file="mappe.xlsx",
+            source_sheet="Buchungen",
+            header_row=5,
+            engagement_id=engagement_id,
+        )
+        stored = repo.create(dataset, _sample_rows())
+        assert stored.id is not None
+
+        loaded = repo.get_by_id(stored.id)
+        assert loaded is not None
+        assert (loaded.source_sheet, loaded.header_row) == ("Buchungen", 5)
+        listed = repo.list_for_engagement(engagement_id)
+        assert [(d.source_sheet, d.header_row) for d in listed] == [("Buchungen", 5)]
+
+    def test_unrecorded_provenance_reads_as_none(self, db: Database, engagement_id: int) -> None:
+        repo = DatasetRepo(db.connect())
+        stored = repo.create(_sample_dataset(engagement_id), _sample_rows())
+        assert stored.id is not None
+        loaded = repo.get_by_id(stored.id)
+        assert loaded is not None
+        assert (loaded.source_sheet, loaded.header_row) == (None, None)
+
+
+class TestSampleParentRelationRoundtrip:
+    @pytest.mark.parametrize("relation", [ParentRelation.RESTRICT, ParentRelation.SUPPLEMENT])
+    def test_parent_relation_roundtrip(
+        self, db: Database, engagement_id: int, relation: ParentRelation
+    ) -> None:
+        dataset_id = _persist_dataset(db, engagement_id)
+        repo = SampleRepo(db.connect())
+        parent_id = repo.create_from_result(_make_result(), dataset_id, "anna")
+        child = SampleResult(
+            config=_make_result().config,
+            selected_row_ids=(1, 3),
+            population_size=4,
+            parent_sample_id=parent_id,
+            parent_relation=relation,
+        )
+        child_id = repo.create_from_result(child, dataset_id, "anna")
+
+        loaded = repo.get_by_id(child_id)
+        assert loaded is not None
+        assert loaded.parent_sample_id == parent_id
+        assert loaded.parent_relation is relation
+        raw = db.connect().execute(
+            "SELECT parent_relation FROM samples WHERE id = ?", (child_id,)
+        ).fetchone()
+        assert raw["parent_relation"] == relation.value
+
+    def test_without_parent_relation_reads_as_none(self, db: Database, engagement_id: int) -> None:
+        dataset_id = _persist_dataset(db, engagement_id)
+        repo = SampleRepo(db.connect())
+        sid = repo.create_from_result(_make_result(), dataset_id, "anna")
+        loaded = repo.get_by_id(sid)
+        assert loaded is not None
+        assert loaded.parent_relation is None

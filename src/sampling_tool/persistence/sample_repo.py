@@ -6,6 +6,7 @@ import sqlite3
 
 from sampling_tool.core.models import (
     FilterOperator,
+    ParentRelation,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -35,8 +36,8 @@ class SampleRepo:
                 "(dataset_id, method, sample_size, population_size, seed, "
                 " filter_field, filter_value, cluster_field, stratum_field, "
                 " stratify_mode, filter_operator, parent_sample_id, created_at, created_by, "
-                " algorithm_version) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " algorithm_version, parent_relation) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     dataset_id,
                     cfg.method.value,
@@ -53,6 +54,7 @@ class SampleRepo:
                     result.drawn_at,
                     created_by,
                     result.algorithm_version,
+                    result.parent_relation.value if result.parent_relation else None,
                 ),
             )
             sample_id = cur.lastrowid
@@ -123,6 +125,9 @@ class SampleRepo:
             algorithm_version=row["algorithm_version"],
             drawn_at=row["created_at"],
             parent_sample_id=row["parent_sample_id"],
+            parent_relation=(
+                ParentRelation(row["parent_relation"]) if row["parent_relation"] else None
+            ),
             created_by=row["created_by"],
             id=row["id"],
         )

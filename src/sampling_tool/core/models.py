@@ -63,6 +63,16 @@ class FilterOperator(StrEnum):
     LTE = "lte"
 
 
+class ParentRelation(StrEnum):
+    """Wie eine Stichprobe aus ihrer Eltern-Stichprobe abgeleitet wurde (Sprint 83)."""
+
+    RESTRICT = "restrict"
+    """Nur aus der aktuellen Auswahl gezogen (einschränken)."""
+
+    SUPPLEMENT = "supplement"
+    """Nachstichprobe aus der Basispopulation, ohne bereits gezogene Datensätze."""
+
+
 class UndoStack(StrEnum):
     """Stack-Identifier für `UndoManager` / `undo_snapshots`."""
 
@@ -128,6 +138,11 @@ class Dataset:
     columns: tuple[str, ...]
     row_count: int = 0
     source_file: str = ""
+    # Import-Herkunft (Sprint 83): gelesenes Excel-Blatt (CSV: `None`) und die
+    # Kopfzeile 1-basiert wie im Import-Dialog, `0` = keine Kopfzeile. `None`
+    # heißt bei beiden „nicht erfasst" (Import vor Migration 006).
+    source_sheet: str | None = None
+    header_row: int | None = None
     imported_at: datetime = field(default_factory=_utcnow)
     engagement_id: int | None = None
     id: int | None = None
@@ -167,6 +182,9 @@ class SampleResult:
     algorithm_version: str = SAMPLING_ALGORITHM_VERSION
     drawn_at: datetime = field(default_factory=_utcnow)
     parent_sample_id: int | None = None
+    # Gesetzt genau dann, wenn `parent_sample_id` gesetzt ist UND die Ziehung ab
+    # Sprint 83 entstand – Bestandssamples bleiben `None` (kein Backfill).
+    parent_relation: ParentRelation | None = None
     created_by: str = "system"
     id: int | None = None
 
