@@ -3439,6 +3439,103 @@ class TestEngagementStateRestore:
             controller.engagement.handle_close_engagement()
 
 
+def _project_without_saved_state(directory: Path) -> Path:
+    """Zweites Projekt mit einem Datensatz, aber ohne gespeicherten UI-State."""
+    directory.mkdir()
+    db_path = directory / "neukunde.db"
+    db = Database(db_path)
+    db.migrate()
+    eng = EngagementRepo(db.connect()).get_or_create(
+        Engagement(auditor_name="Anna", client_name="Neukunde", audit_type="ISAE 3402")
+    )
+    assert eng.id is not None
+    DatasetRepo(db.connect()).create(
+        Dataset(name="Kreditoren", columns=("a",), engagement_id=eng.id),
+        tuple(DatasetRow(row_id=i, values={"a": i}) for i in range(1, 4)),
+    )
+    db.close()
+    return db_path
+
+
+class TestOpenOtherProjectShowsNoDataset:
+    """Sprint 82 / Befund E, benachbarter Fall: Öffnet man ein anderes Projekt
+    direkt (Datei → Öffnen, Zuletzt geöffnet), während eines mit geladenem
+    Datensatz offen ist, standen Datensatzname, Zeilenzahl und aktive
+    Stichprobe des ALTEN Projekts weiter in der Statusleiste.
+    """
+
+    def _activate_sample(self, controller: MainController, window: MainWindow) -> None:
+        ds_id = _first_item_data(window.sidebar().datasets_widget())
+        controller.selection.handle_dataset_selected(ds_id)
+        controller.selection.handle_sample_selected(
+            _first_item_data(window.sidebar().samples_widget())
+        )
+        assert window._status_dataset.text() == "Buchungen"
+        assert window._status_rows.text() == "5 Zeilen"
+        assert window._status_sample.text().startswith("Aktive Stichprobe: #")
+        assert window._action_new_sample.isEnabled() is True
+
+    def test_direct_open_without_restore_shows_no_dataset(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        from sampling_tool.ui.settings_store import AppSettings
+
+        other_db = _project_without_saved_state(tmp_path / "neukunde")
+        controller = MainController(
+            window, recent_store=recent_store, settings=AppSettings.defaults()
+        )
+        try:
+            controller.engagement.handle_open_engagement(populated_db)
+            self._activate_sample(controller, window)
+
+            controller.engagement.handle_open_engagement(other_db)
+
+            assert window._status_engagement.text() == "Neukunde"
+            assert window._status_dataset.text() == "Kein Dataset"
+            assert window._status_rows.text() == "0 Zeilen"
+            assert window._status_sample.text() == "Aktive Stichprobe: keine"
+            assert window._action_new_sample.isEnabled() is False
+            assert window._action_export_sample.isEnabled() is False
+            assert window.sidebar().datasets_widget().count() == 1
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_restored_dataset_wins_over_no_dataset_state(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Guard: stellt das geöffnete Projekt einen Datensatz wieder her, gilt der."""
+        from sampling_tool.ui.settings_store import AppSettings
+
+        other_db = _project_without_saved_state(tmp_path / "neukunde")
+        controller = MainController(
+            window, recent_store=recent_store, settings=AppSettings.defaults()
+        )
+        try:
+            controller.engagement.handle_open_engagement(populated_db)
+            self._activate_sample(controller, window)
+            controller.engagement.handle_open_engagement(other_db)
+
+            controller.engagement.handle_open_engagement(populated_db)
+
+            assert window._status_engagement.text() == "ACME"
+            assert window._status_dataset.text() == "Buchungen"
+            assert window._status_rows.text() == "5 Zeilen"
+            assert window._status_sample.text().startswith("Aktive Stichprobe: #")
+            assert window._action_new_sample.isEnabled() is True
+            assert window._action_export_sample.isEnabled() is True
+            assert window._action_reset_sample.isEnabled() is True
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
 # ---------------------------------------------------------------------------
 # Sprint 9.3 / Sprint 22: aufgelöste Feature-Sichtbarkeit wird an die
 # SamplingDialog-Factory durchgereicht (vorher ein einzelnes advanced_mode-Bool).

@@ -195,6 +195,54 @@ class TestMainWindowState:
         win.highlight_sample(_sample(), filtered=False)
         assert "gefiltert" not in win._status_sample.text()
 
+    def test_show_no_dataset_resets_dataset_status_and_actions(
+        self, qtbot: QtBot, dataset_with_repo: tuple[Dataset, DatasetRepo]
+    ) -> None:
+        """Sprint 82 / Befund E: Workspace ohne Datensatz – das Projekt bleibt offen.
+
+        Engagement-Feld, „Gespeichert"-Zeile, Undo/Redo und die Projekt-Aktionen
+        bleiben stehen; über `show_welcome` umgesetzt wären sie mit weg.
+        """
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.show_workspace()
+        win.set_engagement(_engagement())
+        win.show_dataset(*dataset_with_repo)
+        win.set_samples([_sample()])
+        win.highlight_sample(_sample())
+        win.set_reset_enabled(True)
+        win.set_undo_redo_enabled(True, True)
+        win.set_saved_at(datetime(2026, 9, 24, 10, 30, tzinfo=UTC))
+        saved_line = win._sidebar._engagement_saved
+        saved_text = saved_line.text()
+        assert saved_text
+        dataset_actions = (
+            win._action_new_sample,
+            win._action_export_sample,
+            win._action_reset_sample,
+            win._action_reset_sampling,
+        )
+        assert all(action.isEnabled() for action in dataset_actions)
+        sample_item = win.sidebar().samples_widget().item(0)
+        assert sample_item is not None
+        assert sample_item.font().bold() is True
+
+        win.show_no_dataset()
+
+        assert win._status_dataset.text() == "Kein Dataset"
+        assert win._status_rows.text() == "0 Zeilen"
+        assert win._status_sample.text() == "Aktive Stichprobe: keine"
+        assert sample_item.font().bold() is False
+        assert [action.isEnabled() for action in dataset_actions] == [False] * 4
+        assert win._status_engagement.text() == "ACME"
+        assert win.is_workspace_visible() is True
+        assert win._action_import.isEnabled() is True
+        assert win._action_close.isEnabled() is True
+        assert saved_line.text() == saved_text
+        assert saved_line.isHidden() is False
+        assert win._action_undo.isEnabled() is True
+        assert win._action_redo.isEnabled() is True
+
 
 class TestSwitchEngagementToolbar:
     """Sprint 5.6: neuer Toolbar-Button 'Projekt wechseln' (Sprint 27 umbenannt)."""

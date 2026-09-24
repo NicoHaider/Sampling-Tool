@@ -369,6 +369,14 @@ class DataTableView(QTableView):
         In-Memory-Liste übergeben).
         """
         self._model.set_dataset(dataset, repo)
+        # Der Model-Reset behält die Scrollbar-Werte: ein neu geladener
+        # Datensatz öffnete sonst an der alten Position (Smoke-Test: Zeile 14).
+        # Vor dem Autosizing, weil Qt die Breiten ab der ersten sichtbaren Zeile
+        # misst. Ein folgendes `highlight_rows` springt weiterhin zur Stichprobe.
+        self.scrollToTop()
+        h_bar = self.horizontalScrollBar()
+        if h_bar is not None:
+            h_bar.setValue(h_bar.minimum())
         self._autosize_columns()
 
     def clear_dataset(self) -> None:

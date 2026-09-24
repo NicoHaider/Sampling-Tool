@@ -265,6 +265,26 @@ class MainWindow(QMainWindow):
         self._sidebar.set_active_sample(None)
         self._action_new_sample.setEnabled(True)
 
+    def show_no_dataset(self) -> None:
+        """Workspace ohne geladenen Datensatz (Sprint 82 / Befund E).
+
+        Dataset-/Zeilen-Feld wie im Welcome-Zustand, keine aktive Stichprobe,
+        die Datensatz- und Stichproben-Aktionen aus. Das Projekt bleibt offen:
+        Engagement-Feld, „Gespeichert"-Zeile, Import/Schließen und Undo/Redo
+        (entscheidet `WorkspaceSession.update_undo_redo_state`) bleiben stehen –
+        deshalb bewusst nicht über `show_welcome`.
+        """
+        self._status_dataset.setText("Kein Dataset")
+        self._status_rows.setText("0 Zeilen")
+        self.clear_active_sample()
+        for action in (
+            self._action_new_sample,
+            self._action_export_sample,
+            self._action_reset_sample,
+            self._action_reset_sampling,
+        ):
+            action.setEnabled(False)
+
     def set_audit_events(self, events: list[AuditEvent]) -> None:
         """Liefert die Events an die AuditTrail-View."""
         self._audit_trail_view.set_events(events)

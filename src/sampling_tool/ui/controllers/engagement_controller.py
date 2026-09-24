@@ -337,6 +337,10 @@ class EngagementController:
         s.reload_datasets()
         s.window.set_samples([])
         s.window.clear_table()
+        # Sonst stünden Datensatz, Zeilenzahl und aktive Stichprobe des zuvor
+        # offenen Projekts weiter in der Statusleiste (Sprint 82 / Befund E).
+        # `_restore_state` überschreibt das, wenn es einen Datensatz zurückholt.
+        s.window.show_no_dataset()
         s.update_undo_redo_state()
         s.refresh_views()
 

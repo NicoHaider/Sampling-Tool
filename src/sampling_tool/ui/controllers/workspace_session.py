@@ -557,9 +557,12 @@ class WorkspaceSession:
         self.window.data_table().clear_dataset()
         self.window.clear_table()
         self.window.set_filter_only_sample(False)
-        self.window.clear_active_sample()
         self.window.set_datasets([])
         self.window.set_samples([])
+        # Statusleiste, aktive Stichprobe + Datensatz-Aktionen auf „kein
+        # Datensatz" (Sprint 82 / Befund E) – vor `update_undo_redo_state`, das für Undo/Redo und
+        # Reset das letzte Wort behält.
+        self.window.show_no_dataset()
         self.update_undo_redo_state()
         return True
 
