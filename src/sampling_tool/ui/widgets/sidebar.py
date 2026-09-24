@@ -213,6 +213,10 @@ class NavigationSidebar(QFrame):
         Roh-Enum: die Statusbar zwei Zeilen tiefer sagte „Einfach", während die
         Sidebar „simple" sagte – zwei Sprachen für dasselbe Feld.
 
+        Sprint 82 / Befund B: die Nummer `#N` ist `sample.id` (projektweit, wie
+        Statusleiste, AuditTrail und Reports), nicht mehr die Listenposition.
+        Lücken je Datensatz sind deshalb normal (z. B. #5, #3, #1).
+
         Sprint 69 / Bug 5: das Label (v.a. mit angehängten IDs) kann weiter
         breiter sein als die Sidebar – Qt elidiert den `QListWidgetItem`-Text
         dann ohne erkennbaren Rest. Deshalb bekommt jedes Item zusätzlich den
@@ -228,9 +232,10 @@ class NavigationSidebar(QFrame):
         """
         self._samples_list.clear()
         show_ids = show_sample_id_column and bool(id_column) and id_values_by_sample is not None
-        for idx, sample in enumerate(samples, start=1):
+        for sample in samples:
             method = METHOD_LABELS.get(sample.config.method.value, sample.config.method.value)
-            label = f"#{idx} · {method} · n={sample.actual_size}"
+            number = sample.id if sample.id is not None else "—"
+            label = f"#{number} · {method} · n={sample.actual_size}"
             if show_ids and sample.id is not None:
                 assert id_values_by_sample is not None
                 ids_text = id_values_by_sample.get(sample.id)

@@ -57,14 +57,16 @@ def _sample(sample_id: int, size: int = 3) -> SampleResult:
     )
 
 
-def _base_label(sample: SampleResult, idx: int = 1) -> str:
+def _base_label(sample: SampleResult) -> str:
     """Das Sample-Label OHNE ID-Anhang (Regressions-Referenz).
 
     Sprint 81: der Seed ist raus (er steht im Tooltip) und die Methode steht
-    deutsch da statt als Roh-Enum. Die ID-Logik selbst – was additiv angehängt
-    wird und wann – ist davon unberührt, und genau das prüfen die Tests unten.
+    deutsch da statt als Roh-Enum. Sprint 82 / Befund B: die Nummer ist
+    `sample.id`, nicht die Listenposition. Die ID-Logik selbst – was additiv
+    angehängt wird und wann – ist davon unberührt, und genau das prüfen die
+    Tests unten.
     """
-    return f"#{idx} · {METHOD_LABELS[sample.config.method.value]} · n={sample.actual_size}"
+    return f"#{sample.id} · {METHOD_LABELS[sample.config.method.value]} · n={sample.actual_size}"
 
 
 class TestFormatSampleIdValues:

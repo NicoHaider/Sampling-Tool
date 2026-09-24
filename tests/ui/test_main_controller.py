@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1869,6 +1869,141 @@ class TestSamplingFlow:
             # Frisches Engagement: weder Undo noch Redo verfügbar.
             assert window._action_undo.isEnabled() is False
             assert window._action_redo.isEnabled() is False
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+def _stub_sampling_factory() -> Callable[..., _StubSamplingDialog]:
+    """Sampling-Dialog-Factory, deren Stub jede Ziehung ohne Rückfrage akzeptiert."""
+    from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+    result = SamplingDialogResult(
+        config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
+        from_sample_only=False,
+    )
+    return lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)
+
+
+def _sidebar_sample_ids(window: MainWindow) -> list[int]:
+    widget = window.sidebar().samples_widget()
+    ids: list[int] = []
+    for row in range(widget.count()):
+        item = widget.item(row)
+        assert item is not None
+        value = item.data(int(Qt.ItemDataRole.UserRole))
+        assert isinstance(value, int)
+        ids.append(value)
+    return ids
+
+
+class TestExportDefaultIdIsSampleId:
+    """Sprint 82 / Befund B: „Sample exportieren" schlägt die Nummer der exportierten
+    Stichprobe als ID vor.
+
+    Bis Sprint 81 stand dort „Anzahl Stichproben des Datensatzes + 1" – für jede
+    Stichprobe desselben Datensatzes dieselbe Zahl, und eine, die zu keiner
+    Stichprobe gehört (Stichprobe #5 wurde als `…_ID6_…xlsx` exportiert).
+    """
+
+    def test_default_id_is_id_of_the_exported_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.ui.settings_store import AppSettings
+
+        seen_default_ids: list[str] = []
+
+        def export_factory(
+            _parent: MainWindow,
+            _dataset: Dataset,
+            _name: str,
+            default_id: str,
+            _dir: Path | None,
+        ) -> _StubExportDialog:
+            seen_default_ids.append(default_id)
+            return _StubExportDialog(None, accept=False)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=_stub_sampling_factory(),  # type: ignore[arg-type]
+            export_dialog_factory=export_factory,  # type: ignore[arg-type]
+            settings=AppSettings.defaults(),
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.workspace.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
+            sample_ids = _sidebar_sample_ids(window)
+            assert len(sample_ids) == 3
+            # Eine ältere Stichprobe aktivieren, nicht die zuletzt gezogene: der
+            # Vorschlag muss der exportierten Stichprobe folgen.
+            older_id = sample_ids[1]
+            controller.selection.handle_sample_selected(older_id)
+            controller.export.handle_export_sample()
+            assert seen_default_ids == [str(older_id)]
+
+            # Jede Stichprobe bekommt ihre eigene Nummer, nicht dieselbe Zahl für alle.
+            seen_default_ids.clear()
+            for sample_id in sample_ids:
+                controller.selection.handle_sample_selected(sample_id)
+                controller.export.handle_export_sample()
+            assert seen_default_ids == [str(sample_id) for sample_id in sample_ids]
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+class TestSidebarNumberMatchesStatusBar:
+    """Sprint 82 / Befund B: Sidebar und Statusleiste zeigen dieselbe Nummer.
+
+    Smoke-Test-Schritt 3: beim zweiten Datensatz stand in der Sidebar „#1", in
+    der Statusleiste „#6". Die Ziehungen wechseln hier zwischen zwei Datensätzen,
+    damit die projektweiten IDs je Datensatz Lücken haben und nicht zufällig mit
+    der Listenposition übereinstimmen.
+    """
+
+    def test_sidebar_numbers_are_sample_ids_and_match_status_bar(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        from sampling_tool.ui.settings_store import AppSettings
+
+        db_path, ds1_id, ds2_id, _sample_id = _two_dataset_db(tmp_path)
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=_stub_sampling_factory(),  # type: ignore[arg-type]
+            settings=AppSettings.defaults(),
+        )
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            for ds_id in (ds2_id, ds1_id, ds2_id, ds1_id):
+                controller.selection.handle_dataset_selected(ds_id)
+                controller.workspace.handle_new_sampling()
+                active = controller.session.sample
+                assert active is not None
+                assert active.id is not None
+
+                widget = window.sidebar().samples_widget()
+                active_labels: list[str] = []
+                for row in range(widget.count()):
+                    item = widget.item(row)
+                    assert item is not None
+                    sample_id = item.data(int(Qt.ItemDataRole.UserRole))
+                    label = item.text().removeprefix("● ")
+                    assert label.startswith(f"#{sample_id} · "), label
+                    if item.font().bold():
+                        active_labels.append(label)
+
+                assert len(active_labels) == 1
+                sidebar_number = active_labels[0].split(" · ")[0]
+                status_text = window._status_sample.text()
+                assert sidebar_number == f"#{active.id}"
+                assert status_text.startswith(f"Aktive Stichprobe: {sidebar_number} ("), status_text
         finally:
             controller.engagement.handle_close_engagement()
 

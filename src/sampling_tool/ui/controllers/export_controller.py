@@ -20,7 +20,7 @@ from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.core.models import AuditEvent
 from sampling_tool.io.bdo_locations import company_by_key, location_by_key
 from sampling_tool.io.exporter import ExportError
-from sampling_tool.persistence.repositories import AuditRepo, SampleRepo
+from sampling_tool.persistence.repositories import AuditRepo
 from sampling_tool.ui.controllers._factories import ControllerFactories
 from sampling_tool.ui.controllers.workspace_session import (
     AUDIT_EVENT_DISPLAY_LIMIT,
@@ -84,13 +84,14 @@ class ExportController:
         assert s.engagement is not None
         assert s.engagement.id is not None
 
-        next_id = self._next_sample_id_for_export(s.dataset.id)
         default_dir = s.ensure_export_dir()
+        # Sprint 82 / Befund B: vorgeschlagen wird die Nummer der exportierten
+        # Stichprobe (= Statusleiste/Sidebar/AuditTrail), nicht „Anzahl + 1".
         dialog = self._factories.export_sample(
             s.window,
             s.dataset,
             s.dataset.name,
-            str(next_id),
+            str(s.sample.id),
             default_dir,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
@@ -361,10 +362,3 @@ class ExportController:
                 )
                 if answer != QMessageBox.StandardButton.Retry:
                     return
-
-    def _next_sample_id_for_export(self, dataset_id: int) -> int:
-        """Fortlaufende Sample-Nummer für den Filename-Token (ID-Spalte)."""
-        if self.session.db is None:
-            return 1
-        samples = SampleRepo(self.session.db.connect()).list_for_dataset(dataset_id)
-        return len(samples) + 1
