@@ -85,13 +85,7 @@ class TestFormatAuditDetails:
 
     def test_joins_multiple_keys_compactly(self) -> None:
         result = format_audit_details({"filter_operator": "gte", "parent_sample_id": 17})
-        assert "filter_operator: gte" in result
-        assert "parent_sample_id: 17" in result
-        assert " · " in result
-
-    def test_none_value_renders_dash(self) -> None:
-        result = format_audit_details({"parent_sample_id": None})
-        assert "parent_sample_id: —" in result
+        assert result == "Filter-Operator: ≥ · Parent-Sample-ID: 17"
 
     def test_bool_value_renders_german(self) -> None:
         assert format_audit_details({"flag": True}) == "flag: ja"
@@ -162,3 +156,57 @@ class TestFormatHeaderRow:
 
     def test_nicht_erfasst(self) -> None:
         assert format_header_row(None) == "—"
+
+
+@pytest.mark.unit
+class TestAuditDetailsReadable:
+    """Sprint 83 / D: deutsche Schlüssel, übersetzte Werte, keine Python-Rohdaten.
+    In der DB bleiben die Rohschlüssel – übersetzt wird nur beim Rendern."""
+
+    def test_keys_are_german(self) -> None:
+        result = format_audit_details({"size_requested": 5, "stratum_field": "Land"})
+        assert result == "Angeforderte Größe: 5 · Schicht-Feld: Land"
+
+    @pytest.mark.parametrize(
+        ("details", "expected"),
+        [
+            ({"method": "simple"}, "Methode: Einfach"),
+            ({"method": "stratified"}, "Methode: Geschichtet"),
+            ({"stratify_mode": "proportional"}, "Schichtungsmodus: Proportional"),
+            ({"stratify_mode": "equal"}, "Schichtungsmodus: Gleich"),
+            ({"filter_operator": "lte"}, "Filter-Operator: ≤"),
+            ({"parent_relation": "restrict"}, "Ableitung: eingeschränkt"),
+            ({"parent_relation": "supplement"}, "Ableitung: Nachstichprobe"),
+            ({"header_row": 5}, "Kopfzeile: Zeile 5"),
+            ({"header_row": 0}, "Kopfzeile: keine (Spaltennamen generiert)"),
+            ({"restored": "empty"}, "Wiederhergestellt: leerer Zustand (keine Stichprobe)"),
+        ],
+    )
+    def test_values_are_translated(self, details: dict[str, object], expected: str) -> None:
+        assert format_audit_details(details) == expected
+
+    def test_list_joined_without_python_repr(self) -> None:
+        result = format_audit_details({"columns": ["BuchungsID", "Belegart"]})
+        assert result == "Spalten: BuchungsID, Belegart"
+        assert "[" not in result
+        assert "'" not in result
+
+    def test_tuple_joined_like_list(self) -> None:
+        assert format_audit_details({"columns": ("a", "b")}) == "Spalten: a, b"
+
+    def test_none_entries_are_dropped(self) -> None:
+        result = format_audit_details({"filter_field": None, "method": "simple"})
+        assert result == "Methode: Einfach"
+
+    def test_only_none_entries_render_dash(self) -> None:
+        assert format_audit_details({"filter_field": None}) == "—"
+
+    def test_unknown_key_appears_raw(self) -> None:
+        assert format_audit_details({"mystery_key": 1}) == "mystery_key: 1"
+
+    def test_unknown_value_of_translated_key_appears_raw(self) -> None:
+        assert format_audit_details({"method": "systematic"}) == "Methode: systematic"
+
+    def test_key_order_follows_dict(self) -> None:
+        result = format_audit_details({"seed_hint": 1, "method": "simple", "dataset_id": 3})
+        assert result == "seed_hint: 1 · Methode: Einfach · Datensatz-ID: 3"

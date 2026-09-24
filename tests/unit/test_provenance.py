@@ -85,7 +85,7 @@ class TestToOrderedFields:
         )
         fields = dict(provenance.to_ordered_fields())
         assert fields["Dataset-ID"] == "1"
-        assert fields["Sampling-Methode"] == "cluster"
+        assert fields["Sampling-Methode"] == "Cluster"
         assert fields["Angeforderte Größe"] == "5"
         assert fields["Tatsächliche Größe"] == "7"
         assert fields["Population (Zeilen)"] == "10"
@@ -94,8 +94,8 @@ class TestToOrderedFields:
         assert fields["Filter-Operator"] == "≥"
         assert fields["Filter-Wert"] == "100"
         assert fields["Cluster-Feld"] == "Land"
-        assert fields["Stratum-Feld"] == "—"
-        assert fields["Stratify-Mode"] == "proportional"
+        assert fields["Schicht-Feld"] == "—"
+        assert fields["Schichtungsmodus"] == "Proportional"
         assert fields["Parent-Sample-ID"] == "17"
         assert fields["Algorithmus-Version"] == "bdo-v1"
         assert fields["App-Version"] == "0.8.0"
@@ -114,7 +114,7 @@ class TestToOrderedFields:
         assert fields["Filter-Feld"] == "—"
         assert fields["Filter-Wert"] == "—"
         assert fields["Cluster-Feld"] == "—"
-        assert fields["Stratum-Feld"] == "—"
+        assert fields["Schicht-Feld"] == "—"
 
 
 class TestToAuditDetails:

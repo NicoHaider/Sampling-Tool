@@ -76,7 +76,7 @@
         {% for s in samples %}
         <tr>
           <td>#{{ s.id }}</td>
-          <td><span class="pill">{{ s.config.method.value }}</span></td>
+          <td><span class="pill">{{ s.method_label }}</span></td>
           <td>{{ s.size_requested }}</td>
           <td>{{ s.actual_size }}</td>
           <td>{{ s.population_size }}</td>
@@ -110,7 +110,7 @@
         {% for e in events %}
         <tr>
           <td>{{ e.timestamp_str }}</td>
-          <td>{{ e.event_type }}{% if e.corrects_event_id %} → #{{ e.corrects_event_id }}{% endif %}</td>
+          <td>{{ e.action_label }}{% if e.corrects_event_id %} → #{{ e.corrects_event_id }}{% endif %}</td>
           <td>{{ e.user_name }}</td>
           <td>{{ '#' ~ e.sample_id if e.sample_id else '—' }}</td>
           <td>{{ e.sample_size if e.sample_size is not none else '—' }}</td>

@@ -18,20 +18,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final
 
-from sampling_tool.config import PARENT_RELATION_LABELS, PARENT_RELATION_TEXTS
+from sampling_tool.config import (
+    FILTER_OPERATOR_LABELS,
+    METHOD_LABELS,
+    PARENT_RELATION_LABELS,
+    PARENT_RELATION_TEXTS,
+    STRATIFY_MODE_LABELS,
+)
 from sampling_tool.core.formatting import format_optional_timestamp
 from sampling_tool.core.models import SampleResult
 
 _MISSING: Final[str] = "—"
-
-_OPERATOR_SYMBOLS: Final[dict[str, str]] = {
-    "eq": "=",
-    "ne": "≠",
-    "gt": ">",
-    "gte": "≥",
-    "lt": "<",
-    "lte": "≤",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,12 +102,22 @@ class SamplingProvenance:
         )
 
     @property
+    def method_label(self) -> str:
+        """Deutscher Methodenname („Einfach"/„Cluster"/„Geschichtet"), sonst roh."""
+        return METHOD_LABELS.get(self.method, self.method)
+
+    @property
+    def stratify_mode_label(self) -> str:
+        """Deutscher Schichtungsmodus („Proportional"/„Gleich"), sonst roh."""
+        return STRATIFY_MODE_LABELS.get(self.stratify_mode, self.stratify_mode)
+
+    @property
     def filter_operator_symbol(self) -> str:
         """Menschenlesbares Operator-Symbol (`=`/`≠`/`>`/`≥`/`<`/`≤`).
 
         Fällt auf den rohen Wert zurück, falls ein zukünftiger Operator noch
         keine Symbol-Zuordnung hat (nie stillschweigend verschlucken)."""
-        return _OPERATOR_SYMBOLS.get(self.filter_operator, self.filter_operator)
+        return FILTER_OPERATOR_LABELS.get(self.filter_operator, self.filter_operator)
 
     @property
     def parent_relation_label(self) -> str | None:
@@ -136,7 +143,7 @@ class SamplingProvenance:
         explizit als `"—"` dargestellt, nie geschätzt."""
         return [
             ("Dataset-ID", _or_dash(self.dataset_id)),
-            ("Sampling-Methode", self.method),
+            ("Sampling-Methode", self.method_label),
             ("Angeforderte Größe", str(self.size_requested)),
             ("Tatsächliche Größe", str(self.size_actual)),
             ("Population (Zeilen)", str(self.population_size)),
@@ -145,8 +152,8 @@ class SamplingProvenance:
             ("Filter-Operator", self.filter_operator_symbol),
             ("Filter-Wert", _or_dash(self.filter_value)),
             ("Cluster-Feld", _or_dash(self.cluster_field)),
-            ("Stratum-Feld", _or_dash(self.stratum_field)),
-            ("Stratify-Mode", self.stratify_mode),
+            ("Schicht-Feld", _or_dash(self.stratum_field)),
+            ("Schichtungsmodus", self.stratify_mode_label),
             ("Parent-Sample-ID", _or_dash(self.parent_sample_id)),
             ("Ableitung", self.derivation_text),
             ("Algorithmus-Version", self.algorithm_version),

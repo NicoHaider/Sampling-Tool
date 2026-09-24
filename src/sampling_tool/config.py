@@ -131,6 +131,72 @@ PARENT_RELATION_TEXTS: Final[dict[str | None, str]] = {
 }
 
 # ---------------------------------------------------------------------------
+# Anzeige-Namen für Berichte und AuditTrail (Sprint 83)
+# ---------------------------------------------------------------------------
+# In der DB bleiben alle Rohschlüssel englisch (`event_type`, `method`,
+# `details_json`) – übersetzt wird ausschließlich beim Rendern. Schlüssel ist
+# jeweils der Enum-WERT, wie bei `METHOD_LABELS`. Unbekannte Werte erscheinen
+# überall roh: nie verschlucken.
+#
+# Die Modus-Namen sind die der Radiobuttons im Stichproben-Dialog.
+STRATIFY_MODE_LABELS: Final[dict[str, str]] = {
+    "proportional": "Proportional",
+    "equal": "Gleich",
+}
+
+FILTER_OPERATOR_LABELS: Final[dict[str, str]] = {
+    "eq": "=",
+    "ne": "≠",
+    "gt": ">",
+    "gte": "≥",
+    "lt": "<",
+    "lte": "≤",
+}
+
+# Reihenfolge = Reihenfolge im „Aktion"-Filter des AuditTrail-Tabs.
+EVENT_TYPE_LABELS: Final[dict[str, str]] = {
+    "sampling": "Stichprobe",
+    "reset": "Zurückgesetzt",
+    "import": "Import",
+    "export": "Export",
+    "undo": "Rückgängig",
+    "redo": "Wiederhergestellt",
+    "correction": "Korrektur",
+}
+
+# Werte von `details["restored"]` bei Undo/Redo auf den leeren Zustand.
+RESTORED_STATE_LABELS: Final[dict[str, str]] = {
+    "empty": "leerer Zustand (keine Stichprobe)",
+}
+
+# Deutsche Namen der `AuditEvent.details`-Schlüssel. Wortlaut wie im
+# Stichproben-Dialog und im Metadaten-Sheet, damit dieselbe Sache überall
+# gleich heißt.
+AUDIT_DETAIL_LABELS: Final[dict[str, str]] = {
+    "dataset_id": "Datensatz-ID",
+    "dataset_name": "Datensatz",
+    "columns": "Spalten",
+    "source_sheet": "Quellblatt",
+    "header_row": "Kopfzeile",
+    "rows_above_header": "Zeilen über der Kopfzeile",
+    "method": "Methode",
+    "size_requested": "Angeforderte Größe",
+    "filter_field": "Filter-Feld",
+    "filter_value": "Filter-Wert",
+    "filter_operator": "Filter-Operator",
+    "cluster_field": "Cluster-Feld",
+    "stratum_field": "Schicht-Feld",
+    "stratify_mode": "Schichtungsmodus",
+    "parent_sample_id": "Parent-Sample-ID",
+    "parent_relation": "Ableitung",
+    "algorithm_version": "Algorithmus-Version",
+    "app_version": "App-Version",
+    "created_by": "Erstellt von",
+    "restored": "Wiederhergestellt",
+    "reason": "Begründung",
+}
+
+# ---------------------------------------------------------------------------
 # Sampling-Defaults
 # ---------------------------------------------------------------------------
 DEFAULT_SAMPLE_SIZE: Final[int] = 25  # Branchenüblicher Default

@@ -37,7 +37,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from sampling_tool.config import BDO_GREY, BDO_RED, DEFAULT_BRIEFPAPIER
+from sampling_tool.config import BDO_GREY, BDO_RED, DEFAULT_BRIEFPAPIER, EVENT_TYPE_LABELS
 from sampling_tool.core.formatting import format_audit_details, format_event_timestamp
 from sampling_tool.core.models import AuditEvent, Engagement
 from sampling_tool.io._atomic import atomic_output
@@ -386,9 +386,9 @@ def _build_chunk_table(
     file_style = ParagraphStyle("BDOTableCellFile", parent=cell_style, splitLongWords=True)
 
     for i, evt in enumerate(chunk, start=1):
-        action_text = evt.event_type
+        action_text = EVENT_TYPE_LABELS.get(evt.event_type, evt.event_type)
         if evt.corrects_event_id is not None:
-            action_text = f"{evt.event_type} → #{evt.corrects_event_id}"
+            action_text = f"{action_text} → #{evt.corrects_event_id}"
             correction_rows.append(i)
 
         percent = f"{evt.sample_percent:.2f} %" if evt.sample_percent is not None else "—"
@@ -506,7 +506,7 @@ def _build_statistics(events: list[AuditEvent]) -> list[Any]:
         spaceAfter=4,
     )
 
-    counts = Counter(e.event_type for e in events)
+    counts = Counter(EVENT_TYPE_LABELS.get(e.event_type, e.event_type) for e in events)
     rows: list[list[Any]] = [["Eventtyp", "Anzahl"]]
     for event_type, count in counts.most_common():
         rows.append([event_type, str(count)])

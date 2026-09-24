@@ -33,7 +33,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
 from sampling_tool import __version__
-from sampling_tool.config import BDO_RED, excel_argb
+from sampling_tool.config import BDO_RED, EVENT_TYPE_LABELS, METHOD_LABELS, excel_argb
 from sampling_tool.core.formatting import format_audit_details, format_optional_timestamp
 from sampling_tool.core.models import (
     AuditEvent,
@@ -198,7 +198,7 @@ class MultiSheetReportExporter:
                 ws,
                 [
                     format_optional_timestamp(evt.timestamp),
-                    evt.event_type,
+                    EVENT_TYPE_LABELS.get(evt.event_type, evt.event_type),
                     evt.user_name,
                     evt.sample_id if evt.sample_id is not None else "—",
                     evt.sample_size if evt.sample_size is not None else "—",
@@ -231,8 +231,8 @@ class MultiSheetReportExporter:
             "Filter-Operator",
             "Filter-Wert",
             "Cluster-Feld",
-            "Stratum-Feld",
-            "Stratify-Modus",
+            "Schicht-Feld",
+            "Schichtungsmodus",
             "Parent-Sample-ID",
             "Ableitung",
             "Algorithmus-Version",
@@ -258,7 +258,7 @@ class MultiSheetReportExporter:
                 ws,
                 [
                     sample.id if sample.id is not None else "—",
-                    provenance.method,
+                    provenance.method_label,
                     provenance.size_requested,
                     provenance.size_actual,
                     provenance.population_size,
@@ -269,7 +269,7 @@ class MultiSheetReportExporter:
                     str(provenance.filter_value) if provenance.filter_value is not None else "—",
                     provenance.cluster_field or "—",
                     provenance.stratum_field or "—",
-                    provenance.stratify_mode,
+                    provenance.stratify_mode_label,
                     provenance.parent_sample_id if provenance.parent_sample_id is not None else "—",
                     provenance.derivation_text,
                     provenance.algorithm_version,
@@ -292,7 +292,9 @@ class MultiSheetReportExporter:
         # Methoden-Verteilung als Tabelle.
         ws.append(["Methode", "Anzahl"])
         _style_header_row(ws, 2)
-        method_counts: Counter[str] = Counter(s.config.method.value for s in samples)
+        method_counts: Counter[str] = Counter(
+            METHOD_LABELS.get(s.config.method.value, s.config.method.value) for s in samples
+        )
         for method, count in method_counts.most_common():
             ws.append([method, count])
 
@@ -305,7 +307,9 @@ class MultiSheetReportExporter:
             cell.fill = _HEADER_FILL
             cell.font = _HEADER_FONT
             cell.alignment = _HEADER_ALIGN
-        type_counts: Counter[str] = Counter(e.event_type for e in events)
+        type_counts: Counter[str] = Counter(
+            EVENT_TYPE_LABELS.get(e.event_type, e.event_type) for e in events
+        )
         for event_type, count in type_counts.most_common():
             ws.append([event_type, count])
 

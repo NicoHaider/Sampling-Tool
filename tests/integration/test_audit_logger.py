@@ -224,3 +224,30 @@ class TestLoggerRoundtripViaRepo:
         assert "reset" in types
         assert "undo" in types
         assert "redo" in types
+
+
+class TestEveryDetailKeyHasGermanLabel:
+    """Sprint 83 / D: jeder Schlüssel, den ein `log_*` in `details` schreibt, hat
+    einen deutschen Namen – sonst stünde er roh im Bericht (nie verschluckt,
+    aber auch nicht lesbar)."""
+
+    def test_all_logger_detail_keys_are_labelled(
+        self, logger: AuditLogger, sample_id: int, dataset_id: int, engagement_id: int
+    ) -> None:
+        from sampling_tool.config import AUDIT_DETAIL_LABELS
+
+        ds = Dataset(name="X", columns=("a",), engagement_id=engagement_id, id=dataset_id)
+        sampling = logger.log_sampling(_make_sample_result(), sample_id, dataset_id)
+        assert sampling.id is not None
+        events = [
+            sampling,
+            logger.log_import(ds, rows_above_header=0),
+            logger.log_export(sample_id, Path("out.xlsx"), 1),
+            logger.log_undo(None),
+            logger.log_redo(None),
+            logger.log_reset(dataset_id),
+            logger.log_correction(sampling.id, "Tippfehler"),
+        ]
+        keys = {key for event in events for key in event.details}
+        missing = sorted(keys - set(AUDIT_DETAIL_LABELS))
+        assert not missing, f"Ohne Anzeige-Namen in config.AUDIT_DETAIL_LABELS: {missing}"

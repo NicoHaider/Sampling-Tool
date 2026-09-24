@@ -304,8 +304,8 @@ class TestHtmlReportGenerator:
         out = tmp_path / "report.html"
         _generator().render(engagement, [], samples, events, out)
         html = out.read_text(encoding="utf-8")
-        assert "filter_operator" in html
-        assert "gte" in html
+        assert "Filter-Operator: ≥" in html
+        assert "filter_operator" not in html
 
 
 # ---------------------------------------------------------------------------
@@ -597,3 +597,72 @@ class TestParentColumnDerivation:
         sample = replace(_sample(1), parent_sample_id=17, parent_relation=relation)
         row = _sample_table_cells(_render(tmp_path, engagement, [sample]))["#1"]
         assert row["Parent"] == expected
+
+
+# ---------------------------------------------------------------------------
+# Sprint 83 / D – der Bericht spricht Deutsch
+# ---------------------------------------------------------------------------
+
+
+def _visible_text(html: str) -> str:
+    """Sichtbarer Text: ohne Tags, Attribute, `<style>`/`<script>`-Inhalt."""
+    from html.parser import HTMLParser
+
+    class _Collector(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.parts: list[str] = []
+            self._hidden = 0
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if tag in ("style", "script"):
+                self._hidden += 1
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag in ("style", "script"):
+                self._hidden -= 1
+
+        def handle_data(self, data: str) -> None:
+            if not self._hidden:
+                self.parts.append(data)
+
+    collector = _Collector()
+    collector.feed(html)
+    return "\n".join(collector.parts)
+
+
+class TestReportSpeaksGerman:
+    def test_no_raw_keys_in_visible_text(self, tmp_path: Path, engagement: Engagement) -> None:
+        from tests._readable_reports import raw_words_in, readable_events, readable_samples
+
+        out = tmp_path / "report.html"
+        _generator().render(engagement, [], readable_samples(), readable_events(), out)
+        text = _visible_text(out.read_text(encoding="utf-8"))
+
+        assert raw_words_in(text) == []
+        assert "['" not in text
+        for label in (
+            "Stichprobe",
+            "Rückgängig",
+            "Wiederhergestellt",
+            "Zurückgesetzt",
+            "Einfach",
+            "Geschichtet",
+            "Schichtungsmodus: Proportional",
+            "Kopfzeile: Zeile 5",
+            "Spalten: BuchungsID, Belegart",
+            "Ableitung: eingeschränkt",
+            "Ableitung: Nachstichprobe",
+        ):
+            assert label in text, label
+
+    def test_method_and_derivation_in_samples_table(
+        self, tmp_path: Path, engagement: Engagement
+    ) -> None:
+        from tests._readable_reports import readable_samples
+
+        rows = _sample_table_cells(_render(tmp_path, engagement, readable_samples()))
+        assert "Einfach" in rows["#1"]["Methode"]
+        assert "Geschichtet" in rows["#2"]["Methode"]
+        assert rows["#2"]["Parent"] == "#1 (eingeschränkt)"
+        assert rows["#3"]["Parent"] == "#1 (Nachstichprobe)"

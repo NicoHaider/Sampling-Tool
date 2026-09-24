@@ -28,6 +28,7 @@ from jinja2 import (
 )
 
 from sampling_tool import __version__
+from sampling_tool.config import EVENT_TYPE_LABELS, METHOD_LABELS
 from sampling_tool.core.formatting import format_audit_details, format_optional_timestamp
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.core.provenance import SamplingProvenance
@@ -60,6 +61,7 @@ class _SampleView:
 
     id: int | None
     config: Any
+    method_label: str
     actual_size: int
     population_size: int
     percent_str: str
@@ -76,7 +78,7 @@ class _EventView:
     """View-Modell für einen AuditEvent im Template."""
 
     timestamp_str: str
-    event_type: str
+    action_label: str
     user_name: str
     sample_id: int | None
     sample_size: int | None
@@ -199,6 +201,7 @@ def _to_sample_view(sample: SampleResult, dataset_ids_by_sample: dict[int, int])
     return _SampleView(
         id=sample.id,
         config=sample.config,
+        method_label=provenance.method_label,
         actual_size=sample.actual_size,
         population_size=sample.population_size,
         percent_str=f"{percent:.2f} %",
@@ -239,7 +242,7 @@ def _to_event_view(event: AuditEvent) -> _EventView:
     filename = Path(event.export_file or event.import_file or "").name or "—"
     return _EventView(
         timestamp_str=format_optional_timestamp(event.timestamp),
-        event_type=event.event_type,
+        action_label=EVENT_TYPE_LABELS.get(event.event_type, event.event_type),
         user_name=event.user_name,
         sample_id=event.sample_id,
         sample_size=event.sample_size,
@@ -261,7 +264,9 @@ def _last_activity(events: list[AuditEvent]) -> str:
 def _method_chart_base64(samples: list[SampleResult]) -> str | None:
     if not samples:
         return None
-    counts: Counter[str] = Counter(s.config.method.value for s in samples)
+    counts: Counter[str] = Counter(
+        METHOD_LABELS.get(s.config.method.value, s.config.method.value) for s in samples
+    )
     labels = list(counts.keys())
     values = [float(counts[k]) for k in labels]
     raw = render_bar_chart_bytes(labels, values, title="", width=560, height=240)

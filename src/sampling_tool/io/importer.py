@@ -761,7 +761,7 @@ def _select_sheet(wb: CalamineWorkbook, sheet_name: str | None) -> CalamineSheet
 
 def _read_sheet_name(wb: CalamineWorkbook, sheet_name: str | None) -> str:
     """Name des Blatts, das `_select_sheet` für ``sheet_name`` tatsächlich liest."""
-    return sheet_name if sheet_name is not None else list(wb.sheet_names)[0]
+    return sheet_name if sheet_name is not None else wb.sheet_names[0]
 
 
 def _dataset_name(path: Path, sheet_name: str, wb: CalamineWorkbook) -> str:

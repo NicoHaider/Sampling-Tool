@@ -216,8 +216,7 @@ class TestAuditTrailPDF:
 
         text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
         # In der Aktion-Spalte taucht der Verweis auf den korrigierten Event auf
-        assert "correction" in text
-        assert "#2" in text
+        assert "Korrektur → #2" in text
 
     def test_leerer_audit_trail_enthaelt_hinweis(
         self, engagement: Engagement, tmp_path: Path
@@ -271,7 +270,7 @@ class TestAuditTrailPDF:
         out = tmp_path / "details.pdf"
         AuditTrailPDF().render(engagement, [evt], out)
         text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
-        assert "filter_operator" in text
+        assert "Filter-Operator: ≥" in text
         assert "bdo-v1" in text
 
     def test_korrektur_und_details_komponieren_korrekt(
@@ -288,7 +287,7 @@ class TestAuditTrailPDF:
         AuditTrailPDF().render(engagement, [evt], out)
         text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
         assert "#2" in text
-        assert "filter_operator" in text
+        assert "Filter-Operator: ≥" in text
         assert "bdo-v1" in text
 
 
@@ -748,3 +747,29 @@ class TestBriefpapierRobustness:
         assert any("konnte nicht eingebettet werden" in r.message for r in warnings), (
             f"Erwartete WARNING zum Briefpapier, gefangen: {[r.message for r in warnings]}"
         )
+
+
+class TestPdfSpeaksGerman:
+    """Sprint 83 / D: Aktion, Details und Statistik zeigen deutsche Labels –
+    keine englischen Rohschlüssel, keine Python-Listen."""
+
+    def test_no_raw_keys_in_pdf_text(self, engagement: Engagement, tmp_path: Path) -> None:
+        from tests._readable_reports import raw_words_in, readable_events
+
+        out = tmp_path / "deutsch.pdf"
+        AuditTrailPDF().render(engagement, readable_events(), out, include_statistics=True)
+        text = "\n".join(p.extract_text() for p in PdfReader(str(out)).pages)
+
+        assert raw_words_in(text) == []
+        assert "['" not in text
+        for label in (
+            "Stichprobe",
+            "Rückgängig",
+            "Wiederhergestellt",
+            "Zurückgesetzt",
+            "Einfach",
+            "Geschichtet",
+            "eingeschränkt",
+            "Nachstichprobe",
+        ):
+            assert label in text, label

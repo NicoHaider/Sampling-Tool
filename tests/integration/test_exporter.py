@@ -200,7 +200,7 @@ class TestExportSample:
         assert meta["Angeforderte Größe"] == "4"
         assert meta["Tatsächliche Größe"] == "4"
         assert meta["Population (Zeilen)"] == "10"
-        assert meta["Sampling-Methode"] == "simple"
+        assert meta["Sampling-Methode"] == "Einfach"
         assert meta["Auditor"] == "Anna Auditorin"
         assert meta["Mandant"] == "ACME GmbH"
 
@@ -766,3 +766,36 @@ class TestMetadataImportProvenance:
         at = labels.index("Quelldatei")
         assert rows[at + 1] == ("Quellblatt", expected_sheet)
         assert rows[at + 2] == ("Kopfzeile", expected_header)
+
+
+class TestMetadataSpeaksGerman:
+    """Sprint 83 / D: Methode und Schichtungsmodus im Metadaten-Sheet auf Deutsch."""
+
+    def test_method_and_stratify_mode_labels(
+        self,
+        exporter: ExcelExporter,
+        dataset: Dataset,
+        dataset_repo: DatasetRepo,
+        tmp_path: Path,
+    ) -> None:
+        from tests._readable_reports import raw_words_in, readable_samples
+
+        stratified = readable_samples()[1]
+        out = exporter.export_sample(
+            sample=stratified,
+            dataset=dataset,
+            dataset_repo=dataset_repo,
+            columns=["Name"],
+            output_dir=tmp_path,
+            custom_name="X",
+            custom_id="1",
+        )
+        rows = [
+            (r[0].value, r[1].value) for r in load_workbook(out)["Metadaten"].iter_rows(min_row=2)
+        ]
+        meta = dict(rows)
+        assert meta["Sampling-Methode"] == "Geschichtet"
+        assert meta["Schichtungsmodus"] == "Proportional"
+        assert "Stratify-Mode" not in meta
+        assert meta["Ableitung"] == "Eingeschränkt auf Stichprobe #1"
+        assert raw_words_in("\n".join(str(v) for _k, v in rows)) == []
