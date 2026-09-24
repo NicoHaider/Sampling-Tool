@@ -68,7 +68,7 @@
       <thead>
         <tr>
           <th>ID</th><th>Methode</th><th>Angefordert</th><th>Tatsächlich</th><th>Population</th>
-          <th>Anteil</th><th>Seed</th><th>Operator</th><th>Parent</th><th>Algo-Version</th>
+          <th>Anteil</th><th>Seed</th><th>Filter</th><th>Parent</th><th>Algo-Version</th>
           <th>Dataset</th><th>Erstellt</th>
         </tr>
       </thead>
@@ -82,7 +82,7 @@
           <td>{{ s.population_size }}</td>
           <td>{{ s.percent_str }}</td>
           <td>{{ s.config.seed }}</td>
-          <td>{{ s.filter_operator_symbol }}</td>
+          <td>{{ s.filter_str }}</td>
           <td>{{ '#' ~ s.parent_sample_id if s.parent_sample_id else '—' }}</td>
           <td>{{ s.algorithm_version }}</td>
           <td>{{ '#' ~ s.dataset_id if s.dataset_id else '—' }}</td>
