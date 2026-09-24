@@ -86,11 +86,24 @@ class ImportStats:
     Wird vom Generator während der Iteration befüllt – Werte sind erst
     nach vollständigem Verbrauch (z. B. via `DatasetRepo.create`)
     endgültig.
+
+    ``skipped_rows`` zählt alle nicht importierten Zeilen: die Zeilen
+    oberhalb der Kopfzeile plus die Leerzeilen im Datenteil.
+    ``rows_above_header`` ist eine TEILMENGE davon – bewusst in
+    ``skipped_rows`` mitgezählt, damit die Row-Limit-Bilanz
+    (`_enforce_row_limit`) unverändert bleibt. ``blank_data_rows`` ist der
+    Rest (echte Leerzeilen im Datenteil).
     """
 
     skipped_rows: int = 0
     warnings: list[str] = field(default_factory=list)
     processed_count: int = 0
+    rows_above_header: int = 0
+
+    @property
+    def blank_data_rows(self) -> int:
+        """Leerzeilen im Datenteil (ohne die Zeilen oberhalb der Kopfzeile)."""
+        return self.skipped_rows - self.rows_above_header
 
 
 @dataclass(frozen=True, slots=True)
@@ -381,8 +394,9 @@ class ExcelImporter:
         ``header_row`` ist 0-basiert; ``None`` bedeutet **„keine Kopfzeile"** –
         dann werden generische Spaltennamen (``Spalte 1, Spalte 2, …``)
         vergeben und ALLE (nicht-leeren) Zeilen sind Daten. Ist eine
-        Kopfzeile gesetzt, zählen die Zeilen davor als ``skipped_rows``, die
-        Kopfzeile definiert die Spalten, Daten beginnen in der Folgezeile.
+        Kopfzeile gesetzt, zählen die Zeilen davor als ``skipped_rows`` (und
+        zusätzlich als ``rows_above_header``), die Kopfzeile definiert die
+        Spalten, Daten beginnen in der Folgezeile.
         Skippt die Auto-Detection bewusst.
 
         Sprint 29 – gilt für Excel UND CSV. Bei CSV wird ``sheet_name``
@@ -441,7 +455,11 @@ class ExcelImporter:
             )
 
         columns, header_warnings = _normalize_columns(header_raw)
-        stats = ImportStats(skipped_rows=leading_skipped, warnings=list(header_warnings))
+        stats = ImportStats(
+            skipped_rows=leading_skipped,
+            rows_above_header=leading_skipped,
+            warnings=list(header_warnings),
+        )
         total_estimate = max(0, int(sheet.total_height) - header_row - 1)
         dataset = Dataset(
             name=path.stem,
@@ -504,7 +522,9 @@ class ExcelImporter:
         if encoding != "utf-8":
             warnings = [*warnings, f"CSV-Encoding erkannt als '{encoding}'."]
 
-        stats = ImportStats(skipped_rows=skipped, warnings=list(warnings))
+        stats = ImportStats(
+            skipped_rows=skipped, rows_above_header=leading_skipped, warnings=list(warnings)
+        )
         total = len(data_rows)
         dataset = Dataset(
             name=path.stem,
@@ -578,6 +598,7 @@ class ExcelImporter:
 
         stats = ImportStats(
             skipped_rows=header_skipped,
+            rows_above_header=header_skipped,
             warnings=list(header_warnings),
         )
         # `row_count` ist initial geschätzt (Calamine `total_height` abzüglich
@@ -648,7 +669,9 @@ class ExcelImporter:
 
     def _import_csv(self, path: Path) -> ImportResult:
         text, encoding = _read_csv_text(path)
-        columns, data_rows, skipped, warnings = _parse_csv(text, suffix=path.suffix.lower())
+        columns, data_rows, skipped, warnings, leading = _parse_csv(
+            text, suffix=path.suffix.lower()
+        )
 
         if not columns:
             raise DataImportError(f"CSV-Datei '{path.name}' enthält keine Daten.")
@@ -656,7 +679,9 @@ class ExcelImporter:
         if encoding != "utf-8":
             warnings = [*warnings, f"CSV-Encoding erkannt als '{encoding}'."]
 
-        stats = ImportStats(skipped_rows=skipped, warnings=list(warnings))
+        stats = ImportStats(
+            skipped_rows=skipped, rows_above_header=leading, warnings=list(warnings)
+        )
         total = len(data_rows)
         dataset = Dataset(
             name=path.stem,
@@ -944,8 +969,14 @@ def _csv_reader_rows(text: str, *, suffix: str = "") -> tuple[list[list[Any]], s
     return rows, fallback_warning
 
 
-def _parse_csv(text: str, *, suffix: str = "") -> tuple[list[str], list[list[Any]], int, list[str]]:
-    """Splittet CSV-Text in Header + Datenzeilen. Delimiter wird geschnüffelt."""
+def _parse_csv(
+    text: str, *, suffix: str = ""
+) -> tuple[list[str], list[list[Any]], int, list[str], int]:
+    """Splittet CSV-Text in Header + Datenzeilen. Delimiter wird geschnüffelt.
+
+    Liefert ``(columns, data_rows, skipped, warnings, leading)``; ``leading``
+    (Leerzeilen vor der Kopfzeile) ist in ``skipped`` enthalten.
+    """
     all_rows, delimiter_warning = _csv_reader_rows(text, suffix=suffix)
 
     # Leere Zeilen am Anfang strippen, davon zählen wir die ersten als
@@ -960,7 +991,7 @@ def _parse_csv(text: str, *, suffix: str = "") -> tuple[list[str], list[list[Any
         all_rows.pop()
 
     if not all_rows:
-        return [], [], leading, []
+        return [], [], leading, [], leading
 
     header_row = list(all_rows[0])
     columns, warnings = _normalize_columns(header_row)
@@ -975,7 +1006,7 @@ def _parse_csv(text: str, *, suffix: str = "") -> tuple[list[str], list[list[Any
             continue
         data_rows.append(list(raw))
 
-    return columns, data_rows, skipped, warnings
+    return columns, data_rows, skipped, warnings, leading
 
 
 # ---------------------------------------------------------------------------

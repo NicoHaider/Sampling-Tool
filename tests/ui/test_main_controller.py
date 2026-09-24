@@ -24,6 +24,7 @@ from sampling_tool.core.models import (
     SamplingMethod,
 )
 from sampling_tool.io.import_preflight import ImportPreflight
+from sampling_tool.io.importer import ImportStats
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import (
     DatasetRepo,
@@ -1597,6 +1598,138 @@ class TestImportDialogDispatch:
             assert window.data_table().table_model().rowCount() == 2
         finally:
             controller.engagement.handle_close_engagement()
+
+
+def _write_title_rows_xlsx(path: Path, *, blank_row_in_data: bool) -> Path:
+    """3 Titelzeilen + 1 Leerzeile, Kopfzeile in Zeile 5 (0-basiert: 4)."""
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.append(["Buchungsexport", None, None])
+    ws.append(["Mandant: Muster GmbH", None, None])
+    ws.append(["Erstellt am: 15.06.2026", None, None])
+    ws.append([None, None, None])
+    ws.append(["BuchungsID", "Betrag", "Belegtext"])
+    ws.append(["B001", 13134.97, "Miete"])
+    ws.append(["B002", 20630.27, "Leasing"])
+    if blank_row_in_data:
+        ws.append([None, None, None])
+    ws.append(["B003", -5438.12, "Gutschrift"])
+    wb.save(path)
+    return path
+
+
+class TestImportSummaryMessage:
+    """Sprint 82 / D: Titelzeilen oberhalb der Kopfzeile sind keine Leerzeilen."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Echtes MainWindow → `closeEvent` würde sonst in die echten
+        Benutzer-Prefs schreiben. Muster aus `test_export_audit_pdf_dialog.py`."""
+        from PyQt6.QtCore import QSettings
+
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+        monkeypatch.setattr(
+            "sampling_tool.ui.main_window.QSettings",
+            lambda organization, application: QSettings(
+                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
+            ),
+        )
+
+    @staticmethod
+    def _import_summary_text(
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        xlsx: Path,
+    ) -> str:
+        """Echter `handle_import_excel` mit Kopfzeile 5 – liefert den Info-Text."""
+
+        def factory(_path: Path, _imp: object, _parent: object) -> object:
+            return _StubImportOptionsDialog("Sheet", 4)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            import_options_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.engagement.handle_open_engagement(populated_db)
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
+                    return_value=(str(xlsx), ""),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"
+                ) as info,
+            ):
+                controller.workspace.handle_import_excel()
+            assert window.data_table().table_model().columnCount() == 3
+        finally:
+            controller.engagement.handle_close_engagement()
+        summaries = [c.args[2] for c in info.call_args_list if c.args[1] == "Import abgeschlossen"]
+        assert len(summaries) == 1
+        text = summaries[0]
+        assert isinstance(text, str)
+        return text
+
+    def test_summary_separates_rows_above_header_from_blank_rows(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        xlsx = _write_title_rows_xlsx(tmp_path / "titel_mit_leerzeile.xlsx", blank_row_in_data=True)
+        text = self._import_summary_text(window, recent_store, populated_db, xlsx)
+        assert text.splitlines() == [
+            "4 Zeile(n) oberhalb der Kopfzeile ignoriert.",
+            "1 Leerzeile(n) übersprungen.",
+        ]
+
+    def test_summary_omits_blank_line_when_none_in_data(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        # Smoke-Fall 05: vorher „4 Leerzeile(n) übersprungen." obwohl der
+        # Datenteil keine einzige Leerzeile hat.
+        xlsx = _write_title_rows_xlsx(
+            tmp_path / "titel_ohne_leerzeile.xlsx", blank_row_in_data=False
+        )
+        text = self._import_summary_text(window, recent_store, populated_db, xlsx)
+        assert text == "4 Zeile(n) oberhalb der Kopfzeile ignoriert."
+        assert "Leerzeile" not in text
+
+    @staticmethod
+    def _summary_calls(controller: MainController, stats: ImportStats) -> list[str]:
+        with patch(
+            "sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"
+        ) as info:
+            controller.workspace._show_import_summary(stats)
+        return [c.args[2] for c in info.call_args_list]
+
+    def test_warnings_follow_the_counters(self, controller: MainController) -> None:
+        # Warnungen (Trennzeichen-Fallback, Encoding, Spaltennamen) dürfen beim
+        # Umbau der Zählerzeilen nicht verloren gehen.
+        stats = ImportStats(skipped_rows=5, rows_above_header=4, warnings=["W1", "W2"])
+        (text,) = self._summary_calls(controller, stats)
+        assert text.splitlines() == [
+            "4 Zeile(n) oberhalb der Kopfzeile ignoriert.",
+            "1 Leerzeile(n) übersprungen.",
+            "W1",
+            "W2",
+        ]
+
+    def test_only_warnings_without_counters(self, controller: MainController) -> None:
+        assert self._summary_calls(controller, ImportStats(warnings=["W1"])) == ["W1"]
+
+    def test_nothing_to_report_shows_no_dialog(self, controller: MainController) -> None:
+        assert self._summary_calls(controller, ImportStats()) == []
 
 
 # ---------------------------------------------------------------------------

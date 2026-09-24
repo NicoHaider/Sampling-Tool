@@ -234,16 +234,19 @@ class WorkspaceController:
             return None
 
     def _show_import_summary(self, stats: ImportStats) -> None:
-        """Skipped-/Warning-Übersicht als Info-Dialog (oder nichts, wenn leer)."""
-        warning_text = ""
-        if stats.skipped_rows:
-            warning_text += f"{stats.skipped_rows} Leerzeile(n) übersprungen.\n"
-        if stats.warnings:
-            warning_text += "\n".join(stats.warnings)
-        if warning_text:
-            QMessageBox.information(
-                self.session.window, "Import abgeschlossen", warning_text.strip()
-            )
+        """Skipped-/Warning-Übersicht als Info-Dialog (oder nichts, wenn leer).
+
+        Zeilen oberhalb der Kopfzeile (Titel, Vorspann) werden getrennt von den
+        echten Leerzeilen im Datenteil gemeldet; Zähler mit 0 entfallen.
+        """
+        lines: list[str] = []
+        if stats.rows_above_header:
+            lines.append(f"{stats.rows_above_header} Zeile(n) oberhalb der Kopfzeile ignoriert.")
+        if stats.blank_data_rows:
+            lines.append(f"{stats.blank_data_rows} Leerzeile(n) übersprungen.")
+        lines.extend(stats.warnings)
+        if lines:
+            QMessageBox.information(self.session.window, "Import abgeschlossen", "\n".join(lines))
 
     def _ask_id_column(self, dataset: Dataset) -> None:
         """Optionaler Post-Import-Schritt (Sprint 31): ID-Spalte für die Sidebar wählen.
