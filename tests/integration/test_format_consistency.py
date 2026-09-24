@@ -13,7 +13,8 @@ from datetime import UTC, datetime
 
 from sampling_tool.core import formatting
 from sampling_tool.io import html_report, multi_report_exporter, pdf_report
-from sampling_tool.ui.widgets import audit_trail_view
+from sampling_tool.ui.dialogs import import_options_dialog
+from sampling_tool.ui.widgets import audit_trail_view, data_table, sidebar
 
 # Test-Anker: ein fester aware-UTC-Timestamp. Alle Konsumenten müssen
 # denselben String produzieren – egal über welchen Pfad.
@@ -48,6 +49,25 @@ class TestFormatConsistency:
         assert (
             html_report.format_optional_timestamp  # type: ignore[attr-defined]
             is formatting.format_optional_timestamp
+        )
+
+    def test_data_table_uses_central_format_cell_value(self) -> None:
+        """Sprint 82 / Befund A: Tabelle, Import-Vorschau und Sidebar-IDs – ein Formatierer."""
+        assert (
+            data_table.format_cell_value  # type: ignore[attr-defined]
+            is formatting.format_cell_value
+        )
+
+    def test_import_preview_uses_central_format_cell_value(self) -> None:
+        assert (
+            import_options_dialog.format_cell_value  # type: ignore[attr-defined]
+            is formatting.format_cell_value
+        )
+
+    def test_sidebar_uses_central_format_cell_value(self) -> None:
+        assert (
+            sidebar.format_cell_value  # type: ignore[attr-defined]
+            is formatting.format_cell_value
         )
 
     def test_pdf_and_ui_format_same_event_identically(self) -> None:

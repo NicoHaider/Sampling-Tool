@@ -25,7 +25,6 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Sequence
-from datetime import date, datetime, time
 from typing import Any, ClassVar, Final
 
 from PyQt6 import sip
@@ -34,6 +33,7 @@ from PyQt6.QtGui import QBrush, QColor, QPainter, QPaintEvent, QResizeEvent
 from PyQt6.QtWidgets import QAbstractButton, QHeaderView, QLabel, QTableView, QWidget
 
 from sampling_tool.config import BDO_GREY, SAMPLE_HIGHLIGHT_ALPHA, SAMPLE_HIGHLIGHT_COLOR
+from sampling_tool.core.formatting import format_cell_value
 from sampling_tool.core.models import Dataset, DatasetRow
 from sampling_tool.persistence.repositories import DatasetRepo
 from sampling_tool.ui._fonts import relative_font
@@ -227,7 +227,7 @@ class DatasetTableModel(QAbstractTableModel):
         column = self._columns[index.column()]
 
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
-            return _format_value(row.values.get(column))
+            return format_cell_value(row.values.get(column))
         # TextAlignmentRole
         value = row.values.get(column)
         if isinstance(value, int | float) and not isinstance(value, bool):
@@ -512,29 +512,3 @@ class DataTableView(QTableView):
                 header.resizeSection(col, min_width)
             elif width > max_width:
                 header.resizeSection(col, max_width)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _format_value(value: Any) -> str:
-    """Native Python-Typen menschenlesbar darstellen (deutsche Konventionen halten)."""
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "Ja" if value else "Nein"
-    if isinstance(value, datetime):
-        # Excel-Importe ohne Uhrzeit kommen als datetime mit 00:00:00 rein –
-        # dann sähe " ... 00:00:00" wie ein Bug aus. Nur Datum anzeigen.
-        if value.hour == 0 and value.minute == 0 and value.second == 0 and value.microsecond == 0:
-            return value.strftime("%Y-%m-%d")
-        return value.strftime("%Y-%m-%d %H:%M:%S")
-    if isinstance(value, date):
-        return value.strftime("%Y-%m-%d")
-    if isinstance(value, time):
-        return value.strftime("%H:%M:%S")
-    if isinstance(value, float):
-        return f"{value:g}"
-    return str(value)

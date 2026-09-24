@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -83,6 +84,13 @@ class TestFormatSampleIdValues:
 
     def test_values_stringified(self) -> None:
         assert format_sample_id_values(["B1", "B2"], total=2) == "B1, B2"
+
+    def test_values_formatted_like_table_cells(self) -> None:
+        """Sprint 82 / Befund A: Betrag ungerundet, Datum ohne „00:00:00" – wie in der Tabelle."""
+        assert (
+            format_sample_id_values([13134.97, datetime(2023, 2, 9)], total=2)
+            == "13134.97, 2023-02-09"
+        )
 
 
 class TestIdColumnSelectionAndDisplay:

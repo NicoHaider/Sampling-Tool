@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from sampling_tool.config import BDO_GREY, METHOD_LABELS
+from sampling_tool.core.formatting import format_cell_value
 from sampling_tool.core.models import Dataset, Engagement, SampleResult
 
 _DATASET_ID_ROLE = int(Qt.ItemDataRole.UserRole)
@@ -61,7 +62,7 @@ def format_sample_id_values(
     Gesamtzahl gezogener Zeilen. Zeigt bis zu `max_shown` Werte; gibt es mehr,
     wird „…“ angehängt. Leere Eingabe → leerer String (kein Anhang im Label).
     """
-    shown = [("" if v is None else str(v)) for v in list(values)[:max_shown]]
+    shown = [format_cell_value(v) for v in list(values)[:max_shown]]
     if not shown:
         return ""
     text = ", ".join(shown)

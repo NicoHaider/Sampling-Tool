@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -329,6 +330,44 @@ class TestCsvImportOptions:
         assert isinstance(result, ImportOptionsResult)
         assert result.sheet_name is None
         assert result.header_row is None
+
+
+@pytest.fixture
+def typed_cells_path(tmp_path: Path) -> Path:
+    path = tmp_path / "typed.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.append(["Datum", "Betrag", "Flag"])
+    ws.append([date(2023, 2, 9), 1.5e-7, True])
+    wb.save(path)
+    return path
+
+
+class TestPreviewUsesCellFormatter:
+    """Sprint 82 / Befund A: Vorschau-Zellen sehen aus wie später in der Tabelle."""
+
+    def test_date_only_cell_shows_without_midnight(
+        self, qtbot: QtBot, typed_cells_path: Path, importer: ExcelImporter
+    ) -> None:
+        dialog = ImportOptionsDialog(typed_cells_path, importer)
+        qtbot.addWidget(dialog)
+        item = dialog._preview_table.item(1, 0)
+        assert item is not None
+        assert "00:00:00" not in item.text()
+        assert item.text() == "2023-02-09"
+
+    def test_preview_cells_match_table_formatter(
+        self, qtbot: QtBot, typed_cells_path: Path, importer: ExcelImporter
+    ) -> None:
+        dialog = ImportOptionsDialog(typed_cells_path, importer)
+        qtbot.addWidget(dialog)
+        texts: list[str] = []
+        for c in range(3):
+            item = dialog._preview_table.item(1, c)
+            assert item is not None
+            texts.append(item.text())
+        assert texts == ["2023-02-09", "0.00000015", "Ja"]
 
 
 class TestMinimumSize:

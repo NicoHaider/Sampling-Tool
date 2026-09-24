@@ -10,11 +10,16 @@ Resultat: derselbe Event zeigte in UI und PDF unterschiedliche Uhrzeiten
 Eintrittspunkt für ALLE Audit-Anzeige-Pfade: `format_event_timestamp`.
 DB-Speicherung bleibt unverändert (UTC-aware ISO-8601, siehe
 `persistence/database.py`).
+
+`format_cell_value` ist die SSOT für die Anzeige von Datensatz-Zellwerten
+(Datentabelle, Import-Vorschau, Sidebar-ID-Werte) – Sprint 82 / Befund A.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import math
+from datetime import UTC, date, datetime, time
+from decimal import Decimal
 from typing import Any
 
 # 19-Zeichen-Format: konsistent zwischen UI, PDF, Excel-Report, HTML-Report.
@@ -74,3 +79,44 @@ def _format_detail_value(value: Any) -> str:
     if isinstance(value, bool):
         return "ja" if value else "nein"
     return str(value)
+
+
+def format_cell_value(value: Any) -> str:
+    """Anzeige-Text eines Datensatz-Zellwerts (Ja/Nein, ISO-Datum, Dezimalpunkt, kein Runden).
+
+    Floats erscheinen verlustfrei und nie in Exponent-Schreibweise – das
+    frühere `:g`-Format hat auf 6 signifikante Stellen gerundet
+    (13134.97 → „13135", Sprint 82 / Befund A).
+    """
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "Ja" if value else "Nein"
+    if isinstance(value, datetime):
+        # Excel-Importe ohne Uhrzeit kommen als datetime mit 00:00:00 rein –
+        # dann sähe " ... 00:00:00" wie ein Bug aus. Nur Datum anzeigen.
+        if value.hour == 0 and value.minute == 0 and value.second == 0 and value.microsecond == 0:
+            return value.strftime("%Y-%m-%d")
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(value, date):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, time):
+        return value.strftime("%H:%M:%S")
+    if isinstance(value, float):
+        return _format_float(value)
+    return str(value)
+
+
+def _format_float(value: float) -> str:
+    """Festkomma aus den `repr`-Ziffern (kürzeste verlustfreie Form); `nan`/`inf` → `str`."""
+    if not math.isfinite(value):
+        return str(value)
+    # `float(...)`: Subklassen (z. B. numpy float64) haben ein eigenes repr, das
+    # Decimal nicht parst. Format "f" hängt – anders als `normalize()` – nicht
+    # vom Decimal-Kontext ab.
+    text = format(Decimal(repr(float(value))), "f")
+    # Nur Nachkommastellen kürzen – ohne Punkt würde rstrip die Ziffern von
+    # ganzzahligen Beträgen wie 1e16 zerstören.
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text

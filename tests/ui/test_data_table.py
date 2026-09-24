@@ -154,7 +154,7 @@ class TestDatasetTableModel:
         assert model.columnCount() == 0
         assert model.dataset() is None
 
-    def test_format_value_handles_datetime_none_bool(
+    def test_display_role_handles_datetime_none_bool(
         self, db_with_engagement: tuple[Database, int]
     ) -> None:
         db, eng_id = db_with_engagement
@@ -207,6 +207,29 @@ class TestDatasetTableModel:
         ds, repo = _persist_dataset(db, eng_id, rows, columns=("t",))
         model = DatasetTableModel(ds, repo)
         assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == "09:15:30"
+
+
+class TestAmountDisplay:
+    """Sprint 82 / Befund A: Beträge erscheinen ungerundet und ohne Exponent."""
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (13134.97, "13134.97"),
+            (20630.27, "20630.27"),
+            (1234567.89, "1234567.89"),
+            (1.5e-7, "0.00000015"),
+            (1234.0, "1234"),
+        ],
+    )
+    def test_display_role_shows_exact_amount(
+        self, db_with_engagement: tuple[Database, int], value: float, expected: str
+    ) -> None:
+        db, eng_id = db_with_engagement
+        rows = (DatasetRow(row_id=1, values={"Betrag": value}),)
+        ds, repo = _persist_dataset(db, eng_id, rows, columns=("Betrag",))
+        model = DatasetTableModel(ds, repo)
+        assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == expected
 
 
 class TestDataTableView:
