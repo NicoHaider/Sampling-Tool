@@ -200,7 +200,7 @@ class TestExportSample:
         assert meta["Angeforderte Größe"] == "4"
         assert meta["Tatsächliche Größe"] == "4"
         assert meta["Population (Zeilen)"] == "10"
-        assert meta["Sampling-Methode"] == "simple"
+        assert meta["Sampling-Methode"] == "Einfach"
         assert meta["Auditor"] == "Anna Auditorin"
         assert meta["Mandant"] == "ACME GmbH"
 
@@ -721,3 +721,81 @@ class TestWrittenFileMatchesDialogPreview:
             now=EXPORT_FROZEN_NOW,
         )
         assert written.name == "X_ID1_BDO_sampling_20260513.xlsx"
+
+
+class TestMetadataImportProvenance:
+    """Sprint 83 / B: „Quellblatt" und „Kopfzeile" direkt nach „Quelldatei" –
+    aus dem gespeicherten `Dataset`, nicht durch erneutes Lesen der Quelldatei."""
+
+    @pytest.mark.parametrize(
+        ("source_sheet", "header_row", "expected_sheet", "expected_header"),
+        [
+            ("Buchungen", 5, "Buchungen", "Zeile 5"),
+            ("Daten", 0, "Daten", "keine (Spaltennamen generiert)"),
+            (None, 1, "—", "Zeile 1"),
+            (None, None, "—", "—"),
+        ],
+    )
+    def test_rows_follow_quelldatei(
+        self,
+        exporter: ExcelExporter,
+        sample: SampleResult,
+        dataset: Dataset,
+        dataset_repo: DatasetRepo,
+        tmp_path: Path,
+        source_sheet: str | None,
+        header_row: int | None,
+        expected_sheet: str,
+        expected_header: str,
+    ) -> None:
+        from dataclasses import replace
+
+        out = exporter.export_sample(
+            sample=sample,
+            dataset=replace(dataset, source_sheet=source_sheet, header_row=header_row),
+            dataset_repo=dataset_repo,
+            columns=["Name"],
+            output_dir=tmp_path,
+            custom_name="X",
+            custom_id="1",
+        )
+        rows = [
+            (r[0].value, r[1].value) for r in load_workbook(out)["Metadaten"].iter_rows(min_row=2)
+        ]
+        labels = [label for label, _value in rows]
+        at = labels.index("Quelldatei")
+        assert rows[at + 1] == ("Quellblatt", expected_sheet)
+        assert rows[at + 2] == ("Kopfzeile", expected_header)
+
+
+class TestMetadataSpeaksGerman:
+    """Sprint 83 / D: Methode und Schichtungsmodus im Metadaten-Sheet auf Deutsch."""
+
+    def test_method_and_stratify_mode_labels(
+        self,
+        exporter: ExcelExporter,
+        dataset: Dataset,
+        dataset_repo: DatasetRepo,
+        tmp_path: Path,
+    ) -> None:
+        from tests._readable_reports import raw_words_in, readable_samples
+
+        stratified = readable_samples()[1]
+        out = exporter.export_sample(
+            sample=stratified,
+            dataset=dataset,
+            dataset_repo=dataset_repo,
+            columns=["Name"],
+            output_dir=tmp_path,
+            custom_name="X",
+            custom_id="1",
+        )
+        rows = [
+            (r[0].value, r[1].value) for r in load_workbook(out)["Metadaten"].iter_rows(min_row=2)
+        ]
+        meta = dict(rows)
+        assert meta["Sampling-Methode"] == "Geschichtet"
+        assert meta["Schichtungsmodus"] == "Proportional"
+        assert "Stratify-Mode" not in meta
+        assert meta["Ableitung"] == "Eingeschränkt auf Stichprobe #1"
+        assert raw_words_in("\n".join(str(v) for _k, v in rows)) == []

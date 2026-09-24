@@ -43,7 +43,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import BDO_GREY
+from sampling_tool.config import BDO_GREY, EVENT_TYPE_LABELS
 from sampling_tool.core.formatting import ensure_utc, format_optional_timestamp
 from sampling_tool.core.models import AuditEvent
 from sampling_tool.ui._dialog_buttons import mark_secondary
@@ -58,16 +58,6 @@ _COLUMNS: Final[tuple[str, ...]] = (
     "Seed",
     "Datei",
 )
-
-_ACTION_LABELS: Final[dict[str, str]] = {
-    "sampling": "Sampling",
-    "reset": "Reset",
-    "import": "Import",
-    "export": "Export",
-    "undo": "Undo",
-    "redo": "Redo",
-    "correction": "Korrektur",
-}
 
 # Spezial-Wert für ComboBoxen, der „kein Filter" bedeutet.
 _FILTER_ALL: Final[str] = "Alle"
@@ -367,7 +357,7 @@ class AuditTrailView(QWidget):
 
         self._action_combo = QComboBox()
         self._action_combo.addItem(_FILTER_ALL, None)
-        for key, label in _ACTION_LABELS.items():
+        for key, label in EVENT_TYPE_LABELS.items():
             self._action_combo.addItem(label, key)
         self._action_combo.currentIndexChanged.connect(self._on_action_changed)
         filter_row.addWidget(QLabel("Aktion:"))
@@ -512,7 +502,7 @@ def _format_cell(evt: AuditEvent, col: int) -> str:
     if col == 0:
         return format_optional_timestamp(evt.timestamp)
     if col == 1:
-        action = _ACTION_LABELS.get(evt.event_type, evt.event_type)
+        action = EVENT_TYPE_LABELS.get(evt.event_type, evt.event_type)
         if evt.corrects_event_id is not None:
             action = f"{action} → #{evt.corrects_event_id}"
         return action

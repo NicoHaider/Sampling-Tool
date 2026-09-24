@@ -18,12 +18,31 @@ DB-Speicherung bleibt unverändert (UTC-aware ISO-8601, siehe
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
+
+from sampling_tool.config import (
+    AUDIT_DETAIL_LABELS,
+    FILTER_OPERATOR_LABELS,
+    METHOD_LABELS,
+    PARENT_RELATION_LABELS,
+    RESTORED_STATE_LABELS,
+    STRATIFY_MODE_LABELS,
+)
 
 # 19-Zeichen-Format: konsistent zwischen UI, PDF, Excel-Report, HTML-Report.
 _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+# Detail-Schlüssel, deren WERT ein Enum-Rohwert ist und übersetzt angezeigt wird.
+_DETAIL_VALUE_LABELS: Final[dict[str, Mapping[str, str]]] = {
+    "method": METHOD_LABELS,
+    "stratify_mode": STRATIFY_MODE_LABELS,
+    "filter_operator": FILTER_OPERATOR_LABELS,
+    "parent_relation": PARENT_RELATION_LABELS,
+    "restored": RESTORED_STATE_LABELS,
+}
 
 
 def ensure_utc(ts: datetime) -> datetime:
@@ -59,21 +78,54 @@ def format_optional_timestamp(ts: datetime | None) -> str:
     return format_event_timestamp(ts)
 
 
+def format_header_row(header_row: int | None) -> str:
+    """Anzeige der Import-Kopfzeile (Sprint 83): 1-basiert wie im Import-Dialog.
+
+    ``0`` heißt „keine Kopfzeile, Spaltennamen generiert"; ``None`` heißt
+    „nicht erfasst" (Import vor Migration 006) und bleibt ein Em-Dash.
+    """
+    if header_row is None:
+        return "—"
+    if header_row == 0:
+        return "keine (Spaltennamen generiert)"
+    return f"Zeile {header_row}"
+
+
 def format_audit_details(details: dict[str, Any]) -> str:
     """Kompakte Ein-Zeilen-Darstellung eines `AuditEvent.details`-Dicts.
 
     Einheitlicher Renderer für alle AuditTrail-„Details"-Anzeigen (Projekt-
     XLSX-AuditTrail-Spalte, PDF-/HTML-AuditTrail additiv) – Sprint 43 / A-001.
-    Leere Dicts (die meisten Nicht-Sampling-Events sowie alle Alt-Events vor
-    diesem Sprint) liefern `"—"`, keine geschätzten Werte.
+
+    Sprint 83 / D: Schlüssel erscheinen mit deutschem Namen
+    (`AUDIT_DETAIL_LABELS`), Enum-Rohwerte übersetzt, Listen als
+    „a, b" statt Python-Darstellung, `None`-Einträge entfallen. Unbekannte
+    Schlüssel und Werte erscheinen roh – nie verschluckt. Die Reihenfolge ist
+    die des Dicts. Ohne anzeigbaren Eintrag (leeres Dict, Alt-Events vor
+    Sprint 43, nur `None`-Werte) kommt `"—"`.
     """
-    if not details:
-        return "—"
-    return " · ".join(f"{key}: {_format_detail_value(value)}" for key, value in details.items())
+    parts = [
+        f"{AUDIT_DETAIL_LABELS.get(key, key)}: {_format_detail_value(key, value)}"
+        for key, value in details.items()
+        if value is not None
+    ]
+    return " · ".join(parts) if parts else "—"
 
 
-def _format_detail_value(value: Any) -> str:
-    """Rendert einen einzelnen Detail-Wert; `None` → "—", `bool` → "ja"/"nein"."""
+def _format_detail_value(key: str, value: Any) -> str:
+    """Anzeige eines Detail-Werts: übersetzt, Listen verbunden, sonst skalar."""
+    if key == "header_row" and isinstance(value, int) and not isinstance(value, bool):
+        return format_header_row(value)
+    labels = _DETAIL_VALUE_LABELS.get(key)
+    if labels is not None and isinstance(value, str):
+        return labels.get(value, value)
+    if isinstance(value, list | tuple):
+        return ", ".join(_format_scalar(item) for item in value) or "—"
+    return _format_scalar(value)
+
+
+def _format_scalar(value: Any) -> str:
+    """`None` → "—", `bool` → "ja"/"nein", sonst `str(value)`."""
     if value is None:
         return "—"
     if isinstance(value, bool):

@@ -468,7 +468,8 @@ def run_probe_for_size(
                     sampling_repo.iter_rows(dataset.id),
                     population_size=dataset.row_count,
                 )
-        sid = sample_repo.create_from_result(sampled, dataset.id, "perf")
+        sampled = replace(sampled, created_by="perf")
+        sid = sample_repo.create_from_result(sampled, dataset.id)
         sample_ids.append(sid)
         if cfg.method == SamplingMethod.SIMPLE:
             simple_result = sampled

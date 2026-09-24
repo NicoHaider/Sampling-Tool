@@ -527,3 +527,127 @@ class TestPersistenceAcrossConnections:
             assert row["auditor_name"] == "Anna"
         finally:
             second.close()
+
+
+_V5_MIGRATIONS: tuple[str, ...] = (
+    "001_initial.sql",
+    "002_engagement_state.sql",
+    "003_filter_operator.sql",
+    "004_algorithm_version.sql",
+    "005_application_id.sql",
+)
+
+
+def _build_v5_db_with_data(db_path: Path) -> None:
+    """Sprint-82-Stand (Schema 5) mit Bestandsdaten: Dataset + Rows + Eltern-/Kind-Sample."""
+    legacy = Database(db_path)
+    try:
+        conn = legacy.connect()
+        for name in _V5_MIGRATIONS:
+            conn.executescript(_migration_sql(name))
+        assert legacy.schema_version() == 5
+        with legacy.session() as c:
+            c.execute(
+                "INSERT INTO engagements (auditor_name, client_name) VALUES (?, ?)",
+                ("Anna", "ACME"),
+            )
+            c.execute(
+                "INSERT INTO datasets (engagement_id, name, source_file, row_count, columns_json) "
+                "VALUES (1, 'Buchungen', 'buchungen.xlsx', 3, '[\"a\"]')",
+            )
+            c.executemany(
+                "INSERT INTO dataset_rows (dataset_id, row_index, values_json) VALUES (1, ?, ?)",
+                [(i, f'{{"a": {i}}}') for i in range(1, 4)],
+            )
+            c.execute(
+                "INSERT INTO samples "
+                "(dataset_id, method, sample_size, population_size, seed, created_by) "
+                "VALUES (1, 'simple', 2, 3, 42, 'anna')",
+            )
+            c.execute(
+                "INSERT INTO samples (dataset_id, method, sample_size, population_size, seed, "
+                "parent_sample_id, created_by) VALUES (1, 'simple', 1, 2, 7, 1, 'anna')",
+            )
+    finally:
+        legacy.close()
+
+
+def _snapshot_tables(conn: sqlite3.Connection) -> dict[str, list[dict[str, object]]]:
+    return {
+        table: [dict(r) for r in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+        for table in ("datasets", "dataset_rows", "samples")
+    }
+
+
+class TestMigration006:
+    """Sprint 83: Ableitung (`samples.parent_relation`) + Import-Herkunft
+    (`datasets.source_sheet`/`header_row`). Nur ADD COLUMN, KEIN Backfill."""
+
+    def test_fresh_db_has_version_6_and_new_columns(self, db: Database) -> None:
+        conn = db.connect()
+        assert db.schema_version() == 6
+        sample_cols = {r["name"] for r in conn.execute("PRAGMA table_info(samples)")}
+        dataset_cols = {r["name"] for r in conn.execute("PRAGMA table_info(datasets)")}
+        assert "parent_relation" in sample_cols
+        assert {"source_sheet", "header_row"} <= dataset_cols
+
+    def test_v5_db_migrates_without_backfill(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "legacy_v5.db"
+        _build_v5_db_with_data(db_path)
+
+        before_db = Database(db_path)
+        try:
+            before = _snapshot_tables(before_db.connect())
+        finally:
+            before_db.close()
+
+        upgraded = Database(db_path)
+        try:
+            upgraded.migrate()
+            assert upgraded.schema_version() == 6
+            after = _snapshot_tables(upgraded.connect())
+        finally:
+            upgraded.close()
+
+        # Bestandszeilen: neue Spalten NULL (keine Schätzung aus Population/Überschneidung).
+        assert [row["parent_relation"] for row in after["samples"]] == [None, None]
+        assert [(row["source_sheet"], row["header_row"]) for row in after["datasets"]] == [
+            (None, None)
+        ]
+        # Alle anderen Spalten und `dataset_rows` byte-gleich.
+        new_columns = {"parent_relation", "source_sheet", "header_row"}
+        for table, rows in before.items():
+            stripped = [
+                {k: v for k, v in row.items() if k not in new_columns} for row in after[table]
+            ]
+            assert stripped == rows, table
+
+    def test_check_rejects_unknown_parent_relation(self, db: Database) -> None:
+        conn = db.connect()
+        conn.execute("INSERT INTO engagements (auditor_name, client_name) VALUES ('A', 'B')")
+        conn.execute(
+            "INSERT INTO datasets (engagement_id, name, row_count, columns_json) "
+            "VALUES (1, 'DS', 0, '[]')"
+        )
+        insert = (
+            "INSERT INTO samples (dataset_id, method, sample_size, population_size, seed, "
+            "parent_relation) VALUES (1, 'simple', 1, 1, 1, ?)"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(insert, ("foo",))
+        for allowed in ("restrict", "supplement", None):
+            conn.execute(insert, (allowed,))
+
+    def test_v6_db_blocked_in_v5_app(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        db_path = tmp_path / "v6.db"
+        fresh = Database(db_path)
+        fresh.migrate()
+        fresh.close()
+
+        monkeypatch.setattr("sampling_tool.persistence.database.CURRENT_SCHEMA_VERSION", 5)
+        old_app = Database(db_path)
+        try:
+            with pytest.raises(MigrationError, match="neuer als"):
+                old_app.migrate()
+        finally:
+            old_app.close()

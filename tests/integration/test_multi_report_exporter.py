@@ -14,6 +14,7 @@ from sampling_tool.core.models import (
     Dataset,
     Engagement,
     FilterOperator,
+    ParentRelation,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -149,8 +150,8 @@ class TestMultiSheetReportExporter:
         rows = list(ws.iter_rows(values_only=True))
         assert rows[0][0] == "ID"
         methods = {row[1] for row in rows[1:] if row[1] is not None}
-        assert "simple" in methods
-        assert "stratified" in methods
+        assert "Einfach" in methods
+        assert "Geschichtet" in methods
 
     def test_audit_trail_in_chronological_order(
         self,
@@ -389,7 +390,7 @@ class TestMultiSheetReportExporter:
         header = rows[0]
         row = dict(zip(header, rows[1], strict=True))
         assert row["ID"] == 3
-        assert row["Methode"] == "cluster"
+        assert row["Methode"] == "Cluster"
         assert row["Angeforderte Größe"] == 5
         assert row["Tatsächliche Größe"] == 7
         assert row["Filter-Operator"] == "≥"
@@ -421,8 +422,7 @@ class TestMultiSheetReportExporter:
         ws = wb["2. AuditTrail"]
         rows = list(ws.iter_rows(values_only=True))
         assert rows[0][-1] == "Details"
-        assert "filter_operator" in rows[1][-1]
-        assert "gte" in rows[1][-1]
+        assert rows[1][-1] == "Filter-Operator: ≥ · Algorithmus-Version: bdo-v1"
 
     def test_audit_trail_details_spalte_zeigt_dash_fuer_leere_details(
         self,
@@ -440,3 +440,107 @@ class TestMultiSheetReportExporter:
         ws = wb["2. AuditTrail"]
         rows = list(ws.iter_rows(values_only=True))
         assert rows[1][-1] == "—"
+
+
+class TestSamplesSheetDerivation:
+    """Sprint 83 / A: „3. Samples" hat eine Spalte „Ableitung" direkt nach
+    „Parent-Sample-ID" – Einschränkung und Nachstichprobe unterscheidbar."""
+
+    def test_ableitung_column(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        datasets: list[Dataset],
+        audit_events: list[AuditEvent],
+    ) -> None:
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=1)
+        samples = [
+            SampleResult(
+                config=cfg,
+                selected_row_ids=(1, 2),
+                population_size=5,
+                drawn_at=datetime(2026, 5, 1, 10, 0, tzinfo=UTC),
+                id=1,
+            ),
+            SampleResult(
+                config=cfg,
+                selected_row_ids=(1,),
+                population_size=2,
+                drawn_at=datetime(2026, 5, 1, 11, 0, tzinfo=UTC),
+                parent_sample_id=1,
+                parent_relation=ParentRelation.RESTRICT,
+                id=2,
+            ),
+            SampleResult(
+                config=cfg,
+                selected_row_ids=(3,),
+                population_size=3,
+                drawn_at=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+                parent_sample_id=1,
+                parent_relation=ParentRelation.SUPPLEMENT,
+                id=3,
+            ),
+            SampleResult(
+                config=cfg,
+                selected_row_ids=(4,),
+                population_size=3,
+                drawn_at=datetime(2026, 5, 1, 13, 0, tzinfo=UTC),
+                parent_sample_id=1,
+                id=4,
+            ),
+        ]
+        out = tmp_path / "bericht.xlsx"
+        MultiSheetReportExporter().export(engagement, datasets, samples, audit_events, out)
+        rows = list(load_workbook(out)["3. Samples"].iter_rows(values_only=True))
+        header = list(rows[0])
+        assert header[header.index("Parent-Sample-ID") + 1] == "Ableitung"
+        by_id = {r[0]: dict(zip(header, r, strict=True)) for r in rows[1:]}
+        assert by_id[1]["Ableitung"] == "—"
+        assert by_id[2]["Ableitung"] == "Eingeschränkt auf Stichprobe #1"
+        assert by_id[3]["Ableitung"] == "Nachstichprobe zu #1 (ohne Dubletten)"
+        assert by_id[4]["Ableitung"] == "Ableitung zu #1 nicht erfasst (älterer Stand)"
+
+
+class TestExcelReportSpeaksGerman:
+    """Sprint 83 / D: keine englischen Rohschlüssel und keine Python-Listen in
+    irgendeiner Zelle; Methode, Modus, Ereignistyp und Ableitung auf Deutsch."""
+
+    def test_no_raw_keys_in_any_cell(
+        self, tmp_path: Path, engagement: Engagement, datasets: list[Dataset]
+    ) -> None:
+        from tests._readable_reports import raw_words_in, readable_events, readable_samples
+
+        out = tmp_path / "bericht.xlsx"
+        MultiSheetReportExporter().export(
+            engagement, datasets, readable_samples(), readable_events(), out
+        )
+        wb = load_workbook(out)
+        text = "\n".join(
+            str(value)
+            for ws in wb.worksheets
+            for row in ws.iter_rows(values_only=True)
+            for value in row
+            if value is not None
+        )
+        assert raw_words_in(text) == []
+        assert "['" not in text
+        for label in ("Stichprobe", "Rückgängig", "Einfach", "Geschichtet", "Proportional"):
+            assert label in text, label
+
+    def test_samples_sheet_headers_and_values(
+        self, tmp_path: Path, engagement: Engagement, datasets: list[Dataset]
+    ) -> None:
+        from tests._readable_reports import readable_events, readable_samples
+
+        out = tmp_path / "bericht.xlsx"
+        MultiSheetReportExporter().export(
+            engagement, datasets, readable_samples(), readable_events(), out
+        )
+        rows = list(load_workbook(out)["3. Samples"].iter_rows(values_only=True))
+        header = list(rows[0])
+        assert "Stratify-Modus" not in header
+        by_id = {r[0]: dict(zip(header, r, strict=True)) for r in rows[1:]}
+        assert by_id[2]["Methode"] == "Geschichtet"
+        assert by_id[2]["Schichtungsmodus"] == "Proportional"
+        assert by_id[2]["Ableitung"] == "Eingeschränkt auf Stichprobe #1"
+        assert by_id[3]["Ableitung"] == "Nachstichprobe zu #1 (ohne Dubletten)"

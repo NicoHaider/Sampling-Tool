@@ -87,3 +87,51 @@ class TestMethodLabels:
 
         missing = [m.value for m in SamplingMethod if m.value not in config.METHOD_LABELS]
         assert not missing, f"Ohne Anzeige-Namen in config.METHOD_LABELS: {missing}"
+
+
+class TestReportLabelTables:
+    """Sprint 83 / D: jede Rohwert-Menge hat vollständige deutsche Anzeige-Namen –
+    ein neuer Enum-Wert ohne Label fiele sonst erst im Bericht auf."""
+
+    def test_event_type_labels_are_binding(self) -> None:
+        assert config.EVENT_TYPE_LABELS == {
+            "sampling": "Stichprobe",
+            "reset": "Zurückgesetzt",
+            "import": "Import",
+            "export": "Export",
+            "undo": "Rückgängig",
+            "redo": "Wiederhergestellt",
+            "correction": "Korrektur",
+        }
+
+    def test_stratify_modes_covered(self) -> None:
+        from sampling_tool.core.models import StratifyMode
+
+        assert set(config.STRATIFY_MODE_LABELS) == {m.value for m in StratifyMode}
+
+    def test_filter_operators_covered(self) -> None:
+        from sampling_tool.core.models import FilterOperator
+
+        assert set(config.FILTER_OPERATOR_LABELS) == {o.value for o in FilterOperator}
+
+    def test_parent_relations_covered(self) -> None:
+        from sampling_tool.core.models import ParentRelation
+
+        values = {r.value for r in ParentRelation}
+        assert set(config.PARENT_RELATION_LABELS) == values
+        assert set(config.PARENT_RELATION_TEXTS) == values | {None}
+
+    def test_every_sampling_detail_key_has_a_label(self) -> None:
+        from sampling_tool.core.models import SampleConfig, SampleResult, SamplingMethod
+        from sampling_tool.core.provenance import SamplingProvenance
+
+        result = SampleResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=1),
+            selected_row_ids=(1,),
+            population_size=1,
+        )
+        keys = SamplingProvenance.from_sample_result(
+            result, dataset_id=1, app_version="x"
+        ).to_audit_details()
+        missing = [k for k in keys if k not in config.AUDIT_DETAIL_LABELS]
+        assert not missing, f"Ohne Anzeige-Namen in config.AUDIT_DETAIL_LABELS: {missing}"

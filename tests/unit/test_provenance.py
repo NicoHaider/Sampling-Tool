@@ -3,10 +3,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
+
+import pytest
 
 from sampling_tool.core.models import (
     FilterOperator,
+    ParentRelation,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -81,7 +85,7 @@ class TestToOrderedFields:
         )
         fields = dict(provenance.to_ordered_fields())
         assert fields["Dataset-ID"] == "1"
-        assert fields["Sampling-Methode"] == "cluster"
+        assert fields["Sampling-Methode"] == "Cluster"
         assert fields["Angeforderte Größe"] == "5"
         assert fields["Tatsächliche Größe"] == "7"
         assert fields["Population (Zeilen)"] == "10"
@@ -90,8 +94,8 @@ class TestToOrderedFields:
         assert fields["Filter-Operator"] == "≥"
         assert fields["Filter-Wert"] == "100"
         assert fields["Cluster-Feld"] == "Land"
-        assert fields["Stratum-Feld"] == "—"
-        assert fields["Stratify-Mode"] == "proportional"
+        assert fields["Schicht-Feld"] == "—"
+        assert fields["Schichtungsmodus"] == "Proportional"
         assert fields["Parent-Sample-ID"] == "17"
         assert fields["Algorithmus-Version"] == "bdo-v1"
         assert fields["App-Version"] == "0.8.0"
@@ -110,7 +114,7 @@ class TestToOrderedFields:
         assert fields["Filter-Feld"] == "—"
         assert fields["Filter-Wert"] == "—"
         assert fields["Cluster-Feld"] == "—"
-        assert fields["Stratum-Feld"] == "—"
+        assert fields["Schicht-Feld"] == "—"
 
 
 class TestToAuditDetails:
@@ -142,3 +146,54 @@ class TestToAuditDetails:
         details = provenance.to_audit_details()
         assert isinstance(details["parent_sample_id"], int)
         assert isinstance(details["size_requested"], int)
+
+
+class TestParentRelation:
+    """Sprint 83 / A: Einschränkung und Nachstichprobe sind unterscheidbar;
+    Bestandssamples ohne erfasste Ableitung werden als solche benannt, nie geraten."""
+
+    @pytest.mark.parametrize(
+        ("relation", "expected"),
+        [
+            (ParentRelation.RESTRICT, "Eingeschränkt auf Stichprobe #17"),
+            (ParentRelation.SUPPLEMENT, "Nachstichprobe zu #17 (ohne Dubletten)"),
+            (None, "Ableitung zu #17 nicht erfasst (älterer Stand)"),
+        ],
+    )
+    def test_derivation_text_with_parent(
+        self, relation: ParentRelation | None, expected: str
+    ) -> None:
+        sample = replace(_cluster_sample(), parent_relation=relation)
+        provenance = SamplingProvenance.from_sample_result(
+            sample, dataset_id=1, app_version="0.8.0"
+        )
+        assert dict(provenance.to_ordered_fields())["Ableitung"] == expected
+
+    def test_without_parent_shows_placeholder(self) -> None:
+        sample = replace(_cluster_sample(), parent_sample_id=None)
+        provenance = SamplingProvenance.from_sample_result(
+            sample, dataset_id=1, app_version="0.8.0"
+        )
+        assert dict(provenance.to_ordered_fields())["Ableitung"] == "—"
+
+    def test_derivation_row_follows_parent_sample_id(self) -> None:
+        provenance = SamplingProvenance.from_sample_result(
+            _cluster_sample(), dataset_id=1, app_version="0.8.0"
+        )
+        labels = [label for label, _value in provenance.to_ordered_fields()]
+        assert labels[labels.index("Parent-Sample-ID") + 1] == "Ableitung"
+
+    @pytest.mark.parametrize("relation", [ParentRelation.RESTRICT, ParentRelation.SUPPLEMENT])
+    def test_audit_details_carry_raw_relation(self, relation: ParentRelation) -> None:
+        sample = replace(_cluster_sample(), parent_relation=relation)
+        details = SamplingProvenance.from_sample_result(
+            sample, dataset_id=1, app_version="0.8.0"
+        ).to_audit_details()
+        assert details["parent_relation"] == relation.value
+
+    def test_audit_details_relation_none_when_unrecorded(self) -> None:
+        details = SamplingProvenance.from_sample_result(
+            _cluster_sample(), dataset_id=1, app_version="0.8.0"
+        ).to_audit_details()
+        assert "parent_relation" in details
+        assert details["parent_relation"] is None

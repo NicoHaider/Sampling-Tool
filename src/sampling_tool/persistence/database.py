@@ -24,7 +24,7 @@ from sampling_tool.resources import package_resource
 SCHEMA_VERSION_TABLE: Final = "schema_version"
 APPLICATION_ID: Final = 0x42444F53  # "BDOS" – BDO Sampling; SQLite PRAGMA application_id
 CURRENT_SCHEMA_VERSION: Final = (
-    5  # muss mit jeder neuen migrations/NNN_*.sql-Datei mit hochgezogen werden
+    6  # muss mit jeder neuen migrations/NNN_*.sql-Datei mit hochgezogen werden
 )
 
 # ---------------------------------------------------------------------------
@@ -41,7 +41,7 @@ CURRENT_SCHEMA_VERSION: Final = (
 # wären dafür nötig – eigenes, hier nicht adressiertes Thema).
 #
 # Identisch zu migrations/001_initial.sql (dort erstmalig angelegt, seither
-# von 002-005 nicht angefasst) – `TestAuditAppendOnlyTriggerCanonical` sperrt
+# von 002-006 nicht angefasst) – `TestAuditAppendOnlyTriggerCanonical` sperrt
 # zu, dass diese Konstante nicht von der echten Migration abdriftet.
 # ---------------------------------------------------------------------------
 AUDIT_APPEND_ONLY_TRIGGERS: Final[dict[str, str]] = {

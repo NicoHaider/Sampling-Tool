@@ -56,12 +56,20 @@ class AuditLogger:
 
     # ---- Import / Export ------------------------------------------------
 
-    def log_import(self, dataset: Dataset) -> AuditEvent:
-        """Datenimport – Datei, Zeilenzahl, Spaltennamen."""
+    def log_import(self, dataset: Dataset, *, rows_above_header: int | None = None) -> AuditEvent:
+        """Datenimport – Datei, Zeilenzahl, Spaltennamen und Herkunft (Sprint 83:
+        gelesenes Blatt, Kopfzeile, Zeilen oberhalb der Kopfzeile).
+
+        ``rows_above_header`` kommt aus `ImportStats` des Importers – der
+        Audit-Layer kennt den IO-Layer nicht, der Aufrufer reicht den Wert durch.
+        """
         details: dict[str, Any] = {
             "dataset_name": dataset.name,
             "columns": list(dataset.columns),
             "dataset_id": dataset.id,
+            "source_sheet": dataset.source_sheet,
+            "header_row": dataset.header_row,
+            "rows_above_header": rows_above_header,
         }
         event = AuditEvent(
             event_type="import",

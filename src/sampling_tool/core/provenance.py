@@ -6,8 +6,8 @@ S1.5b, A-001. Vorher baute jede Fläche ihre Provenienz-Zeilen unabhängig, was
 Felder wie `filter_operator`/`parent_sample_id`/`algorithm_version` in einem
 Teil der Flächen driften ließ (im Audit-Event fehlten sie komplett).
 
-Nur von `core.models` + `core.formatting` abhängig – keine IO-/Persistenz-/
-UI-Importe, damit die strikte Layer-Trennung (CLAUDE.md „Architektur") erhalten
+Nur von `core.models`, `core.formatting` und den Label-Tabellen in `config`
+abhängig – keine IO-/Persistenz-/UI-Importe, damit die strikte Layer-Trennung (CLAUDE.md „Architektur") erhalten
 bleibt. `app_version` wird von jedem Aufrufer explizit übergeben
 (`sampling_tool.__version__`) statt hier importiert zu werden.
 """
@@ -18,19 +18,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final
 
+from sampling_tool.config import (
+    FILTER_OPERATOR_LABELS,
+    METHOD_LABELS,
+    PARENT_RELATION_LABELS,
+    PARENT_RELATION_TEXTS,
+    STRATIFY_MODE_LABELS,
+)
 from sampling_tool.core.formatting import format_optional_timestamp
 from sampling_tool.core.models import SampleResult
 
 _MISSING: Final[str] = "—"
-
-_OPERATOR_SYMBOLS: Final[dict[str, str]] = {
-    "eq": "=",
-    "ne": "≠",
-    "gt": ">",
-    "gte": "≥",
-    "lt": "<",
-    "lte": "≤",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +54,7 @@ class SamplingProvenance:
     stratum_field: str | None
     stratify_mode: str
     parent_sample_id: int | None
+    parent_relation: str | None
     algorithm_version: str
     app_version: str
     created_by: str
@@ -93,6 +92,9 @@ class SamplingProvenance:
             stratum_field=cfg.stratum_field,
             stratify_mode=cfg.stratify_mode.value,
             parent_sample_id=result.parent_sample_id,
+            parent_relation=(
+                result.parent_relation.value if result.parent_relation is not None else None
+            ),
             algorithm_version=result.algorithm_version,
             app_version=app_version,
             created_by=result.created_by,
@@ -100,12 +102,40 @@ class SamplingProvenance:
         )
 
     @property
+    def method_label(self) -> str:
+        """Deutscher Methodenname („Einfach"/„Cluster"/„Geschichtet"), sonst roh."""
+        return METHOD_LABELS.get(self.method, self.method)
+
+    @property
+    def stratify_mode_label(self) -> str:
+        """Deutscher Schichtungsmodus („Proportional"/„Gleich"), sonst roh."""
+        return STRATIFY_MODE_LABELS.get(self.stratify_mode, self.stratify_mode)
+
+    @property
     def filter_operator_symbol(self) -> str:
         """Menschenlesbares Operator-Symbol (`=`/`≠`/`>`/`≥`/`<`/`≤`).
 
         Fällt auf den rohen Wert zurück, falls ein zukünftiger Operator noch
         keine Symbol-Zuordnung hat (nie stillschweigend verschlucken)."""
-        return _OPERATOR_SYMBOLS.get(self.filter_operator, self.filter_operator)
+        return FILTER_OPERATOR_LABELS.get(self.filter_operator, self.filter_operator)
+
+    @property
+    def parent_relation_label(self) -> str | None:
+        """Kurzform der Ableitung („eingeschränkt"/„Nachstichprobe"), `None` ohne
+        erfasste Ableitung. Unbekannte Werte erscheinen roh."""
+        if self.parent_relation is None:
+            return None
+        return PARENT_RELATION_LABELS.get(self.parent_relation, self.parent_relation)
+
+    @property
+    def derivation_text(self) -> str:
+        """Langform der Ableitung mit Eltern-ID; `"—"` ohne Eltern-Stichprobe."""
+        if self.parent_sample_id is None:
+            return _MISSING
+        template = PARENT_RELATION_TEXTS.get(self.parent_relation)
+        if template is None:
+            return f"{self.parent_relation} #{self.parent_sample_id}"
+        return template.format(parent=self.parent_sample_id)
 
     def to_ordered_fields(self) -> list[tuple[str, str]]:
         """Kanonische, geordnete (Label, Wert)-Liste für menschenlesbare
@@ -113,7 +143,7 @@ class SamplingProvenance:
         explizit als `"—"` dargestellt, nie geschätzt."""
         return [
             ("Dataset-ID", _or_dash(self.dataset_id)),
-            ("Sampling-Methode", self.method),
+            ("Sampling-Methode", self.method_label),
             ("Angeforderte Größe", str(self.size_requested)),
             ("Tatsächliche Größe", str(self.size_actual)),
             ("Population (Zeilen)", str(self.population_size)),
@@ -122,9 +152,10 @@ class SamplingProvenance:
             ("Filter-Operator", self.filter_operator_symbol),
             ("Filter-Wert", _or_dash(self.filter_value)),
             ("Cluster-Feld", _or_dash(self.cluster_field)),
-            ("Stratum-Feld", _or_dash(self.stratum_field)),
-            ("Stratify-Mode", self.stratify_mode),
+            ("Schicht-Feld", _or_dash(self.stratum_field)),
+            ("Schichtungsmodus", self.stratify_mode_label),
             ("Parent-Sample-ID", _or_dash(self.parent_sample_id)),
+            ("Ableitung", self.derivation_text),
             ("Algorithmus-Version", self.algorithm_version),
             ("App-Version", self.app_version),
             ("Erstellt von", self.created_by),
@@ -148,6 +179,7 @@ class SamplingProvenance:
             "stratum_field": self.stratum_field,
             "stratify_mode": self.stratify_mode,
             "parent_sample_id": self.parent_sample_id,
+            "parent_relation": self.parent_relation,
             "algorithm_version": self.algorithm_version,
             "app_version": self.app_version,
             "created_by": self.created_by,

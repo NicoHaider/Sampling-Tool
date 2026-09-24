@@ -279,3 +279,51 @@ class TestPathWithSpace:
         result = preflight_check(db_path)
 
         assert result == PreflightAccepted(schema_version=CURRENT_SCHEMA_VERSION)
+
+
+class TestPreflightSchema6:
+    """Sprint 83 / Migration 006: v5 und v6 werden erkannt, die Versionssperre
+    „DB neuer als App" greift für eine v6-DB in einer v5-App."""
+
+    def _v5_db(self, db_path: Path) -> None:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            for name in (
+                "001_initial.sql",
+                "002_engagement_state.sql",
+                "003_filter_operator.sql",
+                "004_algorithm_version.sql",
+                "005_application_id.sql",
+            ):
+                conn.executescript(_migration_sql(name))
+        finally:
+            conn.close()
+
+    def _v6_db(self, db_path: Path) -> None:
+        db = Database(db_path)
+        db.migrate()
+        db.close()
+
+    def test_v5_db_accepted(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "v5.db"
+        self._v5_db(db_path)
+        assert preflight_check(db_path) == PreflightAccepted(schema_version=5)
+
+    def test_v6_db_accepted(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "v6.db"
+        self._v6_db(db_path)
+        assert preflight_check(db_path) == PreflightAccepted(schema_version=6)
+
+    def test_v6_db_rejected_by_v5_app(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = tmp_path / "v6.db"
+        self._v6_db(db_path)
+        bytes_before = db_path.read_bytes()
+
+        monkeypatch.setattr("sampling_tool.persistence.db_preflight.CURRENT_SCHEMA_VERSION", 5)
+        result = preflight_check(db_path)
+
+        assert isinstance(result, PreflightRejected)
+        assert result.reason == PreflightRejectionReason.SCHEMA_TOO_NEW
+        assert db_path.read_bytes() == bytes_before

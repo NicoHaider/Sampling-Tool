@@ -19,6 +19,7 @@ from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
     Engagement,
+    ParentRelation,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -122,9 +123,9 @@ def populated_db(tmp_path: Path) -> Path:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=42),
             selected_row_ids=(2, 4),
             population_size=5,
+            created_by="tester",
         ),
         dataset.id,
-        "tester",
     )
     db.close()
     return db_path
@@ -2172,9 +2173,9 @@ def _two_dataset_db(tmp_path: Path) -> tuple[Path, int, int, int]:
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=1),
             selected_row_ids=(1, 3),
             population_size=3,
+            created_by="test",
         ),
         ds1.id,
-        "test",
     )
     db.close()
     return db_path, ds1.id, ds2.id, sample_id
@@ -5833,9 +5834,9 @@ class TestSeedPerDataset:
                         selected_row_ids=(1, 2, 3),
                         population_size=10,
                         drawn_at=same_instant,
+                        created_by="tester",
                     ),
                     ds_a,
-                    "tester",
                 )
         finally:
             db.close()
@@ -5884,9 +5885,9 @@ class TestSeedPerDataset:
                     config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=2**32 - 1),
                     selected_row_ids=(1, 2),
                     population_size=10,
+                    created_by="tester",
                 ),
                 ds_a,
-                "tester",
             )
         finally:
             db.close()
@@ -6139,3 +6140,173 @@ class TestUiScaleWiring:
             assert controller.session.settings.ui_scale == "groß"
         finally:
             app.setStyleSheet(original_stylesheet)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 83 / A: Ableitung (Einschränkung vs. Nachstichprobe) wird gespeichert
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _real_derivation_dialog_driver(steps: list[tuple[int, str | None]]) -> Iterator[None]:
+    """Wie `_real_sampling_dialog_driver`, kreuzt je Dialog-Öffnung aber zusätzlich
+    „einschränken" (``"restrict"``) bzw. „ergänzen" (``"supplement"``) an.
+
+    ``steps`` = eine ``(Größe, Checkbox)``-Angabe pro `exec()` in Reihenfolge.
+    """
+    from sampling_tool.ui.dialogs import sampling_dialog as sd
+
+    pending = list(steps)
+
+    def _auto_accept(self: sd.SamplingDialog) -> QDialog.DialogCode:
+        size, box = pending.pop(0)
+        if box == "restrict":
+            self._resample_checkbox.setChecked(True)
+        elif box == "supplement":
+            self._supplement_checkbox.setChecked(True)
+        self._size_spin.setValue(size)
+        self.accept()
+        return QDialog.DialogCode.Accepted
+
+    with (
+        patch.object(sd, "_generate_random_seed", return_value=111),
+        patch.object(sd.SamplingDialog, "exec", _auto_accept),
+    ):
+        yield
+    assert not pending, f"Nicht verbrauchte Dialog-Schritte: {pending}"
+
+
+class TestParentRelationPersisted:
+    """Über den ECHTEN Controller-/Dialog-Pfad: DB-Spalte, Audit-Details und das
+    nach Schließen/Öffnen geladene `SampleResult` tragen dieselbe Ableitung."""
+
+    @pytest.mark.parametrize(
+        ("box", "relation"),
+        [("restrict", ParentRelation.RESTRICT), ("supplement", ParentRelation.SUPPLEMENT)],
+    )
+    def test_derivation_persisted_logged_and_reloaded(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        box: str,
+        relation: ParentRelation,
+    ) -> None:
+        from sampling_tool.persistence.repositories import AuditRepo
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            with _real_derivation_dialog_driver([(3, None), (1, box)]):
+                controller.workspace.handle_new_sampling()
+                parent = controller.session.sample
+                assert parent is not None
+                assert parent.id is not None
+                assert (parent.parent_sample_id, parent.parent_relation) == (None, None)
+                controller.workspace.handle_new_sampling()
+
+            child = controller.session.sample
+            assert child is not None
+            assert child.id is not None
+            assert child.parent_sample_id == parent.id
+            assert child.parent_relation is relation
+
+            assert controller.session.db is not None
+            assert controller.session.engagement is not None
+            assert controller.session.engagement.id is not None
+            conn = controller.session.db.connect()
+            raw = conn.execute(
+                "SELECT parent_relation FROM samples WHERE id = ?", (child.id,)
+            ).fetchone()
+            assert raw["parent_relation"] == relation.value
+            events = AuditRepo(conn).list_for_engagement(controller.session.engagement.id)
+            [child_event] = [
+                e for e in events if e.event_type == "sampling" and e.sample_id == child.id
+            ]
+            assert child_event.details["parent_relation"] == relation.value
+
+            controller.engagement.handle_close_engagement()
+            controller.engagement.handle_open_engagement(populated_db)
+            assert controller.session.db is not None
+            reloaded = SampleRepo(controller.session.db.connect()).get_by_id(child.id)
+            assert reloaded is not None
+            assert reloaded.parent_relation is relation
+            assert reloaded.parent_sample_id == parent.id
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 83 / C: `created_by` ist der angemeldete Benutzer – überall
+# ---------------------------------------------------------------------------
+
+
+class TestCreatedByIsUser:
+    """Vorher trug das In-Memory-`SampleResult` den Dataclass-Default „system":
+    Audit-Details, Provenienz und der Sample-Export direkt nach dem Ziehen
+    sagten „system", die DB (und damit der Excel-Report) den echten Namen."""
+
+    def test_audit_provenance_and_export_show_login_user(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from openpyxl import load_workbook
+
+        from sampling_tool.core.provenance import SamplingProvenance
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialogResult
+
+        monkeypatch.setattr("getpass.getuser", lambda: "pruefer.in")
+        export_result = ExportSampleDialogResult(
+            columns=["Konto"], custom_name="wer", custom_id="1", output_dir=tmp_path
+        )
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            export_dialog_factory=lambda *a, **kw: _StubExportDialog(export_result),  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            assert controller.session.user_name() == "pruefer.in"
+            with _real_sampling_dialog_driver(seeds=[111]):
+                controller.workspace.handle_new_sampling()
+            sample = controller.session.sample
+            assert sample is not None
+            assert sample.id is not None
+
+            assert sample.created_by == "pruefer.in"
+            provenance = SamplingProvenance.from_sample_result(
+                sample, dataset_id=None, app_version="x"
+            )
+            assert dict(provenance.to_ordered_fields())["Erstellt von"] == "pruefer.in"
+
+            assert controller.session.db is not None
+            assert controller.session.engagement is not None
+            assert controller.session.engagement.id is not None
+            conn = controller.session.db.connect()
+            raw = conn.execute(
+                "SELECT created_by FROM samples WHERE id = ?", (sample.id,)
+            ).fetchone()
+            assert raw["created_by"] == "pruefer.in"
+            [event] = [
+                e
+                for e in AuditRepo(conn).list_for_engagement(controller.session.engagement.id)
+                if e.event_type == "sampling" and e.sample_id == sample.id
+            ]
+            assert event.details["created_by"] == "pruefer.in"
+
+            with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
+                controller.export.handle_export_sample()
+            [exported] = list(tmp_path.glob("wer_ID1_BDO_sampling_*.xlsx"))
+            meta = {
+                r[0].value: r[1].value
+                for r in load_workbook(exported)["Metadaten"].iter_rows(min_row=2)
+            }
+            assert meta["Erstellt von"] == "pruefer.in"
+            assert "system" not in meta.values()
+        finally:
+            controller.engagement.handle_close_engagement()

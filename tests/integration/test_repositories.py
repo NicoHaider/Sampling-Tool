@@ -14,6 +14,7 @@ from sampling_tool.core.models import (
     DatasetRow,
     Engagement,
     FilterOperator,
+    ParentRelation,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -257,7 +258,7 @@ def _persist_dataset(db: Database, engagement_id: int) -> int:
     return ds.id
 
 
-def _make_result() -> SampleResult:
+def _make_result(created_by: str = "anna") -> SampleResult:
     cfg = SampleConfig(
         method=SamplingMethod.STRATIFIED,
         size=4,
@@ -271,6 +272,7 @@ def _make_result() -> SampleResult:
         config=cfg,
         selected_row_ids=(1, 3, 5, 7),
         population_size=10,
+        created_by=created_by,
     )
 
 
@@ -278,13 +280,13 @@ class TestSampleRepo:
     def test_create_returns_int_id(self, db: Database, engagement_id: int) -> None:
         dataset_id = _persist_dataset(db, engagement_id)
         repo = SampleRepo(db.connect())
-        sid = repo.create_from_result(_make_result(), dataset_id, "anna")
+        sid = repo.create_from_result(_make_result(), dataset_id)
         assert isinstance(sid, int)
 
     def test_roundtrip_preserves_config_and_rows(self, db: Database, engagement_id: int) -> None:
         dataset_id = _persist_dataset(db, engagement_id)
         repo = SampleRepo(db.connect())
-        sid = repo.create_from_result(_make_result(), dataset_id, "anna")
+        sid = repo.create_from_result(_make_result(), dataset_id)
 
         loaded = repo.get_by_id(sid)
         assert loaded is not None
@@ -298,8 +300,8 @@ class TestSampleRepo:
     def test_list_for_dataset(self, db: Database, engagement_id: int) -> None:
         dataset_id = _persist_dataset(db, engagement_id)
         repo = SampleRepo(db.connect())
-        repo.create_from_result(_make_result(), dataset_id, "anna")
-        repo.create_from_result(_make_result(), dataset_id, "berta")
+        repo.create_from_result(_make_result(), dataset_id)
+        repo.create_from_result(_make_result(created_by="berta"), dataset_id)
 
         listed = repo.list_for_dataset(dataset_id)
         assert len(listed) == 2
@@ -324,8 +326,9 @@ class TestSampleRepo:
             config=cfg,
             selected_row_ids=(6, 7, 8),
             population_size=10,
+            created_by="anna",
         )
-        sid = repo.create_from_result(result, dataset_id, "anna")
+        sid = repo.create_from_result(result, dataset_id)
 
         loaded = repo.get_by_id(sid)
         assert loaded is not None
@@ -362,7 +365,7 @@ class TestSampleRepo:
         """Sprint 39 / R-001: Ziehen → Speichern → Laden erhält `algorithm_version`."""
         dataset_id = _persist_dataset(db, engagement_id)
         repo = SampleRepo(db.connect())
-        sid = repo.create_from_result(_make_result(), dataset_id, "anna")
+        sid = repo.create_from_result(_make_result(), dataset_id)
 
         loaded = repo.get_by_id(sid)
         assert loaded is not None
@@ -477,3 +480,89 @@ class TestAuditRepo:
         loaded = repo.list_for_engagement(engagement_id)[0]
         assert loaded.details == details
         assert loaded.id == evt.id
+
+
+# ===========================================================================
+# Sprint 83 – Migration 006: Import-Herkunft + Ableitung
+# ===========================================================================
+
+
+class TestDatasetImportProvenanceRoundtrip:
+    def test_source_sheet_and_header_row_roundtrip(self, db: Database, engagement_id: int) -> None:
+        repo = DatasetRepo(db.connect())
+        dataset = Dataset(
+            name="Mappe (Buchungen)",
+            columns=("Col1", "Country"),
+            source_file="mappe.xlsx",
+            source_sheet="Buchungen",
+            header_row=5,
+            engagement_id=engagement_id,
+        )
+        stored = repo.create(dataset, _sample_rows())
+        assert stored.id is not None
+
+        loaded = repo.get_by_id(stored.id)
+        assert loaded is not None
+        assert (loaded.source_sheet, loaded.header_row) == ("Buchungen", 5)
+        listed = repo.list_for_engagement(engagement_id)
+        assert [(d.source_sheet, d.header_row) for d in listed] == [("Buchungen", 5)]
+
+    def test_unrecorded_provenance_reads_as_none(self, db: Database, engagement_id: int) -> None:
+        repo = DatasetRepo(db.connect())
+        stored = repo.create(_sample_dataset(engagement_id), _sample_rows())
+        assert stored.id is not None
+        loaded = repo.get_by_id(stored.id)
+        assert loaded is not None
+        assert (loaded.source_sheet, loaded.header_row) == (None, None)
+
+
+class TestSampleParentRelationRoundtrip:
+    @pytest.mark.parametrize("relation", [ParentRelation.RESTRICT, ParentRelation.SUPPLEMENT])
+    def test_parent_relation_roundtrip(
+        self, db: Database, engagement_id: int, relation: ParentRelation
+    ) -> None:
+        dataset_id = _persist_dataset(db, engagement_id)
+        repo = SampleRepo(db.connect())
+        parent_id = repo.create_from_result(_make_result(), dataset_id)
+        child = SampleResult(
+            config=_make_result().config,
+            selected_row_ids=(1, 3),
+            population_size=4,
+            parent_sample_id=parent_id,
+            parent_relation=relation,
+        )
+        child_id = repo.create_from_result(child, dataset_id)
+
+        loaded = repo.get_by_id(child_id)
+        assert loaded is not None
+        assert loaded.parent_sample_id == parent_id
+        assert loaded.parent_relation is relation
+        raw = (
+            db.connect()
+            .execute("SELECT parent_relation FROM samples WHERE id = ?", (child_id,))
+            .fetchone()
+        )
+        assert raw["parent_relation"] == relation.value
+
+    def test_without_parent_relation_reads_as_none(self, db: Database, engagement_id: int) -> None:
+        dataset_id = _persist_dataset(db, engagement_id)
+        repo = SampleRepo(db.connect())
+        sid = repo.create_from_result(_make_result(), dataset_id)
+        loaded = repo.get_by_id(sid)
+        assert loaded is not None
+        assert loaded.parent_relation is None
+
+
+class TestSampleRepoCreatedByFromResult:
+    """Sprint 83 / C: EINE Quelle für `created_by` – das `SampleResult` selbst,
+    kein zweiter Parameter, der vom In-Memory-Objekt abweichen kann."""
+
+    def test_created_by_comes_from_result(self, db: Database, engagement_id: int) -> None:
+        from dataclasses import replace
+
+        dataset_id = _persist_dataset(db, engagement_id)
+        repo = SampleRepo(db.connect())
+        sid = repo.create_from_result(replace(_make_result(), created_by="berta"), dataset_id)
+        loaded = repo.get_by_id(sid)
+        assert loaded is not None
+        assert loaded.created_by == "berta"

@@ -114,6 +114,32 @@ class TestLogImport:
         assert evt.details["columns"] == ["a", "b"]
         assert evt.details["dataset_id"] == 7
 
+    def test_details_carry_import_provenance(self, logger: AuditLogger, engagement_id: int) -> None:
+        """Sprint 83 / B: Blatt, Kopfzeile und Zeilen über der Kopfzeile stehen im Event."""
+        ds = Dataset(
+            name="Mappe (Buchungen)",
+            columns=("a",),
+            row_count=1,
+            source_file="mappe.xlsx",
+            source_sheet="Buchungen",
+            header_row=5,
+            engagement_id=engagement_id,
+            id=7,
+        )
+        details = logger.log_import(ds, rows_above_header=4).details
+        assert details["source_sheet"] == "Buchungen"
+        assert details["header_row"] == 5
+        assert details["rows_above_header"] == 4
+
+    def test_unknown_rows_above_header_is_none(
+        self, logger: AuditLogger, engagement_id: int
+    ) -> None:
+        ds = Dataset(name="X", columns=("a",), engagement_id=engagement_id, id=7)
+        details = logger.log_import(ds).details
+        assert details["rows_above_header"] is None
+        assert details["source_sheet"] is None
+        assert details["header_row"] is None
+
 
 class TestLogExport:
     def test_writes_event_with_export_file(self, logger: AuditLogger, sample_id: int) -> None:
@@ -196,3 +222,30 @@ class TestLoggerRoundtripViaRepo:
         assert "reset" in types
         assert "undo" in types
         assert "redo" in types
+
+
+class TestEveryDetailKeyHasGermanLabel:
+    """Sprint 83 / D: jeder Schlüssel, den ein `log_*` in `details` schreibt, hat
+    einen deutschen Namen – sonst stünde er roh im Bericht (nie verschluckt,
+    aber auch nicht lesbar)."""
+
+    def test_all_logger_detail_keys_are_labelled(
+        self, logger: AuditLogger, sample_id: int, dataset_id: int, engagement_id: int
+    ) -> None:
+        from sampling_tool.config import AUDIT_DETAIL_LABELS
+
+        ds = Dataset(name="X", columns=("a",), engagement_id=engagement_id, id=dataset_id)
+        sampling = logger.log_sampling(_make_sample_result(), sample_id, dataset_id)
+        assert sampling.id is not None
+        events = [
+            sampling,
+            logger.log_import(ds, rows_above_header=0),
+            logger.log_export(sample_id, Path("out.xlsx"), 1),
+            logger.log_undo(None),
+            logger.log_redo(None),
+            logger.log_reset(dataset_id),
+            logger.log_correction(sampling.id, "Tippfehler"),
+        ]
+        keys = {key for event in events for key in event.details}
+        missing = sorted(keys - set(AUDIT_DETAIL_LABELS))
+        assert not missing, f"Ohne Anzeige-Namen in config.AUDIT_DETAIL_LABELS: {missing}"

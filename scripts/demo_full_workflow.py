@@ -131,10 +131,13 @@ def main(demo_dir: Path = DEFAULT_DEMO_DIR) -> None:
         size=25,
         seed=42,
     )
-    simple_result = create_sampler(simple_cfg).sample(
-        dataset_repo.iter_rows(dataset.id), population_size=dataset.row_count
+    simple_result = replace(
+        create_sampler(simple_cfg).sample(
+            dataset_repo.iter_rows(dataset.id), population_size=dataset.row_count
+        ),
+        created_by="anna",
     )
-    simple_id = SampleRepo(db.connect()).create_from_result(simple_result, dataset.id, "anna")
+    simple_id = SampleRepo(db.connect()).create_from_result(simple_result, dataset.id)
     audit_logger.log_sampling(simple_result, sample_id=simple_id, dataset_id=dataset.id)
     print(f"    -> Sample #{simple_id}, gezogen: {simple_result.actual_size} Zeilen")
 
@@ -146,10 +149,13 @@ def main(demo_dir: Path = DEFAULT_DEMO_DIR) -> None:
         stratum_field="Land",
         stratify_mode=StratifyMode.PROPORTIONAL,
     )
-    strat_result = create_sampler(strat_cfg).sample(
-        dataset_repo.iter_rows(dataset.id), population_size=dataset.row_count
+    strat_result = replace(
+        create_sampler(strat_cfg).sample(
+            dataset_repo.iter_rows(dataset.id), population_size=dataset.row_count
+        ),
+        created_by="anna",
     )
-    strat_id = SampleRepo(db.connect()).create_from_result(strat_result, dataset.id, "anna")
+    strat_id = SampleRepo(db.connect()).create_from_result(strat_result, dataset.id)
     audit_logger.log_sampling(strat_result, sample_id=strat_id, dataset_id=dataset.id)
     print(f"    -> Sample #{strat_id}, gezogen: {strat_result.actual_size} Zeilen")
 

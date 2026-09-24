@@ -6,6 +6,7 @@ import sqlite3
 
 from sampling_tool.core.models import (
     FilterOperator,
+    ParentRelation,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -21,13 +22,13 @@ class SampleRepo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
 
-    def create_from_result(
-        self,
-        result: SampleResult,
-        dataset_id: int,
-        created_by: str,
-    ) -> int:
-        """Speichert die Ziehung; gibt die DB-id der `samples`-Zeile zurück."""
+    def create_from_result(self, result: SampleResult, dataset_id: int) -> int:
+        """Speichert die Ziehung; gibt die DB-id der `samples`-Zeile zurück.
+
+        `created_by` kommt aus `result` (Sprint 83 / C) – bis dahin war es ein
+        eigener Parameter, und das In-Memory-Objekt, aus dem Audit-Event und
+        Export gebaut werden, trug weiter den Dataclass-Default.
+        """
         cfg = result.config
         with savepoint(self.conn, "sample_create"):
             cur = self.conn.execute(
@@ -35,8 +36,8 @@ class SampleRepo:
                 "(dataset_id, method, sample_size, population_size, seed, "
                 " filter_field, filter_value, cluster_field, stratum_field, "
                 " stratify_mode, filter_operator, parent_sample_id, created_at, created_by, "
-                " algorithm_version) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " algorithm_version, parent_relation) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     dataset_id,
                     cfg.method.value,
@@ -51,8 +52,9 @@ class SampleRepo:
                     cfg.filter_operator.value,
                     result.parent_sample_id,
                     result.drawn_at,
-                    created_by,
+                    result.created_by,
                     result.algorithm_version,
+                    result.parent_relation.value if result.parent_relation else None,
                 ),
             )
             sample_id = cur.lastrowid
@@ -123,6 +125,9 @@ class SampleRepo:
             algorithm_version=row["algorithm_version"],
             drawn_at=row["created_at"],
             parent_sample_id=row["parent_sample_id"],
+            parent_relation=(
+                ParentRelation(row["parent_relation"]) if row["parent_relation"] else None
+            ),
             created_by=row["created_by"],
             id=row["id"],
         )

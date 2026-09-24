@@ -62,12 +62,15 @@ class DatasetRepo:
         with savepoint(self.conn, "dataset_create"):
             cur = self.conn.execute(
                 "INSERT INTO datasets "
-                "(engagement_id, name, source_file, imported_at, row_count, columns_json) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(engagement_id, name, source_file, source_sheet, header_row, imported_at, "
+                " row_count, columns_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     dataset.engagement_id,
                     dataset.name,
                     dataset.source_file,
+                    dataset.source_sheet,
+                    dataset.header_row,
                     dataset.imported_at,
                     # Vorläufig die Estimate – wird unten korrigiert.
                     dataset.row_count,
@@ -127,16 +130,7 @@ class DatasetRepo:
         ds_row = self.conn.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,)).fetchone()
         if ds_row is None:
             return None
-
-        return Dataset(
-            name=ds_row["name"],
-            columns=tuple(_json_loads(ds_row["columns_json"])),
-            row_count=int(ds_row["row_count"]),
-            source_file=ds_row["source_file"],
-            imported_at=ds_row["imported_at"],
-            engagement_id=ds_row["engagement_id"],
-            id=ds_row["id"],
-        )
+        return self._to_dataset(ds_row)
 
     # ---- Row-Zugriffe (Sprint 11.1) -------------------------------------
 
@@ -317,18 +311,21 @@ class DatasetRepo:
             "SELECT * FROM datasets WHERE engagement_id = ? ORDER BY imported_at DESC",
             (engagement_id,),
         )
-        return [
-            Dataset(
-                name=r["name"],
-                columns=tuple(_json_loads(r["columns_json"])),
-                row_count=int(r["row_count"]),
-                source_file=r["source_file"],
-                imported_at=r["imported_at"],
-                engagement_id=r["engagement_id"],
-                id=r["id"],
-            )
-            for r in cursor
-        ]
+        return [self._to_dataset(r) for r in cursor]
+
+    @staticmethod
+    def _to_dataset(row: sqlite3.Row) -> Dataset:
+        return Dataset(
+            name=row["name"],
+            columns=tuple(_json_loads(row["columns_json"])),
+            row_count=int(row["row_count"]),
+            source_file=row["source_file"],
+            source_sheet=row["source_sheet"],
+            header_row=row["header_row"],
+            imported_at=row["imported_at"],
+            engagement_id=row["engagement_id"],
+            id=row["id"],
+        )
 
     def distinct_values(self, dataset_id: int, column: str) -> list[Any]:
         """Distinkte Nicht-None-Werte einer Dataset-Spalte – via SQL, ohne Row-Materialize.
