@@ -959,3 +959,95 @@ class TestPersistsPathologicalValues:
         assert by_id[1] == {"Konto": 1000, "Betrag": "99999999999999999999", "Hinweis": "inf"}
         assert by_id[2] == {"Konto": 2000, "Betrag": 500, "Hinweis": "1e999"}
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 83 / B – Import-Herkunft (Blatt + Kopfzeile) und Datensatzname
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestImportProvenance:
+    """`Dataset.source_sheet` = tatsächlich gelesenes Blatt (CSV: None);
+    `Dataset.header_row` = Kopfzeile 1-basiert wie im Dialog, 0 = keine."""
+
+    def test_gewaehltes_zweites_blatt(self, importer: ExcelImporter, three_sheet_xlsx: Path) -> None:
+        ds = importer.import_file_configured(three_sheet_xlsx, "Zweites", 0).dataset
+        assert (ds.source_sheet, ds.header_row) == ("Zweites", 1)
+
+    def test_kopfzeile_in_zeile_5(self, importer: ExcelImporter, title_rows_xlsx: Path) -> None:
+        ds = importer.import_file_configured(title_rows_xlsx, "Export", 4).dataset
+        assert (ds.source_sheet, ds.header_row) == ("Export", 5)
+
+    def test_keine_kopfzeile_ist_0(self, importer: ExcelImporter, three_sheet_xlsx: Path) -> None:
+        ds = importer.import_file_configured(three_sheet_xlsx, "Drittes", None).dataset
+        assert (ds.source_sheet, ds.header_row) == ("Drittes", 0)
+
+    def test_csv_auto_pfad(self, importer: ExcelImporter, utf8_csv: Path) -> None:
+        ds = importer.import_file(utf8_csv).dataset
+        assert (ds.source_sheet, ds.header_row) == (None, 1)
+
+    def test_csv_konfiguriert(self, importer: ExcelImporter, title_rows_csv: Path) -> None:
+        with_header = importer.import_file_configured(title_rows_csv, None, 4).dataset
+        without = importer.import_file_configured(title_rows_csv, None, None).dataset
+        assert (with_header.source_sheet, with_header.header_row) == (None, 5)
+        assert (without.source_sheet, without.header_row) == (None, 0)
+
+    def test_einblaettrige_mappe_auto_pfad_speichert_blattnamen(
+        self, importer: ExcelImporter, simple_xlsx: Path
+    ) -> None:
+        ds = importer.import_file(simple_xlsx).dataset
+        assert (ds.source_sheet, ds.header_row) == ("Daten", 1)
+
+    def test_mehrblaettrige_mappe_auto_pfad_liest_erstes_blatt(
+        self, importer: ExcelImporter, three_sheet_xlsx: Path
+    ) -> None:
+        ds = importer.import_file(three_sheet_xlsx).dataset
+        assert (ds.source_sheet, ds.header_row) == ("Erstes", 1)
+
+    def test_auto_pfad_zaehlt_fuehrende_leerzeilen_mit(
+        self, importer: ExcelImporter, leading_blank_rows_xlsx: Path
+    ) -> None:
+        result = importer.import_file(leading_blank_rows_xlsx)
+        assert result.dataset.header_row == 3
+        assert result.dataset.header_row == result.stats.rows_above_header + 1
+
+    def test_csv_auto_pfad_zaehlt_fuehrende_leerzeilen_mit(
+        self, importer: ExcelImporter, leading_blank_rows_csv: Path
+    ) -> None:
+        assert importer.import_file(leading_blank_rows_csv).dataset.header_row == 3
+
+
+@pytest.mark.integration
+class TestDatasetNameWithSheet:
+    """Nur mehrblättrige Mappen bekommen den Blattnamen als Suffix – zwei Blätter
+    derselben Datei hießen sonst gleich. Einblättrig und CSV: exakt `path.stem`."""
+
+    def test_mehrblaettrig_konfiguriert(
+        self, importer: ExcelImporter, three_sheet_xlsx: Path
+    ) -> None:
+        ds = importer.import_file_configured(three_sheet_xlsx, "Zweites", 0).dataset
+        assert ds.name == "three_sheet (Zweites)"
+
+    def test_mehrblaettrig_ohne_kopfzeile(
+        self, importer: ExcelImporter, three_sheet_xlsx: Path
+    ) -> None:
+        ds = importer.import_file_configured(three_sheet_xlsx, "Drittes", None).dataset
+        assert ds.name == "three_sheet (Drittes)"
+
+    def test_mehrblaettrig_auto_pfad(self, importer: ExcelImporter, three_sheet_xlsx: Path) -> None:
+        assert importer.import_file(three_sheet_xlsx).dataset.name == "three_sheet (Erstes)"
+
+    def test_einblaettrig_exakt_stem(
+        self, importer: ExcelImporter, simple_xlsx: Path, title_rows_xlsx: Path
+    ) -> None:
+        assert importer.import_file(simple_xlsx).dataset.name == simple_xlsx.stem
+        configured = importer.import_file_configured(title_rows_xlsx, "Export", 4).dataset
+        assert configured.name == title_rows_xlsx.stem
+
+    def test_csv_exakt_stem(
+        self, importer: ExcelImporter, utf8_csv: Path, title_rows_csv: Path
+    ) -> None:
+        assert importer.import_file(utf8_csv).dataset.name == utf8_csv.stem
+        configured = importer.import_file_configured(title_rows_csv, None, 4).dataset
+        assert configured.name == title_rows_csv.stem

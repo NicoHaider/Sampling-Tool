@@ -59,6 +59,19 @@ def format_optional_timestamp(ts: datetime | None) -> str:
     return format_event_timestamp(ts)
 
 
+def format_header_row(header_row: int | None) -> str:
+    """Anzeige der Import-Kopfzeile (Sprint 83): 1-basiert wie im Import-Dialog.
+
+    ``0`` heißt „keine Kopfzeile, Spaltennamen generiert"; ``None`` heißt
+    „nicht erfasst" (Import vor Migration 006) und bleibt ein Em-Dash.
+    """
+    if header_row is None:
+        return "—"
+    if header_row == 0:
+        return "keine (Spaltennamen generiert)"
+    return f"Zeile {header_row}"
+
+
 def format_audit_details(details: dict[str, Any]) -> str:
     """Kompakte Ein-Zeilen-Darstellung eines `AuditEvent.details`-Dicts.
 

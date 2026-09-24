@@ -114,6 +114,34 @@ class TestLogImport:
         assert evt.details["columns"] == ["a", "b"]
         assert evt.details["dataset_id"] == 7
 
+    def test_details_carry_import_provenance(
+        self, logger: AuditLogger, engagement_id: int
+    ) -> None:
+        """Sprint 83 / B: Blatt, Kopfzeile und Zeilen über der Kopfzeile stehen im Event."""
+        ds = Dataset(
+            name="Mappe (Buchungen)",
+            columns=("a",),
+            row_count=1,
+            source_file="mappe.xlsx",
+            source_sheet="Buchungen",
+            header_row=5,
+            engagement_id=engagement_id,
+            id=7,
+        )
+        details = logger.log_import(ds, rows_above_header=4).details
+        assert details["source_sheet"] == "Buchungen"
+        assert details["header_row"] == 5
+        assert details["rows_above_header"] == 4
+
+    def test_unknown_rows_above_header_is_none(
+        self, logger: AuditLogger, engagement_id: int
+    ) -> None:
+        ds = Dataset(name="X", columns=("a",), engagement_id=engagement_id, id=7)
+        details = logger.log_import(ds).details
+        assert details["rows_above_header"] is None
+        assert details["source_sheet"] is None
+        assert details["header_row"] is None
+
 
 class TestLogExport:
     def test_writes_event_with_export_file(self, logger: AuditLogger, sample_id: int) -> None:

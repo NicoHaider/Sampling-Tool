@@ -427,6 +427,8 @@ class ExcelImporter:
         sheet = _select_sheet(wb, sheet_name)
         if sheet.start is None:
             raise DataImportError(f"Sheet '{sheet_name or 'Standard'}' in '{path.name}' ist leer.")
+        read_sheet = _read_sheet_name(wb, sheet_name)
+        name = _dataset_name(path, read_sheet, wb)
 
         if header_row is None:
             # „keine Kopfzeile": generische Spaltennamen aus der Blattbreite,
@@ -435,10 +437,12 @@ class ExcelImporter:
             stats = ImportStats()
             total_estimate = max(0, int(sheet.total_height))
             dataset = Dataset(
-                name=path.stem,
+                name=name,
                 columns=tuple(columns),
                 row_count=total_estimate,
                 source_file=str(path),
+                source_sheet=read_sheet,
+                header_row=_header_row_number(None),
             )
             rows_iter = self._configured_row_generator(
                 sheet, columns, stats, total_estimate, skip_rows=0
@@ -462,10 +466,12 @@ class ExcelImporter:
         )
         total_estimate = max(0, int(sheet.total_height) - header_row - 1)
         dataset = Dataset(
-            name=path.stem,
+            name=name,
             columns=tuple(columns),
             row_count=max(0, total_estimate),
             source_file=str(path),
+            source_sheet=read_sheet,
+            header_row=_header_row_number(header_row),
         )
         rows_iter = self._configured_row_generator(
             sheet, columns, stats, total_estimate, skip_rows=header_row + 1
@@ -531,6 +537,7 @@ class ExcelImporter:
             columns=tuple(columns),
             row_count=total,
             source_file=str(path),
+            header_row=_header_row_number(header_row),
         )
         rows_iter = self._csv_row_generator(columns, data_rows, stats, total)
         return ImportResult(dataset=dataset, rows=rows_iter, stats=stats)
@@ -604,11 +611,16 @@ class ExcelImporter:
         # `row_count` ist initial geschätzt (Calamine `total_height` abzüglich
         # Header + leading-blanks). `DatasetRepo.create` korrigiert den Wert
         # nach echter Persistierung.
+        read_sheet = _read_sheet_name(wb, sheet_name)
         dataset = Dataset(
-            name=path.stem,
+            name=_dataset_name(path, read_sheet, wb),
             columns=tuple(columns),
             row_count=max(0, total_estimate),
             source_file=str(path),
+            source_sheet=read_sheet,
+            # Die Auto-Erkennung nimmt die erste nicht-leere Zeile: ihr Index
+            # ist genau die Zahl der Leerzeilen davor.
+            header_row=_header_row_number(header_skipped),
         )
         rows_iter = self._excel_row_generator(sheet, columns, stats, total_estimate)
         return ImportResult(dataset=dataset, rows=rows_iter, stats=stats)
@@ -688,6 +700,7 @@ class ExcelImporter:
             columns=tuple(columns),
             row_count=total,
             source_file=str(path),
+            header_row=_header_row_number(leading),
         )
         rows_iter = self._csv_row_generator(columns, data_rows, stats, total)
         return ImportResult(dataset=dataset, rows=rows_iter, stats=stats)
@@ -744,6 +757,32 @@ def _select_sheet(wb: CalamineWorkbook, sheet_name: str | None) -> CalamineSheet
             f"Sheet '{sheet_name}' existiert nicht. Verfügbar: {', '.join(names)}."
         )
     return wb.get_sheet_by_name(sheet_name)
+
+
+def _read_sheet_name(wb: CalamineWorkbook, sheet_name: str | None) -> str:
+    """Name des Blatts, das `_select_sheet` für ``sheet_name`` tatsächlich liest."""
+    return sheet_name if sheet_name is not None else list(wb.sheet_names)[0]
+
+
+def _dataset_name(path: Path, sheet_name: str, wb: CalamineWorkbook) -> str:
+    """Datensatzname: bei mehrblättrigen Mappen mit Blatt-Suffix (Sprint 83).
+
+    Sonst hießen zwei Blätter derselben Datei gleich. Einblättrige Mappen
+    behalten exakt ``path.stem`` – wie CSV-Dateien und alle Bestands-Datasets.
+    """
+    if len(wb.sheet_names) > 1:
+        return f"{path.stem} ({sheet_name})"
+    return path.stem
+
+
+def _header_row_number(header_index: int | None) -> int:
+    """Kopfzeile 1-basiert, wie der Import-Dialog sie anzeigt; ``0`` = keine Kopfzeile.
+
+    Die EINE Umrechnung aus der 0-basierten Zählung des Importers (Sprint 83).
+    Der Index zählt ab der ersten Zeile des Blatts bzw. der CSV-Datei – calamine
+    liefert führende Leerzeilen mit, der Dialog nummeriert dieselben Zeilen.
+    """
+    return 0 if header_index is None else header_index + 1
 
 
 def _excel_header_pass(sheet: CalamineSheet) -> tuple[list[str], int, list[str], int]:

@@ -107,7 +107,9 @@ class ExcelImportTask:
                     progress=progress.report,
                     cancellation=cancellation,
                 )
-                AuditLogger(AuditRepo(conn), self.user_name, self.engagement_id).log_import(stored)
+                AuditLogger(AuditRepo(conn), self.user_name, self.engagement_id).log_import(
+                    stored, rows_above_header=result.stats.rows_above_header
+                )
             # `stats` ist nach voller `rows`-Konsumierung gefüllt (Sprint 11.3).
             return ExcelImportTaskResult(dataset=stored, stats=result.stats)
         finally:

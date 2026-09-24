@@ -15,6 +15,7 @@ from sampling_tool.core.formatting import (
     format_audit_details,
     format_cell_value,
     format_event_timestamp,
+    format_header_row,
     format_optional_timestamp,
 )
 
@@ -148,3 +149,16 @@ class TestFormatCellValue:
     )
     def test_non_float_values_keep_previous_rendering(self, value: object, expected: str) -> None:
         assert format_cell_value(value) == expected
+
+
+class TestFormatHeaderRow:
+    """Sprint 83 / B: Kopfzeile 1-basiert wie im Import-Dialog, 0 = keine."""
+
+    def test_zeilennummer(self) -> None:
+        assert format_header_row(5) == "Zeile 5"
+
+    def test_keine_kopfzeile(self) -> None:
+        assert format_header_row(0) == "keine (Spaltennamen generiert)"
+
+    def test_nicht_erfasst(self) -> None:
+        assert format_header_row(None) == "—"

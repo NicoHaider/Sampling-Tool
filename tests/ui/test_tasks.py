@@ -17,6 +17,7 @@ from sampling_tool.core.models import Engagement
 from sampling_tool.io.importer import ExcelImporter
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import (
+    AuditRepo,
     DatasetRepo,
     EngagementRepo,
 )
@@ -153,6 +154,49 @@ class TestExcelImportTask:
 
         assert stored.columns == ("Konto", "Betrag")
         assert stored.row_count == 1
+
+    def test_import_records_provenance_in_db_and_audit(self, tmp_path: Path) -> None:
+        """Sprint 83 / B: Blatt + Kopfzeile landen in `datasets` UND im Import-Event."""
+        xlsx = tmp_path / "mappe.xlsx"
+        wb = Workbook()
+        first = wb.active
+        assert first is not None
+        first.title = "Stammdaten"
+        first.append(["Nr"])
+        first.append([1])
+        second = wb.create_sheet("Buchungen")
+        second.append(["Buchungsexport"])
+        second.append([None])
+        second.append(["Konto", "Betrag"])
+        second.append([100, 999])
+        wb.save(xlsx)
+
+        db_path, eng_id = _make_engagement_db(tmp_path)
+        task = ExcelImportTask(
+            path=xlsx,
+            db_path=db_path,
+            engagement_id=eng_id,
+            user_name="tester",
+            sheet_name="Buchungen",
+            header_row=2,
+            configured=True,
+        )
+        reporter, _ticks = _make_progress_reporter()
+        stored = task.run(reporter, CancellationToken()).dataset
+        assert stored.id is not None
+
+        db = Database(db_path)
+        try:
+            loaded = DatasetRepo(db.connect()).get_by_id(stored.id)
+            assert loaded is not None
+            assert loaded.name == "mappe (Buchungen)"
+            assert (loaded.source_sheet, loaded.header_row) == ("Buchungen", 3)
+            [event] = AuditRepo(db.connect()).list_for_engagement(eng_id)
+            assert event.details["source_sheet"] == "Buchungen"
+            assert event.details["header_row"] == 3
+            assert event.details["rows_above_header"] == 2
+        finally:
+            db.close()
 
     def test_import_configured_no_header_generates_generic_columns(self, tmp_path: Path) -> None:
         """configured=True mit header_row=None ⇒ „keine Kopfzeile" (generische Spalten)."""

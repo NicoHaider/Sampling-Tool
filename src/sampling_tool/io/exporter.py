@@ -35,6 +35,7 @@ from sampling_tool.config import (
     local_export_now,
     sanitize_export_filename_token,
 )
+from sampling_tool.core.formatting import format_header_row
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement, SampleResult
 from sampling_tool.core.provenance import SamplingProvenance
 from sampling_tool.io._atomic import AtomicReplaceError, atomic_output
@@ -228,6 +229,8 @@ class ExcelExporter:
             ("Erstellt am", datetime.now()),
             ("Dataset", dataset.name),
             ("Quelldatei", dataset.source_file),
+            ("Quellblatt", dataset.source_sheet or "—"),
+            ("Kopfzeile", format_header_row(dataset.header_row)),
         ]
         rows.extend(provenance.to_ordered_fields())
         if engagement is not None:
