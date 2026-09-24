@@ -5416,7 +5416,7 @@ class TestSeedRelocationReproducibility:
         populated_db: Path,
     ) -> None:
         # „Geänderter Seed gilt für die nächste Ziehung": der Settings-Seed hat
-        # Vorrang vor dem gemerkten last_seed.
+        # Vorrang vor dem Seed der jüngsten Stichprobe des Datensatzes.
         from dataclasses import replace as dc_replace
 
         from sampling_tool.ui.settings_store import AppSettings
@@ -5438,6 +5438,234 @@ class TestSeedRelocationReproducibility:
                 controller.workspace.handle_new_sampling()
                 assert controller.session.sample is not None
                 assert controller.session.sample.config.seed == 2002
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+def _two_datasets_without_samples_db(tmp_path: Path, stem: str = "seeds") -> tuple[Path, int, int]:
+    """Engagement mit zwei Datensätzen (A, B) à 10 Zeilen und OHNE Stichprobe.
+
+    `populated_db`/`_two_dataset_db` tragen bereits Seeds (42 bzw. 1) – für
+    die Seed-je-Datensatz-Tests muss die erste Ziehung den Dialog-Seed nutzen.
+    """
+    db_path = tmp_path / f"{stem}.db"
+    db = Database(db_path)
+    db.migrate()
+    eng = EngagementRepo(db.connect()).get_or_create(
+        Engagement(auditor_name="Anna", client_name=f"ACME {stem}", audit_type="ISAE 3402")
+    )
+    assert eng.id is not None
+    ds_repo = DatasetRepo(db.connect())
+    rows = tuple(DatasetRow(row_id=i, values={"a": i}) for i in range(1, 11))
+    ds_a = ds_repo.create(Dataset(name="A", columns=("a",), engagement_id=eng.id), rows)
+    ds_b = ds_repo.create(Dataset(name="B", columns=("a",), engagement_id=eng.id), rows)
+    assert ds_a.id is not None
+    assert ds_b.id is not None
+    db.close()
+    return db_path, ds_a.id, ds_b.id
+
+
+class TestSeedPerDataset:
+    """Sprint 82 / C: Der Seed gilt je Datensatz statt sitzungsweit.
+
+    Auflösung beim Öffnen des Stichproben-Dialogs: fester Seed aus den
+    Einstellungen → Seed der jüngsten Stichprobe DIESES Datensatzes aus der
+    Projektdatei → sonst würfelt der Dialog. Der echte `SamplingDialog` läuft
+    über `_real_sampling_dialog_driver`; jede Dialog-Öffnung verbraucht genau
+    einen Wert aus `seeds` (auch wenn `set_initial_seed` ihn überschreibt).
+    """
+
+    @staticmethod
+    def _controller(window: MainWindow, recent_store: RecentEngagementsStore) -> MainController:
+        # Explizite Defaults: diese Datei isoliert QSettings nicht – ein fester
+        # Seed aus den echten Einstellungen des Entwicklers würde sonst durchschlagen.
+        from sampling_tool.ui.settings_store import AppSettings
+
+        return MainController(window, recent_store=recent_store, settings=AppSettings.defaults())
+
+    @staticmethod
+    def _draw(controller: MainController, dataset_id: int) -> SampleResult:
+        controller.selection.handle_dataset_selected(dataset_id)
+        controller.workspace.handle_new_sampling()
+        sample = controller.session.sample
+        assert sample is not None
+        return sample
+
+    def test_each_dataset_keeps_its_own_seed(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, ds_a, ds_b = _two_datasets_without_samples_db(tmp_path)
+        controller = self._controller(window, recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            with _real_sampling_dialog_driver(seeds=[111, 222, 333]):
+                first_a = self._draw(controller, ds_a)
+                on_b = self._draw(controller, ds_b)
+                second_a = self._draw(controller, ds_a)
+
+            assert first_a.config.seed == 111
+            assert on_b.config.seed == 222
+            assert second_a.config.seed == 111
+            assert second_a.selected_row_ids == first_a.selected_row_ids
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_seed_survives_close_and_reopen(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, ds_a, _ds_b = _two_datasets_without_samples_db(tmp_path)
+        controller = self._controller(window, recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            with _real_sampling_dialog_driver(seeds=[111]):
+                before = self._draw(controller, ds_a)
+            assert before.config.seed == 111
+
+            controller.engagement.handle_close_engagement()
+            controller.engagement.handle_open_engagement(db_path)
+
+            with _real_sampling_dialog_driver(seeds=[999]):
+                after = self._draw(controller, ds_a)
+            assert after.config.seed == 111
+            assert after.selected_row_ids == before.selected_row_ids
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_fixed_settings_seed_wins(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        db_path, ds_a, ds_b = _two_datasets_without_samples_db(tmp_path)
+        controller = self._controller(window, recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            with _real_sampling_dialog_driver(seeds=[111, 222, 333]):
+                assert self._draw(controller, ds_a).config.seed == 111
+
+                controller.session.settings = dc_replace(controller.session.settings, seed=5555)
+                assert self._draw(controller, ds_a).config.seed == 5555
+                assert self._draw(controller, ds_b).config.seed == 5555
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_back_to_automatic_keeps_seed_of_youngest_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        # Bewusste Folge der Auflösungsreihenfolge: nach einer Ziehung mit festem
+        # Seed trägt die jüngste Stichprobe des Datensatzes diesen Seed – zurück auf
+        # „Automatisch" bleibt er für diesen Datensatz erhalten.
+        from dataclasses import replace as dc_replace
+
+        db_path, ds_a, _ds_b = _two_datasets_without_samples_db(tmp_path)
+        controller = self._controller(window, recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            with _real_sampling_dialog_driver(seeds=[111, 222, 333]):
+                assert self._draw(controller, ds_a).config.seed == 111
+                controller.session.settings = dc_replace(controller.session.settings, seed=5555)
+                assert self._draw(controller, ds_a).config.seed == 5555
+                controller.session.settings = dc_replace(controller.session.settings, seed=None)
+                assert self._draw(controller, ds_a).config.seed == 5555
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_equal_timestamps_pick_newest_sample_id(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        # Bei gleichem created_at liefert `list_for_dataset` die ÄLTESTE Zeile
+        # zuerst – die jüngste Stichprobe muss trotzdem gewinnen.
+        from datetime import UTC, datetime
+
+        db_path, ds_a, _ds_b = _two_datasets_without_samples_db(tmp_path)
+        same_instant = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        db = Database(db_path)
+        try:
+            for seed in (11, 22, 33):
+                SampleRepo(db.connect()).create_from_result(
+                    SampleResult(
+                        config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=seed),
+                        selected_row_ids=(1, 2, 3),
+                        population_size=10,
+                        drawn_at=same_instant,
+                    ),
+                    ds_a,
+                    "tester",
+                )
+        finally:
+            db.close()
+
+        controller = self._controller(window, recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            with _real_sampling_dialog_driver(seeds=[999]):
+                assert self._draw(controller, ds_a).config.seed == 33
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_opening_other_project_does_not_leak_seed(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        first_db, first_ds, _ = _two_datasets_without_samples_db(tmp_path, stem="p1")
+        second_db, second_ds, _ = _two_datasets_without_samples_db(tmp_path, stem="p2")
+        controller = self._controller(window, recent_store)
+        try:
+            controller.engagement.handle_open_engagement(first_db)
+            with _real_sampling_dialog_driver(seeds=[111, 222]):
+                assert self._draw(controller, first_ds).config.seed == 111
+                # Direkt das andere Projekt öffnen, ohne vorher zu schließen.
+                controller.engagement.handle_open_engagement(second_db)
+                assert self._draw(controller, second_ds).config.seed == 222
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_seed_outside_dialog_range_is_not_prefilled(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        # Gültige Seeds reichen bis SEED_MAX (2**32 - 1), die Seed-SpinBox des
+        # Dialogs nur bis 2**31 - 1. Ein solcher Seed aus der Projektdatei darf
+        # „Neue Stichprobe" nicht mit OverflowError abbrechen – der Dialog würfelt.
+        db_path, ds_a, _ds_b = _two_datasets_without_samples_db(tmp_path)
+        db = Database(db_path)
+        try:
+            SampleRepo(db.connect()).create_from_result(
+                SampleResult(
+                    config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=2**32 - 1),
+                    selected_row_ids=(1, 2),
+                    population_size=10,
+                ),
+                ds_a,
+                "tester",
+            )
+        finally:
+            db.close()
+
+        controller = self._controller(window, recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            with _real_sampling_dialog_driver(seeds=[111]):
+                assert self._draw(controller, ds_a).config.seed == 111
         finally:
             controller.engagement.handle_close_engagement()
 

@@ -12,7 +12,11 @@ from pytestqt.qtbot import QtBot
 
 from sampling_tool.config import APP_NAME, APP_ORG
 from sampling_tool.ui._scaling import load_scaled_stylesheet
-from sampling_tool.ui.dialogs.settings_dialog import SettingsDialog
+from sampling_tool.ui.dialogs.settings_dialog import (
+    _SEED_AUTO_HINT,
+    _SEED_AUTO_LABEL,
+    SettingsDialog,
+)
 from sampling_tool.ui.settings_store import AppSettings, load_settings, save_settings
 
 pytestmark = pytest.mark.ui
@@ -234,8 +238,8 @@ class TestAuditExportDateFilterToggle:
 class TestSeedSettingField:
     """Sprint 27: Seed wird ausschließlich in den Einstellungen geändert."""
 
-    def test_default_shows_random(self, qtbot: QtBot, defaults: AppSettings) -> None:
-        # seed=None → SpinBox steht auf 0 (specialValueText „zufällig").
+    def test_default_shows_auto(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        # seed=None → SpinBox steht auf 0 (specialValueText „automatisch").
         dialog = SettingsDialog(defaults)
         qtbot.addWidget(dialog)
         assert dialog._seed_spin.value() == 0
@@ -257,7 +261,7 @@ class TestSeedSettingField:
         assert result is not None
         assert result.seed == 777
 
-    def test_zero_means_random(self, qtbot: QtBot, defaults: AppSettings) -> None:
+    def test_zero_means_auto(self, qtbot: QtBot, defaults: AppSettings) -> None:
         current = replace(defaults, seed=42)
         dialog = SettingsDialog(current)
         qtbot.addWidget(dialog)
@@ -273,7 +277,7 @@ class TestSeedSettingField:
         dialog._seed_dice.click()
         assert dialog._seed_spin.value() > 0
 
-    def test_reset_restores_random(
+    def test_reset_restores_auto(
         self, qtbot: QtBot, defaults: AppSettings, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         current = replace(defaults, seed=5)
@@ -284,6 +288,22 @@ class TestSeedSettingField:
         )
         dialog._on_reset_defaults()
         assert dialog._seed_spin.value() == 0
+
+
+class TestSeedAutoLabel:
+    """Sprint 82 / C: Sonderwert 0 beschreibt das echte Verhalten (Seed je Datensatz)."""
+
+    def test_special_value_shows_auto_label(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        assert dialog._seed_spin.value() == 0
+        assert dialog._seed_spin.specialValueText() == _SEED_AUTO_LABEL
+        assert dialog._seed_spin.text() == _SEED_AUTO_LABEL
+
+    def test_hint_row_explains_per_dataset_seed(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        assert dialog._seed_hint.text() == _SEED_AUTO_HINT
 
 
 class TestPanelVisibilityToggle:
@@ -615,7 +635,7 @@ class TestScrollFallback:
         dialog._tabs.setCurrentIndex(2)
         qtbot.wait(50)
 
-        for label in (dialog._ui_scale_hint, dialog._info_label):
+        for label in (dialog._ui_scale_hint, dialog._seed_hint, dialog._info_label):
             # 1) Bei der Breite, die das reale Layout gerade zuweist.
             width = label.width()
             assert label.height() >= label.heightForWidth(width), (

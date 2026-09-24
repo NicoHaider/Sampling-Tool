@@ -18,12 +18,17 @@ import logging
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from PyQt6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from sampling_tool.audit.logger import AuditLogger
-from sampling_tool.config import SUPPORTED_CSV_SUFFIXES, SUPPORTED_EXCEL_SUFFIXES
+from sampling_tool.config import (
+    SEED_MAX,
+    SEED_MIN,
+    SUPPORTED_CSV_SUFFIXES,
+    SUPPORTED_EXCEL_SUFFIXES,
+)
 from sampling_tool.core.models import (
     AuditEvent,
     Dataset,
@@ -61,6 +66,10 @@ from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
 from sampling_tool.ui.workers.tasks import ExcelImportTask, ExcelImportTaskResult
 
 logger = logging.getLogger(__name__)
+
+# Die Seed-SpinBox des Stichproben-Dialogs ist 32-Bit-signed; gültige Seeds
+# reichen bis SEED_MAX (2**32 - 1). Größere Seeds lassen sich nicht vorbelegen.
+_DIALOG_SEED_MAX: Final[int] = min(SEED_MAX, 2_147_483_647)
 
 
 def _count_filter_matches(
@@ -347,15 +356,14 @@ class WorkspaceController:
             match_count_provider,
             scale_factor(s.settings.ui_scale),
         )
-        # Seed-Quelle auflösen (Sprint 27): ein fester Seed aus den
-        # Einstellungen hat Vorrang („geänderter Seed gilt für die nächste
-        # Ziehung"); sonst greift der Sprint-21-Mechanismus, der den zuletzt
-        # genutzten Seed vorbefüllt, damit eine erneute Ziehung (auch nach
-        # „Sampling zurücksetzen") bit-genau reproduziert (ISAE-3402). Ist
-        # beides None, würfelt der Dialog intern einen Zufalls-Seed. Das
-        # Seed-Feld ist schreibgeschützt – der Eingabeort ist verschoben, der
-        # RNG-/Zieh-Pfad bleibt unverändert.
-        resolved_seed = s.settings.seed if s.settings.seed is not None else s.last_seed
+        # Seed-Quelle auflösen (Sprint 82 / C), in dieser Reihenfolge:
+        # (1) fester Seed aus den Einstellungen (Vorrang, gilt für alle
+        # Datensätze); (2) Seed der jüngsten Stichprobe DIESES Datensatzes aus
+        # der Projektdatei – überlebt Zurücksetzen, Undo und Schließen/
+        # Wiederöffnen, damit eine erneute Ziehung bit-genau reproduziert
+        # (ISAE-3402); (3) sonst würfelt der Dialog intern einen Zufalls-Seed.
+        # Das Seed-Feld ist schreibgeschützt, der RNG-/Zieh-Pfad unverändert.
+        resolved_seed = self._resolve_initial_seed(dataset_id)
         if resolved_seed is not None:
             dialog.set_initial_seed(resolved_seed)
         if dialog.exec() != dialog.DialogCode.Accepted:
@@ -398,9 +406,6 @@ class WorkspaceController:
         s.push_samples(samples)
         s.sample = stored
         s.active_sample_id = stored.id
-        # Sprint 21: Seed merken, damit der nächste Dialog-Open ihn vorbefüllt
-        # (überlebt „Sampling zurücksetzen", siehe `set_initial_seed` oben).
-        s.last_seed = stored.config.seed
         # Auto-Filter: nach dem Sampling sieht der Auditor sofort nur die
         # gezogenen Zeilen, ohne erst die Checkbox suchen zu müssen.
         s.window.filter_to_sample(stored)
@@ -547,6 +552,34 @@ class WorkspaceController:
         s.persist_state()
 
     # ---- intern --------------------------------------------------------
+
+    def _resolve_initial_seed(self, dataset_id: int) -> int | None:
+        """Seed-Vorbelegung für den Stichproben-Dialog (Sprint 82 / C).
+
+        Fester Seed aus den Einstellungen, sonst der Seed der jüngsten
+        Stichprobe dieses Datensatzes, sonst `None` (der Dialog würfelt). Ein
+        Seed außerhalb des SpinBox-Bereichs des Dialogs liefert ebenfalls `None`.
+        """
+        s = self.session
+        if s.settings.seed is not None:
+            return s.settings.seed
+        assert s.db is not None
+        samples = SampleRepo(s.db.connect()).list_for_dataset(dataset_id)
+        if not samples:
+            return None
+        # `list_for_dataset` sortiert nur nach created_at; bei Gleichstand liefert
+        # SQLite die ÄLTERE Zeile zuerst. Die AUTOINCREMENT-ID (= Einfüge-
+        # reihenfolge) entscheidet den Gleichstand zugunsten der jüngsten.
+        youngest = max(samples, key=lambda smp: (smp.drawn_at, smp.id or 0))
+        seed = youngest.config.seed
+        if not SEED_MIN <= seed <= _DIALOG_SEED_MAX:
+            logger.warning(
+                "Seed %s of sample %s is outside the dialog range; dialog rolls a new seed",
+                seed,
+                youngest.id,
+            )
+            return None
+        return seed
 
     def _make_match_count_provider(
         self, repo: DatasetRepo, dataset_id: int

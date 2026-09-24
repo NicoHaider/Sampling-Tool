@@ -23,6 +23,8 @@ from sampling_tool.core.presets import SamplingPreset
 from sampling_tool.ui._scaling import load_scaled_stylesheet
 from sampling_tool.ui.dialogs.sampling_dialog import (
     _HINT_ICON_PX,
+    _SEED_HINT,
+    _SEED_TOOLTIP,
     NO_FILTER_LABEL,
     SamplingDialog,
     _parse_filter_threshold,
@@ -284,6 +286,13 @@ class TestSeedLock:
         result = dialog.get_result()
         assert result is not None
         assert result.config.seed == 98765
+
+    def test_seed_hint_and_tooltip_describe_per_dataset_seed(self, qtbot: QtBot) -> None:
+        # Sprint 82 / C: Hinweis und Tooltip beschreiben den Seed je Datensatz.
+        dialog = SamplingDialog(*_make_dataset(), features=_NONE)
+        qtbot.addWidget(dialog)
+        assert dialog._seed_hint.text() == _SEED_HINT
+        assert dialog._seed_spin.toolTip() == _SEED_TOOLTIP
 
 
 class TestSamplingDialogSizeHint:
