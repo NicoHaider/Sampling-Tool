@@ -14,6 +14,7 @@ from sampling_tool.core.models import (
     Dataset,
     Engagement,
     FilterOperator,
+    ParentRelation,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -440,3 +441,62 @@ class TestMultiSheetReportExporter:
         ws = wb["2. AuditTrail"]
         rows = list(ws.iter_rows(values_only=True))
         assert rows[1][-1] == "—"
+
+
+class TestSamplesSheetDerivation:
+    """Sprint 83 / A: „3. Samples" hat eine Spalte „Ableitung" direkt nach
+    „Parent-Sample-ID" – Einschränkung und Nachstichprobe unterscheidbar."""
+
+    def test_ableitung_column(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        datasets: list[Dataset],
+        audit_events: list[AuditEvent],
+    ) -> None:
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=1)
+        samples = [
+            SampleResult(
+                config=cfg,
+                selected_row_ids=(1, 2),
+                population_size=5,
+                drawn_at=datetime(2026, 5, 1, 10, 0, tzinfo=UTC),
+                id=1,
+            ),
+            SampleResult(
+                config=cfg,
+                selected_row_ids=(1,),
+                population_size=2,
+                drawn_at=datetime(2026, 5, 1, 11, 0, tzinfo=UTC),
+                parent_sample_id=1,
+                parent_relation=ParentRelation.RESTRICT,
+                id=2,
+            ),
+            SampleResult(
+                config=cfg,
+                selected_row_ids=(3,),
+                population_size=3,
+                drawn_at=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+                parent_sample_id=1,
+                parent_relation=ParentRelation.SUPPLEMENT,
+                id=3,
+            ),
+            SampleResult(
+                config=cfg,
+                selected_row_ids=(4,),
+                population_size=3,
+                drawn_at=datetime(2026, 5, 1, 13, 0, tzinfo=UTC),
+                parent_sample_id=1,
+                id=4,
+            ),
+        ]
+        out = tmp_path / "bericht.xlsx"
+        MultiSheetReportExporter().export(engagement, datasets, samples, audit_events, out)
+        rows = list(load_workbook(out)["3. Samples"].iter_rows(values_only=True))
+        header = list(rows[0])
+        assert header[header.index("Parent-Sample-ID") + 1] == "Ableitung"
+        by_id = {r[0]: dict(zip(header, r, strict=True)) for r in rows[1:]}
+        assert by_id[1]["Ableitung"] == "—"
+        assert by_id[2]["Ableitung"] == "Eingeschränkt auf Stichprobe #1"
+        assert by_id[3]["Ableitung"] == "Nachstichprobe zu #1 (ohne Dubletten)"
+        assert by_id[4]["Ableitung"] == "Ableitung zu #1 nicht erfasst (älterer Stand)"

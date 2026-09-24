@@ -66,7 +66,7 @@ class _SampleView:
     drawn_at_str: str
     size_requested: int
     filter_str: str
-    parent_sample_id: int | None
+    parent_str: str
     algorithm_version: str
     dataset_id: int | None
 
@@ -205,7 +205,7 @@ def _to_sample_view(sample: SampleResult, dataset_ids_by_sample: dict[int, int])
         drawn_at_str=format_optional_timestamp(sample.drawn_at),
         size_requested=provenance.size_requested,
         filter_str=_filter_str(provenance),
-        parent_sample_id=provenance.parent_sample_id,
+        parent_str=_parent_str(provenance),
         algorithm_version=provenance.algorithm_version,
         dataset_id=provenance.dataset_id,
     )
@@ -222,6 +222,16 @@ def _filter_str(provenance: SamplingProvenance) -> str:
         return "—"
     value = "—" if provenance.filter_value is None else str(provenance.filter_value)
     return f"{provenance.filter_field} {provenance.filter_operator_symbol} {value}"
+
+
+def _parent_str(provenance: SamplingProvenance) -> str:
+    """„#P (Kurzform der Ableitung)" (Sprint 83 / A); ohne erfasste Ableitung
+    (Bestandssample) nur „#P", ohne Eltern-Stichprobe „—"."""
+    if provenance.parent_sample_id is None:
+        return "—"
+    label = provenance.parent_relation_label
+    parent = f"#{provenance.parent_sample_id}"
+    return parent if label is None else f"{parent} ({label})"
 
 
 def _to_event_view(event: AuditEvent) -> _EventView:

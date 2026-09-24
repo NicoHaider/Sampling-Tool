@@ -34,6 +34,7 @@ from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
     FilterOperator,
+    ParentRelation,
     SampleResult,
     Snapshot,
 )
@@ -383,12 +384,20 @@ class WorkspaceController:
 
         # Sprint 36 / WP-B: eine Nachstichprobe zieht aus derselben Eltern-
         # Stichproben-Lineage wie das Sub-Sampling (from_sample_only).
+        # Sprint 83: WIE abgeleitet wurde, steht daneben – sonst sind beide im
+        # Audit-Trail nicht zu unterscheiden. Der Dialog schließt die zwei
+        # Häkchen gegenseitig aus; die Reihenfolge folgt `_draw_sample_result`.
+        parent_relation: ParentRelation | None = None
+        if s.sample is not None and result.exclude_sample_ids:
+            parent_relation = ParentRelation.SUPPLEMENT
+        elif s.sample is not None and result.from_sample_only:
+            parent_relation = ParentRelation.RESTRICT
         parent_sample_id = (
-            s.sample.id
-            if (result.from_sample_only or result.exclude_sample_ids) and s.sample is not None
-            else None
+            s.sample.id if s.sample is not None and parent_relation is not None else None
         )
-        sample_result = replace(sample_result, parent_sample_id=parent_sample_id)
+        sample_result = replace(
+            sample_result, parent_sample_id=parent_sample_id, parent_relation=parent_relation
+        )
 
         try:
             with s.db.session() as conn:

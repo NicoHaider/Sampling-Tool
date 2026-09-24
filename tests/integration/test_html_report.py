@@ -15,6 +15,7 @@ from sampling_tool.core.models import (
     AuditEvent,
     Engagement,
     FilterOperator,
+    ParentRelation,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -567,3 +568,32 @@ class TestSamplingHistoryWindow:
         after = datetime.now(UTC)
         assert before <= value <= after
         assert value.tzinfo is UTC
+
+
+# ---------------------------------------------------------------------------
+# Sprint 83 / A – Spalte „Parent" zeigt die Ableitung
+# ---------------------------------------------------------------------------
+
+
+class TestParentColumnDerivation:
+    """Einschränkung und Nachstichprobe sind in der Stichproben-Tabelle
+    unterscheidbar; Bestandssamples ohne erfasste Ableitung zeigen nur `#P`."""
+
+    @pytest.mark.parametrize(
+        ("relation", "expected"),
+        [
+            (ParentRelation.RESTRICT, "#17 (eingeschränkt)"),
+            (ParentRelation.SUPPLEMENT, "#17 (Nachstichprobe)"),
+            (None, "#17"),
+        ],
+    )
+    def test_parent_cell(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        relation: ParentRelation | None,
+        expected: str,
+    ) -> None:
+        sample = replace(_sample(1), parent_sample_id=17, parent_relation=relation)
+        row = _sample_table_cells(_render(tmp_path, engagement, [sample]))["#1"]
+        assert row["Parent"] == expected

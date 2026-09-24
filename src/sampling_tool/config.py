@@ -113,6 +113,24 @@ METHOD_LABELS: Final[dict[str, str]] = {
 }
 
 # ---------------------------------------------------------------------------
+# Ableitung einer Stichprobe aus ihrer Eltern-Stichprobe (Sprint 83)
+# ---------------------------------------------------------------------------
+# Schlüssel ist `ParentRelation.value` (Layer-Regel wie bei `METHOD_LABELS`).
+# Kurzform für enge Spalten (HTML-Report „Parent", AuditTrail-Details) …
+PARENT_RELATION_LABELS: Final[dict[str, str]] = {
+    "restrict": "eingeschränkt",
+    "supplement": "Nachstichprobe",
+}
+# … und Langform mit der Eltern-ID für Metadaten und Excel-Report. `None` ist
+# ein Bestandssample mit Eltern-Stichprobe, aber ohne erfasste Ableitung
+# (vor Migration 006): das wird benannt, nicht aus der Population erraten.
+PARENT_RELATION_TEXTS: Final[dict[str | None, str]] = {
+    "restrict": "Eingeschränkt auf Stichprobe #{parent}",
+    "supplement": "Nachstichprobe zu #{parent} (ohne Dubletten)",
+    None: "Ableitung zu #{parent} nicht erfasst (älterer Stand)",
+}
+
+# ---------------------------------------------------------------------------
 # Sampling-Defaults
 # ---------------------------------------------------------------------------
 DEFAULT_SAMPLE_SIZE: Final[int] = 25  # Branchenüblicher Default

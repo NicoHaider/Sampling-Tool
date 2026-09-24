@@ -19,6 +19,7 @@ from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
     Engagement,
+    ParentRelation,
     SampleConfig,
     SampleResult,
     SamplingMethod,
@@ -6139,3 +6140,97 @@ class TestUiScaleWiring:
             assert controller.session.settings.ui_scale == "groß"
         finally:
             app.setStyleSheet(original_stylesheet)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 83 / A: Ableitung (Einschränkung vs. Nachstichprobe) wird gespeichert
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _real_derivation_dialog_driver(steps: list[tuple[int, str | None]]) -> Iterator[None]:
+    """Wie `_real_sampling_dialog_driver`, kreuzt je Dialog-Öffnung aber zusätzlich
+    „einschränken" (``"restrict"``) bzw. „ergänzen" (``"supplement"``) an.
+
+    ``steps`` = eine ``(Größe, Checkbox)``-Angabe pro `exec()` in Reihenfolge.
+    """
+    from sampling_tool.ui.dialogs import sampling_dialog as sd
+
+    pending = list(steps)
+
+    def _auto_accept(self: sd.SamplingDialog) -> QDialog.DialogCode:
+        size, box = pending.pop(0)
+        if box == "restrict":
+            self._resample_checkbox.setChecked(True)
+        elif box == "supplement":
+            self._supplement_checkbox.setChecked(True)
+        self._size_spin.setValue(size)
+        self.accept()
+        return QDialog.DialogCode.Accepted
+
+    with (
+        patch.object(sd, "_generate_random_seed", return_value=111),
+        patch.object(sd.SamplingDialog, "exec", _auto_accept),
+    ):
+        yield
+    assert not pending, f"Nicht verbrauchte Dialog-Schritte: {pending}"
+
+
+class TestParentRelationPersisted:
+    """Über den ECHTEN Controller-/Dialog-Pfad: DB-Spalte, Audit-Details und das
+    nach Schließen/Öffnen geladene `SampleResult` tragen dieselbe Ableitung."""
+
+    @pytest.mark.parametrize(
+        ("box", "relation"),
+        [("restrict", ParentRelation.RESTRICT), ("supplement", ParentRelation.SUPPLEMENT)],
+    )
+    def test_derivation_persisted_logged_and_reloaded(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        box: str,
+        relation: ParentRelation,
+    ) -> None:
+        from sampling_tool.persistence.repositories import AuditRepo
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            _open_dataset(controller, window, populated_db)
+            with _real_derivation_dialog_driver([(3, None), (1, box)]):
+                controller.workspace.handle_new_sampling()
+                parent = controller.session.sample
+                assert parent is not None
+                assert parent.id is not None
+                assert (parent.parent_sample_id, parent.parent_relation) == (None, None)
+                controller.workspace.handle_new_sampling()
+
+            child = controller.session.sample
+            assert child is not None
+            assert child.id is not None
+            assert child.parent_sample_id == parent.id
+            assert child.parent_relation is relation
+
+            assert controller.session.db is not None
+            assert controller.session.engagement is not None
+            assert controller.session.engagement.id is not None
+            conn = controller.session.db.connect()
+            raw = conn.execute(
+                "SELECT parent_relation FROM samples WHERE id = ?", (child.id,)
+            ).fetchone()
+            assert raw["parent_relation"] == relation.value
+            events = AuditRepo(conn).list_for_engagement(controller.session.engagement.id)
+            [child_event] = [
+                e for e in events if e.event_type == "sampling" and e.sample_id == child.id
+            ]
+            assert child_event.details["parent_relation"] == relation.value
+
+            controller.engagement.handle_close_engagement()
+            controller.engagement.handle_open_engagement(populated_db)
+            assert controller.session.db is not None
+            reloaded = SampleRepo(controller.session.db.connect()).get_by_id(child.id)
+            assert reloaded is not None
+            assert reloaded.parent_relation is relation
+            assert reloaded.parent_sample_id == parent.id
+        finally:
+            controller.engagement.handle_close_engagement()
