@@ -39,6 +39,7 @@ from sampling_tool.config import (
     SURFACE_SELECTED,
     WARNING_COLOR,
 )
+from sampling_tool.core.formatting import format_cell_value
 from sampling_tool.io.importer import ExcelImporter, SheetInfo, SheetPreview
 from sampling_tool.ui._dialog_buttons import mark_secondary_buttons, set_accept_text
 
@@ -288,7 +289,7 @@ class ImportOptionsDialog(QDialog):
         for r, row in enumerate(rows):
             for c in range(col_count):
                 value = row[c] if c < len(row) else None
-                item = QTableWidgetItem("" if value is None else str(value))
+                item = QTableWidgetItem(format_cell_value(value))
                 self._preview_table.setItem(r, c, item)
         self._preview_table.resizeColumnsToContents()
 

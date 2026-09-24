@@ -60,10 +60,20 @@ from sampling_tool.ui.settings_store import (
 )
 
 # QSpinBox unterstützt nur 32-Bit-signed → SEED_MAX wird gekappt (wie im
-# Sampling-Dialog). 0 ist reserviert für „zufällig" (specialValueText).
+# Sampling-Dialog). 0 ist reserviert für „automatisch" (specialValueText).
 _SEED_SPIN_MAX: int = min(SEED_MAX, 2_147_483_647)
-# Label für den Seed-Wert 0 = kein fester Seed.
-_SEED_RANDOM_LABEL: str = "Zufällig (bei jeder Ziehung neu)"
+# Sprint 82 / C: Kurzform für den Seed-Wert 0 (kein fester Seed). Kurz halten –
+# der Text bestimmt die Mindestbreite der SpinBox.
+_SEED_AUTO_LABEL: Final[str] = "Automatisch (je Datensatz)"
+# Langform als Hinweiszeile unter „Sampling-Seed": beschreibt, was „Automatisch"
+# tatsächlich tut (vorher behauptete das Label „bei jeder Ziehung neu").
+_SEED_AUTO_HINT: Final[str] = (
+    "Automatisch: Der Seed wird je Datensatz bei der ersten Ziehung gewürfelt und "
+    "danach beibehalten, damit Ergebnisse reproduzierbar bleiben. Für eine "
+    "unabhängige neue Stichprobe hier einen festen Seed würfeln – er gilt für alle "
+    "Datensätze und bleibt bei Datensätzen, die damit gezogen wurden, auch nach der "
+    "Rückkehr zu „Automatisch“ erhalten."
+)
 # Sprint 68 / Teil B1: Anzeige-Labels für die UI-Größe-Stufen (userData bleibt
 # der interne Key aus `ui/_scaling.py`).
 _UI_SCALE_DISPLAY: Final[dict[str, str]] = {"klein": "Klein", "normal": "Normal", "groß": "Groß"}
@@ -378,9 +388,9 @@ class SettingsDialog(QDialog):
         info_btn.setAutoRaise(True)
         info_btn.setToolTip(
             "Schaltet zusätzliche Sampling-Methoden (Cluster, Stratifiziert) "
-            "und Detail-Optionen (Resample, manueller Seed) im Stichproben-"
-            "Dialog frei. Standardmäßig ist nur die einfache Zufallsstichprobe "
-            "sichtbar."
+            "und den Spalten-Filter im Stichproben-Dialog frei. Standardmäßig "
+            "ist nur die einfache Zufallsstichprobe sichtbar. Der Seed wird "
+            "unabhängig davon unten unter „Sampling-Seed“ eingestellt."
         )
         advanced_row = QHBoxLayout()
         advanced_row.addWidget(self._chk_advanced_mode)
@@ -418,16 +428,20 @@ class SettingsDialog(QDialog):
         form.addRow(" ", self._ui_scale_hint)
 
         # Sprint 27: Der Sampling-Seed wird ausschließlich hier geändert – im
-        # Haupt-Dialog ist das Feld schreibgeschützt. 0 (= specialValueText)
-        # bedeutet „kein fester Seed": es wird wie bisher zufällig gewürfelt
-        # und der zuletzt genutzte Seed gemerkt (ISAE-3402, Sprint 21).
+        # Haupt-Dialog ist das Feld schreibgeschützt. Sprint 82 / C: 0
+        # (= specialValueText) bedeutet „kein fester Seed": je Datensatz wird
+        # der Seed der jüngsten Stichprobe übernommen, bei der ersten Ziehung
+        # würfelt der Dialog (ISAE-3402). Ein fester Seed hat Vorrang und gilt
+        # für alle Datensätze.
         self._seed_spin = QSpinBox()
         self._seed_spin.setRange(0, _SEED_SPIN_MAX)
-        self._seed_spin.setSpecialValueText(_SEED_RANDOM_LABEL)
+        self._seed_spin.setSpecialValueText(_SEED_AUTO_LABEL)
         self._seed_spin.setValue(current.seed if current.seed is not None else 0)
         self._seed_spin.setToolTip(
-            "Fester Seed für die nächste Ziehung. Gleicher Seed + gleiche Daten "
-            "→ bit-genau gleiche Stichprobe.\n0 = zufällig (kein fester Seed)."
+            "Fester Seed (> 0): gilt für alle folgenden Ziehungen in allen "
+            "Datensätzen. Gleicher Seed + gleiche Daten → bit-genau gleiche "
+            "Stichprobe.\n0 = automatisch: Seed je Datensatz, bei der ersten "
+            "Ziehung gewürfelt und danach beibehalten."
         )
         self._seed_dice = QPushButton("🎲 Würfeln")
         self._seed_dice.setProperty("secondary", True)
@@ -440,6 +454,10 @@ class SettingsDialog(QDialog):
         seed_widget = QWidget()
         seed_widget.setLayout(seed_row)
         form.addRow("Sampling-Seed", seed_widget)
+
+        self._seed_hint = _WrappingHintLabel(_SEED_AUTO_HINT)
+        self._seed_hint.setStyleSheet(f"color: {BDO_GREY};")
+        form.addRow(" ", self._seed_hint)
 
         self._info_label = _WrappingHintLabel(
             f"Log-Datei: zentral unter {log_file_path()} (app-weit, nicht im "

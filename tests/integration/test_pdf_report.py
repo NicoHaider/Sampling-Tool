@@ -8,19 +8,27 @@ ganze Datei auf einmal (Sprint 80 / §4.2).
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 from PIL import Image
 from pypdf import PdfReader
-from reportlab.platypus import SimpleDocTemplate
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Table
 
 from sampling_tool.core.models import AuditEvent, Engagement
 from sampling_tool.io.bdo_locations import company_by_key, location_by_key
-from sampling_tool.io.pdf_report import AuditTrailPDF
+from sampling_tool.io.pdf_report import (
+    _CELL_STRING_THRESHOLD,
+    _EVENT_TABLE_COL_WIDTHS,
+    AuditTrailPDF,
+    _build_event_table,
+)
 
 
 @pytest.fixture
@@ -521,6 +529,103 @@ class TestFormatCell:
         style = ParagraphStyle("dummy", fontName="Helvetica", fontSize=8)
         assert isinstance(_format_cell("a<b>", style), Paragraph)
         assert isinstance(_format_cell("A & B", style), Paragraph)
+
+
+# Genau 60 Zeichen ohne Leerzeichen: 60 ist nicht > `_CELL_STRING_THRESHOLD`,
+# der Name lief also über den rohen String-Schnellpfad.
+_NAME_60 = "Kundenstammdaten_Mandant_ACME_Holding_ID12_BDO_sampling.xlsx"
+# Dateiname aus dem Smoke-Test (Seite 3), der rechts aus Tabelle und Seite lief.
+_NAME_SMOKE = "06_mehrere_sheets_ID6_BDO_sampling_20260924.xlsx"
+# Der Umbruch fällt direkt vor den Punkt: `wordWrap="CJK"` ließe ihn als
+# Satzzeichen am Zeilenende über die Innenbreite hängen (197,88 > 196,09 pt).
+_NAME_PUNCT = "Kundenstammdaten_a_ID1_BDO_sampling_20260924.xlsx"
+
+
+def _with_file(field: str, name: str) -> AuditEvent:
+    """Event mit Dateiname in `export_file` bzw. `import_file` (mit Ordner davor)."""
+    base = _evt(field.removesuffix("_file"), evt_id=1)
+    path = os.fspath(Path("ablage") / name)
+    if field == "export_file":
+        return replace(base, export_file=path)
+    return replace(base, import_file=path)
+
+
+def _first_row_cell(evt: AuditEvent, col: int) -> tuple[Any, float, list[float]]:
+    """Zelle `col` der ersten Datenzeile, ihre Innenbreite und die gerenderten Zeilenbreiten.
+
+    `Paragraph.wrap()` liefert immer die verfügbare Breite zurück – als Prüfung
+    wertlos. Gemessen werden deshalb die tatsächlichen Zeilenbreiten.
+    """
+    (table,) = [f for f in _build_event_table([evt]) if isinstance(f, Table)]
+    cell = table._cellvalues[1][col]
+    cs = table._cellStyles[1][col]
+    available: float = _EVENT_TABLE_COL_WIDTHS[col] - cs.leftPadding - cs.rightPadding
+    widths: list[float]
+    if isinstance(cell, str):
+        # Table bricht rohe Strings nie um (nur an "\n"), gerendert im Zellstil.
+        widths = [stringWidth(line, cs.fontname, cs.fontsize) for line in cell.split("\n")]
+    else:
+        cell.wrap(available, 10_000)
+        widths = cell.getActualLineWidths0()
+    return cell, available, widths
+
+
+def _plain(cell: Any) -> str:
+    text: str = cell if isinstance(cell, str) else cell.getPlainText()
+    return text
+
+
+@pytest.mark.integration
+class TestLongFilenameWraps:
+    """Sprint 82 / G: Dateinamen ohne Leerzeichen brechen in der Datei-Spalte
+    um, statt rechts aus Tabelle und Seite zu laufen."""
+
+    def test_testnamen_liefen_ueber_den_schnellpfad(self) -> None:
+        assert len(_NAME_60) == _CELL_STRING_THRESHOLD
+        assert len(_NAME_SMOKE) == 48
+        assert len(_NAME_PUNCT) < _CELL_STRING_THRESHOLD
+        for name in (_NAME_60, _NAME_SMOKE, _NAME_PUNCT):
+            assert not any(ch in name for ch in " &<>")
+
+    @pytest.mark.parametrize("field", ["export_file", "import_file"])
+    @pytest.mark.parametrize(
+        "name", [_NAME_60, _NAME_SMOKE, _NAME_PUNCT], ids=["name_60", "smoke_48", "punct"]
+    )
+    def test_datei_zelle_passt_in_spaltenbreite(self, field: str, name: str) -> None:
+        cell, available, widths = _first_row_cell(_with_file(field, name), -1)
+
+        assert max(widths) <= available, (
+            f"Datei-Zelle {max(widths):.2f} pt breit, verfügbar {available:.2f} pt"
+        )
+        assert _plain(cell) == name
+
+    def test_markup_im_dateinamen(self) -> None:
+        name = "A&B_<Mandant>_Kundenstammdaten_ID12_BDO_sampling_20260924.xlsx"
+        cell, available, widths = _first_row_cell(_with_file("export_file", name), -1)
+
+        assert isinstance(cell, Paragraph)
+        assert max(widths) <= available
+        assert cell.getPlainText() == name
+
+    def test_kurzer_dateiname_nutzt_ebenfalls_den_datei_stil(self) -> None:
+        cell, available, widths = _first_row_cell(_with_file("import_file", "Buchungen.xlsx"), -1)
+
+        assert isinstance(cell, Paragraph)
+        assert max(widths) <= available
+        assert cell.getPlainText() == "Buchungen.xlsx"
+
+    def test_ohne_datei_bleibt_strich(self) -> None:
+        cell, _, _ = _first_row_cell(_evt("sampling", evt_id=1), -1)
+
+        assert cell == "—"
+
+    def test_andere_spalten_behalten_schnellpfad(self) -> None:
+        evt = _with_file("export_file", _NAME_SMOKE)
+        user_cell, _, _ = _first_row_cell(evt, 2)
+        timestamp_cell, _, _ = _first_row_cell(evt, 0)
+
+        assert user_cell == "anna"
+        assert isinstance(timestamp_cell, str)
 
 
 class TestPdfPerformanceSmoke:

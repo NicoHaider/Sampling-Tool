@@ -379,6 +379,11 @@ def _build_chunk_table(
     """Eine Sub-Table mit Header + bis zu CHUNK_SIZE Datenzeilen."""
     data: list[list[Any]] = [list(_EVENT_TABLE_HEADER)]
     correction_rows: list[int] = []
+    # Sprint 82 / G: Dateinamen haben keine Leerzeichen, also muss der Stil
+    # innerhalb eines Wortes umbrechen dürfen. Bewusst `splitLongWords` statt
+    # `wordWrap="CJK"`: CJK lässt ein Satzzeichen am Zeilenende über die
+    # Innenbreite hängen (z. B. den Punkt vor „xlsx").
+    file_style = ParagraphStyle("BDOTableCellFile", parent=cell_style, splitLongWords=True)
 
     for i, evt in enumerate(chunk, start=1):
         action_text = evt.event_type
@@ -402,7 +407,7 @@ def _build_chunk_table(
                 size,
                 percent,
                 seed,
-                _format_cell(filename, cell_style),
+                _format_file_cell(filename, file_style),
             ]
         )
 
@@ -471,6 +476,19 @@ def _format_cell(text: str, cell_style: ParagraphStyle) -> str | Paragraph:
     if len(text) > _CELL_STRING_THRESHOLD or "&" in text or "<" in text or ">" in text:
         return Paragraph(_escape(text), cell_style)
     return text
+
+
+def _format_file_cell(name: str, file_style: ParagraphStyle) -> str | Paragraph:
+    """Datei-Zelle: jeder Dateiname als umbrechender Paragraph, nur „—" bleibt roh.
+
+    Der String-Schnellpfad aus `_format_cell` taugt hier nicht: einen rohen
+    String bricht die Table nie um und rendert ihn in ihrer Default-Schrift
+    (Helvetica 10) – schon ein 48-Zeichen-Dateiname lief so rechts aus der
+    Tabelle und von der Seite.
+    """
+    if name == "—":
+        return name
+    return Paragraph(_escape(name), file_style)
 
 
 def _build_statistics(events: list[AuditEvent]) -> list[Any]:

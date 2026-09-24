@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from PyQt6.QtCore import Qt
 from pytestqt.qtbot import QtBot
@@ -210,6 +212,54 @@ class TestNavigationSidebar:
         assert item is not None
         assert not item.text().startswith("●")
         assert item.font().bold() is False
+
+
+class TestSampleNumberIsDbId:
+    """Sprint 82 / Befund B: die Nummer im Label ist `sample.id`, nicht die Listenposition.
+
+    Statusleiste, AuditTrail und Reports zeigen die projektweite DB-ID. Bis
+    Sprint 81 zählte die Sidebar per `enumerate` (neueste = #1) – dieselbe
+    Stichprobe trug also zwei Nummern. Die IDs hier beginnen bewusst nicht bei 1
+    und folgen nicht der Listenposition, sonst wären beide nicht unterscheidbar.
+    """
+
+    def test_label_and_tooltip_start_with_db_id_in_given_order(self, qtbot: QtBot) -> None:
+        sidebar = NavigationSidebar()
+        qtbot.addWidget(sidebar)
+        sidebar.set_samples([_sample(7, size=4), _sample(3, size=2)])
+        first = sidebar.samples_widget().item(0)
+        second = sidebar.samples_widget().item(1)
+        assert first is not None
+        assert second is not None
+        assert first.text().startswith("#7 · ")
+        assert second.text().startswith("#3 · ")
+        assert first.data(int(Qt.ItemDataRole.UserRole)) == 7
+        assert second.data(int(Qt.ItemDataRole.UserRole)) == 3
+        assert first.toolTip().startswith("#7 · ")
+        assert second.toolTip().startswith("#3 · ")
+
+    def test_active_marker_keeps_db_id(self, qtbot: QtBot) -> None:
+        sidebar = NavigationSidebar()
+        qtbot.addWidget(sidebar)
+        sidebar.set_samples([_sample(7), _sample(3)])
+        sidebar.set_active_sample(3)
+        first = sidebar.samples_widget().item(0)
+        second = sidebar.samples_widget().item(1)
+        assert first is not None
+        assert second is not None
+        assert first.text().startswith("#7 · ")
+        assert first.font().bold() is False
+        assert second.text().startswith("● #3 · ")
+        assert second.font().bold() is True
+
+    def test_sample_without_id_shows_placeholder_not_none(self, qtbot: QtBot) -> None:
+        sidebar = NavigationSidebar()
+        qtbot.addWidget(sidebar)
+        sidebar.set_samples([replace(_sample(1), id=None)])
+        item = sidebar.samples_widget().item(0)
+        assert item is not None
+        assert item.text().startswith("#— · ")
+        assert "None" not in item.text()
 
 
 class TestFilterOnlySampleCheckbox:

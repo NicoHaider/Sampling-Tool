@@ -7,6 +7,7 @@ offen; ein erneutes Öffnen/Reload zeigt die Datensätze wieder.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -209,3 +210,106 @@ class TestClearLoadedDatasets:
         assert ctrl.session.active_sample_id is None
         assert ctrl.session.filter_active_sample_id is None
         ctrl.engagement.handle_close_engagement()
+
+
+@pytest.fixture
+def ctrl_with_active_sample(
+    window: MainWindow, tmp_path: Path, populated_db: tuple[Path, int, int]
+) -> Iterator[MainController]:
+    """Projekt offen, Datensatz geladen, Stichprobe aktiv – Schließen im Teardown.
+
+    Das Schließen sitzt im `finally`, damit eine rote Assertion keine
+    SQLite-Connection leakt (sonst kippt der NÄCHSTE Test über die
+    ResourceWarning unter `filterwarnings=error`).
+    """
+    db_path, _eng_id, ds_id = populated_db
+    ctrl = MainController(
+        window, recent_store=RecentEngagementsStore(path=tmp_path / "recent.json")
+    )
+    try:
+        ctrl.engagement.handle_open_engagement(db_path)
+        ctrl.selection.handle_dataset_selected(ds_id)
+        assert ctrl.session.db is not None
+        sample_id = SampleRepo(ctrl.session.db.connect()).list_for_dataset(ds_id)[0].id
+        assert sample_id is not None
+        ctrl.selection.handle_sample_selected(sample_id)
+        yield ctrl
+    finally:
+        ctrl.engagement.handle_close_engagement()
+
+
+class TestClearViewResetsStatusAndActions:
+    """Sprint 82 / Befund E: nach „Datensätze aus Ansicht entfernen" standen
+    Datensatzname und Zeilenzahl weiter in der Statusleiste, und „Neue
+    Stichprobe" blieb aktiv – ein Klick lief ins stille `return` von
+    `handle_new_sampling`, weil kein Datensatz mehr aktiv ist.
+    """
+
+    def test_status_fields_show_no_dataset(
+        self, window: MainWindow, ctrl_with_active_sample: MainController
+    ) -> None:
+        assert window._status_dataset.text() == "Buchungen"
+        assert window._status_rows.text() == "5 Zeilen"
+        assert window._status_sample.text().startswith("Aktive Stichprobe: #")
+
+        with patch(_QUESTION, return_value=QMessageBox.StandardButton.Yes):
+            ctrl_with_active_sample.workspace.handle_clear_loaded_datasets()
+
+        assert window._status_dataset.text() == "Kein Dataset"
+        assert window._status_rows.text() == "0 Zeilen"
+        assert window._status_sample.text() == "Aktive Stichprobe: keine"
+        # Nur die Ansicht ist leer – das Projekt bleibt offen.
+        assert window._status_engagement.text() == "ACME"
+        assert window.is_workspace_visible() is True
+
+    def test_dataset_and_sample_actions_disabled(
+        self, window: MainWindow, ctrl_with_active_sample: MainController
+    ) -> None:
+        dataset_actions = (
+            window._action_new_sample,
+            window._action_export_sample,
+            window._action_reset_sample,
+            window._action_reset_sampling,
+        )
+        assert all(action.isEnabled() for action in dataset_actions)
+
+        with patch(_QUESTION, return_value=QMessageBox.StandardButton.Yes):
+            ctrl_with_active_sample.workspace.handle_clear_loaded_datasets()
+
+        assert [action.isEnabled() for action in dataset_actions] == [False] * 4
+        # Projekt-Aktionen bleiben an: Import und erneutes Leeren gehen weiter.
+        assert window._action_import.isEnabled() is True
+        assert window._action_clear_datasets.isEnabled() is True
+
+    def test_undo_stays_with_the_stack(
+        self, window: MainWindow, ctrl_with_active_sample: MainController
+    ) -> None:
+        """Guard: Undo nach dem Leeren ist erlaubt (Sprint 31) – der Zustand
+        ohne Datensatz schaltet Undo nicht mit ab, das entscheidet der Stack."""
+        ctrl = ctrl_with_active_sample
+        ctrl.workspace._push_undo_snapshot()
+        ctrl.session.update_undo_redo_state()
+        assert window._action_undo.isEnabled() is True
+
+        with patch(_QUESTION, return_value=QMessageBox.StandardButton.Yes):
+            ctrl.workspace.handle_clear_loaded_datasets()
+
+        assert window._action_undo.isEnabled() is True
+
+    def test_reselect_after_clear_restores_status_and_new_sample(
+        self,
+        window: MainWindow,
+        ctrl_with_active_sample: MainController,
+        populated_db: tuple[Path, int, int],
+    ) -> None:
+        _db_path, _eng_id, ds_id = populated_db
+        ctrl = ctrl_with_active_sample
+        with patch(_QUESTION, return_value=QMessageBox.StandardButton.Yes):
+            ctrl.workspace.handle_clear_loaded_datasets()
+
+        ctrl.session.reload_datasets()
+        ctrl.selection.handle_dataset_selected(ds_id)
+
+        assert window._status_dataset.text() == "Buchungen"
+        assert window._status_rows.text() == "5 Zeilen"
+        assert window._action_new_sample.isEnabled() is True

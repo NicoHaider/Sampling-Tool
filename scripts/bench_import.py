@@ -206,7 +206,7 @@ def _parse_xlsx(path: Path) -> tuple[list[str], list[list[Any]]]:
 def _parse_csv_phase(path: Path) -> tuple[list[str], list[list[Any]]]:
     """Phase Parse (csv): read_bytes + decode + Sniff + csv.reader-Materialize."""
     text, _enc = _read_csv_text(path)
-    columns, data_rows, _skipped, _warnings = _parse_csv_rows(text)
+    columns, data_rows, _skipped, _warnings, _leading = _parse_csv_rows(text)
     return columns, data_rows
 
 

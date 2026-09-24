@@ -6,7 +6,7 @@ import re
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 from unittest.mock import patch
 
 import pytest
@@ -19,6 +19,7 @@ from sampling_tool.core.models import (
     SampleResult,
     SamplingMethod,
 )
+from sampling_tool.core.provenance import SamplingProvenance
 from sampling_tool.io import html_report
 from sampling_tool.io.html_report import _HISTORY_DAYS, HtmlReportGenerator
 
@@ -252,7 +253,7 @@ class TestHtmlReportGenerator:
         engagement: Engagement,
         events: list[AuditEvent],
     ) -> None:
-        """A-001 Contract-Test: Operator, Parent, Algorithmus-Version,
+        """A-001 Contract-Test: Filter, Parent, Algorithmus-Version,
         angeforderte Größe, Dataset-ID sind sichtbar."""
         cfg = SampleConfig(
             method=SamplingMethod.CLUSTER,
@@ -277,7 +278,7 @@ class TestHtmlReportGenerator:
         out = tmp_path / "report.html"
         _generator().render(engagement, [], samples, events, out, dataset_ids_by_sample={9: 4})
         html = out.read_text(encoding="utf-8")
-        assert "≥" in html
+        assert "Betrag ≥ 100" in html
         assert "#17" in html
         assert "bdo-v1" in html
         assert "#4" in html
@@ -304,6 +305,137 @@ class TestHtmlReportGenerator:
         html = out.read_text(encoding="utf-8")
         assert "filter_operator" in html
         assert "gte" in html
+
+
+# ---------------------------------------------------------------------------
+# Sprint 82 / Befund F – Spalte „Filter" statt „Operator"
+# ---------------------------------------------------------------------------
+
+
+def _sample(sample_id: int, **config: Any) -> SampleResult:
+    """Einfache Stichprobe mit frei setzbaren Filter-Feldern der Konfiguration."""
+    return SampleResult(
+        config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7, **config),
+        selected_row_ids=(1, 2),
+        population_size=10,
+        drawn_at=INSIDE_WINDOW,
+        id=sample_id,
+    )
+
+
+def _sample_table_cells(html: str) -> dict[str, dict[str, str]]:
+    """Stichproben-Tabelle als {"#id": {Spaltenkopf: Zelltext (escaped)}}."""
+    section = html.split("<h2>Stichproben</h2>", 1)[1].split("</table>", 1)[0]
+    headers = re.findall(r"<th>(.*?)</th>", section)
+    rows: dict[str, dict[str, str]] = {}
+    for row in re.findall(r"<tr>\s*(<td>#.*?)</tr>", section, re.S):
+        cells = re.findall(r"<td>(.*?)</td>", row, re.S)
+        rows[cells[0]] = dict(zip(headers, cells, strict=True))
+    return rows
+
+
+def _render(tmp_path: Path, engagement: Engagement, samples: list[SampleResult]) -> str:
+    """Rendert den Report mit eingefrorener Uhr und liefert das HTML."""
+    out = tmp_path / "report.html"
+    _generator().render(engagement, [], samples, [], out)
+    return out.read_text(encoding="utf-8")
+
+
+class TestSampleFilterColumn:
+    """Die Stichproben-Tabelle zeigt den Vorfilter als „Feld Operator Wert".
+
+    Vorher stand dort nur das Operator-Symbol: ungefilterte Stichproben zeigten
+    „=" (Default-Operator) und waren von „Kostenstelle = Vertrieb" nicht zu
+    unterscheiden.
+    """
+
+    def test_spalte_heisst_filter_nicht_operator(
+        self, tmp_path: Path, engagement: Engagement
+    ) -> None:
+        html = _render(tmp_path, engagement, [_sample(1)])
+        assert "<th>Filter</th>" in html
+        assert "<th>Operator</th>" not in html
+
+    def test_gefilterte_stichprobe_zeigt_feld_operator_wert(
+        self, tmp_path: Path, engagement: Engagement
+    ) -> None:
+        html = _render(
+            tmp_path,
+            engagement,
+            [
+                _sample(1, filter_field="Kostenstelle", filter_value="Vertrieb"),
+                _sample(
+                    2,
+                    filter_field="Betrag",
+                    filter_value=100,
+                    filter_operator=FilterOperator.GTE,
+                ),
+            ],
+        )
+        rows = _sample_table_cells(html)
+        assert rows["#1"]["Filter"] == "Kostenstelle = Vertrieb"
+        assert rows["#2"]["Filter"] == "Betrag ≥ 100"
+
+    def test_ungefilterte_stichprobe_zeigt_denselben_platzhalter(
+        self, tmp_path: Path, engagement: Engagement
+    ) -> None:
+        row = _sample_table_cells(_render(tmp_path, engagement, [_sample(1)]))["#1"]
+        assert row["Filter"] == "—"
+        assert row["Filter"] == row["Parent"]
+
+    def test_ungefilterte_stichprobe_mit_restoperator_zeigt_kein_symbol(
+        self, tmp_path: Path, engagement: Engagement
+    ) -> None:
+        """Der Sampling-Dialog übernimmt den Operator auch bei „(kein Filter)" –
+        maßgeblich ist allein `filter_field is None` (wie `_collect_pool`)."""
+        html = _render(tmp_path, engagement, [_sample(1, filter_operator=FilterOperator.GT)])
+        assert _sample_table_cells(html)["#1"]["Filter"] == "—"
+
+    def test_filterwert_mit_spitzer_klammer_wird_escaped(
+        self, tmp_path: Path, engagement: Engagement
+    ) -> None:
+        html = _render(
+            tmp_path,
+            engagement,
+            [_sample(1, filter_field="Kostenstelle", filter_value="<b>Vertrieb</b> & Co")],
+        )
+        cell = _sample_table_cells(html)["#1"]["Filter"]
+        assert cell == "Kostenstelle = &lt;b&gt;Vertrieb&lt;/b&gt; &amp; Co"
+        assert "<b>Vertrieb" not in html
+
+    def test_filterwert_none_bei_gesetztem_feld(
+        self, tmp_path: Path, engagement: Engagement
+    ) -> None:
+        html = _render(tmp_path, engagement, [_sample(1, filter_field="Kostenstelle")])
+        assert _sample_table_cells(html)["#1"]["Filter"] == "Kostenstelle = —"
+
+    def test_filter_kommt_aus_der_provenienz(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Feld, Symbol und Wert stammen aus EINER `SamplingProvenance` – nicht
+        neu aus `sample.config` berechnet."""
+        real = SamplingProvenance.from_sample_result
+
+        def _fake(
+            result: SampleResult, *, dataset_id: int | None, app_version: str
+        ) -> SamplingProvenance:
+            return replace(
+                real(result, dataset_id=dataset_id, app_version=app_version),
+                filter_field="AusProvenienz",
+                filter_value="P",
+                filter_operator="ne",
+            )
+
+        monkeypatch.setattr(SamplingProvenance, "from_sample_result", staticmethod(_fake))
+        html = _render(
+            tmp_path,
+            engagement,
+            [_sample(1, filter_field="Kostenstelle", filter_value="Vertrieb")],
+        )
+        assert _sample_table_cells(html)["#1"]["Filter"] == "AusProvenienz ≠ P"
 
 
 # ---------------------------------------------------------------------------

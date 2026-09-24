@@ -590,6 +590,153 @@ class TestImportFileConfigured:
 
 
 # ---------------------------------------------------------------------------
+# Sprint 82 / D: Zeilen oberhalb der Kopfzeile ≠ Leerzeilen
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def title_rows_xlsx(tmp_path: Path) -> Path:
+    """3 Titelzeilen + 1 Leerzeile, Kopfzeile in Zeile 5, genau 1 Leerzeile im Datenteil."""
+    path = tmp_path / "title_rows.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Export"
+    ws.append(["Buchungsexport", None, None])
+    ws.append(["Mandant: Muster GmbH", None, None])
+    ws.append(["Erstellt am: 15.06.2026", None, None])
+    ws.append([None, None, None])
+    ws.append(["BuchungsID", "Betrag", "Belegtext"])
+    ws.append(["B001", 13134.97, "Miete"])
+    ws.append(["B002", 20630.27, "Leasing"])
+    ws.append([None, None, None])
+    ws.append(["B003", -5438.12, "Gutschrift"])
+    wb.save(path)
+    return path
+
+
+@pytest.fixture
+def title_rows_csv(tmp_path: Path) -> Path:
+    """CSV-Zwilling von ``title_rows_xlsx``."""
+    path = tmp_path / "title_rows.csv"
+    path.write_text(
+        "Buchungsexport\n"
+        "Mandant: Muster GmbH\n"
+        "Erstellt am: 15.06.2026\n"
+        "\n"
+        "BuchungsID,Betrag,Belegtext\n"
+        "B001,13134.97,Miete\n"
+        "B002,20630.27,Leasing\n"
+        "\n"
+        "B003,-5438.12,Gutschrift\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    return path
+
+
+@pytest.fixture
+def leading_blank_rows_xlsx(tmp_path: Path) -> Path:
+    """2 führende Leerzeilen, Kopfzeile in Zeile 3, 1 Leerzeile im Datenteil."""
+    path = tmp_path / "leading_blank_rows.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.append([None, None])
+    ws.append([None, None])
+    ws.append(["Konto", "Betrag"])
+    ws.append(["1000", 500])
+    ws.append([None, None])
+    ws.append(["2000", 600])
+    wb.save(path)
+    return path
+
+
+@pytest.fixture
+def leading_blank_rows_csv(tmp_path: Path) -> Path:
+    """CSV-Zwilling von ``leading_blank_rows_xlsx``."""
+    path = tmp_path / "leading_blank_rows.csv"
+    # newline="\n": unter Windows würde `write_text` CRLF schreiben – die „\r"-
+    # Leerzeilen lassen dort den Trennzeichen-Sniffer scheitern (Komma-Fallback).
+    path.write_text("\n\nKonto;Betrag\n1000;500\n\n2000;600\n", encoding="utf-8", newline="\n")
+    return path
+
+
+@pytest.mark.integration
+class TestRowsAboveHeader:
+    """``rows_above_header`` trennt Titel-/Vorspannzeilen von echten Leerzeilen.
+
+    ``skipped_rows`` behält seine Bedeutung (Zeilen oberhalb der Kopfzeile +
+    Leerzeilen im Datenteil) – ``rows_above_header`` ist eine Teilmenge davon.
+    """
+
+    def test_xlsx_configured_counts_rows_above_header(
+        self, importer: ExcelImporter, title_rows_xlsx: Path
+    ) -> None:
+        preview = importer.preview_sheet(title_rows_xlsx, "Export")
+        assert preview.detected_header_row == 4
+        result = importer.import_file_configured(
+            title_rows_xlsx, "Export", preview.detected_header_row
+        )
+        rows = list(result.rows)
+        assert len(rows) == 3
+        assert result.stats.rows_above_header == 4
+        assert result.stats.blank_data_rows == 1
+        assert result.stats.skipped_rows == 5
+
+    def test_csv_configured_counts_rows_above_header(
+        self, importer: ExcelImporter, title_rows_csv: Path
+    ) -> None:
+        result = importer.import_file_configured(title_rows_csv, None, 4)
+        rows = list(result.rows)
+        assert len(rows) == 3
+        assert result.stats.rows_above_header == 4
+        assert result.stats.blank_data_rows == 1
+        assert result.stats.skipped_rows == 5
+
+    @pytest.mark.parametrize(
+        ("fixture_name", "sheet_name"),
+        [("title_rows_xlsx", "Export"), ("title_rows_csv", None)],
+    )
+    def test_no_header_has_no_rows_above_header(
+        self,
+        importer: ExcelImporter,
+        request: pytest.FixtureRequest,
+        fixture_name: str,
+        sheet_name: str | None,
+    ) -> None:
+        path: Path = request.getfixturevalue(fixture_name)
+        result = importer.import_file_configured(path, sheet_name, None)
+        rows = list(result.rows)
+        assert len(rows) == 7
+        assert result.stats.rows_above_header == 0
+        assert result.stats.skipped_rows == 2
+        assert result.stats.blank_data_rows == 2
+
+    @pytest.mark.parametrize(
+        ("fixture_name", "sheet_name"),
+        [("leading_blank_rows_xlsx", "Sheet"), ("leading_blank_rows_csv", None)],
+    )
+    def test_auto_leading_blanks_count_as_rows_above_header(
+        self,
+        importer: ExcelImporter,
+        request: pytest.FixtureRequest,
+        fixture_name: str,
+        sheet_name: str | None,
+    ) -> None:
+        path: Path = request.getfixturevalue(fixture_name)
+        auto = importer.import_file(path)
+        auto_rows = list(auto.rows)
+        configured = importer.import_file_configured(path, sheet_name, 2)
+        configured_rows = list(configured.rows)
+        assert auto.dataset.columns == configured.dataset.columns == ("Konto", "Betrag")
+        assert [r.values for r in auto_rows] == [r.values for r in configured_rows]
+        assert auto.stats.rows_above_header == configured.stats.rows_above_header == 2
+        assert auto.stats.skipped_rows == configured.stats.skipped_rows == 3
+        assert auto.stats.blank_data_rows == configured.stats.blank_data_rows == 1
+
+
+# ---------------------------------------------------------------------------
 # Sprint 17: Cancellation-Support
 # ---------------------------------------------------------------------------
 

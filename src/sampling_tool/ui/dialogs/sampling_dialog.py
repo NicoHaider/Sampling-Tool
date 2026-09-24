@@ -94,6 +94,17 @@ _WIDTH_SAFETY_BUFFER: Final[int] = 8
 #: kommen über das Ratio dazu, nicht über diese Zahl (Sprint 78 / §2.5).
 _HINT_ICON_PX: Final[int] = 14
 
+# Sprint 82 / C: Hinweis neben dem Seed. Höchstens ~50 Zeichen – ein längerer
+# Text vergrößert die Mindestbreite des Dialogs. Die Langform steht im Tooltip.
+_SEED_HINT: Final[str] = "je Datensatz fest · in den Einstellungen änderbar"
+_SEED_TOOLTIP: Final[str] = (
+    "Schreibgeschützt. Der Seed wird je Datensatz bei der ersten Ziehung gewürfelt "
+    "und danach beibehalten, damit Ergebnisse reproduzierbar bleiben.\n"
+    "Für eine unabhängige neue Stichprobe in den Einstellungen (Erweitert → "
+    "Sampling-Seed) einen festen Seed würfeln – er gilt dann für alle Datensätze.\n"
+    "Gleicher Seed + gleiche Daten → bit-genau gleiche Stichprobe."
+)
+
 # Sprint 36: Vergleichsoperatoren des Spaltenfilters. Der sichtbare Label-Text
 # steht im Combo, das `FilterOperator`-Member als `userData`.
 _FILTER_OPERATOR_ITEMS: tuple[tuple[str, FilterOperator], ...] = (
@@ -222,9 +233,10 @@ class SamplingDialog(QDialog):
 
         Beim Öffnen würfelt der Dialog standardmäßig einen frischen
         Zufalls-Seed. Der Controller reicht hier den aufgelösten Seed durch
-        (Sprint 27: fester Seed aus den Einstellungen, sonst der zuletzt
-        genutzte Seed der Session), damit eine erneute Ziehung (auch nach
-        „Sampling zurücksetzen") denselben Seed verwendet und die Stichprobe
+        (fester Seed aus den Einstellungen, sonst – Sprint 82 / C – der Seed
+        der jüngsten Stichprobe dieses Datensatzes aus der Projektdatei), damit
+        eine erneute Ziehung (auch nach „Sampling zurücksetzen" oder erneutem
+        Öffnen des Projekts) denselben Seed verwendet und die Stichprobe
         bit-genau reproduziert (ISAE-3402). Das Feld bleibt schreibgeschützt;
         geändert wird der Seed nur in den Einstellungen.
         """
@@ -448,15 +460,13 @@ class SamplingDialog(QDialog):
         self._seed_spin.setValue(_generate_random_seed())
         self._seed_spin.setReadOnly(True)
         self._seed_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-        self._seed_spin.setToolTip(
-            "Schreibgeschützt – der Seed wird in den Einstellungen geändert "
-            "(Erweitert → Sampling-Seed).\nGleicher Seed + gleiche Daten → "
-            "bit-genau gleiche Stichprobe."
+        self._seed_spin.setToolTip(_SEED_TOOLTIP)
+        self._seed_hint = QLabel(_SEED_HINT)
+        self._seed_hint.setStyleSheet(
+            f"color: {BDO_GREY}; font-size: {scaled_px(11, self._factor)}px;"
         )
-        seed_hint = QLabel("in den Einstellungen änderbar")
-        seed_hint.setStyleSheet(f"color: {BDO_GREY}; font-size: {scaled_px(11, self._factor)}px;")
         seed_row.addWidget(self._seed_spin, stretch=1)
-        seed_row.addWidget(seed_hint)
+        seed_row.addWidget(self._seed_hint)
         seed_widget = QWidget()
         seed_widget.setLayout(seed_row)
         seed_form.addRow("Seed", seed_widget)

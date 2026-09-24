@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,6 +24,7 @@ from sampling_tool.core.models import (
     SamplingMethod,
 )
 from sampling_tool.io.import_preflight import ImportPreflight
+from sampling_tool.io.importer import ImportStats
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import (
     DatasetRepo,
@@ -1599,6 +1600,138 @@ class TestImportDialogDispatch:
             controller.engagement.handle_close_engagement()
 
 
+def _write_title_rows_xlsx(path: Path, *, blank_row_in_data: bool) -> Path:
+    """3 Titelzeilen + 1 Leerzeile, Kopfzeile in Zeile 5 (0-basiert: 4)."""
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.append(["Buchungsexport", None, None])
+    ws.append(["Mandant: Muster GmbH", None, None])
+    ws.append(["Erstellt am: 15.06.2026", None, None])
+    ws.append([None, None, None])
+    ws.append(["BuchungsID", "Betrag", "Belegtext"])
+    ws.append(["B001", 13134.97, "Miete"])
+    ws.append(["B002", 20630.27, "Leasing"])
+    if blank_row_in_data:
+        ws.append([None, None, None])
+    ws.append(["B003", -5438.12, "Gutschrift"])
+    wb.save(path)
+    return path
+
+
+class TestImportSummaryMessage:
+    """Sprint 82 / D: Titelzeilen oberhalb der Kopfzeile sind keine Leerzeilen."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Echtes MainWindow → `closeEvent` würde sonst in die echten
+        Benutzer-Prefs schreiben. Muster aus `test_export_audit_pdf_dialog.py`."""
+        from PyQt6.QtCore import QSettings
+
+        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+        monkeypatch.setattr(
+            "sampling_tool.ui.main_window.QSettings",
+            lambda organization, application: QSettings(
+                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
+            ),
+        )
+
+    @staticmethod
+    def _import_summary_text(
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        xlsx: Path,
+    ) -> str:
+        """Echter `handle_import_excel` mit Kopfzeile 5 – liefert den Info-Text."""
+
+        def factory(_path: Path, _imp: object, _parent: object) -> object:
+            return _StubImportOptionsDialog("Sheet", 4)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            import_options_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.engagement.handle_open_engagement(populated_db)
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QFileDialog.getOpenFileName",
+                    return_value=(str(xlsx), ""),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"
+                ) as info,
+            ):
+                controller.workspace.handle_import_excel()
+            assert window.data_table().table_model().columnCount() == 3
+        finally:
+            controller.engagement.handle_close_engagement()
+        summaries = [c.args[2] for c in info.call_args_list if c.args[1] == "Import abgeschlossen"]
+        assert len(summaries) == 1
+        text = summaries[0]
+        assert isinstance(text, str)
+        return text
+
+    def test_summary_separates_rows_above_header_from_blank_rows(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        xlsx = _write_title_rows_xlsx(tmp_path / "titel_mit_leerzeile.xlsx", blank_row_in_data=True)
+        text = self._import_summary_text(window, recent_store, populated_db, xlsx)
+        assert text.splitlines() == [
+            "4 Zeile(n) oberhalb der Kopfzeile ignoriert.",
+            "1 Leerzeile(n) übersprungen.",
+        ]
+
+    def test_summary_omits_blank_line_when_none_in_data(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        # Smoke-Fall 05: vorher „4 Leerzeile(n) übersprungen." obwohl der
+        # Datenteil keine einzige Leerzeile hat.
+        xlsx = _write_title_rows_xlsx(
+            tmp_path / "titel_ohne_leerzeile.xlsx", blank_row_in_data=False
+        )
+        text = self._import_summary_text(window, recent_store, populated_db, xlsx)
+        assert text == "4 Zeile(n) oberhalb der Kopfzeile ignoriert."
+        assert "Leerzeile" not in text
+
+    @staticmethod
+    def _summary_calls(controller: MainController, stats: ImportStats) -> list[str]:
+        with patch(
+            "sampling_tool.ui.controllers.workspace_controller.QMessageBox.information"
+        ) as info:
+            controller.workspace._show_import_summary(stats)
+        return [c.args[2] for c in info.call_args_list]
+
+    def test_warnings_follow_the_counters(self, controller: MainController) -> None:
+        # Warnungen (Trennzeichen-Fallback, Encoding, Spaltennamen) dürfen beim
+        # Umbau der Zählerzeilen nicht verloren gehen.
+        stats = ImportStats(skipped_rows=5, rows_above_header=4, warnings=["W1", "W2"])
+        (text,) = self._summary_calls(controller, stats)
+        assert text.splitlines() == [
+            "4 Zeile(n) oberhalb der Kopfzeile ignoriert.",
+            "1 Leerzeile(n) übersprungen.",
+            "W1",
+            "W2",
+        ]
+
+    def test_only_warnings_without_counters(self, controller: MainController) -> None:
+        assert self._summary_calls(controller, ImportStats(warnings=["W1"])) == ["W1"]
+
+    def test_nothing_to_report_shows_no_dialog(self, controller: MainController) -> None:
+        assert self._summary_calls(controller, ImportStats()) == []
+
+
 # ---------------------------------------------------------------------------
 # Sprint-5: Sampling-Flow, Reset, Undo/Redo, Export
 # ---------------------------------------------------------------------------
@@ -1869,6 +2002,141 @@ class TestSamplingFlow:
             # Frisches Engagement: weder Undo noch Redo verfügbar.
             assert window._action_undo.isEnabled() is False
             assert window._action_redo.isEnabled() is False
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+def _stub_sampling_factory() -> Callable[..., _StubSamplingDialog]:
+    """Sampling-Dialog-Factory, deren Stub jede Ziehung ohne Rückfrage akzeptiert."""
+    from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+    result = SamplingDialogResult(
+        config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
+        from_sample_only=False,
+    )
+    return lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)
+
+
+def _sidebar_sample_ids(window: MainWindow) -> list[int]:
+    widget = window.sidebar().samples_widget()
+    ids: list[int] = []
+    for row in range(widget.count()):
+        item = widget.item(row)
+        assert item is not None
+        value = item.data(int(Qt.ItemDataRole.UserRole))
+        assert isinstance(value, int)
+        ids.append(value)
+    return ids
+
+
+class TestExportDefaultIdIsSampleId:
+    """Sprint 82 / Befund B: „Sample exportieren" schlägt die Nummer der exportierten
+    Stichprobe als ID vor.
+
+    Bis Sprint 81 stand dort „Anzahl Stichproben des Datensatzes + 1" – für jede
+    Stichprobe desselben Datensatzes dieselbe Zahl, und eine, die zu keiner
+    Stichprobe gehört (Stichprobe #5 wurde als `…_ID6_…xlsx` exportiert).
+    """
+
+    def test_default_id_is_id_of_the_exported_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.ui.settings_store import AppSettings
+
+        seen_default_ids: list[str] = []
+
+        def export_factory(
+            _parent: MainWindow,
+            _dataset: Dataset,
+            _name: str,
+            default_id: str,
+            _dir: Path | None,
+        ) -> _StubExportDialog:
+            seen_default_ids.append(default_id)
+            return _StubExportDialog(None, accept=False)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=_stub_sampling_factory(),  # type: ignore[arg-type]
+            export_dialog_factory=export_factory,  # type: ignore[arg-type]
+            settings=AppSettings.defaults(),
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.workspace.handle_new_sampling()
+            controller.workspace.handle_new_sampling()
+            sample_ids = _sidebar_sample_ids(window)
+            assert len(sample_ids) == 3
+            # Eine ältere Stichprobe aktivieren, nicht die zuletzt gezogene: der
+            # Vorschlag muss der exportierten Stichprobe folgen.
+            older_id = sample_ids[1]
+            controller.selection.handle_sample_selected(older_id)
+            controller.export.handle_export_sample()
+            assert seen_default_ids == [str(older_id)]
+
+            # Jede Stichprobe bekommt ihre eigene Nummer, nicht dieselbe Zahl für alle.
+            seen_default_ids.clear()
+            for sample_id in sample_ids:
+                controller.selection.handle_sample_selected(sample_id)
+                controller.export.handle_export_sample()
+            assert seen_default_ids == [str(sample_id) for sample_id in sample_ids]
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+class TestSidebarNumberMatchesStatusBar:
+    """Sprint 82 / Befund B: Sidebar und Statusleiste zeigen dieselbe Nummer.
+
+    Smoke-Test-Schritt 3: beim zweiten Datensatz stand in der Sidebar „#1", in
+    der Statusleiste „#6". Die Ziehungen wechseln hier zwischen zwei Datensätzen,
+    damit die projektweiten IDs je Datensatz Lücken haben und nicht zufällig mit
+    der Listenposition übereinstimmen.
+    """
+
+    def test_sidebar_numbers_are_sample_ids_and_match_status_bar(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        from sampling_tool.ui.settings_store import AppSettings
+
+        db_path, ds1_id, ds2_id, _sample_id = _two_dataset_db(tmp_path)
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=_stub_sampling_factory(),  # type: ignore[arg-type]
+            settings=AppSettings.defaults(),
+        )
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            for ds_id in (ds2_id, ds1_id, ds2_id, ds1_id):
+                controller.selection.handle_dataset_selected(ds_id)
+                controller.workspace.handle_new_sampling()
+                active = controller.session.sample
+                assert active is not None
+                assert active.id is not None
+
+                widget = window.sidebar().samples_widget()
+                active_labels: list[str] = []
+                for row in range(widget.count()):
+                    item = widget.item(row)
+                    assert item is not None
+                    sample_id = item.data(int(Qt.ItemDataRole.UserRole))
+                    label = item.text().removeprefix("● ")
+                    assert label.startswith(f"#{sample_id} · "), label
+                    if item.font().bold():
+                        active_labels.append(label)
+
+                assert len(active_labels) == 1
+                sidebar_number = active_labels[0].split(" · ")[0]
+                status_text = window._status_sample.text()
+                assert sidebar_number == f"#{active.id}"
+                assert status_text.startswith(f"Aktive Stichprobe: {sidebar_number} ("), status_text
         finally:
             controller.engagement.handle_close_engagement()
 
@@ -3167,6 +3435,103 @@ class TestEngagementStateRestore:
             assert state is not None
             assert state.active_sample_id is None
             assert state.filter_active is False
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+def _project_without_saved_state(directory: Path) -> Path:
+    """Zweites Projekt mit einem Datensatz, aber ohne gespeicherten UI-State."""
+    directory.mkdir()
+    db_path = directory / "neukunde.db"
+    db = Database(db_path)
+    db.migrate()
+    eng = EngagementRepo(db.connect()).get_or_create(
+        Engagement(auditor_name="Anna", client_name="Neukunde", audit_type="ISAE 3402")
+    )
+    assert eng.id is not None
+    DatasetRepo(db.connect()).create(
+        Dataset(name="Kreditoren", columns=("a",), engagement_id=eng.id),
+        tuple(DatasetRow(row_id=i, values={"a": i}) for i in range(1, 4)),
+    )
+    db.close()
+    return db_path
+
+
+class TestOpenOtherProjectShowsNoDataset:
+    """Sprint 82 / Befund E, benachbarter Fall: Öffnet man ein anderes Projekt
+    direkt (Datei → Öffnen, Zuletzt geöffnet), während eines mit geladenem
+    Datensatz offen ist, standen Datensatzname, Zeilenzahl und aktive
+    Stichprobe des ALTEN Projekts weiter in der Statusleiste.
+    """
+
+    def _activate_sample(self, controller: MainController, window: MainWindow) -> None:
+        ds_id = _first_item_data(window.sidebar().datasets_widget())
+        controller.selection.handle_dataset_selected(ds_id)
+        controller.selection.handle_sample_selected(
+            _first_item_data(window.sidebar().samples_widget())
+        )
+        assert window._status_dataset.text() == "Buchungen"
+        assert window._status_rows.text() == "5 Zeilen"
+        assert window._status_sample.text().startswith("Aktive Stichprobe: #")
+        assert window._action_new_sample.isEnabled() is True
+
+    def test_direct_open_without_restore_shows_no_dataset(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        from sampling_tool.ui.settings_store import AppSettings
+
+        other_db = _project_without_saved_state(tmp_path / "neukunde")
+        controller = MainController(
+            window, recent_store=recent_store, settings=AppSettings.defaults()
+        )
+        try:
+            controller.engagement.handle_open_engagement(populated_db)
+            self._activate_sample(controller, window)
+
+            controller.engagement.handle_open_engagement(other_db)
+
+            assert window._status_engagement.text() == "Neukunde"
+            assert window._status_dataset.text() == "Kein Dataset"
+            assert window._status_rows.text() == "0 Zeilen"
+            assert window._status_sample.text() == "Aktive Stichprobe: keine"
+            assert window._action_new_sample.isEnabled() is False
+            assert window._action_export_sample.isEnabled() is False
+            assert window.sidebar().datasets_widget().count() == 1
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_restored_dataset_wins_over_no_dataset_state(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Guard: stellt das geöffnete Projekt einen Datensatz wieder her, gilt der."""
+        from sampling_tool.ui.settings_store import AppSettings
+
+        other_db = _project_without_saved_state(tmp_path / "neukunde")
+        controller = MainController(
+            window, recent_store=recent_store, settings=AppSettings.defaults()
+        )
+        try:
+            controller.engagement.handle_open_engagement(populated_db)
+            self._activate_sample(controller, window)
+            controller.engagement.handle_open_engagement(other_db)
+
+            controller.engagement.handle_open_engagement(populated_db)
+
+            assert window._status_engagement.text() == "ACME"
+            assert window._status_dataset.text() == "Buchungen"
+            assert window._status_rows.text() == "5 Zeilen"
+            assert window._status_sample.text().startswith("Aktive Stichprobe: #")
+            assert window._action_new_sample.isEnabled() is True
+            assert window._action_export_sample.isEnabled() is True
+            assert window._action_reset_sample.isEnabled() is True
         finally:
             controller.engagement.handle_close_engagement()
 
@@ -5281,7 +5646,7 @@ class TestSeedRelocationReproducibility:
         populated_db: Path,
     ) -> None:
         # „Geänderter Seed gilt für die nächste Ziehung": der Settings-Seed hat
-        # Vorrang vor dem gemerkten last_seed.
+        # Vorrang vor dem Seed der jüngsten Stichprobe des Datensatzes.
         from dataclasses import replace as dc_replace
 
         from sampling_tool.ui.settings_store import AppSettings
@@ -5303,6 +5668,234 @@ class TestSeedRelocationReproducibility:
                 controller.workspace.handle_new_sampling()
                 assert controller.session.sample is not None
                 assert controller.session.sample.config.seed == 2002
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+def _two_datasets_without_samples_db(tmp_path: Path, stem: str = "seeds") -> tuple[Path, int, int]:
+    """Engagement mit zwei Datensätzen (A, B) à 10 Zeilen und OHNE Stichprobe.
+
+    `populated_db`/`_two_dataset_db` tragen bereits Seeds (42 bzw. 1) – für
+    die Seed-je-Datensatz-Tests muss die erste Ziehung den Dialog-Seed nutzen.
+    """
+    db_path = tmp_path / f"{stem}.db"
+    db = Database(db_path)
+    db.migrate()
+    eng = EngagementRepo(db.connect()).get_or_create(
+        Engagement(auditor_name="Anna", client_name=f"ACME {stem}", audit_type="ISAE 3402")
+    )
+    assert eng.id is not None
+    ds_repo = DatasetRepo(db.connect())
+    rows = tuple(DatasetRow(row_id=i, values={"a": i}) for i in range(1, 11))
+    ds_a = ds_repo.create(Dataset(name="A", columns=("a",), engagement_id=eng.id), rows)
+    ds_b = ds_repo.create(Dataset(name="B", columns=("a",), engagement_id=eng.id), rows)
+    assert ds_a.id is not None
+    assert ds_b.id is not None
+    db.close()
+    return db_path, ds_a.id, ds_b.id
+
+
+class TestSeedPerDataset:
+    """Sprint 82 / C: Der Seed gilt je Datensatz statt sitzungsweit.
+
+    Auflösung beim Öffnen des Stichproben-Dialogs: fester Seed aus den
+    Einstellungen → Seed der jüngsten Stichprobe DIESES Datensatzes aus der
+    Projektdatei → sonst würfelt der Dialog. Der echte `SamplingDialog` läuft
+    über `_real_sampling_dialog_driver`; jede Dialog-Öffnung verbraucht genau
+    einen Wert aus `seeds` (auch wenn `set_initial_seed` ihn überschreibt).
+    """
+
+    @staticmethod
+    def _controller(window: MainWindow, recent_store: RecentEngagementsStore) -> MainController:
+        # Explizite Defaults: diese Datei isoliert QSettings nicht – ein fester
+        # Seed aus den echten Einstellungen des Entwicklers würde sonst durchschlagen.
+        from sampling_tool.ui.settings_store import AppSettings
+
+        return MainController(window, recent_store=recent_store, settings=AppSettings.defaults())
+
+    @staticmethod
+    def _draw(controller: MainController, dataset_id: int) -> SampleResult:
+        controller.selection.handle_dataset_selected(dataset_id)
+        controller.workspace.handle_new_sampling()
+        sample = controller.session.sample
+        assert sample is not None
+        return sample
+
+    def test_each_dataset_keeps_its_own_seed(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, ds_a, ds_b = _two_datasets_without_samples_db(tmp_path)
+        controller = self._controller(window, recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            with _real_sampling_dialog_driver(seeds=[111, 222, 333]):
+                first_a = self._draw(controller, ds_a)
+                on_b = self._draw(controller, ds_b)
+                second_a = self._draw(controller, ds_a)
+
+            assert first_a.config.seed == 111
+            assert on_b.config.seed == 222
+            assert second_a.config.seed == 111
+            assert second_a.selected_row_ids == first_a.selected_row_ids
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_seed_survives_close_and_reopen(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, ds_a, _ds_b = _two_datasets_without_samples_db(tmp_path)
+        controller = self._controller(window, recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            with _real_sampling_dialog_driver(seeds=[111]):
+                before = self._draw(controller, ds_a)
+            assert before.config.seed == 111
+
+            controller.engagement.handle_close_engagement()
+            controller.engagement.handle_open_engagement(db_path)
+
+            with _real_sampling_dialog_driver(seeds=[999]):
+                after = self._draw(controller, ds_a)
+            assert after.config.seed == 111
+            assert after.selected_row_ids == before.selected_row_ids
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_fixed_settings_seed_wins(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        db_path, ds_a, ds_b = _two_datasets_without_samples_db(tmp_path)
+        controller = self._controller(window, recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            with _real_sampling_dialog_driver(seeds=[111, 222, 333]):
+                assert self._draw(controller, ds_a).config.seed == 111
+
+                controller.session.settings = dc_replace(controller.session.settings, seed=5555)
+                assert self._draw(controller, ds_a).config.seed == 5555
+                assert self._draw(controller, ds_b).config.seed == 5555
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_back_to_automatic_keeps_seed_of_youngest_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        # Bewusste Folge der Auflösungsreihenfolge: nach einer Ziehung mit festem
+        # Seed trägt die jüngste Stichprobe des Datensatzes diesen Seed – zurück auf
+        # „Automatisch" bleibt er für diesen Datensatz erhalten.
+        from dataclasses import replace as dc_replace
+
+        db_path, ds_a, _ds_b = _two_datasets_without_samples_db(tmp_path)
+        controller = self._controller(window, recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            with _real_sampling_dialog_driver(seeds=[111, 222, 333]):
+                assert self._draw(controller, ds_a).config.seed == 111
+                controller.session.settings = dc_replace(controller.session.settings, seed=5555)
+                assert self._draw(controller, ds_a).config.seed == 5555
+                controller.session.settings = dc_replace(controller.session.settings, seed=None)
+                assert self._draw(controller, ds_a).config.seed == 5555
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_equal_timestamps_pick_newest_sample_id(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        # Bei gleichem created_at liefert `list_for_dataset` die ÄLTESTE Zeile
+        # zuerst – die jüngste Stichprobe muss trotzdem gewinnen.
+        from datetime import UTC, datetime
+
+        db_path, ds_a, _ds_b = _two_datasets_without_samples_db(tmp_path)
+        same_instant = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        db = Database(db_path)
+        try:
+            for seed in (11, 22, 33):
+                SampleRepo(db.connect()).create_from_result(
+                    SampleResult(
+                        config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=seed),
+                        selected_row_ids=(1, 2, 3),
+                        population_size=10,
+                        drawn_at=same_instant,
+                    ),
+                    ds_a,
+                    "tester",
+                )
+        finally:
+            db.close()
+
+        controller = self._controller(window, recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            with _real_sampling_dialog_driver(seeds=[999]):
+                assert self._draw(controller, ds_a).config.seed == 33
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_opening_other_project_does_not_leak_seed(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        first_db, first_ds, _ = _two_datasets_without_samples_db(tmp_path, stem="p1")
+        second_db, second_ds, _ = _two_datasets_without_samples_db(tmp_path, stem="p2")
+        controller = self._controller(window, recent_store)
+        try:
+            controller.engagement.handle_open_engagement(first_db)
+            with _real_sampling_dialog_driver(seeds=[111, 222]):
+                assert self._draw(controller, first_ds).config.seed == 111
+                # Direkt das andere Projekt öffnen, ohne vorher zu schließen.
+                controller.engagement.handle_open_engagement(second_db)
+                assert self._draw(controller, second_ds).config.seed == 222
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_seed_outside_dialog_range_is_not_prefilled(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        # Gültige Seeds reichen bis SEED_MAX (2**32 - 1), die Seed-SpinBox des
+        # Dialogs nur bis 2**31 - 1. Ein solcher Seed aus der Projektdatei darf
+        # „Neue Stichprobe" nicht mit OverflowError abbrechen – der Dialog würfelt.
+        db_path, ds_a, _ds_b = _two_datasets_without_samples_db(tmp_path)
+        db = Database(db_path)
+        try:
+            SampleRepo(db.connect()).create_from_result(
+                SampleResult(
+                    config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=2**32 - 1),
+                    selected_row_ids=(1, 2),
+                    population_size=10,
+                ),
+                ds_a,
+                "tester",
+            )
+        finally:
+            db.close()
+
+        controller = self._controller(window, recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            with _real_sampling_dialog_driver(seeds=[111]):
+                assert self._draw(controller, ds_a).config.seed == 111
         finally:
             controller.engagement.handle_close_engagement()
 

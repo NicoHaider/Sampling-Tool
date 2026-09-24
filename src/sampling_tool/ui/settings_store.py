@@ -120,11 +120,12 @@ class AppSettings:
     # Onboarding
     first_run_completed: bool
 
-    # Sprint 27: app-weiter Sampling-Seed. None = kein fester Seed (es wird
-    # weiterhin zufällig gewürfelt und der zuletzt genutzte Seed gemerkt,
-    # Sprint-21-Verhalten). Ein gesetzter Seed gilt für die nächste Ziehung;
-    # geändert wird er ausschließlich in den Einstellungen (das Seed-Feld im
-    # Haupt-Dialog ist schreibgeschützt).
+    # Sprint 27: app-weiter Sampling-Seed. None = automatisch je Datensatz
+    # (Sprint 82 / C: Seed der jüngsten Stichprobe des Datensatzes, bei der
+    # ersten Ziehung gewürfelt). Ein gesetzter Seed hat Vorrang und gilt für
+    # alle folgenden Ziehungen in allen Datensätzen; geändert wird er
+    # ausschließlich in den Einstellungen (das Seed-Feld im Haupt-Dialog ist
+    # schreibgeschützt).
     seed: int | None
 
     @classmethod

@@ -183,6 +183,7 @@ class TestHeaderDetection:
         rows = list(result.rows)
         assert result.dataset.columns == ("Konto", "Bezeichnung", "Saldo")
         assert result.stats.skipped_rows == 4
+        assert result.stats.rows_above_header == 4
         assert len(rows) == 2
         assert rows[0].values["Konto"] == 1000
 
@@ -213,6 +214,7 @@ class TestHeaderDetection:
         rows = list(result.rows)
         assert result.dataset.columns == ("Konto", "Bezeichnung", "Saldo")
         assert result.stats.skipped_rows == 2
+        assert result.stats.rows_above_header == 2
         assert len(rows) == 2
         assert rows[0].values["Konto"] == 1000
 

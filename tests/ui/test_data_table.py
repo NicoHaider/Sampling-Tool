@@ -154,7 +154,7 @@ class TestDatasetTableModel:
         assert model.columnCount() == 0
         assert model.dataset() is None
 
-    def test_format_value_handles_datetime_none_bool(
+    def test_display_role_handles_datetime_none_bool(
         self, db_with_engagement: tuple[Database, int]
     ) -> None:
         db, eng_id = db_with_engagement
@@ -207,6 +207,29 @@ class TestDatasetTableModel:
         ds, repo = _persist_dataset(db, eng_id, rows, columns=("t",))
         model = DatasetTableModel(ds, repo)
         assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == "09:15:30"
+
+
+class TestAmountDisplay:
+    """Sprint 82 / Befund A: Beträge erscheinen ungerundet und ohne Exponent."""
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (13134.97, "13134.97"),
+            (20630.27, "20630.27"),
+            (1234567.89, "1234567.89"),
+            (1.5e-7, "0.00000015"),
+            (1234.0, "1234"),
+        ],
+    )
+    def test_display_role_shows_exact_amount(
+        self, db_with_engagement: tuple[Database, int], value: float, expected: str
+    ) -> None:
+        db, eng_id = db_with_engagement
+        rows = (DatasetRow(row_id=1, values={"Betrag": value}),)
+        ds, repo = _persist_dataset(db, eng_id, rows, columns=("Betrag",))
+        model = DatasetTableModel(ds, repo)
+        assert model.data(model.index(0, 0), Qt.ItemDataRole.DisplayRole) == expected
 
 
 class TestDataTableView:
@@ -388,6 +411,113 @@ class TestDataTableView:
         view.apply_ui_scale(1.15)
 
         assert len(calls) <= 10, f"apply_ui_scale hat {len(calls)} Bulk-Loads ausgelöst"
+
+
+def _wide_tall_dataset(
+    db: Database, engagement_id: int, name: str, *, n_rows: int, n_cols: int
+) -> tuple[Dataset, DatasetRepo]:
+    """Dataset mit genug Zeilen/Spalten, damit beide Scrollbars Weg haben."""
+    columns = tuple(f"Spalte {c}" for c in range(1, n_cols + 1))
+    rows = tuple(
+        DatasetRow(row_id=i, values={col: f"{name}{i}-{c}" for c, col in enumerate(columns)})
+        for i in range(1, n_rows + 1)
+    )
+    return _persist_dataset(db, engagement_id, rows, columns=columns, name=name)
+
+
+class TestScrollResetOnDatasetSwitch:
+    """Sprint 82 / Befund E: ein neu geladener Datensatz beginnt oben links.
+
+    Der Model-Reset in `set_dataset` behält die Scrollbar-Werte – im Smoke-Test
+    startete eine neue 500.000-Zeilen-Datei bei Zeile 14. Assertions laufen
+    über `minimum()`/`rowAt`/`columnAt`, nicht über Literale (ScrollPerItem
+    und ScrollPerPixel haben verschiedene Scrollbar-Einheiten).
+    """
+
+    def test_other_dataset_starts_at_first_row(
+        self, qtbot: QtBot, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        db, eng_id = db_with_engagement
+        ds_a, repo = _wide_tall_dataset(db, eng_id, "A", n_rows=500, n_cols=2)
+        ds_b, _ = _wide_tall_dataset(db, eng_id, "B", n_rows=500, n_cols=2)
+        view = DataTableView()
+        qtbot.addWidget(view)
+        view.set_dataset(ds_a, repo)
+        bar = view.verticalScrollBar()
+        assert bar is not None
+        bar.setValue(bar.maximum() // 2)
+        assert bar.value() > bar.minimum()
+
+        view.set_dataset(ds_b, repo)
+
+        assert bar.value() == bar.minimum()
+        assert view.rowAt(0) == 0
+
+    def test_other_dataset_starts_at_first_column(
+        self, qtbot: QtBot, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        db, eng_id = db_with_engagement
+        ds_a, repo = _wide_tall_dataset(db, eng_id, "A", n_rows=50, n_cols=40)
+        ds_b, _ = _wide_tall_dataset(db, eng_id, "B", n_rows=50, n_cols=40)
+        view = DataTableView()
+        qtbot.addWidget(view)
+        view.set_dataset(ds_a, repo)
+        bar = view.horizontalScrollBar()
+        assert bar is not None
+        bar.setValue(bar.maximum() // 2)
+        assert bar.value() > bar.minimum()
+
+        view.set_dataset(ds_b, repo)
+
+        assert bar.value() == bar.minimum()
+        assert view.columnAt(0) == 0
+
+    def test_highlight_after_switch_still_scrolls_to_sample(
+        self, qtbot: QtBot, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        """Guard: Restore/Auswahl (`set_dataset` → `highlight_rows`) landet weiter
+        auf der Stichprobe – das Nach-oben-Scrollen schluckt den Sprung nicht."""
+        db, eng_id = db_with_engagement
+        ds_a, repo = _wide_tall_dataset(db, eng_id, "A", n_rows=500, n_cols=2)
+        ds_b, _ = _wide_tall_dataset(db, eng_id, "B", n_rows=500, n_cols=2)
+        view = DataTableView()
+        qtbot.addWidget(view)
+        view.set_dataset(ds_a, repo)
+        view.set_dataset(ds_b, repo)
+
+        view.highlight_rows([400])
+
+        assert view.rowAt(0) > 0
+
+    def test_column_width_measured_at_new_top_rows(
+        self, qtbot: QtBot, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        """Das Autosizing misst ab der ersten sichtbaren Zeile – es muss also NACH
+        dem Nach-oben-Scrollen laufen, sonst hängt die Spaltenbreite von der
+        Scroll-Position des vorherigen Datensatzes ab (lange Werte oben würden
+        abgeschnitten)."""
+        db, eng_id = db_with_engagement
+        ds_a, repo = _wide_tall_dataset(db, eng_id, "A", n_rows=500, n_cols=1)
+        rows_b = tuple(
+            DatasetRow(row_id=i, values={"Text": ("x" * 60) if i <= 30 else "kurz"})
+            for i in range(1, 501)
+        )
+        ds_b, _ = _persist_dataset(db, eng_id, rows_b, columns=("Text",), name="B")
+
+        fresh = DataTableView()
+        qtbot.addWidget(fresh)
+        fresh.set_dataset(ds_b, repo)
+
+        switched = DataTableView()
+        qtbot.addWidget(switched)
+        switched.set_dataset(ds_a, repo)
+        bar = switched.verticalScrollBar()
+        assert bar is not None
+        bar.setValue(bar.maximum() // 2)
+        assert bar.value() > bar.minimum()
+        switched.set_dataset(ds_b, repo)
+
+        assert switched.columnWidth(0) == fresh.columnWidth(0)
 
 
 class TestLazyCache:
