@@ -69,13 +69,11 @@ class TestPolicyDetectsViolation:
     den Test oben nicht – sie muss ein eingeschleustes Literal finden."""
 
     def test_literal_in_function_is_found(self) -> None:
-        source = (
-            "def persist(result):\n    return replace(result, created_by='system')\n"
-        )
+        source = "def persist(result):\n    return replace(result, created_by='system')\n"
         assert find_system_literals(source, "x.py") == {("x.py", "persist")}
 
     def test_default_argument_is_found(self) -> None:
-        source = "def log(user: str = \"system\") -> None:\n    pass\n"
+        source = 'def log(user: str = "system") -> None:\n    pass\n'
         assert find_system_literals(source, "x.py") == {("x.py", "log")}
 
     def test_other_strings_are_ignored(self) -> None:

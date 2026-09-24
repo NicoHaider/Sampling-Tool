@@ -114,9 +114,7 @@ class TestLogImport:
         assert evt.details["columns"] == ["a", "b"]
         assert evt.details["dataset_id"] == 7
 
-    def test_details_carry_import_provenance(
-        self, logger: AuditLogger, engagement_id: int
-    ) -> None:
+    def test_details_carry_import_provenance(self, logger: AuditLogger, engagement_id: int) -> None:
         """Sprint 83 / B: Blatt, Kopfzeile und Zeilen über der Kopfzeile stehen im Event."""
         ds = Dataset(
             name="Mappe (Buchungen)",

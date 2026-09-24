@@ -971,7 +971,9 @@ class TestImportProvenance:
     """`Dataset.source_sheet` = tatsächlich gelesenes Blatt (CSV: None);
     `Dataset.header_row` = Kopfzeile 1-basiert wie im Dialog, 0 = keine."""
 
-    def test_gewaehltes_zweites_blatt(self, importer: ExcelImporter, three_sheet_xlsx: Path) -> None:
+    def test_gewaehltes_zweites_blatt(
+        self, importer: ExcelImporter, three_sheet_xlsx: Path
+    ) -> None:
         ds = importer.import_file_configured(three_sheet_xlsx, "Zweites", 0).dataset
         assert (ds.source_sheet, ds.header_row) == ("Zweites", 1)
 

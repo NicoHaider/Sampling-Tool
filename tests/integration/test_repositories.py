@@ -488,9 +488,7 @@ class TestAuditRepo:
 
 
 class TestDatasetImportProvenanceRoundtrip:
-    def test_source_sheet_and_header_row_roundtrip(
-        self, db: Database, engagement_id: int
-    ) -> None:
+    def test_source_sheet_and_header_row_roundtrip(self, db: Database, engagement_id: int) -> None:
         repo = DatasetRepo(db.connect())
         dataset = Dataset(
             name="Mappe (Buchungen)",
@@ -539,9 +537,11 @@ class TestSampleParentRelationRoundtrip:
         assert loaded is not None
         assert loaded.parent_sample_id == parent_id
         assert loaded.parent_relation is relation
-        raw = db.connect().execute(
-            "SELECT parent_relation FROM samples WHERE id = ?", (child_id,)
-        ).fetchone()
+        raw = (
+            db.connect()
+            .execute("SELECT parent_relation FROM samples WHERE id = ?", (child_id,))
+            .fetchone()
+        )
         assert raw["parent_relation"] == relation.value
 
     def test_without_parent_relation_reads_as_none(self, db: Database, engagement_id: int) -> None:

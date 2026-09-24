@@ -638,9 +638,7 @@ class TestMigration006:
         for allowed in ("restrict", "supplement", None):
             conn.execute(insert, (allowed,))
 
-    def test_v6_db_blocked_in_v5_app(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_v6_db_blocked_in_v5_app(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         db_path = tmp_path / "v6.db"
         fresh = Database(db_path)
         fresh.migrate()
