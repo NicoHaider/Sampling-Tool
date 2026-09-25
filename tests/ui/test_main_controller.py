@@ -2253,64 +2253,6 @@ class TestDatasetClickPreservesHighlight:
         finally:
             controller.engagement.handle_close_engagement()
 
-    def test_open_snapshot_failure_shows_visible_warning(
-        self,
-        window: MainWindow,
-        recent_store: RecentEngagementsStore,
-        tmp_path: Path,
-    ) -> None:
-        db_path, _ds1, _ds2, _sample = _two_dataset_db(tmp_path)
-        controller = MainController(window, recent_store=recent_store)
-        try:
-            status = window.statusBar()
-            assert status is not None
-            order: list[str] = []
-            warning_observations: list[tuple[bool, bool]] = []
-            real_adopt_database = controller.engagement._adopt_database
-            real_show_message = status.showMessage
-
-            def _record_adopt_database(
-                db: Database,
-                adopted_path: Path,
-                engagement: Engagement,
-            ) -> None:
-                order.append("adopt")
-                real_adopt_database(db, adopted_path, engagement)
-
-            def _record_show_message(message: str, timeout: int = 0) -> None:
-                order.append("warning")
-                warning_observations.append(
-                    (window.is_workspace_visible(), controller.session.db is not None)
-                )
-                real_show_message(message, timeout)
-
-            with (
-                patch(
-                    "sampling_tool.ui.controllers.engagement_controller."
-                    "EngagementVersionManager.create_snapshot",
-                    side_effect=OSError("Datenträger voll"),
-                ),
-                patch(
-                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
-                ) as warning,
-                patch.object(
-                    controller.engagement,
-                    "_adopt_database",
-                    side_effect=_record_adopt_database,
-                ),
-                patch.object(status, "showMessage", side_effect=_record_show_message),
-            ):
-                controller.engagement.handle_open_engagement(db_path)
-
-            assert window.is_workspace_visible() is True
-            assert order == ["adopt", "warning"]
-            assert warning_observations == [(True, True)]
-            assert "Compliance-Snapshot konnte nicht erstellt werden" in status.currentMessage()
-            assert "Datenträger voll" in status.currentMessage()
-            warning.assert_not_called()
-        finally:
-            controller.engagement.handle_close_engagement()
-
     def test_open_foreign_db_shows_error_and_creates_no_snapshot(
         self,
         window: MainWindow,
@@ -2345,6 +2287,136 @@ class TestDatasetClickPreservesHighlight:
             assert not foreign_path.with_name(foreign_path.name + "-wal").exists()
             assert not foreign_path.with_name(foreign_path.name + "-shm").exists()
             assert not (foreign_path.parent / ARCHIVE_DIR_NAME).exists()
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+def _db_at_schema_v5(tmp_path: Path) -> Path:
+    """Projektdatei auf Schema-Stand 5 (vor Sprint 83) – Migration 006 steht aus."""
+    from sampling_tool.resources import package_resource
+
+    migrations = tmp_path / "migrations_v5"
+    migrations.mkdir()
+    for script in sorted(package_resource("persistence/migrations").glob("00[1-5]_*.sql")):
+        (migrations / script.name).write_bytes(script.read_bytes())
+    db_path = tmp_path / "v5.db"
+    db = Database(db_path)
+    db.migrate(migrations_root=migrations)
+    EngagementRepo(db.connect()).get_or_create(
+        Engagement(auditor_name="Anna", client_name="ACME", audit_type="ISAE 3402")
+    )
+    db.close()
+    return db_path
+
+
+def _read_only_schema_version(db_path: Path) -> int:
+    uri = f"{db_path.resolve().as_uri()}?mode=ro&immutable=1"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        return int(conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0])
+    finally:
+        conn.close()
+
+
+class TestOpenRefusesMigrationWithoutSnapshot:
+    """Sprint 84 / B: Steht eine Migration aus und scheitert die Sicherung, wird
+    die Projektdatei weder geöffnet noch migriert – sonst wäre die einzige
+    Kopie verändert, ohne dass es einen Stand davor gibt."""
+
+    def test_v5_db_stays_untouched_and_error_is_shown(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        import hashlib
+
+        from sampling_tool.persistence.database import CURRENT_SCHEMA_VERSION
+
+        db_path = _db_at_schema_v5(tmp_path)
+        assert _read_only_schema_version(db_path) == 5 < CURRENT_SCHEMA_VERSION
+        digest_before = hashlib.sha256(db_path.read_bytes()).hexdigest()
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.engagement_controller."
+                    "EngagementVersionManager.create_snapshot",
+                    side_effect=OSError("Datenträger voll"),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as warning,
+                patch.object(
+                    Database, "migrate", autospec=True, side_effect=Database.migrate
+                ) as migrate,
+            ):
+                controller.engagement.handle_open_engagement(db_path)
+
+            migrate.assert_not_called()
+            assert controller.session.db is None
+            assert window.is_workspace_visible() is False
+            warning.assert_called_once()
+            body = warning.call_args.args[2]
+            assert "keine Sicherung angelegt" in body
+            assert "nicht geöffnet und nicht verändert" in body
+            assert "Datenträger voll" in body
+        finally:
+            controller.engagement.handle_close_engagement()
+
+        assert hashlib.sha256(db_path.read_bytes()).hexdigest() == digest_before
+        assert _read_only_schema_version(db_path) == 5
+        assert not db_path.with_name(db_path.name + "-wal").exists()
+
+
+class TestOpenWithoutPendingMigrationWarns:
+    """Sprint 84 / B: Ohne ausstehende Migration öffnet das Projekt trotz
+    gescheiterter Sicherung – die Warnung erscheint aber als Dialog (vorher
+    nur 5 s in der Statusleiste) und erst, wenn der Workspace steht."""
+
+    def test_v6_db_opens_and_warning_dialog_follows_adopt(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, _ds1, _ds2, _sample = _two_dataset_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            order: list[str] = []
+            real_adopt_database = controller.engagement._adopt_database
+
+            def _record_adopt_database(
+                db: Database, adopted_path: Path, engagement: Engagement
+            ) -> None:
+                order.append("adopt")
+                real_adopt_database(db, adopted_path, engagement)
+
+            def _record_warning(*_args: object) -> None:
+                order.append("warning")
+
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.engagement_controller."
+                    "EngagementVersionManager.create_snapshot",
+                    side_effect=OSError("Datenträger voll"),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.engagement_controller.QMessageBox.warning",
+                    side_effect=_record_warning,
+                ) as warning,
+                patch.object(
+                    controller.engagement, "_adopt_database", side_effect=_record_adopt_database
+                ),
+            ):
+                controller.engagement.handle_open_engagement(db_path)
+
+            assert window.is_workspace_visible() is True
+            assert controller.session.db is not None
+            assert order == ["adopt", "warning"]
+            body = warning.call_args.args[2]
+            assert "Sicherung" in body
+            assert "Datenträger voll" in body
         finally:
             controller.engagement.handle_close_engagement()
 
