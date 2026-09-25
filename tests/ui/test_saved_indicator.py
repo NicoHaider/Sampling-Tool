@@ -55,21 +55,12 @@ FROZEN_NOW = datetime(2026, 9, 13, 14, 32, 9)
 
 
 @pytest.fixture(autouse=True)
-def _isolated_qsettings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Echte MainWindows schreiben im `closeEvent` Geometrie in die Prefs.
-
-    Gleiches Muster wie `test_export_dir_bootstrap._isolated_qsettings`:
-    die Klasse am Verwendungsort patchen – bewusst kein HOME-Umbiegen
-    (hat in Sprint 67 echte Benutzer-Prefs korrumpiert).
-    """
+def _isolated_qsettings(tmp_path: Path) -> None:
+    """Lokale Absicherung, redundant zur globalen Isolation `_isolate_qsettings`
+    in `tests/conftest.py` (Sprint 84 / A): `MainWindow` holt seinen Handle
+    über `settings_store.open_qsettings()`, schreibt also in dieselbe tmp-INI."""
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    monkeypatch.setattr(
-        "sampling_tool.ui.main_window.QSettings",
-        lambda organization, application: QSettings(
-            QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
-        ),
-    )
 
 
 @pytest.fixture

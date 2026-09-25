@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 from openpyxl import Workbook
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import QDialog, QListWidget, QMessageBox
 from pytestqt.qtbot import QtBot
 
@@ -1624,19 +1624,14 @@ class TestImportSummaryMessage:
     """Sprint 82 / D: Titelzeilen oberhalb der Kopfzeile sind keine Leerzeilen."""
 
     @pytest.fixture(autouse=True)
-    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Echtes MainWindow → `closeEvent` würde sonst in die echten
-        Benutzer-Prefs schreiben. Muster aus `test_export_audit_pdf_dialog.py`."""
+    def _isolated_qsettings(self, tmp_path: Path) -> None:
+        """Lokale Absicherung, redundant zur globalen Isolation `_isolate_qsettings`
+        in `tests/conftest.py` (Sprint 84 / A): `MainWindow` holt seinen Handle
+        über `settings_store.open_qsettings()`, schreibt also in dieselbe tmp-INI."""
         from PyQt6.QtCore import QSettings
 
         QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
         QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-        monkeypatch.setattr(
-            "sampling_tool.ui.main_window.QSettings",
-            lambda organization, application: QSettings(
-                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
-            ),
-        )
 
     @staticmethod
     def _import_summary_text(
@@ -4023,6 +4018,72 @@ class TestPanelVisibilityWiring:
         # Beide Tabs sind weg.
         assert window._lower_tabs.count() == 0
         assert window._lower_tabs.isVisible() is False
+
+
+class TestSettingsWritesStayInTmpIni:
+    """Sprint 84 / A: Regression für den Verursacher der zurückgesetzten Prefs.
+
+    `TestPanelVisibilityWiring::test_handle_settings_wendet_neue_panel_visibility_an`
+    lief ohne Isolation und schrieb über `HelpController.handle_settings` →
+    `save_settings` die Werks-Defaults in die echten Prefs. Derselbe Pfad muss
+    jetzt ausschließlich in der tmp-INI der globalen Fixture landen – ebenso der
+    Fensterzustand, den `MainWindow` beim Schließen schreibt (bis Sprint 83 eine
+    zweite, eigene `QSettings`-Tür).
+    """
+
+    @staticmethod
+    def _record_handles(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        from sampling_tool.ui import settings_store
+
+        opened: list[str] = []
+        isolated = settings_store._qsettings
+
+        def spy() -> QSettings:
+            handle = isolated()
+            opened.append(handle.fileName())
+            return handle
+
+        monkeypatch.setattr(settings_store, "_qsettings", spy)
+        return opened
+
+    def test_handle_settings_with_defaults_writes_only_tmp_ini(
+        self,
+        qtbot: QtBot,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.dialogs.settings_dialog import SettingsDialog
+        from sampling_tool.ui.settings_store import AppSettings
+
+        opened = self._record_handles(monkeypatch)
+        window = MainWindow()
+        qtbot.addWidget(window)
+        defaults = AppSettings.defaults()
+        new_settings = dc_replace(defaults, show_dashboard=False, show_audit_trail=False)
+
+        class _StubSettingsDialog(SettingsDialog):
+            def exec(self) -> int:
+                self._result = new_settings
+                return int(QDialog.DialogCode.Accepted)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            settings_dialog_factory=lambda _p, _s: _StubSettingsDialog(defaults),
+            settings=defaults,
+        )
+        controller.help.handle_settings()
+        window.close()
+
+        assert opened, "weder Fenster noch save_settings haben einen Handle geöffnet"
+        root = tmp_path.resolve()
+        assert all(Path(name).resolve().is_relative_to(root) for name in opened), opened
+        stored = QSettings(opened[-1], QSettings.Format.IniFormat)
+        assert stored.value("settings/first_run_completed", type=bool) is False
+        assert stored.contains("window/width")
 
 
 # ---------------------------------------------------------------------------

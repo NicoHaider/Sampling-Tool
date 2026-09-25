@@ -76,20 +76,12 @@ def _reject_export_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _isolated_qsettings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Diese Tests bauen echte MainWindows; `closeEvent` -> `_window_state.save()`
-    wuerde sonst in die echten Benutzer-Prefs schreiben. Gleiches Muster wie
-    `test_main_window.TestWindowGeometryFitsScreen._isolated_qsettings` –
-    bewusst kein HOME-Umbiegen (hat in Sprint 67 echte Prefs korrumpiert).
-    """
+def _isolated_qsettings(tmp_path: Path) -> None:
+    """Lokale Absicherung, redundant zur globalen Isolation `_isolate_qsettings`
+    in `tests/conftest.py` (Sprint 84 / A): `MainWindow` holt seinen Handle
+    über `settings_store.open_qsettings()`, schreibt also in dieselbe tmp-INI."""
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    monkeypatch.setattr(
-        "sampling_tool.ui.main_window.QSettings",
-        lambda organization, application: QSettings(
-            QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
-        ),
-    )
 
 
 @pytest.fixture

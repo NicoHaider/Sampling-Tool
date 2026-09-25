@@ -303,19 +303,12 @@ class TestEmptyAuditTrail:
     """
 
     @pytest.fixture(autouse=True)
-    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Echtes MainWindow → `closeEvent` würde sonst in die echten
-        Benutzer-Prefs schreiben. Gleiches Muster wie
-        `test_export_dir_bootstrap` – bewusst kein HOME-Umbiegen (hat in
-        Sprint 67 echte Prefs korrumpiert)."""
+    def _isolated_qsettings(self, tmp_path: Path) -> None:
+        """Lokale Absicherung, redundant zur globalen Isolation `_isolate_qsettings`
+        in `tests/conftest.py` (Sprint 84 / A): `MainWindow` holt seinen Handle
+        über `settings_store.open_qsettings()`, schreibt also in dieselbe tmp-INI."""
         QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
         QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-        monkeypatch.setattr(
-            "sampling_tool.ui.main_window.QSettings",
-            lambda organization, application: QSettings(
-                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
-            ),
-        )
 
     @pytest.fixture(autouse=True)
     def _reject_dialog(self, monkeypatch: pytest.MonkeyPatch) -> None:

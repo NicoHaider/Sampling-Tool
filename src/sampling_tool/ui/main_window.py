@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QSettings, QSize, pyqtSignal
+from PyQt6.QtCore import QSize, pyqtSignal
 from PyQt6.QtGui import QAction, QCloseEvent
 from PyQt6.QtWidgets import (
     QFileDialog,
@@ -28,7 +28,6 @@ from PyQt6.QtWidgets import (
 
 from sampling_tool.config import (
     APP_NAME,
-    APP_ORG,
     BDO_LIGHT_GREY,
     ENGAGEMENTS_DIR,
     METHOD_LABELS,
@@ -47,6 +46,7 @@ from sampling_tool.ui._window_menu import (
 from sampling_tool.ui._window_state import WindowStateController
 from sampling_tool.ui._window_toolbar import _TOOLBAR_ICON_SIZE, build_toolbar
 from sampling_tool.ui.recent import RecentEntry
+from sampling_tool.ui.settings_store import open_qsettings
 from sampling_tool.ui.widgets.audit_trail_view import AuditTrailView
 from sampling_tool.ui.widgets.dashboard_view import DashboardView
 from sampling_tool.ui.widgets.data_table import _DEFAULT_ROW_HEIGHT, DataTableView
@@ -153,7 +153,7 @@ class MainWindow(QMainWindow):
         # (Sprint 67 / Teil A, Task 1+2) verfälschen.
         self.setMinimumSize(700, 600)
 
-        self._settings = QSettings(APP_ORG, APP_NAME)
+        self._settings = open_qsettings()
 
         # ---- zentrale Widgets ----
         self._stack = QStackedWidget()
