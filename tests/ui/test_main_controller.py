@@ -38,6 +38,7 @@ from sampling_tool.ui.controllers._factories import (
     default_audit_pdf_factory,
     default_duplicate_dialog_factory,
     default_excel_report_factory,
+    default_existing_export_factory,
     default_export_factory,
     default_html_report_factory,
     default_id_column_factory,
@@ -241,6 +242,7 @@ def test_controller_factories_defaults() -> None:
     assert factories.settings is default_settings_factory
     assert factories.import_options is default_import_options_factory
     assert factories.id_column is default_id_column_factory
+    assert factories.existing_export is default_existing_export_factory
     assert all(
         callable(getattr(factories, field.name))
         for field in dataclasses.fields(ControllerFactories)

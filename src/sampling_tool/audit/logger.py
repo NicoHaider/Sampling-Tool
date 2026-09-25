@@ -86,8 +86,13 @@ class AuditLogger:
         sample_id: int,
         export_file: Path,
         row_count: int,
+        archived_previous: Path | None = None,
     ) -> AuditEvent:
-        """Export einer Stichprobe – Ziel-Datei und exportierte Zeilenzahl."""
+        """Export einer Stichprobe – Ziel-Datei und exportierte Zeilenzahl.
+
+        `archived_previous` (Sprint 84 / C): wohin die vorher an `export_file`
+        liegende Fassung verschoben wurde, wenn der Anwender überschrieben hat.
+        """
         event = AuditEvent(
             event_type="export",
             engagement_id=self.engagement_id,
@@ -95,6 +100,28 @@ class AuditLogger:
             sample_id=sample_id,
             sample_size=row_count,
             export_file=str(export_file),
+            details=_archive_details(archived_previous),
+        )
+        return self.repo.log(event)
+
+    def log_report_export(
+        self,
+        export_file: Path,
+        report: str,
+        archived_previous: Path | None = None,
+    ) -> AuditEvent:
+        """Export eines Berichts (AuditTrail-PDF, Excel-, HTML-Bericht; Sprint 84 / C).
+
+        Bis Sprint 83 hinterließen Berichte keine Spur im Audit-Trail – eine
+        abgegebene Fassung ließ sich darin weder finden noch von einer
+        späteren unterscheiden. `report` ist die Anzeige-Bezeichnung.
+        """
+        event = AuditEvent(
+            event_type="export",
+            engagement_id=self.engagement_id,
+            user_name=self.user_name,
+            export_file=str(export_file),
+            details={"report": report, **_archive_details(archived_previous)},
         )
         return self.repo.log(event)
 
@@ -146,3 +173,7 @@ class AuditLogger:
             corrects_event_id=original_event_id,
         )
         return self.repo.correct(original_event_id, correction)
+
+
+def _archive_details(archived_previous: Path | None) -> dict[str, Any]:
+    return {} if archived_previous is None else {"archived_previous": str(archived_previous)}

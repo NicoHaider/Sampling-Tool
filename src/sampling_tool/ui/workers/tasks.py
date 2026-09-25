@@ -140,6 +140,9 @@ class SampleExportTask:
     # Sprint 74 / §2.2: der Zeitpunkt aus dem Export-Dialog. `None` = der
     # Writer liest selbst (Aufrufer ohne Dialog).
     now: datetime | None = None
+    # Sprint 84 / C: vom Controller aufgelöster Dateiname (z. B. `…_2.xlsx`
+    # nach der Rückfrage). `None` = Namensmuster des Exporters.
+    filename: str | None = None
 
     def run(self, progress: ProgressReporter, cancellation: CancellationToken) -> Path:
         cancellation.raise_if_cancelled()
@@ -156,6 +159,7 @@ class SampleExportTask:
                 custom_id=self.custom_id,
                 engagement=self.engagement,
                 now=self.now,
+                filename=self.filename,
             )
         finally:
             db.close()

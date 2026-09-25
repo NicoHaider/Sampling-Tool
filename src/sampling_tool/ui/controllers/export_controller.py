@@ -9,23 +9,26 @@ Session-State.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Sequence
-from dataclasses import replace
-from datetime import date
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, replace
+from datetime import date, datetime
 from pathlib import Path
 
 from PyQt6.QtWidgets import QMessageBox
 
 from sampling_tool.audit.logger import AuditLogger
+from sampling_tool.config import ARCHIVE_DIR_NAME
 from sampling_tool.core.models import AuditEvent
 from sampling_tool.io.bdo_locations import company_by_key, location_by_key
-from sampling_tool.io.exporter import ExportError
+from sampling_tool.io.exporter import ExcelExporter, ExportError
 from sampling_tool.persistence.repositories import AuditRepo
+from sampling_tool.ui._scaling import scale_factor
 from sampling_tool.ui.controllers._factories import ControllerFactories
 from sampling_tool.ui.controllers.workspace_session import (
     AUDIT_EVENT_DISPLAY_LIMIT,
     WorkspaceSession,
 )
+from sampling_tool.ui.dialogs.existing_export_dialog import ExistingExportChoice
 from sampling_tool.ui.dialogs.progress_dialog import TaskProgressDialog
 from sampling_tool.ui.settings_store import save_settings
 from sampling_tool.ui.workers.tasks import (
@@ -36,6 +39,50 @@ from sampling_tool.ui.workers.tasks import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Zeitstempel im Namen einer archivierten Export-Fassung – dasselbe Schema wie
+#: die Projekt-Snapshots unter `archiv/` (Datum und Uhrzeit, dateisystemtauglich).
+_ARCHIVE_TIMESTAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
+
+#: Anzeige-Bezeichnungen der Berichte im Audit-Trail (`details["report"]`).
+REPORT_AUDIT_PDF = "AuditTrail-PDF"
+REPORT_EXCEL = "Excel-Bericht"
+REPORT_HTML = "HTML-Bericht"
+
+
+@dataclass(frozen=True, slots=True)
+class ExportTarget:
+    """Aufgelöstes Export-Ziel: wohin geschrieben wird, wohin die alte Fassung ging."""
+
+    path: Path
+    archived_previous: Path | None = None
+
+
+def next_free_path(path: Path) -> Path:
+    """Erste freie Variante `<stem>_2<suffix>`, `_3`, … neben `path`."""
+    n = 2
+    while True:
+        candidate = path.with_name(f"{path.stem}_{n}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
+def archive_existing_export(path: Path, now: datetime) -> Path:
+    """Verschiebt eine vorhandene Export-Datei nach `<Ordner>/archiv/`.
+
+    Name: `<stem>_<Zeitstempel><suffix>`, bei Kollision (zweimal in derselben
+    Sekunde) mit `_2`, `_3`, … – eine archivierte Fassung wird nie ersetzt.
+    Wirft `OSError`, wenn Ordner oder Verschieben scheitern; dann liegt die
+    Datei unverändert am alten Ort.
+    """
+    archive_dir = path.parent / ARCHIVE_DIR_NAME
+    archive_dir.mkdir(exist_ok=True)
+    target = archive_dir / f"{path.stem}_{now.strftime(_ARCHIVE_TIMESTAMP_FORMAT)}{path.suffix}"
+    if target.exists():
+        target = next_free_path(target)
+    path.rename(target)
+    return target
 
 
 def filter_audit_events(
@@ -99,6 +146,12 @@ class ExportController:
         result = dialog.get_result()
         if result is None:
             return
+        target = self._resolve_export_target(
+            result.output_dir
+            / ExcelExporter.build_filename(result.custom_name, result.custom_id, result.now)
+        )
+        if target is None:
+            return
 
         # Sprint 11.4: Exporter zieht sich die Sample-Rows on-demand via
         # `get_rows_by_ids` – kein voll materialisiertes Dataset mehr.
@@ -110,7 +163,7 @@ class ExportController:
             dataset=s.dataset,
             db_path=s.db.db_path,
             columns=result.columns,
-            output_dir=result.output_dir,
+            output_dir=target.path.parent,
             custom_name=result.custom_name,
             custom_id=result.custom_id,
             engagement=s.engagement,
@@ -119,6 +172,7 @@ class ExportController:
             # Tageswechsel einen anderen {date}-Token schreiben, als der
             # Auditor im Dialog gelesen hat.
             now=result.now,
+            filename=target.path.name,
         )
         progress_dialog = TaskProgressDialog("Exportiere Sample…", s.window)
         try:
@@ -133,7 +187,14 @@ class ExportController:
         if output_path is None:
             return  # User-Cancel
 
-        self._log_export_with_retry(s, s.sample.id, output_path, s.sample.actual_size)
+        sample_id, row_count = s.sample.id, s.sample.actual_size
+        self._log_export_with_retry(
+            s,
+            output_path,
+            lambda audit: audit.log_export(
+                sample_id, output_path, row_count, target.archived_previous
+            ),
+        )
         s.refresh_views()
 
         QMessageBox.information(
@@ -181,6 +242,9 @@ class ExportController:
         result = dialog.get_result()
         if result is None:
             return
+        target = self._resolve_export_target(result.output_path)
+        if target is None:
+            return
 
         # Sprint 33: gewählte BDO-Gesellschaft + Standort app-weit merken
         # (analog default_auditor_name) und auf die Daten-Objekte auflösen.
@@ -198,7 +262,7 @@ class ExportController:
         task = AuditPdfExportTask(
             engagement=s.engagement,
             events=filtered,
-            output_path=result.output_path,
+            output_path=target.path,
             briefpapier=briefpapier if result.use_briefpapier else None,
             include_statistics=result.include_statistics,
             company=company_by_key(result.company_key),
@@ -213,6 +277,7 @@ class ExportController:
             return
         if output_path is None:
             return  # User-Cancel
+        self._log_report_export(s, output_path, REPORT_AUDIT_PDF, target)
 
         QMessageBox.information(
             s.window,
@@ -243,12 +308,15 @@ class ExportController:
             logger.exception("Excel-Report: Daten-Sammlung fehlgeschlagen")
             s.error(f"Excel-Report fehlgeschlagen: {exc}")
             return
+        target = self._resolve_export_target(result.output_path)
+        if target is None:
+            return
         task = ExcelReportTask(
             engagement=s.engagement,
             datasets=datasets,
             samples=samples,
             audit_events=events,
-            output_path=result.output_path,
+            output_path=target.path,
             sheets=result.sheets,
             dataset_ids_by_sample=dataset_ids_by_sample,
         )
@@ -261,6 +329,7 @@ class ExportController:
             return
         if output_path is None:
             return  # User-Cancel
+        self._log_report_export(s, output_path, REPORT_EXCEL, target)
         QMessageBox.information(
             s.window,
             "Excel-Report erstellt",
@@ -290,12 +359,15 @@ class ExportController:
             logger.exception("HTML-Report: Daten-Sammlung fehlgeschlagen")
             s.error(f"HTML-Report fehlgeschlagen: {exc}")
             return
+        target = self._resolve_export_target(result.output_path)
+        if target is None:
+            return
         task = HtmlReportTask(
             engagement=s.engagement,
             datasets=datasets,
             samples=samples,
             audit_events=events,
-            output_path=result.output_path,
+            output_path=target.path,
             include_charts=result.include_charts,
             include_audit_trail=result.include_audit_trail,
             include_samples_table=result.include_samples_table,
@@ -310,6 +382,7 @@ class ExportController:
             return
         if output_path is None:
             return  # User-Cancel
+        self._log_report_export(s, output_path, REPORT_HTML, target)
         QMessageBox.information(
             s.window,
             "HTML-Report erstellt",
@@ -318,12 +391,55 @@ class ExportController:
 
     # ---- intern --------------------------------------------------------
 
+    def _resolve_export_target(self, planned: Path) -> ExportTarget | None:
+        """Die eine Stelle, an der alle vier Exporte ihr Ziel festlegen (Sprint 84 / C).
+
+        Existiert `planned` nicht, wird dorthin geschrieben. Sonst fragt der
+        `ExistingExportDialog` VOR dem Worker: neuer Name (erste freie Nummer),
+        überschreiben nach Sicherung der alten Fassung in `archiv/`, oder
+        abbrechen. `None` heißt: nicht exportieren. Scheitert die Sicherung,
+        wird nichts überschrieben – die vorhandene Datei bleibt, wo sie ist.
+        """
+        if not planned.exists():
+            return ExportTarget(planned)
+        s = self.session
+        new_name = next_free_path(planned)
+        dialog = self._factories.existing_export(
+            s.window, planned, new_name, scale_factor(s.settings.ui_scale)
+        )
+        dialog.exec()
+        choice = dialog.choice()
+        if choice == ExistingExportChoice.NEW_NAME:
+            return ExportTarget(new_name)
+        if choice != ExistingExportChoice.OVERWRITE:
+            return None
+        try:
+            archived = archive_existing_export(planned, s.now())
+        except OSError as exc:
+            logger.exception("Vorhandene Export-Datei konnte nicht archiviert werden")
+            s.error(
+                f"Die vorhandene Datei „{planned.name}“ konnte nicht gesichert werden. "
+                f"Es wurde nichts überschrieben.\n\nUrsache: {exc}"
+            )
+            return None
+        return ExportTarget(planned, archived)
+
+    def _log_report_export(
+        self, s: WorkspaceSession, export_file: Path, report: str, target: ExportTarget
+    ) -> None:
+        """`export`-Event für einen Bericht + Views auffrischen (Sprint 84 / C)."""
+        self._log_export_with_retry(
+            s,
+            export_file,
+            lambda audit: audit.log_report_export(export_file, report, target.archived_previous),
+        )
+        s.refresh_views()
+
     def _log_export_with_retry(
         self,
         s: WorkspaceSession,
-        sample_id: int,
         export_file: Path,
-        row_count: int,
+        write: Callable[[AuditLogger], object],
     ) -> None:
         """Schreibt das Export-Audit-Event. Schlägt das INSERT fehl, bleibt die
         bereits erstellte Exportdatei erhalten (Compliance-Entscheidung Nico,
@@ -345,9 +461,7 @@ class ExportController:
             try:
                 # s.db.connect() liefert die bereits offene Connection (kein Reconnect) –
                 # der Retry wiederholt nur das INSERT, sinnvoll bei transienten Locks (WAL).
-                AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id).log_export(
-                    sample_id, export_file, row_count
-                )
+                write(AuditLogger(AuditRepo(s.db.connect()), s.user_name(), s.engagement.id))
                 return
             except Exception:
                 logger.exception("Audit-Log für Export fehlgeschlagen")

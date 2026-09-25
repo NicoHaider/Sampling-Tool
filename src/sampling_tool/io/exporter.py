@@ -78,6 +78,7 @@ class ExcelExporter:
         custom_id: str,
         engagement: Engagement | None = None,
         now: datetime | None = None,
+        filename: str | None = None,
     ) -> Path:
         """Exportiert die gezogenen Zeilen.
 
@@ -102,6 +103,10 @@ class ExcelExporter:
         `engagement` ist optional – wird im Metadaten-Sheet ausgewertet,
         wenn gesetzt. Damit kann der Exporter auch standalone genutzt
         werden.
+
+        `filename` (Sprint 84 / C) ersetzt den aus dem Muster gebauten Namen –
+        der Controller reicht ihn durch, wenn die Zieldatei schon existierte
+        und der Anwender „Neuen Namen verwenden" gewählt hat. `None` = Muster.
         """
         self._validate(columns, dataset)
 
@@ -111,7 +116,8 @@ class ExcelExporter:
             else []
         )
 
-        filename = self._build_filename(custom_name, custom_id, now)
+        if filename is None:
+            filename = self.build_filename(custom_name, custom_id, now)
         target = output_dir / filename
 
         wb = Workbook()
@@ -135,8 +141,11 @@ class ExcelExporter:
     # ---- Helpers --------------------------------------------------------
 
     @staticmethod
-    def _build_filename(custom_name: str, custom_id: str, now: datetime | None = None) -> str:
+    def build_filename(custom_name: str, custom_id: str, now: datetime | None = None) -> str:
         """Baut den Dateinamen aus dem gemeinsamen Pattern (`config.py`).
+
+        Öffentlich seit Sprint 84 / C: der Export-Controller prüft damit VOR
+        dem Worker, ob die Zieldatei schon existiert.
 
         `now=None` liest die Uhr selbst – für Aufrufer ohne Dialog. Der
         `or "sample"`-Fallback greift NACH dem Sanitizer und weicht damit vom

@@ -637,7 +637,7 @@ class TestWrittenFileMatchesDialogPreview:
     auch wenn zwischen Dialog-Öffnen und OK-Klick ein Tageswechsel liegt.
 
     Vor Sprint 74 liefen hier zwei unabhängige Uhren (Widget-Vorschau und
-    `ExcelExporter._build_filename`); sie stimmten nur zufällig überein.
+    `ExcelExporter.build_filename`); sie stimmten nur zufällig überein.
     """
 
     def test_file_on_disk_has_the_previewed_name(
@@ -700,7 +700,7 @@ class TestWrittenFileMatchesDialogPreview:
             custom_id="1",
         )
         assert written.exists()
-        assert written.name == ExcelExporter._build_filename("X", "1", datetime.now())
+        assert written.name == ExcelExporter.build_filename("X", "1", datetime.now())
 
     def test_explicit_now_controls_the_date_token(
         self,

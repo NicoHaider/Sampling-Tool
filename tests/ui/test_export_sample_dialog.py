@@ -64,10 +64,10 @@ class TestExportSampleDialog:
             _dataset(), default_name="Foo", default_id="42", default_output_dir=tmp_path
         )
         qtbot.addWidget(dialog)
-        assert dialog._target.preview_filename() == ExcelExporter._build_filename("Foo", "42")
+        assert dialog._target.preview_filename() == ExcelExporter.build_filename("Foo", "42")
         dialog._target._name_field.setText("Bar")
         dialog._target._id_field.setText("99")
-        assert dialog._target.preview_filename() == ExcelExporter._build_filename("Bar", "99")
+        assert dialog._target.preview_filename() == ExcelExporter.build_filename("Bar", "99")
 
     def test_validation_blocks_when_name_empty(self, qtbot: QtBot, tmp_path: Path) -> None:
         dialog = ExportSampleDialog(_dataset(), default_id="1", default_output_dir=tmp_path)
