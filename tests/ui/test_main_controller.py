@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 from openpyxl import Workbook
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import QDialog, QListWidget, QMessageBox
 from pytestqt.qtbot import QtBot
 
@@ -38,6 +38,7 @@ from sampling_tool.ui.controllers._factories import (
     default_audit_pdf_factory,
     default_duplicate_dialog_factory,
     default_excel_report_factory,
+    default_existing_export_factory,
     default_export_factory,
     default_html_report_factory,
     default_id_column_factory,
@@ -241,6 +242,7 @@ def test_controller_factories_defaults() -> None:
     assert factories.settings is default_settings_factory
     assert factories.import_options is default_import_options_factory
     assert factories.id_column is default_id_column_factory
+    assert factories.existing_export is default_existing_export_factory
     assert all(
         callable(getattr(factories, field.name))
         for field in dataclasses.fields(ControllerFactories)
@@ -1624,19 +1626,14 @@ class TestImportSummaryMessage:
     """Sprint 82 / D: Titelzeilen oberhalb der Kopfzeile sind keine Leerzeilen."""
 
     @pytest.fixture(autouse=True)
-    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Echtes MainWindow → `closeEvent` würde sonst in die echten
-        Benutzer-Prefs schreiben. Muster aus `test_export_audit_pdf_dialog.py`."""
+    def _isolated_qsettings(self, tmp_path: Path) -> None:
+        """Lokale Absicherung, redundant zur globalen Isolation `_isolate_qsettings`
+        in `tests/conftest.py` (Sprint 84 / A): `MainWindow` holt seinen Handle
+        über `settings_store.open_qsettings()`, schreibt also in dieselbe tmp-INI."""
         from PyQt6.QtCore import QSettings
 
         QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
         QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-        monkeypatch.setattr(
-            "sampling_tool.ui.main_window.QSettings",
-            lambda organization, application: QSettings(
-                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
-            ),
-        )
 
     @staticmethod
     def _import_summary_text(
@@ -2258,64 +2255,6 @@ class TestDatasetClickPreservesHighlight:
         finally:
             controller.engagement.handle_close_engagement()
 
-    def test_open_snapshot_failure_shows_visible_warning(
-        self,
-        window: MainWindow,
-        recent_store: RecentEngagementsStore,
-        tmp_path: Path,
-    ) -> None:
-        db_path, _ds1, _ds2, _sample = _two_dataset_db(tmp_path)
-        controller = MainController(window, recent_store=recent_store)
-        try:
-            status = window.statusBar()
-            assert status is not None
-            order: list[str] = []
-            warning_observations: list[tuple[bool, bool]] = []
-            real_adopt_database = controller.engagement._adopt_database
-            real_show_message = status.showMessage
-
-            def _record_adopt_database(
-                db: Database,
-                adopted_path: Path,
-                engagement: Engagement,
-            ) -> None:
-                order.append("adopt")
-                real_adopt_database(db, adopted_path, engagement)
-
-            def _record_show_message(message: str, timeout: int = 0) -> None:
-                order.append("warning")
-                warning_observations.append(
-                    (window.is_workspace_visible(), controller.session.db is not None)
-                )
-                real_show_message(message, timeout)
-
-            with (
-                patch(
-                    "sampling_tool.ui.controllers.engagement_controller."
-                    "EngagementVersionManager.create_snapshot",
-                    side_effect=OSError("Datenträger voll"),
-                ),
-                patch(
-                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
-                ) as warning,
-                patch.object(
-                    controller.engagement,
-                    "_adopt_database",
-                    side_effect=_record_adopt_database,
-                ),
-                patch.object(status, "showMessage", side_effect=_record_show_message),
-            ):
-                controller.engagement.handle_open_engagement(db_path)
-
-            assert window.is_workspace_visible() is True
-            assert order == ["adopt", "warning"]
-            assert warning_observations == [(True, True)]
-            assert "Compliance-Snapshot konnte nicht erstellt werden" in status.currentMessage()
-            assert "Datenträger voll" in status.currentMessage()
-            warning.assert_not_called()
-        finally:
-            controller.engagement.handle_close_engagement()
-
     def test_open_foreign_db_shows_error_and_creates_no_snapshot(
         self,
         window: MainWindow,
@@ -2350,6 +2289,136 @@ class TestDatasetClickPreservesHighlight:
             assert not foreign_path.with_name(foreign_path.name + "-wal").exists()
             assert not foreign_path.with_name(foreign_path.name + "-shm").exists()
             assert not (foreign_path.parent / ARCHIVE_DIR_NAME).exists()
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+def _db_at_schema_v5(tmp_path: Path) -> Path:
+    """Projektdatei auf Schema-Stand 5 (vor Sprint 83) – Migration 006 steht aus."""
+    from sampling_tool.resources import package_resource
+
+    migrations = tmp_path / "migrations_v5"
+    migrations.mkdir()
+    for script in sorted(package_resource("persistence/migrations").glob("00[1-5]_*.sql")):
+        (migrations / script.name).write_bytes(script.read_bytes())
+    db_path = tmp_path / "v5.db"
+    db = Database(db_path)
+    db.migrate(migrations_root=migrations)
+    EngagementRepo(db.connect()).get_or_create(
+        Engagement(auditor_name="Anna", client_name="ACME", audit_type="ISAE 3402")
+    )
+    db.close()
+    return db_path
+
+
+def _read_only_schema_version(db_path: Path) -> int:
+    uri = f"{db_path.resolve().as_uri()}?mode=ro&immutable=1"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        return int(conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0])
+    finally:
+        conn.close()
+
+
+class TestOpenRefusesMigrationWithoutSnapshot:
+    """Sprint 84 / B: Steht eine Migration aus und scheitert die Sicherung, wird
+    die Projektdatei weder geöffnet noch migriert – sonst wäre die einzige
+    Kopie verändert, ohne dass es einen Stand davor gibt."""
+
+    def test_v5_db_stays_untouched_and_error_is_shown(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        import hashlib
+
+        from sampling_tool.persistence.database import CURRENT_SCHEMA_VERSION
+
+        db_path = _db_at_schema_v5(tmp_path)
+        assert _read_only_schema_version(db_path) == 5 < CURRENT_SCHEMA_VERSION
+        digest_before = hashlib.sha256(db_path.read_bytes()).hexdigest()
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.engagement_controller."
+                    "EngagementVersionManager.create_snapshot",
+                    side_effect=OSError("Datenträger voll"),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as warning,
+                patch.object(
+                    Database, "migrate", autospec=True, side_effect=Database.migrate
+                ) as migrate,
+            ):
+                controller.engagement.handle_open_engagement(db_path)
+
+            migrate.assert_not_called()
+            assert controller.session.db is None
+            assert window.is_workspace_visible() is False
+            warning.assert_called_once()
+            body = warning.call_args.args[2]
+            assert "keine Sicherung angelegt" in body
+            assert "nicht geöffnet und nicht verändert" in body
+            assert "Datenträger voll" in body
+        finally:
+            controller.engagement.handle_close_engagement()
+
+        assert hashlib.sha256(db_path.read_bytes()).hexdigest() == digest_before
+        assert _read_only_schema_version(db_path) == 5
+        assert not db_path.with_name(db_path.name + "-wal").exists()
+
+
+class TestOpenWithoutPendingMigrationWarns:
+    """Sprint 84 / B: Ohne ausstehende Migration öffnet das Projekt trotz
+    gescheiterter Sicherung – die Warnung erscheint aber als Dialog (vorher
+    nur 5 s in der Statusleiste) und erst, wenn der Workspace steht."""
+
+    def test_v6_db_opens_and_warning_dialog_follows_adopt(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, _ds1, _ds2, _sample = _two_dataset_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            order: list[str] = []
+            real_adopt_database = controller.engagement._adopt_database
+
+            def _record_adopt_database(
+                db: Database, adopted_path: Path, engagement: Engagement
+            ) -> None:
+                order.append("adopt")
+                real_adopt_database(db, adopted_path, engagement)
+
+            def _record_warning(*_args: object) -> None:
+                order.append("warning")
+
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.engagement_controller."
+                    "EngagementVersionManager.create_snapshot",
+                    side_effect=OSError("Datenträger voll"),
+                ),
+                patch(
+                    "sampling_tool.ui.controllers.engagement_controller.QMessageBox.warning",
+                    side_effect=_record_warning,
+                ) as warning,
+                patch.object(
+                    controller.engagement, "_adopt_database", side_effect=_record_adopt_database
+                ),
+            ):
+                controller.engagement.handle_open_engagement(db_path)
+
+            assert window.is_workspace_visible() is True
+            assert controller.session.db is not None
+            assert order == ["adopt", "warning"]
+            body = warning.call_args.args[2]
+            assert "Sicherung" in body
+            assert "Datenträger voll" in body
         finally:
             controller.engagement.handle_close_engagement()
 
@@ -4023,6 +4092,72 @@ class TestPanelVisibilityWiring:
         # Beide Tabs sind weg.
         assert window._lower_tabs.count() == 0
         assert window._lower_tabs.isVisible() is False
+
+
+class TestSettingsWritesStayInTmpIni:
+    """Sprint 84 / A: Regression für den Verursacher der zurückgesetzten Prefs.
+
+    `TestPanelVisibilityWiring::test_handle_settings_wendet_neue_panel_visibility_an`
+    lief ohne Isolation und schrieb über `HelpController.handle_settings` →
+    `save_settings` die Werks-Defaults in die echten Prefs. Derselbe Pfad muss
+    jetzt ausschließlich in der tmp-INI der globalen Fixture landen – ebenso der
+    Fensterzustand, den `MainWindow` beim Schließen schreibt (bis Sprint 83 eine
+    zweite, eigene `QSettings`-Tür).
+    """
+
+    @staticmethod
+    def _record_handles(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        from sampling_tool.ui import settings_store
+
+        opened: list[str] = []
+        isolated = settings_store._qsettings
+
+        def spy() -> QSettings:
+            handle = isolated()
+            opened.append(handle.fileName())
+            return handle
+
+        monkeypatch.setattr(settings_store, "_qsettings", spy)
+        return opened
+
+    def test_handle_settings_with_defaults_writes_only_tmp_ini(
+        self,
+        qtbot: QtBot,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from dataclasses import replace as dc_replace
+
+        from sampling_tool.ui.dialogs.settings_dialog import SettingsDialog
+        from sampling_tool.ui.settings_store import AppSettings
+
+        opened = self._record_handles(monkeypatch)
+        window = MainWindow()
+        qtbot.addWidget(window)
+        defaults = AppSettings.defaults()
+        new_settings = dc_replace(defaults, show_dashboard=False, show_audit_trail=False)
+
+        class _StubSettingsDialog(SettingsDialog):
+            def exec(self) -> int:
+                self._result = new_settings
+                return int(QDialog.DialogCode.Accepted)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            settings_dialog_factory=lambda _p, _s: _StubSettingsDialog(defaults),
+            settings=defaults,
+        )
+        controller.help.handle_settings()
+        window.close()
+
+        assert opened, "weder Fenster noch save_settings haben einen Handle geöffnet"
+        root = tmp_path.resolve()
+        assert all(Path(name).resolve().is_relative_to(root) for name in opened), opened
+        stored = QSettings(opened[-1], QSettings.Format.IniFormat)
+        assert stored.value("settings/first_run_completed", type=bool) is False
+        assert stored.contains("window/width")
 
 
 # ---------------------------------------------------------------------------

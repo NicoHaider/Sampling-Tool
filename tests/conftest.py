@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from openpyxl import Workbook
+from PyQt6.QtCore import QSettings
 
 # Qt-Headless-Default. Wenn weder DISPLAY noch ein expliziter Plattform-Wert
 # gesetzt ist, läuft Qt im offscreen-Modus – damit UI-Tests in CI funktionieren
@@ -20,6 +21,7 @@ from openpyxl import Workbook
 if "QT_QPA_PLATFORM" not in os.environ and "DISPLAY" not in os.environ:
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
+from sampling_tool.config import APP_NAME, APP_ORG
 from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
@@ -34,6 +36,7 @@ from sampling_tool.persistence.repositories import (
     EngagementRepo,
     SampleRepo,
 )
+from sampling_tool.ui import settings_store
 from tests._test_floor import (
     ENFORCE_TEST_FLOOR_ENV,
     EXECUTED_FLOOR,
@@ -114,6 +117,39 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     # Fehler, Usage-Error) nicht überschreiben – nur den grünen Lauf kippen.
     if session.exitstatus == pytest.ExitCode.OK:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+@pytest.fixture(autouse=True)
+def _isolate_qsettings(
+    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Biegt für JEDEN Test die App-Einstellungen auf eine INI unter `tmp_path` um.
+
+    Sprint 84 / A: Die Isolation war bis dahin pro Datei/Klasse opt-in, und
+    `test_main_controller.py::TestPanelVisibilityWiring::test_handle_settings_
+    wendet_neue_panel_visibility_an` schrieb über `HelpController.handle_settings`
+    → `save_settings` die Werks-Defaults (`first_run_completed=False`, leerer
+    Auditor-Name) in die echten Prefs; zwei Audit-PDF-Export-Tests leerten dort
+    Gesellschaft/Standort. `_qsettings` ist seit Sprint 84 die einzige Stelle,
+    die in `src/` ein `QSettings` baut (`test_qsettings_single_door.py`) – eine
+    Umleitung dort deckt also alles ab.
+
+    `_qsettings` bleibt ein Aufruf zur Laufzeit (kein festes Handle): Tests, die
+    selbst `setPath(IniFormat, UserScope, …)` setzen und die Datei mit
+    `QSettings(IniFormat, UserScope, APP_ORG, APP_NAME)` nachlesen, sehen damit
+    dieselbe Datei wie der Code. Bewusst kein `HOME`-Umbiegen (hat in Sprint 67
+    echte Prefs korrumpiert).
+    """
+    if request.node.get_closest_marker("real_qsettings") is not None:
+        return
+    ini_dir = tmp_path / "qsettings"
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(ini_dir))
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    monkeypatch.setattr(
+        settings_store,
+        "_qsettings",
+        lambda: QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME),
+    )
 
 
 @pytest.fixture

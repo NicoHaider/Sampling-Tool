@@ -228,7 +228,7 @@ class TestExportSanitizerSingleSource:
                 now_provider=lambda: FROZEN_NOW,
             )
             qtbot.addWidget(w)
-            assert w.preview_filename() == ExcelExporter._build_filename(name, id_, w.now())
+            assert w.preview_filename() == ExcelExporter.build_filename(name, id_, w.now())
 
 
 def _ticking_provider(start: datetime = FROZEN_NOW) -> Callable[[], datetime]:
@@ -251,7 +251,7 @@ class TestPreviewMatchesWrittenName:
 
     Der Dateiname der geschriebenen Datei muss der Vorschau PER KONSTRUKTION
     entsprechen, nicht per Zufall. Vorher liefen zwei unabhängige Uhren
-    (`_export_base.preview_filename` und `ExcelExporter._build_filename`),
+    (`_export_base.preview_filename` und `ExcelExporter.build_filename`),
     die nur so lange übereinstimmten, wie kein Tageswechsel dazwischenlag.
     """
 
@@ -287,7 +287,7 @@ class TestPreviewMatchesWrittenName:
         qtbot.addWidget(w)
         preview = w.preview_filename()
         # Der Controller reicht genau diesen Zeitpunkt an den Export-Task durch.
-        written = ExcelExporter._build_filename(w.get_name(), w.get_id(), w.now())
+        written = ExcelExporter.build_filename(w.get_name(), w.get_id(), w.now())
         assert written == preview
 
     def test_get_path_uses_the_same_clock_reading_as_the_label(

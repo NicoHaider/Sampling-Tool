@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from sampling_tool.core.models import Dataset, Engagement, FilterOperator, SampleResult
 from sampling_tool.io.importer import ExcelImporter
 from sampling_tool.ui.dialogs.duplicate_engagement_dialog import DuplicateEngagementDialog
+from sampling_tool.ui.dialogs.existing_export_dialog import ExistingExportDialog
 from sampling_tool.ui.dialogs.export_audit_pdf_dialog import ExportAuditPdfDialog
 from sampling_tool.ui.dialogs.export_excel_report_dialog import ExportExcelReportDialog
 from sampling_tool.ui.dialogs.export_html_report_dialog import ExportHtmlReportDialog
@@ -77,6 +78,9 @@ SettingsDialogFactory = Callable[["MainWindow", AppSettings], SettingsDialog]
 ImportOptionsDialogFactory = Callable[[Path, ExcelImporter, "MainWindow"], ImportOptionsDialog]
 # Sprint 31: optionaler Post-Import-Schritt – ID-Spalte für die Sidebar wählen.
 IdColumnDialogFactory = Callable[[list[str], str | None, "MainWindow"], IdColumnDialog]
+# Sprint 84 / C: Rückfrage bei existierender Export-Zieldatei
+# (Elternfenster, vorhandene Datei, vorgeschlagener neuer Name, UI-Faktor).
+ExistingExportDialogFactory = Callable[["MainWindow", Path, Path, float], ExistingExportDialog]
 
 
 # ---------------------------------------------------------------------------
@@ -101,10 +105,11 @@ class ControllerFactories:
     settings: SettingsDialogFactory
     import_options: ImportOptionsDialogFactory
     id_column: IdColumnDialogFactory
+    existing_export: ExistingExportDialogFactory
 
     @classmethod
     def defaults(cls) -> ControllerFactories:
-        """Bündelt die 10 `default_*_factory`-Funktionen zu einem Bundle.
+        """Bündelt die 11 `default_*_factory`-Funktionen zu einem Bundle.
 
         Sprint 59 / Teil B (L-003): einziger Ort, an dem die Default-Factories
         auf die Bundle-Felder gemappt werden – `MainController.__init__`
@@ -122,6 +127,7 @@ class ControllerFactories:
             settings=default_settings_factory,
             import_options=default_import_options_factory,
             id_column=default_id_column_factory,
+            existing_export=default_existing_export_factory,
         )
 
 
@@ -241,3 +247,9 @@ def default_id_column_factory(
     columns: list[str], current: str | None, parent: MainWindow
 ) -> IdColumnDialog:
     return IdColumnDialog(columns, current=current, parent=parent)
+
+
+def default_existing_export_factory(
+    parent: MainWindow, existing: Path, new_name: Path, ui_scale_factor: float
+) -> ExistingExportDialog:
+    return ExistingExportDialog(existing, new_name, parent=parent, ui_scale_factor=ui_scale_factor)

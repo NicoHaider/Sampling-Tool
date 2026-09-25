@@ -464,20 +464,12 @@ class TestToolbarChromeNotWhite:
     WHITE = (255, 255, 255)
 
     @pytest.fixture(autouse=True)
-    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Diese Tests bauen echte MainWindows und veraendern deren Groesse;
-        `closeEvent` -> `_window_state.save()` wuerde die Testgeometrie sonst
-        in die echten Prefs schreiben. Gleiches Muster wie
-        `TestWindowGeometryFitsScreen._isolated_qsettings`.
-        """
+    def _isolated_qsettings(self, tmp_path: Path) -> None:
+        """Lokale Absicherung, redundant zur globalen Isolation `_isolate_qsettings`
+        in `tests/conftest.py` (Sprint 84 / A): `MainWindow` holt seinen Handle
+        über `settings_store.open_qsettings()`, schreibt also in dieselbe tmp-INI."""
         QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
         QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-        monkeypatch.setattr(
-            "sampling_tool.ui.main_window.QSettings",
-            lambda organization, application: QSettings(
-                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
-            ),
-        )
 
     # Ein weisser HINTERGRUND bedeckt den ueberwiegenden Teil eines Widgets
     # (vor dem Fix: 67-100 % der Flaeche). Vereinzelte weisse Pixel stammen
@@ -875,26 +867,12 @@ class TestWindowGeometryFitsScreen:
     """Sprint 67 / Teil A: Startgröße passt in den verfügbaren Bildschirmbereich."""
 
     @pytest.fixture(autouse=True)
-    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Schiebt `QSettings`-IO in einen tmp-Pfad, damit echte Prefs unangetastet
-        bleiben (gleiches Muster wie `test_feature_toggles`/`test_settings_store`).
-
-        Zusatz (Code-Review-Nachtrag zu Sprint 67 Task 2): `QSettings(org, app)`
-        ist laut Qt-Doku fest auf `NativeFormat`/`UserScope` verdrahtet und
-        ignoriert `setDefaultFormat`/`setPath` (siehe ausführlicher Kommentar in
-        `TestWindowGeometryPersistence._isolated_qsettings`). Seit Task 2 liest
-        `restore()` echte `window/*`-Werte – ohne diesen Patch würde dieser Test
-        von zufällig echten (auf diesem Rechner bereits gespeicherten) Prefs
-        abhängen und könnte je nach Ausführungsreihenfolge/Vorlauf flackern.
-        """
+    def _isolated_qsettings(self, tmp_path: Path) -> None:
+        """Lokale Absicherung, redundant zur globalen Isolation `_isolate_qsettings`
+        in `tests/conftest.py` (Sprint 84 / A): `MainWindow` holt seinen Handle
+        über `settings_store.open_qsettings()`, schreibt also in dieselbe tmp-INI."""
         QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
         QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-        monkeypatch.setattr(
-            "sampling_tool.ui.main_window.QSettings",
-            lambda organization, application: QSettings(
-                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
-            ),
-        )
 
     def test_initial_geometry_fits_available_screen(self, qtbot: QtBot) -> None:
         win = MainWindow()
@@ -908,27 +886,12 @@ class TestWindowGeometryPersistence:
     """Sprint 67 / Teil A: Fenstergeometrie (Größe/Position/Maximiert) überlebt einen Neustart."""
 
     @pytest.fixture(autouse=True)
-    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Schiebt `QSettings`-IO in einen tmp-Pfad, damit echte Prefs unangetastet
-        bleiben (gleiches Muster wie `test_feature_toggles`/`test_settings_store`).
-
-        Zusatz (Code-Review-Nachtrag): der 2-Arg-Konstruktor `QSettings(org, app)`
-        ist laut Qt-Doku fest auf `NativeFormat`/`UserScope` verdrahtet und
-        ignoriert `setDefaultFormat`/`setPath` – verifiziert via `fileName()`,
-        das trotz obigem `setPath` weiterhin auf die echte
-        `~/Library/Preferences/…plist` zeigte. `MainWindow.__init__` nutzt genau
-        diesen Konstruktor fest verdrahtet (kein überschreibbares Factory wie
-        `settings_store._qsettings`) – deshalb hier zusätzlich `main_window.
-        QSettings` patchen, analog zum Muster in `test_settings_store.py`.
-        """
+    def _isolated_qsettings(self, tmp_path: Path) -> None:
+        """Lokale Absicherung, redundant zur globalen Isolation `_isolate_qsettings`
+        in `tests/conftest.py` (Sprint 84 / A): `MainWindow` holt seinen Handle
+        über `settings_store.open_qsettings()`, schreibt also in dieselbe tmp-INI."""
         QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
         QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-        monkeypatch.setattr(
-            "sampling_tool.ui.main_window.QSettings",
-            lambda organization, application: QSettings(
-                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
-            ),
-        )
 
     def test_geometry_roundtrip(self, qtbot: QtBot) -> None:
         """Größe/Position/Maximiert überleben einen Save/Restore-Zyklus."""
@@ -1059,19 +1022,12 @@ class TestOuterSplitterPersistence:
     """Sprint 67 / Teil A: Sidebar-Breite (äußerer Splitter) überlebt einen Neustart."""
 
     @pytest.fixture(autouse=True)
-    def _isolated_qsettings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Schiebt `QSettings`-IO in einen tmp-Pfad, damit echte Prefs unangetastet
-        bleiben. Siehe `TestWindowGeometryPersistence._isolated_qsettings` für den
-        vollständigen Hintergrund (QSettings(org, app) ignoriert setPath/setDefaultFormat,
-        `main_window.QSettings` muss deshalb zusätzlich gepatcht werden)."""
+    def _isolated_qsettings(self, tmp_path: Path) -> None:
+        """Lokale Absicherung, redundant zur globalen Isolation `_isolate_qsettings`
+        in `tests/conftest.py` (Sprint 84 / A): `MainWindow` holt seinen Handle
+        über `settings_store.open_qsettings()`, schreibt also in dieselbe tmp-INI."""
         QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
         QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-        monkeypatch.setattr(
-            "sampling_tool.ui.main_window.QSettings",
-            lambda organization, application: QSettings(
-                QSettings.Format.IniFormat, QSettings.Scope.UserScope, organization, application
-            ),
-        )
 
     def test_outer_splitter_persisted(self, qtbot: QtBot) -> None:
         # Verarbeitet zuerst liegengebliebene `deleteLater()`-Events aus

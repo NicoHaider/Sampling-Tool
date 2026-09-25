@@ -15,7 +15,11 @@ from PyQt6.QtWidgets import QMessageBox
 
 from sampling_tool.core.models import Engagement
 from sampling_tool.core.undo import UndoManager
-from sampling_tool.persistence.database import Database, restore_audit_append_only_triggers
+from sampling_tool.persistence.database import (
+    CURRENT_SCHEMA_VERSION,
+    Database,
+    restore_audit_append_only_triggers,
+)
 from sampling_tool.persistence.db_preflight import PreflightRejected, preflight_check
 from sampling_tool.persistence.repositories import (
     DatasetRepo,
@@ -195,15 +199,34 @@ class EngagementController:
             s.error(result.message)
             return
         triggers_tampered = result.audit_triggers_tampered
+        # Aus dem read-only Preflight, nicht aus `Database`: dessen `connect()`
+        # schaltet WAL ein und verändert damit schon die Datei. Liegt nach
+        # einem Absturz eine neuere Version nur im WAL, gilt die Migration
+        # hier als ausstehend – das irrt zur sicheren Seite (Sprint 84 / B).
+        migration_pending = result.schema_version < CURRENT_SCHEMA_VERSION
 
-        # Compliance-Snapshot BEVOR die Session anfängt – ein Fehler dabei
-        # soll das Öffnen nicht blockieren (Defense-in-Depth, nicht kritisch).
+        # Compliance-Snapshot BEVOR die Session anfängt. Ohne ausstehende
+        # Migration blockiert ein Fehler das Öffnen nicht (die Datei bleibt
+        # strukturell, wie sie war); mit ausstehender Migration schon, denn
+        # `migrate()` veränderte sonst die einzige Kopie ohne Stand davor.
         snapshot_warning: str | None = None
         try:
             EngagementVersionManager(db_path).create_snapshot(s.user_name())
         except Exception as exc:
+            if migration_pending:
+                logger.exception("Snapshot vor Migration fehlgeschlagen – Öffnen abgebrochen")
+                s.error(
+                    "Vor der Aktualisierung der Projektdatei konnte keine Sicherung "
+                    "angelegt werden. Das Projekt wurde nicht geöffnet und nicht "
+                    f"verändert.\n\nUrsache: {exc}"
+                )
+                return
             logger.exception("Snapshot beim Öffnen fehlgeschlagen (nicht-kritisch)")
-            snapshot_warning = f"Compliance-Snapshot konnte nicht erstellt werden: {exc}"
+            snapshot_warning = (
+                "Beim Öffnen konnte keine Sicherungskopie des Projekts angelegt "
+                "werden. Das Projekt ist geöffnet, für diesen Stand liegt aber "
+                f"keine Kopie im Archiv.\n\nUrsache: {exc}"
+            )
 
         db = Database(db_path)
         try:
@@ -226,9 +249,7 @@ class EngagementController:
             self._warn_and_restore_tampered_triggers(db, db_path)
 
         if snapshot_warning is not None:
-            status = s.window.statusBar()
-            if status is not None:
-                status.showMessage(snapshot_warning, 5000)
+            QMessageBox.warning(s.window, "Sicherung fehlgeschlagen", snapshot_warning)
 
     def _warn_and_restore_tampered_triggers(self, db: Database, db_path: Path) -> None:
         """Variante 1 (Sprint 52 / S2.7, S-004): Öffnen NICHT blockieren, aber

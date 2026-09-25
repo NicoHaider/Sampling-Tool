@@ -116,6 +116,10 @@ class WorkspaceSession:
         # zwischenüberschrieben wird.
         self.restoring_state: bool = False
 
+    def now(self) -> datetime:
+        """Die Uhr der Session – eine Quelle für alle Zeitstempel des Controllers."""
+        return self._now_provider()
+
     # ---- Convenience-Guards --------------------------------------------
 
     def has_engagement(self) -> bool:

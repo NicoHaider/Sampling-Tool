@@ -203,6 +203,7 @@ markers = [
     "integration: Integration mit DB / Filesystem / Excel",
     "ui: PyQt6-UI-Tests (benötigen pytest-qt)",
     "slow: Tests die mehr als 1s dauern",
+    "real_qsettings: schaltet die globale QSettings-Isolation ab (nur Positiv-Kontrolle)",
 ]
 filterwarnings = [
     "error",

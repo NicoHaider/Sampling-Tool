@@ -42,6 +42,7 @@ from sampling_tool.ui.controllers._factories import (
     DialogFactory,
     DuplicateDialogFactory,
     ExcelReportDialogFactory,
+    ExistingExportDialogFactory,
     ExportDialogFactory,
     HtmlReportDialogFactory,
     IdColumnDialogFactory,
@@ -87,6 +88,7 @@ class MainController:
         settings_dialog_factory: SettingsDialogFactory | None = None,
         import_options_dialog_factory: ImportOptionsDialogFactory | None = None,
         id_column_dialog_factory: IdColumnDialogFactory | None = None,
+        existing_export_dialog_factory: ExistingExportDialogFactory | None = None,
         settings: AppSettings | None = None,
     ) -> None:
         # ---- Session aufbauen --------------------------------------
@@ -97,7 +99,7 @@ class MainController:
         )
 
         # ---- Factories bündeln -------------------------------------
-        # Sprint 59 / Teil B (L-003): Basis sind die 10 Default-Factories aus
+        # Sprint 59 / Teil B (L-003): Basis sind die Default-Factories aus
         # `ControllerFactories.defaults()`; nur tatsächlich übergebene
         # (nicht-`None`) Konstruktor-Kwargs überschreiben sie per
         # `dataclasses.replace`. Verhaltensidentisch zur vorherigen
@@ -124,6 +126,7 @@ class MainController:
             ("settings", settings_dialog_factory),
             ("import_options", import_options_dialog_factory),
             ("id_column", id_column_dialog_factory),
+            ("existing_export", existing_export_dialog_factory),
         )
         overrides: dict[str, Any] = {
             field: value for field, value in factory_overrides if value is not None

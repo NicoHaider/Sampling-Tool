@@ -194,6 +194,8 @@ AUDIT_DETAIL_LABELS: Final[dict[str, str]] = {
     "created_by": "Erstellt von",
     "restored": "Wiederhergestellt",
     "reason": "Begründung",
+    "report": "Bericht",
+    "archived_previous": "Vorherige Fassung archiviert unter",
 }
 
 # ---------------------------------------------------------------------------
