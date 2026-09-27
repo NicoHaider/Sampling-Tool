@@ -7,6 +7,7 @@ HTML-Report denselben Event mit IDENTISCHEM Datums-/Zeit-String anzeigen.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta, timezone
+from typing import Any, ClassVar
 
 import pytest
 
@@ -90,6 +91,47 @@ class TestFormatAuditDetails:
     def test_bool_value_renders_german(self) -> None:
         assert format_audit_details({"flag": True}) == "flag: ja"
         assert format_audit_details({"flag": False}) == "flag: nein"
+
+
+class TestDetailsOmitIrrelevant:
+    """Sprint 85 / E1: Details zeigen nur, was für die Ziehung gilt.
+
+    Weggelassen wird nur, wenn der Bezugsschlüssel da ist und nicht passt –
+    ein Dict ohne `filter_field`/`method` bleibt unverändert.
+    """
+
+    _SIMPLE: ClassVar[dict[str, Any]] = {
+        "method": "simple",
+        "filter_field": None,
+        "filter_operator": "eq",
+        "stratify_mode": "proportional",
+        "size_requested": 5,
+    }
+
+    def test_no_filter_field_drops_operator(self) -> None:
+        text = format_audit_details(self._SIMPLE)
+        assert "Filter-Operator" not in text
+
+    def test_non_stratified_drops_stratify_mode(self) -> None:
+        text = format_audit_details(self._SIMPLE)
+        assert "Schichtungsmodus" not in text
+        assert text == "Methode: Einfach · Angeforderte Größe: 5"
+
+    def test_filter_and_stratified_keep_both(self) -> None:
+        details = {
+            **self._SIMPLE,
+            "method": "stratified",
+            "filter_field": "Betrag",
+            "filter_operator": "gte",
+        }
+        text = format_audit_details(details)
+        assert "Filter-Operator: ≥" in text
+        assert "Schichtungsmodus: Proportional" in text
+
+    def test_db_dict_is_not_mutated(self) -> None:
+        details = dict(self._SIMPLE)
+        format_audit_details(details)
+        assert details == self._SIMPLE
 
 
 @pytest.mark.unit

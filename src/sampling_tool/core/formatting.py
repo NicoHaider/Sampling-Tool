@@ -31,6 +31,7 @@ from sampling_tool.config import (
     RESTORED_STATE_LABELS,
     STRATIFY_MODE_LABELS,
 )
+from sampling_tool.core.models import SamplingMethod
 
 # 19-Zeichen-Format: konsistent zwischen UI, PDF, Excel-Report, HTML-Report.
 _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -113,9 +114,23 @@ def format_audit_details(details: dict[str, Any]) -> str:
     parts = [
         f"{AUDIT_DETAIL_LABELS.get(key, key)}: {_format_detail_value(key, value)}"
         for key, value in details.items()
-        if value is not None
+        if value is not None and not _irrelevant_detail(key, details)
     ]
     return " · ".join(parts) if parts else "—"
+
+
+def _irrelevant_detail(key: str, details: dict[str, Any]) -> bool:
+    """Operator ohne Filter-Feld, Schichtungsmodus ohne „Geschichtet" (Sprint 85 / E1).
+
+    Beide stehen in jeder Ziehung in der DB (der Dialog setzt Defaults), sagen
+    aber nur etwas, wenn ihr Bezug gilt. Weggelassen wird nur, wenn der
+    Bezugsschlüssel vorhanden ist – ein fremdes Dict bleibt unverändert.
+    """
+    if key == "filter_operator":
+        return "filter_field" in details and details["filter_field"] is None
+    if key == "stratify_mode":
+        return "method" in details and details["method"] != SamplingMethod.STRATIFIED.value
+    return False
 
 
 def _format_detail_value(key: str, value: Any) -> str:
