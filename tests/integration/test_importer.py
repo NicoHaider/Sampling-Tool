@@ -132,8 +132,8 @@ class TestImportCsv:
         result = importer.import_file(utf8_bom_csv)
         list(result.rows)
         assert result.dataset.columns == ("Name", "Stadt")
-        # utf-8-sig wurde gewählt → Warnung
-        assert any("utf-8-sig" in w for w in result.stats.warnings)
+        # Sprint 85 / E3: UTF-8 mit BOM ist UTF-8 – keine Meldung mehr.
+        assert result.stats.warnings == []
 
     def test_csv_cp1252(self, importer: ExcelImporter, cp1252_csv: Path) -> None:
         # latin-1 nimmt jedes Byte und liest in dem Zeichensatz – das ist für
@@ -142,7 +142,7 @@ class TestImportCsv:
         rows = list(result.rows)
         assert result.dataset.columns == ("Name", "Stadt")
         assert rows[0].values["Name"] == "Müller"
-        assert any("Encoding" in w for w in result.stats.warnings)
+        assert any("Windows-Zeichensatz" in w for w in result.stats.warnings)
 
     def test_cp1252_byte_0x80_is_euro(self, importer: ExcelImporter, tmp_path: Path) -> None:
         """Sprint 49 / A-005: cp1252 muss VOR latin-1 probiert werden – 0x80
@@ -154,7 +154,7 @@ class TestImportCsv:
         result = importer.import_file(path)
         rows = list(result.rows)
         assert rows[0].values["Wert"] == "€"
-        assert any("cp1252" in w for w in result.stats.warnings)
+        assert any("Windows-Zeichensatz" in w for w in result.stats.warnings)  # nicht latin-1
 
     def test_tsv_fallback_uses_tab(self, importer: ExcelImporter, tmp_path: Path) -> None:
         """Sprint 49 / A-005: ungleiche Zeilenbreiten lassen csv.Sniffer
@@ -185,6 +185,46 @@ class TestImportCsv:
         path.write_text("", encoding="utf-8")
         with pytest.raises(DataImportError, match="keine Daten"):
             importer.import_file(path)
+
+
+class TestEncodingWarningOnlyForFallback:
+    """Sprint 85 / E3: das blockierende „CSV-Encoding erkannt als 'utf-8-sig'"
+    entfällt. Eine Meldung gibt es nur, wenn die Datei NICHT als UTF-8 gelesen
+    werden konnte – dann in Klartext statt Codec-Namen."""
+
+    @pytest.mark.parametrize("fixture", ["utf8_csv", "utf8_bom_csv"])
+    @pytest.mark.parametrize("configured", [False, True], ids=["auto", "dialog"])
+    def test_utf8_with_or_without_bom_is_silent(
+        self,
+        importer: ExcelImporter,
+        request: pytest.FixtureRequest,
+        fixture: str,
+        configured: bool,
+    ) -> None:
+        path: Path = request.getfixturevalue(fixture)
+        result = (
+            importer.import_file_configured(path, None, 0)
+            if configured
+            else importer.import_file(path)
+        )
+        list(result.rows)
+        assert result.stats.warnings == []
+
+    @pytest.mark.parametrize("configured", [False, True], ids=["auto", "dialog"])
+    def test_cp1252_fallback_explains_in_plain_german(
+        self, importer: ExcelImporter, cp1252_csv: Path, configured: bool
+    ) -> None:
+        result = (
+            importer.import_file_configured(cp1252_csv, None, 0)
+            if configured
+            else importer.import_file(cp1252_csv)
+        )
+        list(result.rows)
+        assert result.stats.warnings == [
+            "Die Datei war nicht als UTF-8 gespeichert und wurde als Windows-Zeichensatz "
+            "gelesen. Bitte Umlaute prüfen."
+        ]
+        assert not any("cp1252" in w or "Encoding" in w for w in result.stats.warnings)
 
 
 class TestCalamineIntegration:
