@@ -82,6 +82,17 @@ class SampleRepo:
         )
         return self._to_model(row, row_ids)
 
+    def dataset_id_of(self, sample_id: int) -> int | None:
+        """Datensatz, auf dem die Stichprobe gezogen wurde (`None`: unbekannt).
+
+        `sample_rows.row_id` ist datensatzbezogen: dieselben IDs treffen in
+        jedem anderen Datensatz andere Zeilen (Sprint 86).
+        """
+        row = self.conn.execute(
+            "SELECT dataset_id FROM samples WHERE id = ?", (sample_id,)
+        ).fetchone()
+        return None if row is None else int(row["dataset_id"])
+
     def list_for_dataset(self, dataset_id: int) -> list[SampleResult]:
         sample_rows = self.conn.execute(
             "SELECT * FROM samples WHERE dataset_id = ? ORDER BY created_at DESC",

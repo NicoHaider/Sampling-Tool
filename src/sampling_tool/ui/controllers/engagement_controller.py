@@ -404,11 +404,17 @@ class EngagementController:
                     s.select_dataset(state.active_dataset_id)
             if state.active_sample_id is not None and s.dataset is not None:
                 sample = SampleRepo(s.db.connect()).get_by_id(state.active_sample_id)
-                if sample is not None:
+                if sample is not None and s.belongs_to_current_dataset(state.active_sample_id):
                     # Filter-Checkbox vor der Sample-Auswahl setzen, damit der
                     # Code-Pfad weiß, dass nach dem Highlight gefiltert werden soll.
                     s.window.set_filter_only_sample(state.filter_active)
                     self._apply_restored_sample(state.active_sample_id)
+                elif sample is not None:
+                    # Stichprobe eines anderen Datensatzes (Sprint 86): nur merken,
+                    # wie `select_dataset` im laufenden Betrieb – ein Klick auf
+                    # ihren Datensatz holt sie zurück. Angewandt würden ihre
+                    # Zeilen-IDs fremde Zeilen markieren und exportieren.
+                    s.active_sample_id = state.active_sample_id
         finally:
             s.restoring_state = False
 

@@ -3616,6 +3616,460 @@ class TestEngagementStateRestore:
             controller.engagement.handle_close_engagement()
 
 
+# ---------------------------------------------------------------------------
+# Sprint 86: eine Stichprobe wirkt nur auf ihrem eigenen Datensatz
+# ---------------------------------------------------------------------------
+
+
+def _foreign_sample_db(tmp_path: Path) -> tuple[Path, int, int, int]:
+    """Projekt mit zwei unterscheidbaren Datensätzen, Stichprobe (Zeilen 2, 4) auf dem ersten.
+
+    Beide Datensätze haben die Zeilen-IDs 1..6 – genau wie echte Importe, deren
+    `row_id` je Datensatz bei 1 beginnt. Nur die Werte verraten, woher eine Zeile
+    stammt („A-…" vs. „B-…").
+    """
+    db_path = tmp_path / "fremd.db"
+    db = Database(db_path)
+    db.migrate()
+    eng = EngagementRepo(db.connect()).get_or_create(
+        Engagement(auditor_name="Anna", client_name="SMOKE", audit_type="ISAE 3402")
+    )
+    assert eng.id is not None
+    ds_repo = DatasetRepo(db.connect())
+    own = ds_repo.create(
+        Dataset(name="Buchungen", columns=("Beleg", "Betrag"), engagement_id=eng.id),
+        tuple(
+            DatasetRow(row_id=i, values={"Beleg": f"A-{i:04d}", "Betrag": i * 10})
+            for i in range(1, 7)
+        ),
+    )
+    other = ds_repo.create(
+        Dataset(name="gross", columns=("Beleg", "Betrag"), engagement_id=eng.id),
+        tuple(
+            DatasetRow(row_id=i, values={"Beleg": f"B-{i:04d}", "Betrag": i * 10})
+            for i in range(1, 7)
+        ),
+    )
+    assert own.id is not None
+    assert other.id is not None
+    sample_id = SampleRepo(db.connect()).create_from_result(
+        SampleResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=7),
+            selected_row_ids=(2, 4),
+            population_size=6,
+            created_by="tester",
+        ),
+        own.id,
+    )
+    db.close()
+    return db_path, own.id, other.id, sample_id
+
+
+def _leave_foreign_sample_in_saved_state(
+    window: MainWindow,
+    recent_store: RecentEngagementsStore,
+    db_path: Path,
+    own_id: int,
+    other_id: int,
+    sample_id: int,
+) -> None:
+    """Befund-Reproduktion Schritte 1–3: Stichprobe auf dem eigenen Datensatz
+    aktiv, dann auf den anderen Datensatz klicken, Projekt schließen."""
+    controller = MainController(window, recent_store=recent_store)
+    try:
+        controller.engagement.handle_open_engagement(db_path)
+        controller.selection.handle_dataset_selected(own_id)
+        controller.selection.handle_sample_selected(sample_id)
+        controller.selection.handle_dataset_selected(other_id)
+        state_repo = controller.session.state_repo
+        engagement = controller.session.engagement
+        assert state_repo is not None
+        assert engagement is not None
+        assert engagement.id is not None
+        state = state_repo.get(engagement.id)
+        assert state is not None
+        # Genau der Zustand aus der SMOKE-DB: fremder Datensatz + gemerkte Stichprobe.
+        assert (state.active_dataset_id, state.active_sample_id) == (other_id, sample_id)
+    finally:
+        controller.engagement.handle_close_engagement()
+
+
+def _export_events(db_path: Path) -> list[sqlite3.Row]:
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        return conn.execute(
+            "SELECT sample_id, export_file FROM audit_events WHERE event_type = 'export'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+class TestRestoreIgnoresForeignSample:
+    """Sprint 86 / B: der Befund aus dem Cowork-Smoke-Test über den echten Controller."""
+
+    def test_reopen_shows_no_sample_on_foreign_dataset(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, own_id, other_id, sample_id = _foreign_sample_db(tmp_path)
+        _leave_foreign_sample_in_saved_state(
+            window, recent_store, db_path, own_id, other_id, sample_id
+        )
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            s = controller.session
+            assert s.dataset is not None
+            assert s.dataset.id == other_id
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+            assert window._status_sample.text() == "Aktive Stichprobe: keine"
+            assert s.sample is None
+            assert s.has_active_sample() is False
+            assert s.active_sample_for_current_dataset() is None
+            assert s.filter_active_sample_id is None
+            assert window.sidebar().is_filter_only_sample() is False
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_back_on_own_dataset_the_sample_is_active_again(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, own_id, other_id, sample_id = _foreign_sample_db(tmp_path)
+        _leave_foreign_sample_in_saved_state(
+            window, recent_store, db_path, own_id, other_id, sample_id
+        )
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.selection.handle_dataset_selected(own_id)
+            s = controller.session
+            assert s.sample is not None
+            assert s.sample.id == sample_id
+            assert s.has_active_sample() is True
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset({2, 4})
+            assert window._status_sample.text().startswith(f"Aktive Stichprobe: #{sample_id} ")
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_saved_state_is_not_rewritten_by_reading_it(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        """Die Korrektur passiert beim Lesen – `engagement_state` bleibt, wie er war."""
+        db_path, own_id, other_id, sample_id = _foreign_sample_db(tmp_path)
+        _leave_foreign_sample_in_saved_state(
+            window, recent_store, db_path, own_id, other_id, sample_id
+        )
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            s = controller.session
+            assert s.state_repo is not None
+            assert s.engagement is not None
+            assert s.engagement.id is not None
+            state = s.state_repo.get(s.engagement.id)
+            assert state is not None
+            assert (state.active_dataset_id, state.active_sample_id) == (other_id, sample_id)
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_export_after_reopen_reports_no_sample_and_writes_nothing(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        """Smoke-Test-Schritt 1: „Sample exportieren" meldet, dass keine gewählt ist."""
+        from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialogResult
+
+        db_path, own_id, other_id, sample_id = _foreign_sample_db(tmp_path)
+        _leave_foreign_sample_in_saved_state(
+            window, recent_store, db_path, own_id, other_id, sample_id
+        )
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        dialogs_opened: list[object] = []
+
+        def export_factory(*_args: object) -> _StubExportDialog:
+            dialogs_opened.append(_args)
+            return _StubExportDialog(
+                ExportSampleDialogResult(
+                    columns=["Beleg", "Betrag"],
+                    custom_name="gross",
+                    custom_id=str(sample_id),
+                    output_dir=out_dir,
+                )
+            )
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            export_dialog_factory=export_factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as warning,
+                patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"),
+            ):
+                controller.export.handle_export_sample()
+            warning.assert_called_once()
+            assert "auswählen" in warning.call_args.args[2]
+            assert dialogs_opened == []
+            assert list(out_dir.iterdir()) == []
+        finally:
+            controller.engagement.handle_close_engagement()
+        assert _export_events(db_path) == []
+
+
+class TestExportRefusesForeignSample:
+    """Sprint 86 / C: ein fremder `s.sample` exportiert nie die Zeilen des aktiven Datensatzes."""
+
+    @staticmethod
+    def _export_controller(
+        window: MainWindow, recent_store: RecentEngagementsStore, out_dir: Path
+    ) -> MainController:
+        from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialogResult
+
+        export_result = ExportSampleDialogResult(
+            columns=["Beleg", "Betrag"],
+            custom_name="gross",
+            custom_id="1",
+            output_dir=out_dir,
+        )
+        return MainController(
+            window,
+            recent_store=recent_store,
+            export_dialog_factory=lambda *_a: _StubExportDialog(export_result),  # type: ignore[arg-type]
+        )
+
+    def test_foreign_session_sample_is_not_exported(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, _own_id, other_id, sample_id = _foreign_sample_db(tmp_path)
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        controller = self._export_controller(window, recent_store, out_dir)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.selection.handle_dataset_selected(other_id)
+            s = controller.session
+            assert s.db is not None
+            s.sample = SampleRepo(s.db.connect()).get_by_id(sample_id)
+            assert s.sample is not None
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as warning,
+                patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"),
+            ):
+                controller.export.handle_export_sample()
+            warning.assert_called_once()
+            assert list(out_dir.iterdir()) == []
+        finally:
+            controller.engagement.handle_close_engagement()
+        assert _export_events(db_path) == []
+
+    def test_export_task_refuses_when_session_guard_is_bypassed(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Letzte Verteidigung: selbst wenn die Session die fremde Stichprobe
+        durchließe, liest der Export-Task keine Zeile des falschen Datensatzes."""
+        db_path, _own_id, other_id, sample_id = _foreign_sample_db(tmp_path)
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        controller = self._export_controller(window, recent_store, out_dir)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.selection.handle_dataset_selected(other_id)
+            s = controller.session
+            assert s.db is not None
+            foreign = SampleRepo(s.db.connect()).get_by_id(sample_id)
+            assert foreign is not None
+            s.sample = foreign
+            monkeypatch.setattr(s, "active_sample_for_current_dataset", lambda: foreign)
+            monkeypatch.setattr(s, "has_active_sample", lambda: True)
+            with (
+                patch(
+                    "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+                ) as warning,
+                patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"),
+            ):
+                controller.export.handle_export_sample()
+            warning.assert_called_once()
+            message = warning.call_args.args[2]
+            assert f"#{sample_id}" in message
+            assert "gross" in message
+            assert list(out_dir.iterdir()) == []
+        finally:
+            controller.engagement.handle_close_engagement()
+        assert _export_events(db_path) == []
+
+    def test_own_sample_still_exports_its_own_rows(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        """Gegenprobe: der Normalfall exportiert weiter – mit den echten Zeilen."""
+        from openpyxl import load_workbook
+
+        db_path, own_id, _other_id, sample_id = _foreign_sample_db(tmp_path)
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        controller = self._export_controller(window, recent_store, out_dir)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.selection.handle_dataset_selected(own_id)
+            controller.selection.handle_sample_selected(sample_id)
+            with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
+                controller.export.handle_export_sample()
+        finally:
+            controller.engagement.handle_close_engagement()
+        [written] = list(out_dir.iterdir())
+        wb = load_workbook(written, read_only=True)
+        try:
+            belege = [row[0] for row in wb["Sample"].iter_rows(min_row=2, values_only=True)]
+        finally:
+            wb.close()
+        assert belege == ["A-0002", "A-0004"]
+        assert [row["sample_id"] for row in _export_events(db_path)] == [sample_id]
+
+
+class TestRestrictAndSupplementUseOwnDatasetOnly:
+    """Sprint 86 / A: „Einschränken" und „Ergänzen" beziehen sich nie auf eine
+    Stichprobe eines anderen Datensatzes."""
+
+    @staticmethod
+    def _draw(
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        *,
+        how: str,
+        **flags: bool,
+    ) -> tuple[SampleResult, dict[str, object]]:
+        """Zieht auf dem fremden Datensatz, während eine Stichprobe des anderen gemerkt ist.
+
+        `how="reopen"`: der Befund-Weg (Restore). `how="forced"`: `s.sample`
+        künstlich auf die fremde Stichprobe gesetzt – so, wie Undo/Redo oder ein
+        AuditTrail-Doppelklick ihn hinterlassen können.
+        """
+        from sampling_tool.core.models import FilterOperator
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        db_path, own_id, other_id, sample_id = _foreign_sample_db(tmp_path)
+        if how == "reopen":
+            _leave_foreign_sample_in_saved_state(
+                window, recent_store, db_path, own_id, other_id, sample_id
+            )
+        captured: dict[str, object] = {}
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=11), **flags
+        )
+
+        def factory(
+            _parent: MainWindow,
+            _dataset: object,
+            _provider: object,
+            current: object,
+            _features: object,
+            match_count: object = None,
+            _factor: object = None,
+        ) -> _StubSamplingDialog:
+            captured["current_sample"] = current
+            assert callable(match_count)
+            # restrict=True, solange der Dialog offen ist: Betrag > 0 trifft alle Zeilen.
+            captured["restricted_count"] = match_count("Betrag", FilterOperator.GT, 0, True)
+            return _StubSamplingDialog(result)
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            s = controller.session
+            if how == "forced":
+                controller.selection.handle_dataset_selected(other_id)
+                assert s.db is not None
+                s.sample = SampleRepo(s.db.connect()).get_by_id(sample_id)
+                s.active_sample_id = sample_id
+            controller.workspace.handle_new_sampling()
+            drawn = s.sample
+            assert drawn is not None
+            assert drawn.id != sample_id
+            assert s.dataset is not None
+            assert s.dataset.id == other_id
+            return drawn, captured
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    @pytest.mark.parametrize("how", ["reopen", "forced"])
+    def test_dialog_gets_no_foreign_parent_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        how: str,
+    ) -> None:
+        _drawn, captured = self._draw(window, recent_store, tmp_path, how=how)
+        assert captured["current_sample"] is None
+        # restrict=True darf nicht auf die fremden Zeilen-IDs (2, 4) einschränken.
+        assert captured["restricted_count"] == 6
+
+    @pytest.mark.parametrize("how", ["reopen", "forced"])
+    def test_restrict_does_not_use_foreign_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        how: str,
+    ) -> None:
+        drawn, _captured = self._draw(
+            window, recent_store, tmp_path, how=how, from_sample_only=True
+        )
+        assert drawn.parent_sample_id is None
+        assert drawn.parent_relation is None
+        assert drawn.population_size == 6
+
+    @pytest.mark.parametrize("how", ["reopen", "forced"])
+    def test_supplement_does_not_use_foreign_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        how: str,
+    ) -> None:
+        drawn, _captured = self._draw(
+            window, recent_store, tmp_path, how=how, exclude_sample_ids=True
+        )
+        assert drawn.parent_sample_id is None
+        assert drawn.parent_relation is None
+        assert drawn.population_size == 6
+
+
 def _project_without_saved_state(directory: Path) -> Path:
     """Zweites Projekt mit einem Datensatz, aber ohne gespeicherten UI-State."""
     directory.mkdir()

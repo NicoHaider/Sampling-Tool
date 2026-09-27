@@ -20,13 +20,13 @@ from typing import TYPE_CHECKING
 
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.core.cancellation import CancellationToken
-from sampling_tool.io.exporter import ExcelExporter
+from sampling_tool.io.exporter import ExcelExporter, ExportError
 from sampling_tool.io.html_report import HtmlReportGenerator
 from sampling_tool.io.importer import ExcelImporter, ImportStats
 from sampling_tool.io.multi_report_exporter import MultiSheetReportExporter
 from sampling_tool.io.pdf_report import AuditTrailPDF
 from sampling_tool.persistence.database import Database
-from sampling_tool.persistence.repositories import AuditRepo, DatasetRepo
+from sampling_tool.persistence.repositories import AuditRepo, DatasetRepo, SampleRepo
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -175,6 +175,19 @@ class SampleExportTask:
         progress.report(0, 1)
         db = Database(self.db_path)
         try:
+            # Letzte Verteidigung (Sprint 86): die Zeilen-IDs einer Stichprobe
+            # gelten nur in ihrem eigenen Datensatz. Bevor eine Zeile gelesen
+            # wird – kein File, kein Audit-Event.
+            owner = (
+                SampleRepo(db.connect()).dataset_id_of(self.sample.id)
+                if self.sample.id is not None
+                else None
+            )
+            if owner is None or owner != self.dataset.id:
+                raise ExportError(
+                    f"Stichprobe #{self.sample.id} gehört nicht zum Datensatz "
+                    f"„{self.dataset.name}“. Es wurde keine Datei geschrieben."
+                )
             path = ExcelExporter().export_sample(
                 self.sample,
                 self.dataset,

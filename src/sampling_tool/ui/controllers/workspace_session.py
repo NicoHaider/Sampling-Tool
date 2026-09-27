@@ -133,8 +133,33 @@ class WorkspaceSession:
         return self.has_engagement() and self.dataset is not None and self.dataset.id is not None
 
     def has_active_sample(self) -> bool:
-        """True, wenn zusätzlich zum Dataset ein Sample aktiv ist."""
-        return self.has_active_dataset() and self.sample is not None and self.sample.id is not None
+        """True, wenn eine Stichprobe DIESES Datensatzes aktiv ist."""
+        return self.active_sample_for_current_dataset() is not None
+
+    def belongs_to_current_dataset(self, sample_id: int) -> bool:
+        """Wurde die Stichprobe auf dem gerade angezeigten Datensatz gezogen?
+
+        `sample_rows.row_id` ist datensatzbezogen – auf einen anderen Datensatz
+        angewandt, trifft dieselbe ID klaglos eine fremde Zeile (Sprint 86).
+        """
+        if not self.has_active_dataset():
+            return False
+        assert self.db is not None
+        assert self.dataset is not None
+        owner = SampleRepo(self.db.connect()).dataset_id_of(sample_id)
+        return owner is not None and owner == self.dataset.id
+
+    def active_sample_for_current_dataset(self) -> SampleResult | None:
+        """Die aktive Stichprobe – aber nur, wenn sie zum aktiven Datensatz gehört.
+
+        Eintrittspunkt für alles, was mit der aktiven Stichprobe Zeilen liest
+        oder eine Eltern-Stichprobe ableitet (Export, Einschränken, Ergänzen).
+        `self.sample` kann nach Undo/Redo oder einem AuditTrail-Doppelklick auf
+        eine fremde Stichprobe zeigen.
+        """
+        if self.sample is None or self.sample.id is None:
+            return None
+        return self.sample if self.belongs_to_current_dataset(self.sample.id) else None
 
     # ---- State-Persistenz (Sprint 8.2) ---------------------------------
 
