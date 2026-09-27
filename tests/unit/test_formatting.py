@@ -94,7 +94,12 @@ class TestFormatAuditDetails:
 
 @pytest.mark.unit
 class TestFormatCellValue:
-    """Sprint 82 / Befund A: Zellwerte ungerundet, Floats nie in Exponent-Schreibweise."""
+    """Sprint 82 / Befund A: Floats nie in Exponent-Schreibweise.
+
+    Sprint 85 / C (Entscheidung Nico): höchstens 15 signifikante Stellen wie in
+    Excel – `0.1 + 0.2` erscheint als „0.3", nicht als „0.30000000000000004".
+    Werte mit bis zu 15 Stellen bleiben exakt (13134.97, 1e16).
+    """
 
     @pytest.mark.parametrize(
         ("value", "expected"),
@@ -109,7 +114,15 @@ class TestFormatCellValue:
             (0.1, "0.1"),
             # Das Vorzeichen steht so in der Quelle (nur CSV-Text „-0.0" landet hier).
             (-0.0, "-0"),
-            (123456789012345678.0, "123456789012345680"),
+            # 18 Stellen → auf 15 gerundet, wie Excel sie im Zahlenformat „0" zeigt.
+            (123456789012345678.0, "123456789012346000"),
+            (0.1 + 0.2, "0.3"),
+            (1 / 3, "0.333333333333333"),
+            (2 / 3, "0.666666666666667"),
+            (1234567890123456.0, "1234567890123460"),
+            (-0.1 - 0.2, "-0.3"),
+            # Rundung trägt über alle Stellen: 16 Neunen → nächste Zehnerpotenz.
+            (999999999999999.9, "1000000000000000"),
             (float("nan"), "nan"),
             (float("inf"), "inf"),
             (float("-inf"), "-inf"),
@@ -122,7 +135,7 @@ class TestFormatCellValue:
         "value",
         [13134.97, 20630.27, -5438.12, 1234567.89, 1e16, 1.5e-7, 1234.0, 1e22, 1e300, 5e-324],
     )
-    def test_finite_float_never_exponent_and_lossless(self, value: float) -> None:
+    def test_finite_float_never_exponent_and_lossless_up_to_15_digits(self, value: float) -> None:
         text = format_cell_value(value)
         assert "e" not in text.lower()
         assert float(text) == value
