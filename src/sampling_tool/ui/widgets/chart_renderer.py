@@ -25,10 +25,20 @@ def render_bar_chart(
     width: int = _DEFAULT_WIDTH,
     height: int = _DEFAULT_HEIGHT,
     device_pixel_ratio: float = 1.0,
+    *,
+    integer_ticks: bool = False,
 ) -> QPixmap:
     """Rendert ein Balkendiagramm als `QPixmap`."""
     return _bytes_to_pixmap(
-        render_bar_chart_bytes(labels, values, title, width, height, device_pixel_ratio),
+        render_bar_chart_bytes(
+            labels,
+            values,
+            title,
+            width,
+            height,
+            device_pixel_ratio,
+            integer_ticks=integer_ticks,
+        ),
         device_pixel_ratio,
     )
 
@@ -40,10 +50,20 @@ def render_line_chart(
     width: int = _DEFAULT_WIDTH,
     height: int = _DEFAULT_HEIGHT,
     device_pixel_ratio: float = 1.0,
+    *,
+    integer_ticks: bool = False,
 ) -> QPixmap:
     """Rendert ein Liniendiagramm als `QPixmap`."""
     return _bytes_to_pixmap(
-        render_line_chart_bytes(labels, values, title, width, height, device_pixel_ratio),
+        render_line_chart_bytes(
+            labels,
+            values,
+            title,
+            width,
+            height,
+            device_pixel_ratio,
+            integer_ticks=integer_ticks,
+        ),
         device_pixel_ratio,
     )
 
