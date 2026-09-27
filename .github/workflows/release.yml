@@ -248,6 +248,18 @@ jobs:
             exit 1
           fi
 
+          # --- Übersetzung (Sprint 85 / A): liegt im Bundle UND wurde geladen ---
+          if ! find "$OUT" -name 'qtbase_de.qm' | grep -q .; then
+            echo "::error::qtbase_de.qm fehlt im entpackten Artefakt – Standardbuttons wären englisch." >&2
+            exit 1
+          fi
+          APP_LOG="$HOME/Library/Logs/AuditSamplingTool/app.log"
+          if ! grep -q "Qt translation loaded" "$APP_LOG"; then
+            echo "::error::Das Bundle hat qtbase_de nicht geladen (kein 'Qt translation loaded' in $APP_LOG)." >&2
+            exit 1
+          fi
+          echo "Übersetzung OK: $(grep 'Qt translation loaded' "$APP_LOG" | tail -1)"
+
           # Aufräumen ist Kosmetik, keine Prüfung – mit `set -e` darf es den Step
           # nicht nachträglich rot machen.
           rm -rf "$ROUNDTRIP" || true
@@ -320,6 +332,19 @@ jobs:
             Write-Host "  FirstRunWizard), dass die .exe auf einem echten Desktop startet oder bedienbar ist."
             Stop-Process -Id $proc.Id -Force
           }
+
+          # --- Uebersetzung (Sprint 85 / A): liegt im Bundle UND wurde geladen ---
+          if (-not (Get-ChildItem -Recurse -Path $out -Filter 'qtbase_de.qm')) {
+            Write-Host "::error::qtbase_de.qm fehlt im entpackten Artefakt - Standardbuttons waeren englisch."
+            exit 1
+          }
+          $appLog = Join-Path $env:LOCALAPPDATA 'BDO\AuditSamplingTool\Logs\app.log'
+          $loaded = Select-String -Path $appLog -Pattern 'Qt translation loaded' -ErrorAction SilentlyContinue
+          if (-not $loaded) {
+            Write-Host "::error::Das Bundle hat qtbase_de nicht geladen (kein 'Qt translation loaded' in $appLog)."
+            exit 1
+          }
+          Write-Host "Uebersetzung OK: $($loaded[-1].Line)"
 
           # Aufraeumen ist Kosmetik, keine Pruefung, und darf den Step deshalb
           # NICHT rot machen. Auf Windows haelt der gerade beendete Prozess seine
