@@ -969,3 +969,47 @@ class TestAuditSearchDebounce:
         view._search.setText("")  # Feld leeren – läuft über denselben Debounce-Pfad
         qtbot.waitUntil(lambda: not view._search_debounce.isActive(), timeout=2000)
         assert view.visible_row_count() == 10
+
+
+class TestTimestampColumnShowsFullValue:
+    """Sprint 85 / E6: „2026-09-…" war abgeschnitten – die Spalte muss den
+    vollständigen Zeitstempel fassen, ohne eine breiter gezogene Spalte wieder
+    zu verkleinern."""
+
+    def _view(self, qtbot: QtBot) -> AuditTrailView:
+        view = AuditTrailView()
+        qtbot.addWidget(view)
+        view.resize(900, 400)
+        view.show()
+        qtbot.waitExposed(view)
+        view.set_events([_make_event(event_id=1)])
+        return view
+
+    def test_column_fits_full_timestamp(self, qtbot: QtBot) -> None:
+        view = self._view(qtbot)
+        table = view.table()
+        text = str(view.proxy().index(0, 0).data())
+        assert len(text) == 19  # YYYY-MM-DD HH:MM:SS
+        header = table.horizontalHeader()
+        assert header is not None
+        needed = table.fontMetrics().horizontalAdvance(text)
+        assert header.sectionSize(0) > needed
+
+    def test_user_widened_column_is_kept(self, qtbot: QtBot) -> None:
+        view = self._view(qtbot)
+        header = view.table().horizontalHeader()
+        assert header is not None
+        header.resizeSection(0, 400)
+        view.set_events([_make_event(event_id=1), _make_event(event_id=2)])
+        assert header.sectionSize(0) == 400
+
+    def test_fits_even_when_filled_while_hidden(self, qtbot: QtBot) -> None:
+        """Die Ansicht wird oft in einem verdeckten Tab befüllt."""
+        view = AuditTrailView()
+        qtbot.addWidget(view)
+        view.set_events([_make_event(event_id=1)])
+        table = view.table()
+        header = table.horizontalHeader()
+        assert header is not None
+        text = str(view.proxy().index(0, 0).data())
+        assert header.sectionSize(0) > table.fontMetrics().horizontalAdvance(text)
