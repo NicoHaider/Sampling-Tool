@@ -275,7 +275,11 @@ ui ──▶ controllers ──▶ core ◀── io
     Session-State + Glue-Helper. Hält DB-Connection, Engagement,
     Dataset, Sample, Filter-State, UndoManager, EngagementStateRepo,
     Settings, Window-Ref. Helpers: `has_engagement()` / `has_active_
-    dataset()` / `has_active_sample()` (Convenience-Guards), `persist_
+    dataset()` / `has_active_sample()` (Convenience-Guards), **Sprint 86:**
+    `active_sample_for_current_dataset()` liefert `sample` nur, wenn es zum
+    aktiven Datensatz gehört (`SampleRepo.dataset_id_of`; `row_id` ist
+    datensatzbezogen) – Pflicht-Eintritt für Sample-Export, Einschränken,
+    Ergänzen; `has_active_sample()` meint seitdem „dieses Datensatzes". `persist_
     state()` / `restore_state()`-Lebenszyklus, `refresh_audit_trail()` /
     `refresh_dashboard()` / `refresh_views()`, `select_dataset(id)`
     (geteilt von Selection- und WorkspaceController), `resolve_brief

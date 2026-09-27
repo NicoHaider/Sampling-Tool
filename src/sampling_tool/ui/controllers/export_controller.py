@@ -119,15 +119,15 @@ class ExportController:
 
     def handle_export_sample(self) -> None:
         """Sample als Excel exportieren (Spaltenauswahl + Dateiname-Konfiguration)."""
-        if not self.session.has_active_sample():
-            self.session.error("Bitte zuerst ein Sample auswählen, bevor exportiert wird.")
-            return
         s = self.session
+        sample = s.active_sample_for_current_dataset()
+        if sample is None:
+            s.error("Bitte zuerst ein Sample auswählen, bevor exportiert wird.")
+            return
         assert s.db is not None
         assert s.dataset is not None
         assert s.dataset.id is not None
-        assert s.sample is not None
-        assert s.sample.id is not None
+        assert sample.id is not None
         assert s.engagement is not None
         assert s.engagement.id is not None
 
@@ -138,7 +138,7 @@ class ExportController:
             s.window,
             s.dataset,
             s.dataset.name,
-            str(s.sample.id),
+            str(sample.id),
             default_dir,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
@@ -159,7 +159,7 @@ class ExportController:
         # geholt statt 1M.
         # Sprint 17: Worker-basiert – UI bleibt während des Exports responsiv.
         task = SampleExportTask(
-            sample=s.sample,
+            sample=sample,
             dataset=s.dataset,
             db_path=s.db.db_path,
             columns=result.columns,
@@ -187,7 +187,7 @@ class ExportController:
         if output_path is None:
             return  # User-Cancel
 
-        sample_id, row_count = s.sample.id, s.sample.actual_size
+        sample_id, row_count = sample.id, sample.actual_size
         self._log_export_with_retry(
             s,
             output_path,

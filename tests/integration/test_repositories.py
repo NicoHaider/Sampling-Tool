@@ -566,3 +566,21 @@ class TestSampleRepoCreatedByFromResult:
         loaded = repo.get_by_id(sid)
         assert loaded is not None
         assert loaded.created_by == "berta"
+
+
+class TestSampleDatasetIdOf:
+    """Sprint 86: `sample_rows.row_id` ist datensatzbezogen – wer eine Stichprobe
+    auf Zeilen anwendet, muss ihren Datensatz kennen, ohne sie ganz zu laden."""
+
+    def test_returns_owning_dataset(self, db: Database, engagement_id: int) -> None:
+        first = _persist_dataset(db, engagement_id)
+        second = _persist_dataset(db, engagement_id)
+        repo = SampleRepo(db.connect())
+        on_first = repo.create_from_result(_make_result(), first)
+        on_second = repo.create_from_result(_make_result(), second)
+
+        assert repo.dataset_id_of(on_first) == first
+        assert repo.dataset_id_of(on_second) == second
+
+    def test_unknown_sample_returns_none(self, db: Database) -> None:
+        assert SampleRepo(db.connect()).dataset_id_of(99999) is None

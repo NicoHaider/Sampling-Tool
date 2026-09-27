@@ -366,11 +366,14 @@ class WorkspaceController:
         match_count_provider = (
             self._make_match_count_provider(repo, dataset_id) if features.show_filter else None
         )
+        # Sprint 86: Eltern-Stichprobe fürs Einschränken/Ergänzen nur aus DIESEM
+        # Datensatz – eine fremde würde mit ihren Zeilen-IDs fremde Zeilen treffen.
+        parent = s.active_sample_for_current_dataset()
         dialog = self._factories.sampling(
             s.window,
             s.dataset,
             distinct_provider,
-            s.sample,
+            parent,
             features,
             match_count_provider,
             scale_factor(s.settings.ui_scale),
@@ -408,13 +411,11 @@ class WorkspaceController:
         # Audit-Trail nicht zu unterscheiden. Der Dialog schließt die zwei
         # Häkchen gegenseitig aus; die Reihenfolge folgt `_draw_sample_result`.
         parent_relation: ParentRelation | None = None
-        if s.sample is not None and result.exclude_sample_ids:
+        if parent is not None and result.exclude_sample_ids:
             parent_relation = ParentRelation.SUPPLEMENT
-        elif s.sample is not None and result.from_sample_only:
+        elif parent is not None and result.from_sample_only:
             parent_relation = ParentRelation.RESTRICT
-        parent_sample_id = (
-            s.sample.id if s.sample is not None and parent_relation is not None else None
-        )
+        parent_sample_id = parent.id if parent is not None and parent_relation is not None else None
         # Sprint 83 / C: `created_by` VOR dem Persistieren setzen – dasselbe
         # Objekt speist DB-Zeile, Audit-Event, Sidebar und Sample-Export.
         sample_result = replace(
@@ -664,9 +665,8 @@ class WorkspaceController:
         s = self.session
 
         def _provider(field: str, operator: FilterOperator, value: Any, restrict: bool) -> int:
-            restrict_ids = (
-                list(s.sample.selected_row_ids) if restrict and s.sample is not None else None
-            )
+            parent = s.active_sample_for_current_dataset() if restrict else None
+            restrict_ids = list(parent.selected_row_ids) if parent is not None else None
             return _count_filter_matches(repo, dataset_id, field, operator, value, restrict_ids)
 
         return _provider
@@ -722,11 +722,12 @@ class WorkspaceController:
                 repo.iter_row_field_pairs(dataset.id, result.config.stratum_field),
                 population_size=dataset.row_count,
             )
-        if result.exclude_sample_ids and s.sample is not None:
+        parent = s.active_sample_for_current_dataset()
+        if result.exclude_sample_ids and parent is not None:
             # Sprint 36 / WP-B: Nachstichprobe – klassischer Pfad über einen
             # Iterator, der die bereits gezogene aktive Stichprobe ausschließt.
             effective_rows, population_size = self._build_supplement_iterator(
-                repo, dataset, s.sample.selected_row_ids
+                repo, dataset, parent.selected_row_ids
             )
             return sampler.sample(effective_rows, population_size=population_size)
         effective_rows, population_size = self._build_sampling_iterator(
@@ -755,8 +756,9 @@ class WorkspaceController:
         """
         s = self.session
         assert dataset.id is not None
-        if from_sample_only and s.sample is not None:
-            sample_ids = list(s.sample.selected_row_ids)
+        parent = s.active_sample_for_current_dataset() if from_sample_only else None
+        if parent is not None:
+            sample_ids = list(parent.selected_row_ids)
             return repo.get_rows_by_ids(dataset.id, sample_ids), len(sample_ids)
         return repo.iter_rows(dataset.id), dataset.row_count
 
