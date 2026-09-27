@@ -43,7 +43,7 @@ _MAX_SIGNIFICANT_DIGITS: Final = 15
 _ROUNDING_CONTEXT: Final = Context(prec=40)
 
 # Detail-Schlüssel, deren WERT ein Enum-Rohwert ist und übersetzt angezeigt wird.
-_DETAIL_VALUE_LABELS: Final[dict[str, Mapping[str, str]]] = {
+_DETAIL_VALUE_LABELS: Final[dict[str, Mapping[Any, str]]] = {
     "method": METHOD_LABELS,
     "stratify_mode": STRATIFY_MODE_LABELS,
     "filter_operator": FILTER_OPERATOR_LABELS,

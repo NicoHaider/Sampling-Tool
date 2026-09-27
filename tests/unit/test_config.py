@@ -118,7 +118,8 @@ class TestReportLabelTables:
         from sampling_tool.core.models import ParentRelation
 
         values = {r.value for r in ParentRelation}
-        assert set(config.PARENT_RELATION_LABELS) == values
+        # Sprint 85 / E2: `None` = Altbestand ohne erfasste Ableitung.
+        assert set(config.PARENT_RELATION_LABELS) == values | {None}
         assert set(config.PARENT_RELATION_TEXTS) == values | {None}
 
     def test_every_sampling_detail_key_has_a_label(self) -> None:

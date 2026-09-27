@@ -28,7 +28,7 @@ from jinja2 import (
 )
 
 from sampling_tool import __version__
-from sampling_tool.config import EVENT_TYPE_LABELS, METHOD_LABELS
+from sampling_tool.config import EVENT_TYPE_LABELS, METHOD_LABELS, PARENT_RELATION_LABELS
 from sampling_tool.core.formatting import format_audit_details, format_optional_timestamp
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.core.provenance import SamplingProvenance
@@ -228,13 +228,16 @@ def _filter_str(provenance: SamplingProvenance) -> str:
 
 
 def _parent_str(provenance: SamplingProvenance) -> str:
-    """„#P (Kurzform der Ableitung)" (Sprint 83 / A); ohne erfasste Ableitung
-    (Bestandssample) nur „#P", ohne Eltern-Stichprobe „—"."""
+    """„#P (Kurzform der Ableitung)" (Sprint 83 / A), ohne Eltern-Stichprobe „—".
+
+    Sprint 85 / E2: ohne erfasste Ableitung (Bestandssample) „#P (nicht
+    erfasst)" statt nur „#P" – dieselbe Aussage wie „Ableitung" im Excel-Report.
+    """
     if provenance.parent_sample_id is None:
         return "—"
-    label = provenance.parent_relation_label
-    parent = f"#{provenance.parent_sample_id}"
-    return parent if label is None else f"{parent} ({label})"
+    relation = provenance.parent_relation
+    label = PARENT_RELATION_LABELS.get(relation) or str(relation)
+    return f"#{provenance.parent_sample_id} ({label})"
 
 
 def _to_event_view(event: AuditEvent) -> _EventView:

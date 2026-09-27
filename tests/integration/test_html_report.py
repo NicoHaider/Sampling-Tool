@@ -584,7 +584,8 @@ class TestParentColumnDerivation:
         [
             (ParentRelation.RESTRICT, "#17 (eingeschränkt)"),
             (ParentRelation.SUPPLEMENT, "#17 (Nachstichprobe)"),
-            (None, "#17"),
+            # Sprint 85 / E2: Altbestand benennt die fehlende Ableitung.
+            (None, "#17 (nicht erfasst)"),
         ],
     )
     def test_parent_cell(
@@ -597,6 +598,19 @@ class TestParentColumnDerivation:
         sample = replace(_sample(1), parent_sample_id=17, parent_relation=relation)
         row = _sample_table_cells(_render(tmp_path, engagement, [sample]))["#1"]
         assert row["Parent"] == expected
+
+
+class TestLegacyParentLabel:
+    """Sprint 85 / E2: ein Bestandssample ohne erfasste Ableitung zeigt im HTML
+    dieselbe Aussage wie der Excel-Report („nicht erfasst"), nicht nur `#P`."""
+
+    def test_legacy_parent_says_not_recorded(self, tmp_path: Path, engagement: Engagement) -> None:
+        from sampling_tool.config import PARENT_RELATION_LABELS, PARENT_RELATION_TEXTS
+
+        sample = replace(_sample(1), parent_sample_id=1, parent_relation=None)
+        row = _sample_table_cells(_render(tmp_path, engagement, [sample]))["#1"]
+        assert row["Parent"] == f"#1 ({PARENT_RELATION_LABELS[None]})"
+        assert PARENT_RELATION_LABELS[None] in PARENT_RELATION_TEXTS[None]
 
 
 # ---------------------------------------------------------------------------
