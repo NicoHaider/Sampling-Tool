@@ -566,3 +566,298 @@ class TestEngagementVersionManager:
         timestamp, auditor = parsed
         assert timestamp == datetime(2026, 5, 11, 10, 30, 15, 123456)
         assert auditor == "Anna_Auditorin"
+
+
+# ---------------------------------------------------------------------------
+# Sprint 88: Grund im Namen, keine Kopie ohne Änderung, Aufbewahrung
+# ---------------------------------------------------------------------------
+
+
+def _project_db(path: Path) -> Path:
+    """Echtes (migriertes) Projekt mit Engagement und einem Audit-Event."""
+    from sampling_tool.audit.logger import AuditLogger
+    from sampling_tool.core.models import Engagement
+    from sampling_tool.persistence.repositories import AuditRepo, EngagementRepo
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = Database(path)
+    try:
+        db.migrate()
+        engagement = EngagementRepo(db.connect()).get_or_create(
+            Engagement(auditor_name="Anna", client_name="ACME")
+        )
+        assert engagement.id is not None
+        AuditLogger(AuditRepo(db.connect()), "anna", engagement.id).log_undo(None)
+    finally:
+        db.close()
+    return path
+
+
+def _log_event(db: Database, event_type: str = "reset") -> None:
+    from sampling_tool.core.models import AuditEvent
+    from sampling_tool.persistence.repositories import AuditRepo
+
+    engagement_id = db.connect().execute("SELECT id FROM engagements").fetchone()[0]
+    AuditRepo(db.connect()).log(AuditEvent(event_type=event_type, engagement_id=engagement_id))
+
+
+def _add_event(path: Path, event_type: str = "reset") -> None:
+    db = Database(path)
+    try:
+        _log_event(db, event_type)
+    finally:
+        db.close()
+
+
+def _snapshot_file(archive: Path, name: str) -> Path:
+    """Legt eine Datei mit Snapshot-Namen an – read-only wie ein echter Snapshot."""
+    archive.mkdir(parents=True, exist_ok=True)
+    path = archive / name
+    path.write_bytes(b"snapshot " + name.encode())
+    path.chmod(0o444)
+    return path
+
+
+def _open_name(minute: int, reason: str | None = "oeffnen", stem: str = "ACME") -> str:
+    tag = f"+{reason}" if reason is not None else ""
+    return f"{stem}_2026-09-27_10-{minute:02d}-00-000000_Anna{tag}.db"
+
+
+@pytest.fixture
+def project(tmp_path: Path) -> Path:
+    return _project_db(tmp_path / "ACME" / "ACME.db")
+
+
+class TestSnapshotReasonInName:
+    @pytest.mark.parametrize(
+        ("reason", "token"),
+        [
+            (version_manager.SnapshotReason.OPEN, "+oeffnen"),
+            (version_manager.SnapshotReason.PRE_MIGRATION, "+vor-migration"),
+            (version_manager.SnapshotReason.PRE_OVERWRITE, "+vor-ueberschreiben"),
+        ],
+    )
+    def test_reason_is_in_the_name_and_listed(
+        self, project: Path, reason: version_manager.SnapshotReason, token: str
+    ) -> None:
+        mgr = EngagementVersionManager(project)
+        snapshot = mgr.create_snapshot("Anna Auditorin", reason=reason)
+        assert snapshot.name.endswith(f"_Anna_Auditorin{token}.db")
+        [info] = mgr.list_snapshots()
+        assert info.reason is reason
+        assert info.auditor_name == "Anna_Auditorin"
+
+    def test_collision_counter_follows_the_reason(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(version_manager, "datetime", _FixedDatetime)
+        mgr = EngagementVersionManager(project)
+        mgr.create_snapshot("Anna", reason=version_manager.SnapshotReason.OPEN)
+        second = mgr.create_snapshot("Anna", reason=version_manager.SnapshotReason.OPEN)
+        assert second.name.endswith("_Anna+oeffnen~2.db")
+        assert [i.reason for i in mgr.list_snapshots()] == [
+            version_manager.SnapshotReason.OPEN,
+            version_manager.SnapshotReason.OPEN,
+        ]
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "ACME_2026-05-11_10-30-15_Anna_Auditorin.db",
+            "ACME_2026-05-11_10-30-15-123456_Anna_Auditorin.db",
+            "ACME_2026-05-11_10-30-15-123456_Anna_Auditorin~2.db",
+        ],
+    )
+    def test_legacy_names_parse_without_reason(self, project: Path, name: str) -> None:
+        _snapshot_file(project.parent / "archiv", name)
+        [info] = EngagementVersionManager(project).list_snapshots()
+        assert info.reason is None
+        assert info.auditor_name == "Anna_Auditorin"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "ACME_2026-05-11_10-30-15-123456_Anna+unbekannt.db",
+            "ACME_2026-05-11_10-30-15-123456_+oeffnen.db",
+            "ACME_2026-05-11_10-30-15-123456_Anna+oeffnen+oeffnen.db",
+        ],
+    )
+    def test_unknown_or_broken_reason_is_not_a_snapshot(self, project: Path, name: str) -> None:
+        _snapshot_file(project.parent / "archiv", name)
+        assert EngagementVersionManager(project).list_snapshots() == []
+
+
+class TestUnchangedSinceLatestSnapshot:
+    def test_no_snapshot_means_changed(self, project: Path) -> None:
+        assert EngagementVersionManager(project).latest_snapshot_if_unchanged() is None
+
+    def test_unchanged_project_returns_the_latest_snapshot(self, project: Path) -> None:
+        mgr = EngagementVersionManager(project)
+        snapshot = mgr.create_snapshot("Anna", reason=version_manager.SnapshotReason.OPEN)
+        assert mgr.latest_snapshot_if_unchanged() == snapshot
+
+    def test_new_audit_event_is_a_change(self, project: Path) -> None:
+        mgr = EngagementVersionManager(project)
+        mgr.create_snapshot("Anna", reason=version_manager.SnapshotReason.OPEN)
+        _add_event(project)
+        assert mgr.latest_snapshot_if_unchanged() is None
+
+    def test_backup_events_are_not_a_change(self, project: Path) -> None:
+        """Die Protokoll-Events zur Sicherung selbst ändern den Projektinhalt nicht."""
+        mgr = EngagementVersionManager(project)
+        snapshot = mgr.create_snapshot("Anna", reason=version_manager.SnapshotReason.OPEN)
+        for event_type in version_manager.SNAPSHOT_EVENT_TYPES:
+            _add_event(project, event_type)
+        assert mgr.latest_snapshot_if_unchanged() == snapshot
+
+    def test_schema_version_is_a_change(self, project: Path) -> None:
+        mgr = EngagementVersionManager(project)
+        mgr.create_snapshot("Anna", reason=version_manager.SnapshotReason.OPEN)
+        db = Database(project)
+        try:
+            db.connect().execute("INSERT INTO schema_version (version) VALUES (999)")
+        finally:
+            db.close()
+        assert mgr.latest_snapshot_if_unchanged() is None
+
+    def test_change_only_in_wal_is_seen_and_nothing_is_written(self, project: Path) -> None:
+        """App offen, kein Checkpoint: der neue Event steht nur im WAL."""
+        mgr = EngagementVersionManager(project)
+        mgr.create_snapshot("Anna", reason=version_manager.SnapshotReason.OPEN)
+        db = Database(project)
+        try:
+            conn = db.connect()
+            conn.execute("PRAGMA wal_autocheckpoint = 0")
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+            _log_event(db)
+            wal = project.with_name(project.name + "-wal")
+            assert wal.stat().st_size > 0
+            before = {p: p.read_bytes() for p in (project, wal)}
+
+            assert mgr.latest_snapshot_if_unchanged() is None
+
+            assert {p: p.read_bytes() for p in (project, wal)} == before
+        finally:
+            db.close()
+
+    def test_unchanged_while_app_is_open(self, project: Path) -> None:
+        """Wiederöffnen in der laufenden App: WAL da, aber keine Änderung."""
+        mgr = EngagementVersionManager(project)
+        db = Database(project)
+        try:
+            db.connect().execute("SELECT 1").fetchall()
+            snapshot = mgr.create_snapshot("Anna", reason=version_manager.SnapshotReason.OPEN)
+            assert mgr.latest_snapshot_if_unchanged() == snapshot
+        finally:
+            db.close()
+
+    def test_unreadable_latest_snapshot_means_changed(self, project: Path) -> None:
+        mgr = EngagementVersionManager(project)
+        mgr.create_snapshot("Anna", reason=version_manager.SnapshotReason.OPEN)
+        _snapshot_file(project.parent / "archiv", _open_name(59).replace("2026", "2099"))
+        assert mgr.latest_snapshot_if_unchanged() is None
+
+    def test_latest_snapshot_without_audit_events_means_changed(self, project: Path) -> None:
+        mgr = EngagementVersionManager(project)
+        mgr.create_snapshot("Anna", reason=version_manager.SnapshotReason.OPEN)
+        newer = project.parent / "archiv" / _open_name(0).replace("2026", "2099")
+        conn = sqlite3.connect(newer)
+        conn.execute("CREATE TABLE schema_version (version INTEGER)")
+        conn.commit()
+        conn.close()
+        assert mgr.latest_snapshot_if_unchanged() is None
+
+    def test_copy_of_the_overwritten_project_is_no_baseline(self, project: Path) -> None:
+        """„vor Überschreiben" sichert das VORHERIGE Projekt am selben Pfad."""
+        mgr = EngagementVersionManager(project)
+        mgr.create_snapshot("Anna", reason=version_manager.SnapshotReason.PRE_OVERWRITE)
+        assert mgr.latest_snapshot_if_unchanged() is None
+
+    def test_other_engagement_is_a_change(self, project: Path, tmp_path: Path) -> None:
+        mgr = EngagementVersionManager(project)
+        mgr.create_snapshot("Anna", reason=version_manager.SnapshotReason.OPEN)
+        other = _project_db(tmp_path / "other" / "ACME.db")
+        db = Database(other)
+        try:
+            db.connect().execute("UPDATE engagements SET client_name = 'Andere GmbH'")
+        finally:
+            db.close()
+        shutil.copy2(other, project)
+        assert mgr.latest_snapshot_if_unchanged() is None
+
+
+class _Trash:
+    """Papierkorb-Attrappe: merkt sich Aufrufe, der echte Papierkorb bleibt tabu."""
+
+    def __init__(self, *, succeed: bool = True) -> None:
+        self.succeed = succeed
+        self.calls: list[Path] = []
+        self.writable_when_called: list[bool] = []
+
+    def __call__(self, path: Path) -> bool:
+        self.calls.append(path)
+        self.writable_when_called.append(os.access(path, os.W_OK))
+        if self.succeed:
+            path.unlink()
+        return self.succeed
+
+
+class TestTrashSurplusOpenSnapshots:
+    def _archive(self, project: Path) -> dict[str, Path]:
+        archive = project.parent / "archiv"
+        files = {f"open{m}": _snapshot_file(archive, _open_name(m)) for m in range(1, 6)}
+        files["migration"] = _snapshot_file(archive, _open_name(0, "vor-migration"))
+        files["overwrite"] = _snapshot_file(archive, _open_name(0, "vor-ueberschreiben"))
+        files["legacy"] = _snapshot_file(archive, _open_name(0, None))
+        files["foreign"] = _snapshot_file(archive, "notizen.db")
+        files["other_project"] = _snapshot_file(archive, _open_name(0, stem="ACME_alt"))
+        exports_archive = project.parent / "exports" / "archiv"
+        files["export"] = _snapshot_file(exports_archive, _open_name(0))
+        return files
+
+    def test_oldest_open_snapshots_go_to_the_trash(self, project: Path) -> None:
+        files = self._archive(project)
+        trash = _Trash()
+
+        trashed = EngagementVersionManager(project).trash_surplus_open_snapshots(3, trash)
+
+        assert trashed == [files["open2"], files["open1"]]
+        assert trash.calls == [files["open2"], files["open1"]]
+        assert trash.writable_when_called == [True, True]
+        remaining = {k for k, p in files.items() if p.exists()}
+        assert remaining == set(files) - {"open1", "open2"}
+
+    def test_nothing_to_do_within_the_limit(self, project: Path) -> None:
+        self._archive(project)
+        trash = _Trash()
+        assert EngagementVersionManager(project).trash_surplus_open_snapshots(5, trash) == []
+        assert trash.calls == []
+
+    def test_failed_trash_keeps_the_copy_read_only_and_warns(
+        self, project: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        files = self._archive(project)
+        trash = _Trash(succeed=False)
+
+        with caplog.at_level("WARNING", logger="sampling_tool.persistence.version_manager"):
+            trashed = EngagementVersionManager(project).trash_surplus_open_snapshots(4, trash)
+
+        assert trashed == []
+        assert files["open1"].exists()
+        assert not os.access(files["open1"], os.W_OK)
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert any(files["open1"].name in w and "trash" in w for w in warnings)
+
+    def test_trash_that_raises_keeps_the_copy(self, project: Path) -> None:
+        files = self._archive(project)
+
+        def broken(_path: Path) -> bool:
+            raise OSError("kein Papierkorb")
+
+        assert EngagementVersionManager(project).trash_surplus_open_snapshots(4, broken) == []
+        assert files["open1"].exists()
+        assert not os.access(files["open1"], os.W_OK)
+
+    def test_keep_below_one_is_refused(self, project: Path) -> None:
+        with pytest.raises(ValueError, match="mindestens 1"):
+            EngagementVersionManager(project).trash_surplus_open_snapshots(0, _Trash())

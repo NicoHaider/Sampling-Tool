@@ -56,6 +56,7 @@ from sampling_tool.ui._dialog_sizing import (
 from sampling_tool.ui._scaling import UI_SCALE_LEVELS
 from sampling_tool.ui.settings_store import (
     LOG_LEVELS,
+    OPEN_SNAPSHOTS_KEEP_RANGE,
     AppSettings,
 )
 
@@ -407,6 +408,19 @@ class SettingsDialog(QDialog):
         self._undo_depth.setValue(current.undo_depth)
         form.addRow("Undo-Tiefe (max. Aktionen)", self._undo_depth)
 
+        # Sprint 88 / A3: ältere „öffnen"-Sicherungen darüber hinaus wandern in
+        # den Papierkorb. Sicherungen vor Migration/Überschreiben nie.
+        self._open_snapshots_keep = QSpinBox()
+        self._open_snapshots_keep.setRange(*OPEN_SNAPSHOTS_KEEP_RANGE)
+        self._open_snapshots_keep.setValue(current.open_snapshots_keep)
+        self._open_snapshots_keep.setToolTip(
+            "Beim Öffnen eines geänderten Projekts entsteht eine Sicherungskopie im "
+            "Ordner „archiv“. Ältere Kopien darüber hinaus werden in den Papierkorb "
+            "verschoben. Sicherungen vor einer Aktualisierung oder vor dem "
+            "Überschreiben bleiben immer erhalten."
+        )
+        form.addRow("Automatische Sicherungen beim Öffnen behalten", self._open_snapshots_keep)
+
         self._log_level = QComboBox()
         self._log_level.addItems(LOG_LEVELS)
         idx = self._log_level.findText(current.log_level)
@@ -538,6 +552,7 @@ class SettingsDialog(QDialog):
         self._chk_show_sample_id_column.setChecked(defaults.show_sample_id_column)
         self._chk_advanced_mode.setChecked(defaults.advanced_mode)
         self._undo_depth.setValue(defaults.undo_depth)
+        self._open_snapshots_keep.setValue(defaults.open_snapshots_keep)
         self._seed_spin.setValue(defaults.seed if defaults.seed is not None else 0)
         idx = self._log_level.findText(defaults.log_level)
         if idx >= 0:
@@ -584,6 +599,7 @@ class SettingsDialog(QDialog):
             show_sample_id_column=self._chk_show_sample_id_column.isChecked(),
             advanced_mode=self._chk_advanced_mode.isChecked(),
             undo_depth=self._undo_depth.value(),
+            open_snapshots_keep=self._open_snapshots_keep.value(),
             log_level=self._log_level.currentText(),
             ui_scale=self._ui_scale.currentData() or AppSettings.defaults().ui_scale,
             # Sprint 22: Die Einzel-Toggles für Advanced-Funktionen leben im

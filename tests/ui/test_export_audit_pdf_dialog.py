@@ -17,6 +17,7 @@ from sampling_tool.core.models import AuditEvent, Engagement
 from sampling_tool.io.bdo_locations import companies, locations
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import AuditRepo, EngagementRepo
+from sampling_tool.persistence.version_manager import EngagementVersionManager, SnapshotReason
 from sampling_tool.ui._scaling import load_scaled_stylesheet
 from sampling_tool.ui.controllers._factories import default_audit_pdf_factory
 from sampling_tool.ui.controllers.export_controller import filter_audit_events
@@ -335,6 +336,10 @@ class TestEmptyAuditTrail:
             )
         )
         db.close()
+        # Sprint 88 / A4: das Öffnen legt eine Sicherung an und protokolliert
+        # sie – außer, seit der jüngsten Kopie hat sich nichts geändert. Mit
+        # einer inhaltsgleichen Kopie bleibt „null Ereignisse" erreichbar.
+        EngagementVersionManager(db_path).create_snapshot("Anna", reason=SnapshotReason.OPEN)
         return db_path
 
     @staticmethod
@@ -378,7 +383,7 @@ class TestEmptyAuditTrail:
         self, qtbot: QtBot, tmp_path: Path, empty_db: Path
     ) -> None:
         """Vorbedingung der ganzen Klasse: der Zustand „null Ereignisse" ist
-        überhaupt erreichbar (auch das Öffnen selbst schreibt keinen Event)."""
+        überhaupt erreichbar (ein Öffnen ohne Änderung schreibt keinen Event)."""
         _dialog, events = self._open_dialog(qtbot, tmp_path, empty_db)
         assert events == []
 

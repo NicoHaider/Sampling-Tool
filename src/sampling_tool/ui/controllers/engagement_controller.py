@@ -13,6 +13,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QMessageBox
 
+from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.core.models import Engagement
 from sampling_tool.core.undo import UndoManager
 from sampling_tool.persistence.database import (
@@ -22,13 +23,15 @@ from sampling_tool.persistence.database import (
 )
 from sampling_tool.persistence.db_preflight import PreflightRejected, preflight_check
 from sampling_tool.persistence.repositories import (
+    AuditRepo,
     DatasetRepo,
     EngagementRepo,
     EngagementStateRepo,
     SampleRepo,
     UndoRepo,
 )
-from sampling_tool.persistence.version_manager import EngagementVersionManager
+from sampling_tool.persistence.version_manager import EngagementVersionManager, SnapshotReason
+from sampling_tool.ui import _trash
 from sampling_tool.ui.controllers._factories import ControllerFactories
 from sampling_tool.ui.controllers.workspace_session import WorkspaceSession
 from sampling_tool.ui.dialogs.duplicate_engagement_dialog import DuplicateEngagementChoice
@@ -122,7 +125,9 @@ class EngagementController:
         #    EngagementVersionManager konsolidiert auch committeten WAL-Stand in
         #    eine einzelne Snapshot-DB; die Sidecars selbst werden nicht kopiert.
         try:
-            backup_path = EngagementVersionManager(db_path).create_snapshot(s.user_name())
+            backup_path = EngagementVersionManager(db_path).create_snapshot(
+                s.user_name(), reason=SnapshotReason.PRE_OVERWRITE
+            )
         except Exception as exc:
             logger.exception("Backup vor Überschreiben fehlgeschlagen")
             s.error(
@@ -169,6 +174,10 @@ class EngagementController:
             s.error(f"Projekt konnte nicht angelegt werden: {exc}")
             return
 
+        # Sprint 88 / A4: das neue Projekt beginnt mit dem Verweis, wo das
+        # überschriebene liegt.
+        self._log_backup_events(db, created, backup_path, SnapshotReason.PRE_OVERWRITE, [])
+
         # 3. UI/State/Recent/Restore wie im Normalpfad aufsetzen – ohne diesen
         #    Aufruf bliebe das UI nach dem Überschreiben leer.
         self._adopt_database(db, db_path, created)
@@ -209,9 +218,19 @@ class EngagementController:
         # Migration blockiert ein Fehler das Öffnen nicht (die Datei bleibt
         # strukturell, wie sie war); mit ausstehender Migration schon, denn
         # `migrate()` veränderte sonst die einzige Kopie ohne Stand davor.
+        # Sprint 88: „vor Migration" immer; „öffnen" nur, wenn sich seit der
+        # jüngsten Kopie etwas geändert hat (oder der Append-only-Schutz
+        # manipuliert wurde – dann wird der vorgefundene Stand gesichert).
+        reason = SnapshotReason.PRE_MIGRATION if migration_pending else SnapshotReason.OPEN
+        snapshot_path: Path | None = None
+        trashed: list[Path] = []
         snapshot_warning: str | None = None
         try:
-            EngagementVersionManager(db_path).create_snapshot(s.user_name())
+            snapshot_path, trashed = self._snapshot_on_open(
+                EngagementVersionManager(db_path),
+                reason,
+                always=reason is not SnapshotReason.OPEN or triggers_tampered,
+            )
         except Exception as exc:
             if migration_pending:
                 logger.exception("Snapshot vor Migration fehlgeschlagen – Öffnen abgebrochen")
@@ -243,6 +262,9 @@ class EngagementController:
             s.error("Die ausgewählte Datei enthält kein Projekt.")
             return
 
+        if snapshot_path is not None:
+            self._log_backup_events(db, engagement, snapshot_path, reason, trashed)
+
         self._adopt_database(db, db_path, engagement)
 
         if triggers_tampered:
@@ -250,6 +272,50 @@ class EngagementController:
 
         if snapshot_warning is not None:
             QMessageBox.warning(s.window, "Sicherung fehlgeschlagen", snapshot_warning)
+
+    def _snapshot_on_open(
+        self, versions: EngagementVersionManager, reason: SnapshotReason, *, always: bool
+    ) -> tuple[Path | None, list[Path]]:
+        """Sichert beim Öffnen – ohne Änderung nur, wenn `always` (Sprint 88 / A2+A3).
+
+        Liefert (neue Kopie oder `None`, in den Papierkorb verschobene Kopien).
+        Nur `create_snapshot` darf werfen; Vergleich und Aufräumen scheitern
+        still in Richtung „sichern" bzw. „liegen lassen".
+        """
+        if not always:
+            unchanged = _latest_snapshot_if_unchanged(versions)
+            if unchanged is not None:
+                logger.info("No change since %s, no new backup", unchanged.name)
+                return None, []
+        snapshot_path = versions.create_snapshot(self.session.user_name(), reason=reason)
+        if reason is not SnapshotReason.OPEN:
+            return snapshot_path, []
+        keep = self.session.settings.open_snapshots_keep
+        return snapshot_path, _trash_surplus_open_snapshots(versions, keep)
+
+    def _log_backup_events(
+        self,
+        db: Database,
+        engagement: Engagement,
+        snapshot_path: Path,
+        reason: SnapshotReason,
+        trashed: list[Path],
+    ) -> None:
+        """Sicherung (und ggf. Papierkorb) im AuditTrail vermerken (Sprint 88 / A4).
+
+        Diese Events zählen beim nächsten Vergleich nicht als Änderung
+        (`SNAPSHOT_EVENT_TYPES`). Ein Fehler hier blockiert das Öffnen nicht –
+        die Kopie liegt ja schon im Archiv.
+        """
+        if engagement.id is None:
+            return
+        try:
+            audit = AuditLogger(AuditRepo(db.connect()), self.session.user_name(), engagement.id)
+            audit.log_backup_created(snapshot_path, reason)
+            if trashed:
+                audit.log_backups_trashed(trashed)
+        except Exception:
+            logger.exception("Could not log backup events for %s", snapshot_path.name)
 
     def _warn_and_restore_tampered_triggers(self, db: Database, db_path: Path) -> None:
         """Variante 1 (Sprint 52 / S2.7, S-004): Öffnen NICHT blockieren, aber
@@ -449,6 +515,24 @@ class EngagementController:
 # ---------------------------------------------------------------------------
 # Hilfen
 # ---------------------------------------------------------------------------
+
+
+def _latest_snapshot_if_unchanged(versions: EngagementVersionManager) -> Path | None:
+    """Vergleich mit der jüngsten Kopie – scheitert er, wird gesichert (Sprint 88 / A2)."""
+    try:
+        return versions.latest_snapshot_if_unchanged()
+    except Exception:
+        logger.warning("Snapshot comparison failed, backing up anyway", exc_info=True)
+        return None
+
+
+def _trash_surplus_open_snapshots(versions: EngagementVersionManager, keep: int) -> list[Path]:
+    """Aufbewahrung nach einem neuen „öffnen"-Snapshot – blockiert das Öffnen nie."""
+    try:
+        return versions.trash_surplus_open_snapshots(keep, _trash.move_to_trash)
+    except Exception:
+        logger.warning("Cleaning up old backups failed", exc_info=True)
+        return []
 
 
 def _paths_refer_to_same_file(first: Path, second: Path) -> bool:

@@ -696,3 +696,37 @@ class TestUiScaleSetting:
         )
         dialog._on_reset_defaults()
         assert dialog._ui_scale.currentData() == "normal"
+
+
+class TestOpenSnapshotsKeepField:
+    """Sprint 88 / A3: Aufbewahrung der „öffnen"-Sicherungen im Tab „Erweitert"."""
+
+    def test_field_shows_value_with_bounds(self, qtbot: QtBot, defaults: AppSettings) -> None:
+        dialog = SettingsDialog(replace(defaults, open_snapshots_keep=7))
+        qtbot.addWidget(dialog)
+        assert dialog._open_snapshots_keep.value() == 7
+        assert dialog._open_snapshots_keep.minimum() == 1
+        assert dialog._open_snapshots_keep.maximum() == 100
+
+    def test_accept_carries_the_value(
+        self, qtbot: QtBot, defaults: AppSettings, tmp_path: Path
+    ) -> None:
+        dialog = SettingsDialog(defaults)
+        qtbot.addWidget(dialog)
+        dialog._engagements_dir.setText(str(tmp_path))
+        dialog._open_snapshots_keep.setValue(4)
+        dialog._on_accept()
+        result = dialog.get_settings()
+        assert result is not None
+        assert result.open_snapshots_keep == 4
+
+    def test_reset_restores_ten(
+        self, qtbot: QtBot, defaults: AppSettings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        dialog = SettingsDialog(replace(defaults, open_snapshots_keep=2))
+        qtbot.addWidget(dialog)
+        monkeypatch.setattr(
+            QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes
+        )
+        dialog._on_reset_defaults()
+        assert dialog._open_snapshots_keep.value() == 10

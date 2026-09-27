@@ -59,6 +59,9 @@ _COLUMNS: Final[tuple[str, ...]] = (
     "Datei",
 )
 _FILE_COLUMN: Final[int] = _COLUMNS.index("Datei")
+_ACTION_COLUMN: Final[int] = _COLUMNS.index("Aktion")
+# Innenabstand links + rechts einer Zelle (Style-Margins), großzügig gerundet.
+_CELL_TEXT_PADDING: Final[int] = 24
 
 # Spezial-Wert für ComboBoxen, der „kein Filter" bedeutet.
 _FILTER_ALL: Final[str] = "Alle"
@@ -410,6 +413,10 @@ class AuditTrailView(QWidget):
         # Sprint 87 / E4: Dateinamen in der Mitte kürzen – vorne steht der
         # Datensatz, hinten ID, Datum und Endung; beides unterscheidet Exporte.
         self._table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        # Sprint 88 / B1: ohne das bricht Qt am Leerzeichen um und kürzt die
+        # erste Zeile am Ende („06_mehrere_sheets …") – `ElideMiddle` wirkt
+        # nur auf einzeiligen Text.
+        self._table.setWordWrap(False)
         h_header = self._table.horizontalHeader()
         if h_header is not None:
             h_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -436,6 +443,7 @@ class AuditTrailView(QWidget):
         self._table.sortByColumn(0, Qt.SortOrder.DescendingOrder)
         self._stack.setCurrentWidget(self._table if events else self._empty_label)
         self._fit_timestamp_column()
+        self._fit_action_column()
 
     def _fit_timestamp_column(self) -> None:
         """Verbreitert die Zeitstempel-Spalte auf ihren Inhalt (Sprint 85 / E6).
@@ -449,6 +457,22 @@ class AuditTrailView(QWidget):
         needed = max(self._table.sizeHintForColumn(0), header.sectionSizeHint(0))
         if header.sectionSize(0) < needed:
             header.resizeSection(0, needed)
+
+    def _fit_action_column(self) -> None:
+        """Breit genug für das längste deutsche Aktions-Label (Sprint 88 / B2).
+
+        Gemessen an ALLEN Labels, nicht nur den gerade gezeigten – sonst
+        springt die Spalte, sobald ein „Wiederhergestellt" dazukommt. Wie beim
+        Zeitstempel: nur verbreitern, nie verkleinern.
+        """
+        header = self._table.horizontalHeader()
+        if header is None:
+            return
+        metrics = self._table.fontMetrics()
+        widest = max(metrics.horizontalAdvance(label) for label in EVENT_TYPE_LABELS.values())
+        needed = max(widest + _CELL_TEXT_PADDING, header.sectionSizeHint(_ACTION_COLUMN))
+        if header.sectionSize(_ACTION_COLUMN) < needed:
+            header.resizeSection(_ACTION_COLUMN, needed)
 
     def model(self) -> AuditTrailModel:
         """Zugriff aufs Model (Tests)."""

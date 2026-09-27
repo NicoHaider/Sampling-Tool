@@ -60,6 +60,7 @@ _CHART_WIDTH: Final[int] = 360
 _CHART_HEIGHT: Final[int] = 160
 _RECENT_SAMPLE_LIMIT: Final[int] = 5
 _HISTORY_DAYS: Final[int] = 30
+_HISTORY_X_LABELS: Final[int] = 6
 
 
 class DashboardTile(QFrame):
@@ -485,6 +486,8 @@ class DashboardView(QWidget):
             height=_CHART_HEIGHT,
             device_pixel_ratio=self._chart_ratio(),
             integer_ticks=True,
+            # Sprint 88 / B3: 30 Tagesdaten überlagerten sich – etwa wöchentlich.
+            max_x_labels=_HISTORY_X_LABELS,
         )
         chart = QLabel()
         chart.setPixmap(pixmap)
@@ -584,6 +587,7 @@ def _samples_per_day(
     values: list[float] = []
     for offset in range(days - 1, -1, -1):
         date_key = (today - timedelta(days=offset)).isoformat()
-        labels.append(date_key[5:])  # MM-DD
+        day = today - timedelta(days=offset)
+        labels.append(f"{day.day:02d}.{day.month:02d}.")  # Sprint 88 / B3: TT.MM.
         values.append(float(bins.get(date_key, 0)))
     return labels, values

@@ -380,3 +380,32 @@ class TestProjectWithoutAuditTrail:
         assert check_exports(db_path) == []
         assert main([str(db_path)]) == 0
         assert "keine Audit-Events in dieser Projektdatei" in capsys.readouterr().out
+
+
+class TestOldPython:
+    def test_too_old_python_exits_2_not_1(self, tmp_path: Path) -> None:
+        """Sprint 88 / B4: Exit 1 heißt ABWEICHUNG – ein Abbruch wegen zu altem
+        Python darf nicht so aussehen. Simuliert: `enum.StrEnum` fehlt (< 3.11)."""
+        code = (
+            "import enum, runpy, sys\n"
+            "db, script = sys.argv[1], sys.argv[2]\n"
+            "del enum.StrEnum\n"
+            "sys.argv = [script, db]\n"
+            "runpy.run_path(script, run_name='__main__')\n"
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                code,
+                str(tmp_path / "egal.db"),
+                str(_SCRIPTS / "check_export_integrity.py"),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+            env={**os.environ, "PYTHONPATH": str(_SCRIPTS)},
+        )
+        assert result.returncode == 2, result.stderr
+        assert "3.11" in result.stderr

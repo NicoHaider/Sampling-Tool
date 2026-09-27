@@ -11,6 +11,7 @@ from PyQt6.QtCore import QSettings
 from sampling_tool.config import APP_NAME, APP_ORG
 from sampling_tool.ui.settings_store import (
     DEFAULT_LOG_LEVEL,
+    DEFAULT_OPEN_SNAPSHOTS_KEEP,
     DEFAULT_UNDO_DEPTH,
     AppSettings,
     load_settings,
@@ -320,3 +321,29 @@ class TestUiScaleSetting:
         s.sync()
         loaded = load_settings()
         assert loaded.ui_scale == "normal"
+
+
+class TestOpenSnapshotsKeep:
+    """Sprint 88 / A3: „Automatische Sicherungen beim Öffnen behalten"."""
+
+    def test_default_is_ten(self) -> None:
+        assert AppSettings.defaults().open_snapshots_keep == DEFAULT_OPEN_SNAPSHOTS_KEEP == 10
+        assert load_settings().open_snapshots_keep == 10
+
+    def test_round_trip(self) -> None:
+        save_settings(replace(AppSettings.defaults(), open_snapshots_keep=3))
+        assert load_settings().open_snapshots_keep == 3
+
+    @pytest.mark.parametrize("raw", ["0", "101", "-5", "viele", ""])
+    def test_out_of_range_or_invalid_falls_back_to_default(self, raw: str) -> None:
+        s = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME)
+        s.setValue("settings/open_snapshots_keep", raw)
+        s.sync()
+        assert load_settings().open_snapshots_keep == DEFAULT_OPEN_SNAPSHOTS_KEEP
+
+    @pytest.mark.parametrize("raw", ["1", "100"])
+    def test_bounds_are_accepted(self, raw: str) -> None:
+        s = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME)
+        s.setValue("settings/open_snapshots_keep", raw)
+        s.sync()
+        assert load_settings().open_snapshots_keep == int(raw)
