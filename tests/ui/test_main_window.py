@@ -118,6 +118,9 @@ class TestMainWindowState:
         qtbot.addWidget(win)
         win.show_workspace()
         win.show_dataset(*dataset_with_repo)
+        # Sprint 87 / C: markiert wird nur eine Stichprobe des angezeigten
+        # Datensatzes – der Controller füllt die Liste immer vorher.
+        win.set_samples([_sample()])
         win.highlight_sample(_sample())
         assert win._action_export_sample.isEnabled() is True
         assert 1 in win.data_table().table_model().highlighted_row_ids()

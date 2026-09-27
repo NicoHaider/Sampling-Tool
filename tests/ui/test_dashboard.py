@@ -15,6 +15,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog, QLabel, QMessageBox
@@ -232,3 +233,102 @@ class TestDashboardRefreshesAfterSampling:
         counts.append(int(_big_numbers(self._view(controller))[2]))
         assert counts == sorted(counts)
         assert len(set(counts)) == len(counts)
+
+
+class TestGermanTileTitles:
+    """Sprint 87 / E2: Kacheltitel deutsch, gleiche Wörter wie in der Sidebar."""
+
+    def test_tile_titles_and_captions_are_german(self, qtbot: QtBot) -> None:
+        view = DashboardView()
+        qtbot.addWidget(view)
+        view.set_data(
+            Engagement(auditor_name="A", client_name="C", id=1),
+            [Dataset(name="d", columns=("a",), id=1)],
+            [_sample(1, SamplingMethod.SIMPLE)],
+            [_event("sampling")],
+        )
+        titles = [view.datasets_tile(), view.samples_tile(), view.events_tile()]
+        assert [tile._title_label.text() for tile in titles] == [
+            "Datensätze",
+            "Stichproben",
+            "Audit-Ereignisse",
+        ]
+        captions = {lbl.text() for lbl in view.events_tile().findChildren(QLabel)}
+        assert "Ereignisse" in captions
+        assert "Events" not in captions
+
+
+_LONG_EVENT_LABELS = ["Wiederhergestellt", "Zurückgesetzt", "Stichprobe", "Rückgängig", "Korrektur"]
+
+
+class TestTopEventTypesReadable:
+    """Sprint 87 / E1: lange deutsche Eventtypen überlappen im Diagramm nicht."""
+
+    @staticmethod
+    def _tick_boxes(horizontal: bool, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+        figures: list[Figure] = []
+        real = charts._figure_to_bytes
+
+        def capture(fig: Figure, scale: float = 1.0) -> bytes:
+            figures.append(fig)
+            return real(fig, scale)
+
+        monkeypatch.setattr(charts, "_figure_to_bytes", capture)
+        charts.render_bar_chart_bytes(
+            _LONG_EVENT_LABELS,
+            [5.0, 4.0, 3.0, 2.0, 1.0],
+            title="Top-Eventtypen",
+            width=360,
+            height=160,
+            integer_ticks=True,
+            horizontal=horizontal,
+        )
+        [fig] = figures
+        ax = fig.axes[0]
+        renderer = FigureCanvasAgg(fig).get_renderer()  # type: ignore[no-untyped-call]
+        labels = ax.get_yticklabels() if horizontal else ax.get_xticklabels()
+        return [label.get_window_extent(renderer) for label in labels if label.get_text()]
+
+    @staticmethod
+    def _overlapping(boxes: list[Any]) -> bool:
+        return any(a.overlaps(b) for i, a in enumerate(boxes) for b in boxes[i + 1 :])
+
+    def test_vertical_bars_overlap_so_the_dashboard_needs_the_horizontal_variant(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert self._overlapping(self._tick_boxes(False, monkeypatch))
+
+    def test_horizontal_bars_keep_labels_apart(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        boxes = self._tick_boxes(True, monkeypatch)
+        assert len(boxes) == len(_LONG_EVENT_LABELS)
+        assert not self._overlapping(boxes)
+
+    def test_horizontal_bars_put_the_most_frequent_type_on_top(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        boxes = self._tick_boxes(True, monkeypatch)
+        # Anzeigekoordinaten: größeres y = weiter oben.
+        tops = [box.y0 for box in boxes]
+        assert tops == sorted(tops, reverse=True)
+
+    def test_dashboard_requests_horizontal_bars_for_event_types(
+        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[dict[str, Any]] = []
+        real_bar = chart_renderer.render_bar_chart
+
+        def spy(labels: list[str], values: list[float], **kwargs: Any) -> Any:
+            seen.append(kwargs)
+            return real_bar(labels, values, **kwargs)
+
+        monkeypatch.setattr(dashboard_view, "render_bar_chart", spy)
+        view = DashboardView()
+        qtbot.addWidget(view)
+        view.set_data(
+            Engagement(auditor_name="A", client_name="C", id=1),
+            [],
+            [],
+            [_event("redo"), _event("reset")],
+        )
+        [call] = [c for c in seen if c["title"] == "Top-Eventtypen"]
+        assert call.get("horizontal") is True

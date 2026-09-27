@@ -425,9 +425,9 @@ class EngagementController:
         Konvention. Wird ausschließlich aus `_restore_state` gerufen.
         """
         s = self.session
-        if s.db is None:
-            return
-        sample = SampleRepo(s.db.connect()).get_by_id(sample_id)
+        # Der Aufrufer hat die Zugehörigkeit schon geprüft – `activate_sample`
+        # wechselt hier also nie den Datensatz, bleibt aber der eine Eintritt.
+        sample = s.activate_sample(sample_id)
         if sample is None:
             return
         s.sample = sample

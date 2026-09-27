@@ -396,8 +396,8 @@ class SamplingDialog(QDialog):
         )
         size_layout.addWidget(self._lbl_size_hint)
         self._inline_errors: dict[str, QLabel] = {}
-        size_layout.addWidget(self._new_inline_error("size"))
         form.addRow("Stichprobengröße *", size_box)
+        form.addRow(self._new_inline_error("size"))
 
         # Sprint 22: Filter, Cluster und Geschichtet werden je eigenem Toggle
         # einzeln gerendert – nicht mehr gebündelt unter einem Advanced-Flag.
@@ -424,25 +424,22 @@ class SamplingDialog(QDialog):
             filter_row.addWidget(self._filter_field, stretch=2)
             filter_row.addWidget(self._filter_operator, stretch=0)
             filter_row.addWidget(self._filter_value_stack, stretch=3)
-            filter_widget = QWidget()
-            filter_column = QVBoxLayout(filter_widget)
-            filter_column.setContentsMargins(0, 0, 0, 0)
-            filter_column.setSpacing(2)
-            filter_column.addLayout(filter_row)
-            filter_column.addWidget(self._new_inline_error("filter"))
-            form.addRow("Filter (optional)", filter_widget)
+            form.addRow("Filter (optional)", filter_row)
+            form.addRow(self._new_inline_error("filter"))
 
         # Sprint 85 / B: Methodenfelder erscheinen nur bei ihrer Methode
         # (`_on_method_changed` schaltet die Formularzeilen um).
         if self._show_cluster:
             self._cluster_field = self._column_combo()
-            self._cluster_row = self._field_with_inline_error(self._cluster_field, "cluster")
+            self._cluster_row = self._cluster_field
             form.addRow("Cluster-Feld", self._cluster_row)
+            form.addRow(self._new_inline_error("cluster"))
 
         if self._show_stratified:
             self._stratum_field = self._column_combo()
-            self._stratum_row = self._field_with_inline_error(self._stratum_field, "stratum")
+            self._stratum_row = self._stratum_field
             form.addRow("Schicht-Feld", self._stratum_row)
+            form.addRow(self._new_inline_error("stratum"))
 
             stratify_box = QWidget()
             stratify_layout = QHBoxLayout(stratify_box)
@@ -554,22 +551,19 @@ class SamplingDialog(QDialog):
         return combo
 
     def _new_inline_error(self, field: str) -> QLabel:
-        """Rote Meldungszeile unter einem Feld; unsichtbar, solange sie leer ist."""
+        """Rote Meldungszeile unter einem Feld; unsichtbar, solange sie leer ist.
+
+        Sprint 87 / E5: als eigene Formularzeile über die volle Breite
+        (`addRow(label)`) – im Feld-Widget brach der Text unter schmalen Feldern
+        (macOS lässt Felder bei ihrer Wunschbreite) nach wenigen Wörtern um.
+        Leer und unsichtbar belegt die Zeile keinen Platz.
+        """
         label = QLabel("")
         label.setStyleSheet(f"color: {WARNING_COLOR}; font-size: {scaled_px(11, self._factor)}px;")
         label.setWordWrap(True)
         label.setVisible(False)
         self._inline_errors[field] = label
         return label
-
-    def _field_with_inline_error(self, field_widget: QWidget, field: str) -> QWidget:
-        row = QWidget()
-        layout = QVBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        layout.addWidget(field_widget)
-        layout.addWidget(self._new_inline_error(field))
-        return row
 
     def _icon_ratio(self) -> float:
         """Device-Pixel-Ratio des Bildschirms, auf dem dieser Dialog liegt.

@@ -432,3 +432,99 @@ class TestEmptySheetMessage:
         assert dialog._confidence_label.text() == "Dieses Blatt enthält keine Daten."
         assert "Header" not in dialog._confidence_label.text()
         assert _ok_enabled(dialog) is False
+
+
+# ---------------------------------------------------------------------------
+# Sprint 87 / E3: Nur-Kopfzeilen-Blatt, Grund für ein graues „Importieren"
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def header_only_first_sheet_path(tmp_path: Path) -> Path:
+    """Erstes Blatt nur mit Kopfzeile, zweites mit Daten."""
+    path = tmp_path / "nur_kopf.xlsx"
+    wb = Workbook()
+    header_only = wb.active
+    assert header_only is not None
+    header_only.title = "NurKopf"
+    header_only.append(["Konto", "Saldo"])
+    data = wb.create_sheet("Buchungen")
+    data.append(["Konto", "Saldo"])
+    data.append(["1000", 5])
+    wb.save(path)
+    return path
+
+
+class TestHeaderOnlySheetNotPreselected:
+    def test_first_sheet_with_a_data_row_is_preselected(
+        self, qtbot: QtBot, importer: ExcelImporter, header_only_first_sheet_path: Path
+    ) -> None:
+        dialog = ImportOptionsDialog(header_only_first_sheet_path, importer)
+        qtbot.addWidget(dialog)
+        assert dialog._sheet_combo is not None
+        assert dialog._sheet_combo.currentData() == "Buchungen"
+        assert _ok_enabled(dialog) is True
+        assert dialog.blocked_reason_text() == ""
+
+    def test_header_only_workbook_keeps_its_only_sheet(
+        self, qtbot: QtBot, importer: ExcelImporter, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "nur_kopf_allein.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "NurKopf"
+        ws.append(["Konto", "Saldo"])
+        wb.save(path)
+        dialog = ImportOptionsDialog(path, importer)
+        qtbot.addWidget(dialog)
+        assert dialog._sheet_combo is not None
+        assert dialog._sheet_combo.currentData() == "NurKopf"
+
+
+class TestBlockedImportExplainsWhy:
+    def test_header_only_sheet_names_the_reason(
+        self, qtbot: QtBot, importer: ExcelImporter, header_only_first_sheet_path: Path
+    ) -> None:
+        dialog = ImportOptionsDialog(header_only_first_sheet_path, importer)
+        qtbot.addWidget(dialog)
+        assert dialog._sheet_combo is not None
+        dialog._sheet_combo.setCurrentIndex(0)
+
+        assert _ok_enabled(dialog) is False
+        assert dialog.blocked_reason_text() == (
+            "Das Blatt enthält keine Datenzeilen – nur eine Kopfzeile."
+        )
+
+    def test_header_on_the_last_row_names_the_reason(
+        self, qtbot: QtBot, importer: ExcelImporter, simple_path: Path
+    ) -> None:
+        dialog = ImportOptionsDialog(simple_path, importer)
+        qtbot.addWidget(dialog)
+        dialog._header_spin.setValue(3)
+
+        assert _ok_enabled(dialog) is False
+        assert dialog.blocked_reason_text() == (
+            "Nach der Kopfzeile (Zeile 3) folgen keine Datenzeilen."
+        )
+
+    def test_empty_sheet_names_the_reason(
+        self, qtbot: QtBot, importer: ExcelImporter, leading_empty_sheet_path: Path
+    ) -> None:
+        dialog = ImportOptionsDialog(leading_empty_sheet_path, importer)
+        qtbot.addWidget(dialog)
+        assert dialog._sheet_combo is not None
+        dialog._sheet_combo.setCurrentIndex(0)
+
+        assert _ok_enabled(dialog) is False
+        assert dialog.blocked_reason_text() == "Das Blatt enthält keine Daten."
+
+    def test_reason_disappears_when_import_is_possible(
+        self, qtbot: QtBot, importer: ExcelImporter, simple_path: Path
+    ) -> None:
+        dialog = ImportOptionsDialog(simple_path, importer)
+        qtbot.addWidget(dialog)
+        dialog._header_spin.setValue(3)
+        dialog._header_spin.setValue(1)
+        assert _ok_enabled(dialog) is True
+        assert dialog.blocked_reason_text() == ""

@@ -4070,6 +4070,434 @@ class TestRestrictAndSupplementUseOwnDatasetOnly:
         assert drawn.population_size == 6
 
 
+# ---------------------------------------------------------------------------
+# Sprint 87: Stichprobe auswählen = auf ihren Datensatz wechseln
+# ---------------------------------------------------------------------------
+
+
+def _log_sampling_event(db_path: Path, dataset_id: int, sample_id: int) -> int:
+    """Schreibt den Sampling-Event, den der echte Ziehpfad hinterlässt; liefert seine ID."""
+    from sampling_tool.audit.logger import AuditLogger
+    from sampling_tool.persistence.repositories import AuditRepo
+
+    db = Database(db_path)
+    try:
+        conn = db.connect()
+        sample = SampleRepo(conn).get_by_id(sample_id)
+        assert sample is not None
+        engagement_id = conn.execute("SELECT id FROM engagements").fetchone()[0]
+        event = AuditLogger(AuditRepo(conn), "tester", engagement_id).log_sampling(
+            sample, sample_id, dataset_id
+        )
+        assert event.id is not None
+        return event.id
+    finally:
+        db.close()
+
+
+def _sidebar_dataset_id(window: MainWindow) -> int | None:
+    item = window.sidebar().datasets_widget().currentItem()
+    if item is None:
+        return None
+    value = item.data(int(Qt.ItemDataRole.UserRole))
+    assert isinstance(value, int)
+    return value
+
+
+def _status_message(window: MainWindow) -> str:
+    bar = window.statusBar()
+    assert bar is not None
+    return bar.currentMessage()
+
+
+class TestAuditDoubleClickSwitchesDataset:
+    """Sprint 87 / A: Doppelklick auf einen Stichproben-Event holt ihren Datensatz."""
+
+    def test_double_click_switches_to_the_samples_dataset(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, own_id, other_id, sample_id = _foreign_sample_db(tmp_path)
+        event_id = _log_sampling_event(db_path, own_id, sample_id)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.selection.handle_dataset_selected(other_id)
+
+            controller.selection.handle_audit_event_double_clicked(event_id)
+
+            s = controller.session
+            assert s.dataset is not None
+            assert s.dataset.id == own_id
+            assert s.sample is not None
+            assert s.sample.id == sample_id
+            assert s.has_active_sample() is True
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset({2, 4})
+            assert _sidebar_dataset_id(window) == own_id
+            assert window._status_dataset.text() == "Buchungen"
+            assert window._status_sample.text().startswith(f"Aktive Stichprobe: #{sample_id} ")
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_double_click_keeps_the_filter_choice(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        """Ist „nur Stichprobe" angehakt, filtert die Tabelle nach dem Wechsel weiter."""
+        db_path, own_id, other_id, sample_id = _foreign_sample_db(tmp_path)
+        event_id = _log_sampling_event(db_path, own_id, sample_id)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.selection.handle_dataset_selected(other_id)
+            window.set_filter_only_sample(True)
+
+            controller.selection.handle_audit_event_double_clicked(event_id)
+
+            s = controller.session
+            assert s.dataset is not None
+            assert s.dataset.id == own_id
+            assert s.filter_active_sample_id == sample_id
+            assert window.sidebar().is_filter_only_sample() is True
+            assert window.data_table().table_model().rowCount() == 2
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_sample_on_the_shown_dataset_does_not_reload_it(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, own_id, _other_id, sample_id = _foreign_sample_db(tmp_path)
+        event_id = _log_sampling_event(db_path, own_id, sample_id)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.selection.handle_dataset_selected(own_id)
+            with patch.object(window, "show_dataset") as show_dataset:
+                controller.selection.handle_audit_event_double_clicked(event_id)
+            show_dataset.assert_not_called()
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset({2, 4})
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+class TestDashboardClickSwitchesDataset:
+    """Sprint 87 / A: „Letzte Stichproben" im Dashboard listet alle Datensätze –
+    ein Klick läuft über denselben Eintrittspunkt wie der AuditTrail."""
+
+    def test_click_on_foreign_sample_switches_dataset(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, own_id, other_id, sample_id = _foreign_sample_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.selection.handle_dataset_selected(other_id)
+
+            window._dashboard_view.sample_clicked.emit(sample_id)
+
+            s = controller.session
+            assert s.dataset is not None
+            assert s.dataset.id == own_id
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset({2, 4})
+            assert _sidebar_dataset_id(window) == own_id
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+class TestAuditDoubleClickDatasetNotInView:
+    """Sprint 87 / A: ist der Datensatz nicht in der Ansicht, wird nichts markiert."""
+
+    def test_no_highlight_and_a_status_hint(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, own_id, other_id, sample_id = _foreign_sample_db(tmp_path)
+        event_id = _log_sampling_event(db_path, own_id, sample_id)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.selection.handle_dataset_selected(other_id)
+            s = controller.session
+            assert s.clear_view() is True
+
+            with patch.object(window, "show_dataset") as show_dataset:
+                controller.selection.handle_audit_event_double_clicked(event_id)
+
+            show_dataset.assert_not_called()
+            assert s.dataset is None
+            assert s.sample is None
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+            assert window._status_sample.text() == "Aktive Stichprobe: keine"
+            message = _status_message(window)
+            assert f"#{sample_id}" in message
+            assert "Buchungen" in message
+            assert "nicht in der Ansicht" in message
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+class TestActivateSampleEdgeCases:
+    """Sprint 87 / A: der Eintrittspunkt bei Stichproben ohne greifbaren Datensatz."""
+
+    def test_unknown_sample_changes_nothing(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, _own_id, other_id, _sample_id = _foreign_sample_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.selection.handle_dataset_selected(other_id)
+            s = controller.session
+
+            assert s.activate_sample(9999) is None
+
+            assert s.dataset is not None
+            assert s.dataset.id == other_id
+            assert _status_message(window) == ""
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_sample_whose_dataset_is_gone_gets_a_hint(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        """Defensiv: der FK lässt das nicht zu – der Hinweis steht trotzdem richtig da."""
+        db_path, _own_id, other_id, sample_id = _foreign_sample_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.selection.handle_dataset_selected(other_id)
+            s = controller.session
+
+            with patch.object(SampleRepo, "dataset_id_of", return_value=9999):
+                assert s.activate_sample(sample_id) is None
+
+            assert s.dataset is not None
+            assert s.dataset.id == other_id
+            assert _status_message(window) == (
+                f"Stichprobe #{sample_id}: ihr Datensatz ist nicht mehr vorhanden."
+            )
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+class TestUndoRedoAcrossDatasets:
+    """Sprint 87 / B: Undo/Redo stellt Datensatz und Stichprobe gemeinsam wieder her."""
+
+    def test_undo_and_redo_switch_the_dataset_with_the_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        from sampling_tool.core.models import UndoStack
+        from sampling_tool.persistence.repositories import UndoRepo
+
+        db_path, own_id, other_id, _existing = _foreign_sample_db(tmp_path)
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=_stub_sampling_factory(),  # type: ignore[arg-type]
+        )
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            s = controller.session
+            assert s.db is not None
+            assert s.engagement is not None
+            assert s.engagement.id is not None
+            undo_repo = UndoRepo(s.db.connect(), s.engagement.id)
+
+            def stacks() -> tuple[int, int]:
+                return undo_repo.count(UndoStack.UNDO), undo_repo.count(UndoStack.REDO)
+
+            controller.selection.handle_dataset_selected(own_id)
+            controller.workspace.handle_new_sampling()
+            sample_a = s.sample
+            assert sample_a is not None
+            controller.selection.handle_dataset_selected(other_id)
+            controller.workspace.handle_new_sampling()
+            sample_b = s.sample
+            assert sample_b is not None
+            assert stacks() == (2, 0)
+
+            controller.workspace.handle_undo()
+
+            assert s.dataset is not None
+            assert s.dataset.id == own_id
+            assert s.sample is not None
+            assert s.sample.id == sample_a.id
+            assert _sidebar_dataset_id(window) == own_id
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset(
+                sample_a.selected_row_ids
+            )
+            assert stacks() == (1, 1)
+
+            controller.workspace.handle_redo()
+
+            assert s.dataset is not None
+            assert s.dataset.id == other_id
+            assert s.sample is not None
+            assert s.sample.id == sample_b.id
+            assert _sidebar_dataset_id(window) == other_id
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset(
+                sample_b.selected_row_ids
+            )
+            assert stacks() == (2, 0)
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_undo_events_keep_the_sample_id(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, own_id, other_id, _existing = _foreign_sample_db(tmp_path)
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=_stub_sampling_factory(),  # type: ignore[arg-type]
+        )
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            s = controller.session
+            controller.selection.handle_dataset_selected(own_id)
+            controller.workspace.handle_new_sampling()
+            sample_a = s.sample
+            assert sample_a is not None
+            controller.selection.handle_dataset_selected(other_id)
+            controller.workspace.handle_new_sampling()
+            sample_b = s.sample
+            assert sample_b is not None
+            controller.workspace.handle_undo()
+            controller.workspace.handle_redo()
+        finally:
+            controller.engagement.handle_close_engagement()
+        conn = sqlite3.connect(str(db_path))
+        try:
+            rows = conn.execute(
+                "SELECT event_type, sample_id FROM audit_events "
+                "WHERE event_type IN ('undo', 'redo') ORDER BY id"
+            ).fetchall()
+        finally:
+            conn.close()
+        assert rows == [("undo", sample_a.id), ("redo", sample_b.id)]
+
+    def test_undo_to_a_dataset_not_in_view_applies_empty_state_with_hint(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, own_id, _other_id, _existing = _foreign_sample_db(tmp_path)
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=_stub_sampling_factory(),  # type: ignore[arg-type]
+        )
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            s = controller.session
+            controller.selection.handle_dataset_selected(own_id)
+            controller.workspace.handle_new_sampling()
+            sample_a = s.sample
+            assert sample_a is not None
+            controller.workspace.handle_new_sampling()
+            assert s.clear_view() is True
+
+            controller.workspace.handle_undo()
+
+            assert s.dataset is None
+            assert s.sample is None
+            assert s.active_sample_id is None
+            assert window.data_table().table_model().highlighted_row_ids() == frozenset()
+            assert f"#{sample_a.id}" in _status_message(window)
+            assert "nicht in der Ansicht" in _status_message(window)
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+class TestSidebarSelectsRestoredDataset:
+    """Sprint 87 / E6: nach dem Wiederöffnen ist der Datensatz auch in der Sidebar gewählt."""
+
+    def test_restored_dataset_is_selected_without_a_second_load(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        db_path, _own_id, other_id, _sample_id = _foreign_sample_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.selection.handle_dataset_selected(other_id)
+        finally:
+            controller.engagement.handle_close_engagement()
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            with patch.object(
+                controller.session, "select_dataset", wraps=controller.session.select_dataset
+            ) as select_dataset:
+                controller.engagement.handle_open_engagement(db_path)
+            select_dataset.assert_called_once_with(other_id)
+            assert _sidebar_dataset_id(window) == other_id
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+class TestHighlightRefusesForeignSample:
+    """Sprint 87 / C: das Fenster markiert nie eine Stichprobe eines anderen Datensatzes."""
+
+    def test_forced_foreign_highlight_marks_nothing_and_warns(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        db_path, _own_id, other_id, sample_id = _foreign_sample_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.selection.handle_dataset_selected(other_id)
+            s = controller.session
+            assert s.db is not None
+            foreign = SampleRepo(s.db.connect()).get_by_id(sample_id)
+            assert foreign is not None
+
+            with caplog.at_level("WARNING", logger="sampling_tool.ui.main_window"):
+                window.highlight_sample(foreign)
+                window.filter_to_sample(foreign)
+
+            model = window.data_table().table_model()
+            assert model.highlighted_row_ids() == frozenset()
+            assert model.rowCount() == 6
+            assert window._status_sample.text() == "Aktive Stichprobe: keine"
+            assert window._action_export_sample.isEnabled() is False
+            warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+            assert len(warnings) == 2
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
 def _project_without_saved_state(directory: Path) -> Path:
     """Zweites Projekt mit einem Datensatz, aber ohne gespeicherten UI-State."""
     directory.mkdir()

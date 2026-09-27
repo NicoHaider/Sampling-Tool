@@ -58,6 +58,22 @@ class ExportTarget:
     archived_previous: Path | None = None
 
 
+def export_failure_message(what: str, exc: BaseException, target: ExportTarget) -> str:
+    """Fehlermeldung eines gescheiterten Exports (Sprint 87 / E7).
+
+    Wurde die vorhandene Datei vorher nach `archiv/` verschoben, liegt am
+    Zielpfad jetzt NICHTS mehr – die Meldung sagt deshalb, wo die bisherige
+    Fassung liegt, damit der Prüfer sie findet.
+    """
+    message = f"{what} fehlgeschlagen: {exc}"
+    if target.archived_previous is not None:
+        message += (
+            "\n\nDie bisherige Fassung wurde vorher gesichert und liegt hier:\n"
+            f"{target.archived_previous}"
+        )
+    return message
+
+
 def next_free_path(path: Path) -> Path:
     """Erste freie Variante `<stem>_2<suffix>`, `_3`, … neben `path`."""
     n = 2
@@ -178,11 +194,11 @@ class ExportController:
         try:
             output_path = progress_dialog.run_task(task)
         except ExportError as exc:
-            s.error(f"Sample-Export fehlgeschlagen: {exc}")
+            s.error(export_failure_message("Sample-Export", exc, target))
             return
         except Exception as exc:
             logger.exception("Sample-Export fehlgeschlagen")
-            s.error(f"Sample-Export fehlgeschlagen: {exc}")
+            s.error(export_failure_message("Sample-Export", exc, target))
             return
         if output_path is None:
             return  # User-Cancel
@@ -271,9 +287,9 @@ class ExportController:
         progress_dialog = TaskProgressDialog("Erstelle AuditTrail-PDF…", s.window)
         try:
             output_path = progress_dialog.run_task(task)
-        except Exception as exc:  # pragma: no cover – defensiv
+        except Exception as exc:
             logger.exception("PDF-Export fehlgeschlagen")
-            s.error(f"PDF-Export fehlgeschlagen: {exc}")
+            s.error(export_failure_message("PDF-Export", exc, target))
             return
         if output_path is None:
             return  # User-Cancel
@@ -323,9 +339,9 @@ class ExportController:
         progress_dialog = TaskProgressDialog("Erstelle Excel-Report…", s.window)
         try:
             output_path = progress_dialog.run_task(task)
-        except Exception as exc:  # pragma: no cover – defensiv
+        except Exception as exc:
             logger.exception("Excel-Report fehlgeschlagen")
-            s.error(f"Excel-Report fehlgeschlagen: {exc}")
+            s.error(export_failure_message("Excel-Report", exc, target))
             return
         if output_path is None:
             return  # User-Cancel
@@ -376,9 +392,9 @@ class ExportController:
         progress_dialog = TaskProgressDialog("Erstelle HTML-Report…", s.window)
         try:
             output_path = progress_dialog.run_task(task)
-        except Exception as exc:  # pragma: no cover – defensiv
+        except Exception as exc:
             logger.exception("HTML-Report fehlgeschlagen")
-            s.error(f"HTML-Report fehlgeschlagen: {exc}")
+            s.error(export_failure_message("HTML-Report", exc, target))
             return
         if output_path is None:
             return  # User-Cancel

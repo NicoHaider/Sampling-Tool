@@ -48,19 +48,27 @@ def render_bar_chart_bytes(
     scale: float = 1.0,
     *,
     integer_ticks: bool = False,
+    horizontal: bool = False,
 ) -> bytes:
     """Rendert ein Balkendiagramm als PNG-Bytes.
 
     `integer_ticks` (Sprint 85 / D) für Zähl-Diagramme: nur ganze Zahlen an der
-    y-Achse statt 0.25-Schritten. Default aus – die Berichts-Charts bleiben
-    byte-identisch.
+    Werteachse statt 0.25-Schritten. `horizontal` (Sprint 87 / E1) legt die
+    Balken quer: lange deutsche Kategorien („Wiederhergestellt",
+    „Zurückgesetzt") stehen dann untereinander statt sich an der x-Achse zu
+    überlappen; der erste Eintrag steht oben. Beide Default aus – die
+    Berichts-Charts bleiben byte-identisch.
     """
     fig = _make_figure(width, height, scale)
     ax = fig.add_subplot(111)
     if labels:
         colors = [BDO_COLORS[i % len(BDO_COLORS)] for i in range(len(labels))]
-        ax.bar(labels, values, color=colors)
-    _style_axes(ax, title, integer_ticks=integer_ticks)
+        if horizontal:
+            ax.barh(labels, values, color=colors)
+            ax.invert_yaxis()
+        else:
+            ax.bar(labels, values, color=colors)
+    _style_axes(ax, title, integer_ticks=integer_ticks, value_axis="x" if horizontal else "y")
     return _figure_to_bytes(fig, scale)
 
 
@@ -121,16 +129,17 @@ def _make_figure(width: int, height: int, scale: float = 1.0) -> Figure:
     return fig
 
 
-def _style_axes(ax: Any, title: str, *, integer_ticks: bool = False) -> None:
-    """Einheitliches Styling für Bar-/Line-Charts."""
+def _style_axes(ax: Any, title: str, *, integer_ticks: bool = False, value_axis: str = "y") -> None:
+    """Einheitliches Styling für Bar-/Line-Charts (`value_axis`: Achse der Werte)."""
     if integer_ticks:
-        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+        value = ax.xaxis if value_axis == "x" else ax.yaxis
+        value.set_major_locator(MaxNLocator(integer=True))
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["left"].set_color(BDO_LIGHT_GREY)
     ax.spines["bottom"].set_color(BDO_LIGHT_GREY)
     ax.tick_params(axis="both", colors=BDO_GREY, labelsize=8)
-    ax.grid(axis="y", linestyle=":", color=BDO_LIGHT_GREY, alpha=0.6)
+    ax.grid(axis=value_axis, linestyle=":", color=BDO_LIGHT_GREY, alpha=0.6)
     ax.set_axisbelow(True)
     if title:
         ax.set_title(title, color=BDO_DARK_GREY, fontsize=10, fontweight="bold")

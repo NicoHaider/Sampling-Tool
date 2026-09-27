@@ -456,3 +456,52 @@ class TestAllExportPathsAsk:
         assert second.is_file()
         assert h.planned.read_bytes() == FIRST_VERSION
         assert Path(h.export_events()[-1].export_file or "") == second
+
+
+@pytest.mark.parametrize("kind", EXPORT_KINDS, ids=[k.name for k in EXPORT_KINDS])
+class TestFailedOverwriteNamesArchive:
+    """Sprint 87 / E7: scheitert das Schreiben NACH dem Sichern der alten
+    Fassung, sagt die Fehlermeldung, wo die alte Fassung jetzt liegt."""
+
+    def test_error_names_the_archived_previous_version(
+        self,
+        kind: _ExportKind,
+        harness: Callable[[_ExportKind, ExistingExportChoice], _Harness],
+    ) -> None:
+        h = harness(kind, ExistingExportChoice.OVERWRITE)
+        h.export_first()
+
+        with (
+            patch(
+                "sampling_tool.ui.controllers.export_controller.TaskProgressDialog.run_task",
+                side_effect=RuntimeError("Datenträger voll"),
+            ),
+            patch("sampling_tool.ui.controllers.workspace_session.QMessageBox.warning") as warning,
+        ):
+            h.export()
+
+        [archived] = (h.out_dir / ARCHIVE_DIR_NAME).iterdir()
+        assert archived.read_bytes() == FIRST_VERSION
+        warning.assert_called_once()
+        body = warning.call_args.args[2]
+        assert "Datenträger voll" in body
+        assert str(archived) in body
+
+    def test_error_without_overwrite_mentions_no_archive(
+        self,
+        kind: _ExportKind,
+        harness: Callable[[_ExportKind, ExistingExportChoice], _Harness],
+    ) -> None:
+        h = harness(kind, ExistingExportChoice.OVERWRITE)
+
+        with (
+            patch(
+                "sampling_tool.ui.controllers.export_controller.TaskProgressDialog.run_task",
+                side_effect=RuntimeError("Datenträger voll"),
+            ),
+            patch("sampling_tool.ui.controllers.workspace_session.QMessageBox.warning") as warning,
+        ):
+            h.export()
+
+        warning.assert_called_once()
+        assert ARCHIVE_DIR_NAME not in warning.call_args.args[2]

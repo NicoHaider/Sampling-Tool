@@ -152,7 +152,14 @@ class ImportOptionsDialog(QDialog):
         )
         set_accept_text(self._buttons, "Importieren")
         mark_secondary_buttons(self._buttons)
-        outer.addWidget(self._buttons)
+        # Sprint 87 / E3: ist „Importieren" grau, steht der Grund daneben.
+        self._blocked_reason_label = QLabel("")
+        self._blocked_reason_label.setWordWrap(True)
+        self._blocked_reason_label.setStyleSheet(f"color: {WARNING_COLOR};")
+        button_row = QHBoxLayout()
+        button_row.addWidget(self._blocked_reason_label, stretch=1)
+        button_row.addWidget(self._buttons)
+        outer.addLayout(button_row)
 
         # ---- Signals ---------------------------------------------------
         if self._sheet_combo is not None:
@@ -169,8 +176,9 @@ class ImportOptionsDialog(QDialog):
         self._buttons.accepted.connect(self._on_accept)
         self._buttons.rejected.connect(self.reject)
 
-        # Initiale Vorschau laden. Excel: das erste Blatt mit Daten (Sprint 85 /
-        # E4 – vorher Index 0, auch wenn das Blatt leer war). CSV: einmalig direkt.
+        # Initiale Vorschau laden. Excel: das erste Blatt mit mindestens einer
+        # Datenzeile nach der Kopfzeile (Sprint 85 / E4, Sprint 87 / E3 – vorher
+        # auch ein leeres oder Nur-Kopfzeilen-Blatt). CSV: einmalig direkt.
         if self._is_csv:
             self._load_preview(self._csv_preview())
         else:
@@ -189,6 +197,10 @@ class ImportOptionsDialog(QDialog):
     def get_result_header_row(self) -> int:
         """0-basierter Header-Index (nur sinnvoll, wenn eine Kopfzeile gewählt ist)."""
         return self._header_spin.value() - 1
+
+    def blocked_reason_text(self) -> str:
+        """Warum „Importieren" gerade grau ist („" wenn importiert werden kann)."""
+        return self._blocked_reason_label.text()
 
     # ---- Slots ---------------------------------------------------------
 
@@ -364,34 +376,46 @@ class ImportOptionsDialog(QDialog):
     # ---- Validierung ---------------------------------------------------
 
     def _is_valid(self) -> bool:
-        if self._current_preview is None or not _has_data(self._current_preview):
-            return False
+        return self._invalid_reason() is None
+
+    def _invalid_reason(self) -> str | None:
+        """Grund, warum nicht importiert werden kann – `None`, wenn es geht."""
+        if self._current_preview is None:
+            return "Keine Vorschau verfügbar."
+        if not _has_data(self._current_preview):
+            return "Das Blatt enthält keine Daten."
         # „keine Kopfzeile": gültig, sobald überhaupt Zeilen vorhanden sind.
         if self._no_header_check.isChecked():
-            return len(self._current_preview.rows) >= 1
+            return None
 
         header_index = self._header_spin.value() - 1
         if self._is_csv:
             # Mindestens eine Datenzeile nach dem Header – es sei denn, die
             # Vorschau war abgeschnitten (dann liegen evtl. weitere Zeilen vor).
             n = len(self._current_preview.rows)
-            return header_index < n - 1 or n >= _PREVIEW_MAX_ROWS
+            if header_index < n - 1 or n >= _PREVIEW_MAX_ROWS:
+                return None
+            return _no_data_rows_reason(header_index, n)
 
         # Excel: echte Zeilenzahl aus den Sheet-Metadaten nutzen.
         assert self._sheet_combo is not None
         sheet_name = self._sheet_combo.currentData()
         if not isinstance(sheet_name, str):
-            return False
+            return "Kein Blatt ausgewählt."
         info = next((s for s in self._sheets if s.name == sheet_name), None)
         if info is None:
-            return False
+            return "Kein Blatt ausgewählt."
         # Mindestens eine Datenzeile NACH dem Header.
-        return header_index < info.row_count - 1
+        if header_index < info.row_count - 1:
+            return None
+        return _no_data_rows_reason(header_index, info.row_count)
 
     def _update_ok_enabled(self) -> None:
+        reason = self._invalid_reason()
         ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
         if ok_btn is not None:
-            ok_btn.setEnabled(self._is_valid())
+            ok_btn.setEnabled(reason is None)
+        self._blocked_reason_label.setText(reason or "")
 
 
 # ---------------------------------------------------------------------------
@@ -400,11 +424,22 @@ class ImportOptionsDialog(QDialog):
 
 
 def _first_sheet_with_data(sheets: list[SheetInfo]) -> int:
-    """Index des ersten Blatts mit Zellen; 0, wenn alle leer sind (Sprint 85 / E4)."""
-    return next(
-        (i for i, info in enumerate(sheets) if info.row_count > 0 and info.column_count > 0),
-        0,
-    )
+    """Index des Blatts, das der Dialog vorwählt (Sprint 85 / E4, Sprint 87 / E3).
+
+    Bevorzugt das erste Blatt mit mindestens einer Datenzeile nach der
+    Kopfzeile (≥ 2 Zeilen); sonst das erste mit überhaupt Zellen (z. B. nur
+    eine Kopfzeile – der Grund steht dann neben „Importieren"); sonst 0.
+    """
+    filled = [i for i, info in enumerate(sheets) if info.row_count > 0 and info.column_count > 0]
+    with_rows = [i for i in filled if sheets[i].row_count >= 2]
+    return next(iter(with_rows or filled), 0)
+
+
+def _no_data_rows_reason(header_index: int, row_count: int) -> str:
+    """Grund für „keine Datenzeile nach der Kopfzeile"."""
+    if row_count <= 1:
+        return "Das Blatt enthält keine Datenzeilen – nur eine Kopfzeile."
+    return f"Nach der Kopfzeile (Zeile {header_index + 1}) folgen keine Datenzeilen."
 
 
 def _has_data(preview: SheetPreview) -> bool:

@@ -58,6 +58,7 @@ _COLUMNS: Final[tuple[str, ...]] = (
     "Seed",
     "Datei",
 )
+_FILE_COLUMN: Final[int] = _COLUMNS.index("Datei")
 
 # Spezial-Wert für ComboBoxen, der „kein Filter" bedeutet.
 _FILTER_ALL: Final[str] = "Alle"
@@ -154,6 +155,10 @@ class AuditTrailModel(QAbstractTableModel):
             return evt.user_name
         if role == _TIMESTAMP_ROLE:
             return ensure_utc(evt.timestamp).timestamp() if evt.timestamp else 0.0
+        if role == Qt.ItemDataRole.ToolTipRole and col == _FILE_COLUMN:
+            # Sprint 87 / E4: die Spalte zeigt nur den (ggf. elidierten)
+            # Dateinamen – der volle Pfad sagt auch, wo die Datei liegt.
+            return evt.export_file or evt.import_file or None
         if role == Qt.ItemDataRole.TextAlignmentRole and col in (3, 4, 5, 6):
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         return None
@@ -402,6 +407,9 @@ class AuditTrailView(QWidget):
         self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self._table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
+        # Sprint 87 / E4: Dateinamen in der Mitte kürzen – vorne steht der
+        # Datensatz, hinten ID, Datum und Endung; beides unterscheidet Exporte.
+        self._table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         h_header = self._table.horizontalHeader()
         if h_header is not None:
             h_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -530,7 +538,7 @@ def _format_cell(evt: AuditEvent, col: int) -> str:
         return f"{evt.sample_percent:.2f} %" if evt.sample_percent is not None else "—"
     if col == 6:
         return str(evt.seed) if evt.seed is not None else "—"
-    if col == 7:
+    if col == _FILE_COLUMN:
         return _format_file(evt)
     return ""
 
