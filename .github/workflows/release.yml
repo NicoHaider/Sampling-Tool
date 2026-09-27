@@ -234,6 +234,15 @@ jobs:
             echo "  NICHT belegt: dass MainWindow konstruiert wird (der Prozess steht im modalen"
             echo "  FirstRunWizard), dass das .app auf einem echten Desktop startet, dass Gatekeeper"
             echo "  es zulässt oder dass es bedienbar ist."
+            # Übersetzung (Sprint 85 / A): das Log entsteht erst nach dem
+            # Import-Vorlauf; auf einem frischen Runner baut Matplotlib dabei
+            # seinen Font-Cache, also auf die Zeile warten, solange der Prozess lebt.
+            APP_LOG="$HOME/Library/Logs/AuditSamplingTool/app.log"
+            for _ in $(seq 1 60); do
+              if grep -q "Qt translation loaded" "$APP_LOG" 2>/dev/null; then break; fi
+              kill -0 "$PID" 2>/dev/null || break
+              sleep 1
+            done
             kill "$PID"
             wait "$PID" 2>/dev/null || true
           else
@@ -253,8 +262,7 @@ jobs:
             echo "::error::qtbase_de.qm fehlt im entpackten Artefakt – Standardbuttons wären englisch." >&2
             exit 1
           fi
-          APP_LOG="$HOME/Library/Logs/AuditSamplingTool/app.log"
-          if ! grep -q "Qt translation loaded" "$APP_LOG"; then
+          if ! grep -q "Qt translation loaded" "$APP_LOG" 2>/dev/null; then
             echo "::error::Das Bundle hat qtbase_de nicht geladen (kein 'Qt translation loaded' in $APP_LOG)." >&2
             exit 1
           fi
@@ -330,6 +338,13 @@ jobs:
             Write-Host "  Belegt ist damit: kein Startup-/Import-Crash aus dem ausgelieferten Bundle."
             Write-Host "  NICHT belegt: dass MainWindow konstruiert wird (der Prozess steht im modalen"
             Write-Host "  FirstRunWizard), dass die .exe auf einem echten Desktop startet oder bedienbar ist."
+            # Uebersetzung (Sprint 85 / A): auf die Log-Zeile warten, solange der Prozess lebt.
+            $appLog = Join-Path $env:LOCALAPPDATA 'BDO\AuditSamplingTool\Logs\app.log'
+            for ($i = 0; $i -lt 60; $i++) {
+              if (Select-String -Path $appLog -Pattern 'Qt translation loaded' -Quiet -ErrorAction SilentlyContinue) { break }
+              if ($proc.HasExited) { break }
+              Start-Sleep -Seconds 1
+            }
             Stop-Process -Id $proc.Id -Force
           }
 
@@ -338,7 +353,6 @@ jobs:
             Write-Host "::error::qtbase_de.qm fehlt im entpackten Artefakt - Standardbuttons waeren englisch."
             exit 1
           }
-          $appLog = Join-Path $env:LOCALAPPDATA 'BDO\AuditSamplingTool\Logs\app.log'
           $loaded = Select-String -Path $appLog -Pattern 'Qt translation loaded' -ErrorAction SilentlyContinue
           if (-not $loaded) {
             Write-Host "::error::Das Bundle hat qtbase_de nicht geladen (kein 'Qt translation loaded' in $appLog)."
