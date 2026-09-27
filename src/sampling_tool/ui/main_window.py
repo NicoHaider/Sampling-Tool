@@ -8,6 +8,7 @@ laufen ausschließlich im Controller.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -52,6 +53,8 @@ from sampling_tool.ui.widgets.dashboard_view import DashboardView
 from sampling_tool.ui.widgets.data_table import _DEFAULT_ROW_HEIGHT, DataTableView
 from sampling_tool.ui.widgets.sidebar import NavigationSidebar
 from sampling_tool.ui.widgets.welcome import WelcomeScreen
+
+logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
@@ -259,6 +262,11 @@ class MainWindow(QMainWindow):
         Row-Liste; das hält den UI-RAM konstant.
         """
         self._data_table.set_dataset(dataset, repo)
+        # Sidebar-Auswahl mitziehen (Sprint 87 / E6: Restore, Undo/Redo und der
+        # AuditTrail-Doppelklick wechseln ohne Klick). `setCurrentRow` löst kein
+        # `itemClicked` aus – also kein zweites `select_dataset`.
+        if dataset.id is not None:
+            self._sidebar.select_dataset(dataset.id)
         self._status_dataset.setText(dataset.name)
         self._status_rows.setText(f"{dataset.row_count} Zeilen")
         self.set_active_sample_label(None)
@@ -306,6 +314,8 @@ class MainWindow(QMainWindow):
 
     def highlight_sample(self, sample: SampleResult, *, filtered: bool = False) -> None:
         """Markiert Sample-Zeilen und aktualisiert Statusbar + Sidebar."""
+        if not self._shows_sample_of_displayed_dataset(sample, "highlight"):
+            return
         self._data_table.highlight_rows(sample.selected_row_ids)
         self.set_active_sample_label(sample, filtered=filtered)
         self._sidebar.set_active_sample(sample.id)
@@ -358,7 +368,26 @@ class MainWindow(QMainWindow):
 
     def filter_to_sample(self, sample: SampleResult) -> None:
         """Filtert die Tabelle auf Sample-Zeilen."""
+        if not self._shows_sample_of_displayed_dataset(sample, "filter"):
+            return
         self._data_table.filter_to_rows(sample.selected_row_ids)
+
+    def _shows_sample_of_displayed_dataset(self, sample: SampleResult, action: str) -> bool:
+        """Letzte Verteidigung (Sprint 87): nur Stichproben des angezeigten Datensatzes.
+
+        `row_id` ist datensatzbezogen – eine fremde Stichprobe träfe klaglos
+        fremde Zeilen. Das Fenster greift nicht auf die DB zu; die Sidebar-
+        Stichprobenliste ist genau die Liste des angezeigten Datensatzes (der
+        Controller füllt sie bei jedem Datensatzwechsel vor dem Markieren).
+        Der Controller wechselt vorher (`WorkspaceSession.activate_sample`),
+        dieser Pfad darf also nie greifen.
+        """
+        if sample.id is not None and self._sidebar.has_sample(sample.id):
+            return True
+        logger.warning(
+            "Refusing to %s sample %s: not a sample of the displayed dataset", action, sample.id
+        )
+        return False
 
     def clear_sample_filter(self) -> None:
         """Hebt einen Sample-Filter wieder auf."""

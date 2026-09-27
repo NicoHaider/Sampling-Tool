@@ -8,7 +8,7 @@ WorkspaceSession.
 
 from __future__ import annotations
 
-from sampling_tool.persistence.repositories import AuditRepo, SampleRepo
+from sampling_tool.persistence.repositories import AuditRepo
 from sampling_tool.ui.controllers.workspace_session import (
     AUDIT_EVENT_DISPLAY_LIMIT,
     WorkspaceSession,
@@ -42,14 +42,17 @@ class SelectionController:
         """Sample-Zeilen in der Tabelle markieren + zur ersten scrollen.
 
         Wenn die Filter-Checkbox aktiv ist, wird der Filter auf das neue
-        Sample umgehängt (statt zurückgesetzt).
+        Sample umgehängt (statt zurückgesetzt). Gehört das Sample zu einem
+        anderen Datensatz, wechselt `activate_sample` vorher dorthin (Sprint 87);
+        die Filter-Wahl überlebt den Wechsel.
         """
         s = self.session
-        if s.db is None:
-            return
-        sample = SampleRepo(s.db.connect()).get_by_id(sample_id)
+        filter_only = s.window.sidebar().is_filter_only_sample()
+        sample = s.activate_sample(sample_id)
         if sample is None:
             return
+        # `select_dataset` setzt die Checkbox bei einem Wechsel zurück.
+        s.window.set_filter_only_sample(filter_only)
         s.sample = sample
         s.active_sample_id = sample.id
         if s.window.sidebar().is_filter_only_sample():
@@ -81,7 +84,7 @@ class SelectionController:
             s.persist_state()
             return
 
-        sample = SampleRepo(s.db.connect()).get_by_id(sample_id)
+        sample = s.activate_sample(sample_id)
         if sample is None:
             return
         s.sample = sample
@@ -121,7 +124,11 @@ class SelectionController:
     # ---- AuditTrail-Doppelklick ----------------------------------------
 
     def handle_audit_event_double_clicked(self, event_id: int) -> None:
-        """Doppelklick auf einen AuditTrail-Event: falls Sample-Bezug → markieren."""
+        """Doppelklick auf einen AuditTrail-Event: falls Sample-Bezug → markieren.
+
+        Läuft über `handle_sample_selected` und damit über `activate_sample`:
+        die Stichprobe wird auf IHREM Datensatz markiert (Sprint 87).
+        """
         s = self.session
         if not s.has_engagement():
             return

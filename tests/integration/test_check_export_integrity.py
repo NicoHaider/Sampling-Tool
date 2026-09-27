@@ -3,8 +3,10 @@ deren Datei die Zeilen eines anderen Datensatzes enthält – rein lesend."""
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -248,3 +250,133 @@ class TestCommandLine:
     ) -> None:
         assert main([str(tmp_path / "gibt-es-nicht.db")]) == 2
         assert "nicht gefunden" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Sprint 87 / D: kein falsches Grün (WAL, unlesbare Datei, alte Projekte)
+# ---------------------------------------------------------------------------
+
+
+def _sidecar(db_path: Path, suffix: str) -> Path:
+    return db_path.with_name(db_path.name + suffix)
+
+
+def _copy_with_pending_wal(project: _Project, target_dir: Path) -> Path:
+    """Kopie der Projektdatei samt `-wal`, solange die App (hier: `project.db`)
+    noch offen ist – der Export-Event steht nur im WAL. Kein `-shm` daneben."""
+    target_dir.mkdir()
+    copy = target_dir / project.db_path.name
+    shutil.copy2(project.db_path, copy)
+    shutil.copy2(_sidecar(project.db_path, "-wal"), _sidecar(copy, "-wal"))
+    return copy
+
+
+class TestPendingWal:
+    def test_export_only_in_wal_is_found(self, project: _Project, tmp_path: Path) -> None:
+        path = project.export(project.other, "08_gross")
+        project.log_export(path)
+        copy = _copy_with_pending_wal(project, tmp_path / "kopie")
+        project.close()
+
+        assert _statuses(copy) == [(path.name, "ABWEICHUNG")]
+
+    def test_original_files_stay_byte_identical_and_no_shm_appears(
+        self, project: _Project, tmp_path: Path
+    ) -> None:
+        project.log_export(project.export(project.own, "Buchungen"))
+        copy = _copy_with_pending_wal(project, tmp_path / "kopie")
+        project.close()
+        before = {p: p.read_bytes() for p in copy.parent.iterdir()}
+
+        check_exports(copy)
+
+        after = {p: p.read_bytes() for p in copy.parent.iterdir()}
+        assert after == before
+        assert not _sidecar(copy, "-shm").exists()
+
+    def test_open_app_is_left_untouched(self, project: _Project) -> None:
+        """Die App hält die Projektdatei offen: Skript liest den WAL mit, ändert nichts."""
+        path = project.export(project.own, "Buchungen")
+        project.log_export(path)
+        watched = (project.db_path, _sidecar(project.db_path, "-wal"))
+        before = {p: p.read_bytes() for p in watched}
+
+        statuses = _statuses(project.db_path)
+
+        assert {p: p.read_bytes() for p in watched} == before
+        project.close()
+        assert statuses == [(path.name, "OK")]
+
+    def test_main_mentions_the_wal(
+        self, project: _Project, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        project.log_export(project.export(project.own, "Buchungen"))
+        copy = _copy_with_pending_wal(project, tmp_path / "kopie")
+        project.close()
+
+        assert main([str(copy)]) == 0
+        out = capsys.readouterr().out
+        assert "WAL" in out
+        assert "1 Sample-Exporte geprüft" in out
+
+
+class TestUnreadableProject:
+    @pytest.mark.parametrize(
+        ("target", "error"),
+        [
+            ("sqlite3.connect", sqlite3.OperationalError("disk I/O error")),
+            ("shutil.copy2", OSError(errno.EDEADLK, "Resource deadlock avoided")),
+        ],
+    )
+    def test_unreadable_project_exits_2_with_cloud_hint(
+        self,
+        project: _Project,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        target: str,
+        error: Exception,
+    ) -> None:
+        project.log_export(project.export(project.own, "Buchungen"))
+        copy = _copy_with_pending_wal(project, tmp_path / "kopie")
+        project.close()
+
+        def fail(*_args: object, **_kwargs: object) -> None:
+            raise error
+
+        module, attribute = target.split(".")
+        monkeypatch.setattr(f"check_export_integrity.{module}.{attribute}", fail)
+
+        assert main([str(copy)]) == 2
+        err = capsys.readouterr().err
+        assert "Projektdatei nicht lesbar" in err
+        assert "Cloud" in err
+        assert str(copy) in err
+        assert "Traceback" not in err
+
+    def test_not_a_database_exits_2(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        bogus = tmp_path / "kein.db"
+        bogus.write_bytes(b"das ist keine SQLite-Datei" * 10)
+        assert main([str(bogus)]) == 2
+        assert "Traceback" not in capsys.readouterr().err
+
+
+class TestProjectWithoutAuditTrail:
+    @pytest.mark.parametrize("content", ["empty", "other_table"])
+    def test_no_audit_events_table_is_ok_with_hint(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], content: str
+    ) -> None:
+        db_path = tmp_path / "alt.db"
+        if content == "empty":
+            db_path.write_bytes(b"")
+        else:
+            conn = sqlite3.connect(db_path)
+            conn.execute("CREATE TABLE engagements (id INTEGER PRIMARY KEY)")
+            conn.commit()
+            conn.close()
+
+        assert check_exports(db_path) == []
+        assert main([str(db_path)]) == 0
+        assert "keine Audit-Events in dieser Projektdatei" in capsys.readouterr().out

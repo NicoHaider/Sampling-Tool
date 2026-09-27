@@ -518,6 +518,52 @@ class WorkspaceSession:
         self.persist_state()
         return True
 
+    def activate_sample(self, sample_id: int) -> SampleResult | None:
+        """Lädt eine Stichprobe und zeigt vorher ihren Datensatz an (Sprint 87).
+
+        Einziger Eintrittspunkt, über den eine Stichprobe aktiv wird (Sidebar,
+        AuditTrail-Doppelklick, Undo/Redo, Restore). `row_id` ist datensatz-
+        bezogen – gehört die Stichprobe zu einem anderen Datensatz, wird erst
+        über `select_dataset` gewechselt, genau wie bei einem Sidebar-Klick.
+        Ist ihr Datensatz nicht in der Ansicht (oder nicht mehr vorhanden),
+        liefert die Methode `None` und nennt den Grund in der Statusleiste.
+
+        Markieren/Filtern bleibt beim Aufrufer.
+        """
+        if self.db is None:
+            return None
+        sample_repo = SampleRepo(self.db.connect())
+        sample = sample_repo.get_by_id(sample_id)
+        if sample is None:
+            return None
+        owner_id = sample_repo.dataset_id_of(sample_id)
+        if self.dataset is not None and owner_id == self.dataset.id:
+            return sample
+        in_view = owner_id is not None and any(ds.id == owner_id for ds in self.datasets)
+        if not in_view:
+            self._show_sample_not_in_view(sample_id, owner_id)
+            return None
+        assert owner_id is not None
+        if not self.select_dataset(owner_id):
+            return None
+        return sample
+
+    def _show_sample_not_in_view(self, sample_id: int, owner_id: int | None) -> None:
+        """Statusleisten-Hinweis, warum eine Stichprobe nicht markiert wird."""
+        assert self.db is not None
+        owner = None if owner_id is None else DatasetRepo(self.db.connect()).get_by_id(owner_id)
+        if owner is None:
+            message = f"Stichprobe #{sample_id}: ihr Datensatz ist nicht mehr vorhanden."
+        else:
+            message = (
+                f"Stichprobe #{sample_id} gehört zu Datensatz „{owner.name}“, "
+                "der nicht in der Ansicht ist."
+            )
+        logger.info("Sample %s not activated: dataset %s not in view", sample_id, owner_id)
+        status = self.window.statusBar()
+        if status is not None:
+            status.showMessage(message, 8000)
+
     # ---- Sampling-Reset (Sprint 20) ------------------------------------
 
     def reset_sampling(self) -> bool:

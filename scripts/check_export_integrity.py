@@ -7,30 +7,49 @@ Dataset-ID. Dieses Skript vergleicht für jedes `export`-Event mit Stichprobe di
 Dataset-ID aus der exportierten Datei mit dem Datensatz, auf dem die
 Stichprobe tatsächlich gezogen wurde (`samples.dataset_id`).
 
-Rein lesend: die Projektdatei wird mit `mode=ro&immutable=1` geöffnet (legt
-auch keine `-wal`/`-shm`-Dateien an), Exportdateien nur gelesen. Nichts wird
-geändert oder repariert.
+Rein lesend: Projekt- und Exportdateien werden nie geändert oder repariert.
+Ohne WAL wird die Projektdatei mit `mode=ro&immutable=1` geöffnet (legt keine
+`-wal`/`-shm`-Dateien an). Liegt daneben eine nicht leere `-wal`-Datei – die
+App ist offen oder hat den WAL noch nicht zurückgeschrieben –, stünden neuere
+Export-Events nur dort; `immutable` würde sie ignorieren und „0 geprüft"
+melden (Sprint 87 / D). Dann werden `.db`, `-wal` und ggf. `-shm` in ein
+temporäres Verzeichnis kopiert und die KOPIE normal geöffnet.
 
-Aufruf (App vorher schließen – `immutable` liest keine noch offenen Änderungen):
+Aufruf (auch bei offener App):
     python scripts/check_export_integrity.py "<Pfad>/<Mandant>.db"
 
 Ausgabe je Event: OK / ABWEICHUNG / DATEI FEHLT / UNKLAR.
-Exit-Code: 0 ohne Abweichung, 1 bei mindestens einer ABWEICHUNG, 2 bei
-Bedienfehler (Datei nicht gefunden, keine Projektdatei).
+Exit-Code:
+    0  alles OK oder nichts zu prüfen (auch: keine Audit-Events; UNKLAR und
+       DATEI FEHLT werden nur in der Zusammenfassung gezählt)
+    1  mindestens eine ABWEICHUNG
+    2  Projektdatei nicht lesbar (nicht gefunden, keine SQLite-Datei, oder
+       z. B. nur als Cloud-Platzhalter vorhanden)
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sqlite3
 import sys
+import tempfile
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 
 from _script_io import force_utf8_stdout
 from openpyxl import load_workbook
+
+try:
+    from enum import StrEnum
+except ImportError:  # pragma: no cover – nur auf Python < 3.11 erreichbar
+    sys.exit(
+        "check_export_integrity.py braucht Python 3.11 oder neuer "
+        f"(gefunden: {sys.version.split()[0]})."
+    )
 
 _META_SHEET = "Metadaten"
 _DATASET_ID_LABEL = "Dataset-ID"
@@ -68,17 +87,44 @@ class _ExportEvent:
     archived_previous: Path | None
 
 
+class ProjectUnreadableError(Exception):
+    """Die Projektdatei ließ sich nicht lesen (I/O, Cloud-Platzhalter)."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectCheck:
+    """Ergebnis für eine Projektdatei."""
+
+    checks: list[ExportCheck]
+    wal_applied: bool
+    has_audit_trail: bool
+
+
 def check_exports(db_path: Path) -> list[ExportCheck]:
     """Prüft alle Sample-Exporte der Projektdatei, in Event-Reihenfolge."""
-    conn = _connect_read_only(db_path)
+    return check_project(db_path).checks
+
+
+def check_project(db_path: Path) -> ProjectCheck:
+    """Wie `check_exports`, plus: wurde ein WAL berücksichtigt, gibt es Audit-Events?
+
+    Raises:
+        ProjectUnreadableError: Datei oder WAL nicht lesbar (`OSError`,
+            `sqlite3.OperationalError`).
+        sqlite3.DatabaseError: die Datei ist keine SQLite-Datenbank.
+    """
+    wal_applied = _has_pending_wal(db_path)
     try:
-        events = _export_events(conn)
-        owners = {
-            int(row["id"]): int(row["dataset_id"])
-            for row in conn.execute("SELECT id, dataset_id FROM samples")
-        }
-    finally:
-        conn.close()
+        with _open_project(db_path, wal_applied) as conn:
+            if not _has_table(conn, "audit_events"):
+                return ProjectCheck(checks=[], wal_applied=wal_applied, has_audit_trail=False)
+            events = _export_events(conn)
+            owners = {
+                int(row["id"]): int(row["dataset_id"])
+                for row in conn.execute("SELECT id, dataset_id FROM samples")
+            }
+    except (OSError, sqlite3.OperationalError) as exc:
+        raise ProjectUnreadableError(str(exc)) from exc
 
     locations = _current_locations(events)
     checks: list[ExportCheck] = []
@@ -86,7 +132,37 @@ def check_exports(db_path: Path) -> list[ExportCheck]:
         if event.sample_id is None:
             continue  # Berichts-Export (PDF/Excel-/HTML-Bericht), keine Stichprobe.
         checks.append(_check_one(event, event.sample_id, locations[event.event_id], owners))
-    return checks
+    return ProjectCheck(checks=checks, wal_applied=wal_applied, has_audit_trail=True)
+
+
+def _sidecar(db_path: Path, suffix: str) -> Path:
+    return db_path.with_name(db_path.name + suffix)
+
+
+def _has_pending_wal(db_path: Path) -> bool:
+    wal = _sidecar(db_path, "-wal")
+    return wal.is_file() and wal.stat().st_size > 0
+
+
+@contextmanager
+def _open_project(db_path: Path, with_wal: bool) -> Iterator[sqlite3.Connection]:
+    if not with_wal:
+        with closing(_connect_read_only(db_path)) as conn:
+            yield conn
+        return
+    # Die Kopie wendet den WAL beim Öffnen an; das Original (auch das einer
+    # gerade offenen App) bleibt byte-genau, es entsteht dort kein `-shm`.
+    with tempfile.TemporaryDirectory(prefix="export-check-") as tmp:
+        copy = Path(tmp) / db_path.name
+        shutil.copy2(db_path, copy)
+        for suffix in ("-wal", "-shm"):
+            sidecar = _sidecar(db_path, suffix)
+            if sidecar.is_file():
+                shutil.copy2(sidecar, _sidecar(copy, suffix))
+        # Vor dem Aufräumen schließen – Windows löscht keine offenen Dateien.
+        with closing(sqlite3.connect(copy)) as conn:
+            conn.row_factory = sqlite3.Row
+            yield conn
 
 
 def _connect_read_only(db_path: Path) -> sqlite3.Connection:
@@ -96,6 +172,13 @@ def _connect_read_only(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+    ).fetchone()
+    return row is not None
 
 
 def _export_events(conn: sqlite3.Connection) -> list[_ExportEvent]:
@@ -224,11 +307,28 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Projektdatei nicht gefunden: {db_path}", file=sys.stderr)
         return 2
     try:
-        checks = check_exports(db_path)
+        project = check_project(db_path)
+    except ProjectUnreadableError as exc:
+        print(
+            f"Projektdatei nicht lesbar (evtl. nur in der Cloud, nicht heruntergeladen): "
+            f"{db_path} ({exc})",
+            file=sys.stderr,
+        )
+        return 2
     except sqlite3.DatabaseError as exc:
         print(f"Keine lesbare Projektdatei: {db_path} ({exc})", file=sys.stderr)
         return 2
 
+    if project.wal_applied:
+        print(
+            "Hinweis: offene Änderungen aus der WAL-Datei wurden berücksichtigt (über eine Kopie)."
+        )
+        print()
+    if not project.has_audit_trail:
+        print("Nichts zu prüfen: keine Audit-Events in dieser Projektdatei.")
+        return 0
+
+    checks = project.checks
     for check in checks:
         print(_format(check))
     counts = {status: sum(c.status is status for c in checks) for status in ExportStatus}

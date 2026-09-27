@@ -837,25 +837,25 @@ class WorkspaceController:
         if s.db is None:
             return
 
-        # Leerer Initialzustand ODER keine Population in der Ansicht (z. B. nach
-        # „Datensätze aus Ansicht entfernen", Sprint 31): leeren State anwenden,
-        # statt ein Sample-Highlight ohne sichtbares Dataset zu setzen (sonst
-        # inkonsistente UI + inkonsistenter persistierter `engagement_state`).
-        if snapshot is None or snapshot.sample_id is None or s.dataset is None:
+        # Sprint 87: gehört die Stichprobe des Snapshots zu einem anderen
+        # Datensatz, wechselt `activate_sample` erst dorthin (Datensatz und
+        # Stichprobe kommen gemeinsam zurück). Der Wechsel legt KEINEN
+        # Undo-Snapshot an – `select_dataset` pusht nie.
+        sample = (
+            s.activate_sample(snapshot.sample_id)
+            if snapshot is not None and snapshot.sample_id is not None
+            else None
+        )
+        # Leerer Initialzustand, gelöschte Stichprobe ODER ihr Datensatz ist
+        # nicht in der Ansicht (z. B. nach „Datensätze aus Ansicht entfernen",
+        # Sprint 31 – den Hinweis gibt `activate_sample`): leeren State
+        # anwenden, statt ein Sample-Highlight ohne passendes Dataset zu setzen
+        # (sonst inkonsistente UI + inkonsistenter `engagement_state`).
+        if snapshot is None or sample is None:
             s.sample = None
             s.active_sample_id = None
             s.filter_active_sample_id = None
             s.window.clear_sample_filter()
-            s.window.set_filter_only_sample(False)
-            s.window.data_table().clear_highlight()
-            s.window.clear_active_sample()
-            return
-
-        sample = SampleRepo(s.db.connect()).get_by_id(snapshot.sample_id)
-        if sample is None:
-            # Sample wurde zwischenzeitlich gelöscht – defensiv: leeren State anwenden.
-            s.sample = None
-            s.active_sample_id = None
             s.window.set_filter_only_sample(False)
             s.window.data_table().clear_highlight()
             s.window.clear_active_sample()

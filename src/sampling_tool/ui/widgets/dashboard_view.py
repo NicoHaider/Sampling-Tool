@@ -180,9 +180,9 @@ class DashboardView(QWidget):
         self._grid.setSpacing(10)
 
         # Kacheln (initial leer, set_data füllt sie).
-        self._tile_datasets = DashboardTile("Datasets", ui_scale_factor=self._factor)
-        self._tile_samples = DashboardTile("Samples", ui_scale_factor=self._factor)
-        self._tile_events = DashboardTile("Audit-Events", ui_scale_factor=self._factor)
+        self._tile_datasets = DashboardTile("Datensätze", ui_scale_factor=self._factor)
+        self._tile_samples = DashboardTile("Stichproben", ui_scale_factor=self._factor)
+        self._tile_events = DashboardTile("Audit-Ereignisse", ui_scale_factor=self._factor)
         self._tile_last_activity = DashboardTile("Letzte Aktivität", ui_scale_factor=self._factor)
         self._tile_recent_samples = DashboardTile(
             "Letzte Stichproben", ui_scale_factor=self._factor
@@ -402,7 +402,7 @@ class DashboardView(QWidget):
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
-        layout.addWidget(_big_number_label(len(events), "Events", self._factor))
+        layout.addWidget(_big_number_label(len(events), "Ereignisse", self._factor))
 
         type_counts: Counter[str] = Counter()
         for e in events:
@@ -419,6 +419,9 @@ class DashboardView(QWidget):
                 height=_CHART_HEIGHT,
                 device_pixel_ratio=self._chart_ratio(),
                 integer_ticks=True,
+                # Sprint 87 / E1: quer, sonst überlappen die langen deutschen
+                # Eventtypen an der x-Achse.
+                horizontal=True,
             )
             chart_label = QLabel()
             chart_label.setPixmap(pixmap)
@@ -531,7 +534,7 @@ def _big_number_label(value: int, label: str, factor: float = 1.0) -> QWidget:
     layout.setSpacing(0)
     number = QLabel(str(value))
     # Sprint 81: Primärtext statt Marken-Rot. Die drei Kennzahlen zählen nur
-    # (Datensätze, Stichproben, Events) – sie bestehen als Großtext mühelos,
+    # (Datensätze, Stichproben, Ereignisse) – sie bestehen als Großtext mühelos,
     # lasen sich in Rot aber wie Alarme. Rot bleibt der Marke und den Aktionen
     # vorbehalten, die etwas erzeugen; die Größe trägt die Betonung schon.
     number.setStyleSheet(

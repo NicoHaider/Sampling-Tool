@@ -27,6 +27,7 @@ def render_bar_chart(
     device_pixel_ratio: float = 1.0,
     *,
     integer_ticks: bool = False,
+    horizontal: bool = False,
 ) -> QPixmap:
     """Rendert ein Balkendiagramm als `QPixmap`."""
     return _bytes_to_pixmap(
@@ -38,6 +39,7 @@ def render_bar_chart(
             height,
             device_pixel_ratio,
             integer_ticks=integer_ticks,
+            horizontal=horizontal,
         ),
         device_pixel_ratio,
     )

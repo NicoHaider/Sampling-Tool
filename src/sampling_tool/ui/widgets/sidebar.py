@@ -271,6 +271,14 @@ class NavigationSidebar(QFrame):
             font.setBold(is_active)
             item.setFont(font)
 
+    def has_sample(self, sample_id: int) -> bool:
+        """Steht die Stichprobe in der Liste (= gehört sie zum angezeigten Datensatz)?"""
+        for row in range(self._samples_list.count()):
+            item = self._samples_list.item(row)
+            if item is not None and item.data(_SAMPLE_ID_ROLE) == sample_id:
+                return True
+        return False
+
     def select_dataset(self, dataset_id: int) -> None:
         """Wählt das Dataset mit der gegebenen ID programmatisch aus."""
         for row in range(self._datasets_list.count()):

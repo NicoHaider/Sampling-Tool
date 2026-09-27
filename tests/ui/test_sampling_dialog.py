@@ -8,7 +8,14 @@ from datetime import datetime
 from typing import Any
 
 import pytest
-from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QLabel, QLineEdit, QScrollArea
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialogButtonBox,
+    QFormLayout,
+    QLabel,
+    QLineEdit,
+    QScrollArea,
+)
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import (
@@ -1354,3 +1361,31 @@ class TestPresetFillsClusterField:
         result = dialog.get_result()
         assert result is not None
         assert result.config.cluster_field == "Kostenstelle"
+
+
+class TestInlineErrorsUseFullRowWidth:
+    """Sprint 87 / E5: Meldungen stehen über die volle Formularbreite, nicht
+    zusammengequetscht unter einem schmalen Feld."""
+
+    def test_every_inline_error_spans_the_form_row(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot)
+        assert set(dialog._inline_errors) == {"size", "filter", "cluster", "stratum"}
+        for field, label in dialog._inline_errors.items():
+            _row, role = dialog._form.getWidgetPosition(label)
+            assert role == QFormLayout.ItemRole.SpanningRole, field
+
+    def test_size_error_is_wider_than_the_size_field(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot)
+        dialog.show()
+        qtbot.waitExposed(dialog)
+        dialog._radio_cluster.setChecked(True)
+        dialog._cluster_field.setCurrentText("Kostenstelle")
+        dialog._size_spin.setValue(25)
+
+        dialog.accept()
+        qtbot.waitUntil(lambda: _inline(dialog, "size").isVisible())
+
+        # Nicht gegen die SpinBox-Breite prüfen: unter `offscreen` wachsen die
+        # Felder ohnehin mit (Fusion), unter macOS bleiben sie schmal.
+        label = _inline(dialog, "size")
+        assert label.width() >= dialog._form.geometry().width() - 1

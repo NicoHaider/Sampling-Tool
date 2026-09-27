@@ -279,7 +279,13 @@ ui ──▶ controllers ──▶ core ◀── io
     `active_sample_for_current_dataset()` liefert `sample` nur, wenn es zum
     aktiven Datensatz gehört (`SampleRepo.dataset_id_of`; `row_id` ist
     datensatzbezogen) – Pflicht-Eintritt für Sample-Export, Einschränken,
-    Ergänzen; `has_active_sample()` meint seitdem „dieses Datensatzes". `persist_
+    Ergänzen; `has_active_sample()` meint seitdem „dieses Datensatzes".
+    **Sprint 87:** `activate_sample(id)` ist der einzige Eintritt, über den eine
+    Stichprobe aktiv wird (Sidebar, Dashboard, AuditTrail-Doppelklick,
+    Undo/Redo, Restore): gehört sie zu einem anderen Datensatz, wird vorher über
+    `select_dataset` gewechselt; ist der nicht in der Ansicht, nur
+    Statusleisten-Hinweis. `MainWindow.highlight_sample`/`filter_to_sample`
+    verweigern Stichproben, die nicht in der Sidebar-Liste stehen. `persist_
     state()` / `restore_state()`-Lebenszyklus, `refresh_audit_trail()` /
     `refresh_dashboard()` / `refresh_views()`, `select_dataset(id)`
     (geteilt von Selection- und WorkspaceController), `resolve_brief

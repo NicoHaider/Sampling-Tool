@@ -1013,3 +1013,34 @@ class TestTimestampColumnShowsFullValue:
         assert header is not None
         text = str(view.proxy().index(0, 0).data())
         assert header.sectionSize(0) > table.fontMetrics().horizontalAdvance(text)
+
+
+class TestFileColumnReadable:
+    """Sprint 87 / E4: lange Dateinamen („06_mehrere_sheets …") bleiben lesbar."""
+
+    _PATH = str(
+        Path("Projekte")
+        / "SMOKE"
+        / "exports"
+        / "06_mehrere_sheets (Buchungen)_ID11_BDO_sampling_20260927.xlsx"
+    )
+
+    def test_tooltip_carries_the_full_path(self, qtbot: QtBot) -> None:
+        view = AuditTrailView()
+        qtbot.addWidget(view)
+        view.set_events([_make_event(event_type="export", export_file=self._PATH)])
+        index = view.proxy().index(0, 7)
+        assert index.data() == Path(self._PATH).name
+        assert index.data(Qt.ItemDataRole.ToolTipRole) == self._PATH
+
+    def test_no_tooltip_without_a_file(self, qtbot: QtBot) -> None:
+        view = AuditTrailView()
+        qtbot.addWidget(view)
+        view.set_events([_make_event()])
+        assert view.proxy().index(0, 7).data(Qt.ItemDataRole.ToolTipRole) is None
+
+    def test_long_names_are_elided_in_the_middle(self, qtbot: QtBot) -> None:
+        """Anfang (Datensatz) und Ende (ID, Datum, Endung) bleiben sichtbar."""
+        view = AuditTrailView()
+        qtbot.addWidget(view)
+        assert view.table().textElideMode() == Qt.TextElideMode.ElideMiddle
