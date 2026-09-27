@@ -26,7 +26,7 @@ from sampling_tool.config import (
     STRATIFY_MODE_LABELS,
 )
 from sampling_tool.core.formatting import format_optional_timestamp
-from sampling_tool.core.models import SampleResult
+from sampling_tool.core.models import SampleResult, SamplingMethod
 
 _MISSING: Final[str] = "—"
 
@@ -141,7 +141,7 @@ class SamplingProvenance:
         """Kanonische, geordnete (Label, Wert)-Liste für menschenlesbare
         Sample-Ebenen-Anzeigen (Sample-XLSX-Metadaten). Fehlende Werte werden
         explizit als `"—"` dargestellt, nie geschätzt."""
-        return [
+        fields = [
             ("Dataset-ID", _or_dash(self.dataset_id)),
             ("Sampling-Methode", self.method_label),
             ("Angeforderte Größe", str(self.size_requested)),
@@ -161,6 +161,26 @@ class SamplingProvenance:
             ("Erstellt von", self.created_by),
             ("Gezogen am", format_optional_timestamp(self.drawn_at)),
         ]
+        # Sprint 85 / E1: nur zeigen, was für diese Ziehung gilt.
+        omitted = {
+            label
+            for label, applies in (
+                ("Filter-Operator", self.has_filter),
+                ("Schichtungsmodus", self.is_stratified),
+            )
+            if not applies
+        }
+        return [(label, value) for label, value in fields if label not in omitted]
+
+    @property
+    def has_filter(self) -> bool:
+        """Wurde vorgefiltert? Nur dann sagt der Operator etwas aus."""
+        return self.filter_field is not None
+
+    @property
+    def is_stratified(self) -> bool:
+        """Geschichtete Ziehung? Nur dann sagt der Schichtungsmodus etwas aus."""
+        return self.method == SamplingMethod.STRATIFIED.value
 
     def to_audit_details(self) -> dict[str, Any]:
         """Dict für `AuditEvent.details` (→ `details_json`). Ergänzt die

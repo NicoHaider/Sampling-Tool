@@ -95,7 +95,8 @@ class TestToOrderedFields:
         assert fields["Filter-Wert"] == "100"
         assert fields["Cluster-Feld"] == "Land"
         assert fields["Schicht-Feld"] == "—"
-        assert fields["Schichtungsmodus"] == "Proportional"
+        # Sprint 85 / E1: Cluster ist nicht geschichtet – kein Schichtungsmodus.
+        assert "Schichtungsmodus" not in fields
         assert fields["Parent-Sample-ID"] == "17"
         assert fields["Algorithmus-Version"] == "bdo-v1"
         assert fields["App-Version"] == "0.8.0"
@@ -115,6 +116,35 @@ class TestToOrderedFields:
         assert fields["Filter-Wert"] == "—"
         assert fields["Cluster-Feld"] == "—"
         assert fields["Schicht-Feld"] == "—"
+
+
+class TestOrderedFieldsOmitIrrelevant:
+    """Sprint 85 / E1: kein „Filter-Operator: =" ohne Filter, kein
+    Schichtungsmodus außerhalb von „Geschichtet"."""
+
+    def _labels(self, cfg: SampleConfig) -> list[str]:
+        result = SampleResult(config=cfg, selected_row_ids=(1,), population_size=3)
+        provenance = SamplingProvenance.from_sample_result(result, dataset_id=1, app_version="x")
+        return [label for label, _ in provenance.to_ordered_fields()]
+
+    def test_simple_without_filter_has_neither(self) -> None:
+        labels = self._labels(SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=1))
+        assert "Filter-Operator" not in labels
+        assert "Schichtungsmodus" not in labels
+        assert "Filter-Feld" in labels
+
+    def test_stratified_with_filter_has_both(self) -> None:
+        cfg = SampleConfig(
+            method=SamplingMethod.STRATIFIED,
+            size=1,
+            seed=1,
+            stratum_field="Land",
+            filter_field="Betrag",
+            filter_value=1,
+        )
+        labels = self._labels(cfg)
+        assert "Filter-Operator" in labels
+        assert "Schichtungsmodus" in labels
 
 
 class TestToAuditDetails:

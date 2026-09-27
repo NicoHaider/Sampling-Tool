@@ -22,6 +22,7 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
+from matplotlib.ticker import MaxNLocator
 
 from sampling_tool.config import BDO_DARK_GREY, BDO_GREY, BDO_LIGHT_GREY, BDO_RED
 
@@ -45,14 +46,21 @@ def render_bar_chart_bytes(
     width: int = _DEFAULT_WIDTH,
     height: int = _DEFAULT_HEIGHT,
     scale: float = 1.0,
+    *,
+    integer_ticks: bool = False,
 ) -> bytes:
-    """Rendert ein Balkendiagramm als PNG-Bytes."""
+    """Rendert ein Balkendiagramm als PNG-Bytes.
+
+    `integer_ticks` (Sprint 85 / D) für Zähl-Diagramme: nur ganze Zahlen an der
+    y-Achse statt 0.25-Schritten. Default aus – die Berichts-Charts bleiben
+    byte-identisch.
+    """
     fig = _make_figure(width, height, scale)
     ax = fig.add_subplot(111)
     if labels:
         colors = [BDO_COLORS[i % len(BDO_COLORS)] for i in range(len(labels))]
         ax.bar(labels, values, color=colors)
-    _style_axes(ax, title)
+    _style_axes(ax, title, integer_ticks=integer_ticks)
     return _figure_to_bytes(fig, scale)
 
 
@@ -63,14 +71,16 @@ def render_line_chart_bytes(
     width: int = _DEFAULT_WIDTH,
     height: int = _DEFAULT_HEIGHT,
     scale: float = 1.0,
+    *,
+    integer_ticks: bool = False,
 ) -> bytes:
-    """Rendert ein Liniendiagramm als PNG-Bytes."""
+    """Rendert ein Liniendiagramm als PNG-Bytes (`integer_ticks` wie beim Balken)."""
     fig = _make_figure(width, height, scale)
     ax = fig.add_subplot(111)
     if labels:
         ax.plot(labels, values, color=BDO_RED, marker="o", linewidth=2.0)
         ax.fill_between(range(len(labels)), values, alpha=0.15, color=BDO_RED)
-    _style_axes(ax, title)
+    _style_axes(ax, title, integer_ticks=integer_ticks)
     if len(labels) > 8:
         for label in ax.get_xticklabels():
             label.set_rotation(45)
@@ -111,8 +121,10 @@ def _make_figure(width: int, height: int, scale: float = 1.0) -> Figure:
     return fig
 
 
-def _style_axes(ax: Any, title: str) -> None:
+def _style_axes(ax: Any, title: str, *, integer_ticks: bool = False) -> None:
     """Einheitliches Styling für Bar-/Line-Charts."""
+    if integer_ticks:
+        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["left"].set_color(BDO_LIGHT_GREY)

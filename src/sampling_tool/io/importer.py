@@ -61,6 +61,14 @@ ProgressCallback = Callable[[int, int], None]
 # cp1252 nie erreichbar.
 _CSV_ENCODINGS: Final[tuple[str, ...]] = ("utf-8", "utf-8-sig", "cp1252", "latin-1")
 
+# Sprint 85 / E3: Meldung nur bei einem Rückfall – UTF-8 mit BOM ist UTF-8 und
+# kein Grund für ein Modal. Klartext statt Codec-Namen (Zielgruppe ohne
+# Technik-Hintergrund).
+_FALLBACK_ENCODING_NAMES: Final[dict[str, str]] = {
+    "cp1252": "Windows-Zeichensatz",
+    "latin-1": "westeuropäischen Zeichensatz (ISO 8859-1)",
+}
+
 # Schwellwert für Header-Detection: ≥ Anteil String-Zellen einer Zeile.
 _HEADER_STRING_RATIO: Final[float] = 0.5
 
@@ -525,8 +533,9 @@ class ExcelImporter:
 
         if delimiter_warning is not None:
             warnings = [*warnings, delimiter_warning]
-        if encoding != "utf-8":
-            warnings = [*warnings, f"CSV-Encoding erkannt als '{encoding}'."]
+        encoding_warning = _encoding_warning(encoding)
+        if encoding_warning is not None:
+            warnings = [*warnings, encoding_warning]
 
         stats = ImportStats(
             skipped_rows=skipped, rows_above_header=leading_skipped, warnings=list(warnings)
@@ -688,8 +697,9 @@ class ExcelImporter:
         if not columns:
             raise DataImportError(f"CSV-Datei '{path.name}' enthält keine Daten.")
 
-        if encoding != "utf-8":
-            warnings = [*warnings, f"CSV-Encoding erkannt als '{encoding}'."]
+        encoding_warning = _encoding_warning(encoding)
+        if encoding_warning is not None:
+            warnings = [*warnings, encoding_warning]
 
         stats = ImportStats(
             skipped_rows=skipped, rows_above_header=leading, warnings=list(warnings)
@@ -954,6 +964,17 @@ def _normalize_columns(header_row: list[Any]) -> tuple[list[str], list[str]]:
 # ---------------------------------------------------------------------------
 # Hilfen – CSV
 # ---------------------------------------------------------------------------
+
+
+def _encoding_warning(encoding: str) -> str | None:
+    """Klartext-Hinweis, wenn die CSV nicht als UTF-8 gelesen werden konnte."""
+    name = _FALLBACK_ENCODING_NAMES.get(encoding)
+    if name is None:
+        return None
+    return (
+        f"Die Datei war nicht als UTF-8 gespeichert und wurde als {name} gelesen. "
+        "Bitte Umlaute prüfen."
+    )
 
 
 def _read_csv_text(path: Path) -> tuple[str, str]:

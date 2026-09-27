@@ -654,3 +654,39 @@ class TestDateRangePrefillIsControllable:
         after = datetime.now()
         assert before.date() <= dialog._now.date() <= after.date()
         assert dialog._now.tzinfo is None
+
+
+class TestGermanActionLabels:
+    """Sprint 85 / E5: die Aktionstypen erscheinen deutsch; der interne Schlüssel
+    reist als `userData` mit und ist das, was der Filter bekommt."""
+
+    def test_items_show_labels_and_keep_raw_keys(self, qtbot: QtBot) -> None:
+        from sampling_tool.config import EVENT_TYPE_LABELS
+
+        dialog = ExportAuditPdfDialog(
+            engagement=_engagement(),
+            event_types_available=["import", "sampling", "export"],
+            briefpapier_available=False,
+        )
+        qtbot.addWidget(dialog)
+        role = int(Qt.ItemDataRole.UserRole)
+        items = [dialog._types_list.item(i) for i in range(dialog._types_list.count())]
+        shown = [(item.text(), item.data(role)) for item in items if item is not None]
+        assert shown == [
+            (EVENT_TYPE_LABELS["import"], "import"),
+            (EVENT_TYPE_LABELS["sampling"], "sampling"),
+            (EVENT_TYPE_LABELS["export"], "export"),
+        ]
+        assert dialog._selected_types() == {"import", "sampling", "export"}
+
+    def test_unknown_type_is_shown_raw(self, qtbot: QtBot) -> None:
+        dialog = ExportAuditPdfDialog(
+            engagement=_engagement(),
+            event_types_available=["zukunft"],
+            briefpapier_available=False,
+        )
+        qtbot.addWidget(dialog)
+        item = dialog._types_list.item(0)
+        assert item is not None
+        assert item.text() == "zukunft"
+        assert dialog._selected_types() == {"zukunft"}

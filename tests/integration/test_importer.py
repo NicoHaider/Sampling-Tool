@@ -132,8 +132,8 @@ class TestImportCsv:
         result = importer.import_file(utf8_bom_csv)
         list(result.rows)
         assert result.dataset.columns == ("Name", "Stadt")
-        # utf-8-sig wurde gewählt → Warnung
-        assert any("utf-8-sig" in w for w in result.stats.warnings)
+        # Sprint 85 / E3: UTF-8 mit BOM ist UTF-8 – keine Meldung mehr.
+        assert result.stats.warnings == []
 
     def test_csv_cp1252(self, importer: ExcelImporter, cp1252_csv: Path) -> None:
         # latin-1 nimmt jedes Byte und liest in dem Zeichensatz – das ist für
@@ -142,7 +142,7 @@ class TestImportCsv:
         rows = list(result.rows)
         assert result.dataset.columns == ("Name", "Stadt")
         assert rows[0].values["Name"] == "Müller"
-        assert any("Encoding" in w for w in result.stats.warnings)
+        assert any("Windows-Zeichensatz" in w for w in result.stats.warnings)
 
     def test_cp1252_byte_0x80_is_euro(self, importer: ExcelImporter, tmp_path: Path) -> None:
         """Sprint 49 / A-005: cp1252 muss VOR latin-1 probiert werden – 0x80
@@ -154,7 +154,7 @@ class TestImportCsv:
         result = importer.import_file(path)
         rows = list(result.rows)
         assert rows[0].values["Wert"] == "€"
-        assert any("cp1252" in w for w in result.stats.warnings)
+        assert any("Windows-Zeichensatz" in w for w in result.stats.warnings)  # nicht latin-1
 
     def test_tsv_fallback_uses_tab(self, importer: ExcelImporter, tmp_path: Path) -> None:
         """Sprint 49 / A-005: ungleiche Zeilenbreiten lassen csv.Sniffer
@@ -185,6 +185,46 @@ class TestImportCsv:
         path.write_text("", encoding="utf-8")
         with pytest.raises(DataImportError, match="keine Daten"):
             importer.import_file(path)
+
+
+class TestEncodingWarningOnlyForFallback:
+    """Sprint 85 / E3: das blockierende „CSV-Encoding erkannt als 'utf-8-sig'"
+    entfällt. Eine Meldung gibt es nur, wenn die Datei NICHT als UTF-8 gelesen
+    werden konnte – dann in Klartext statt Codec-Namen."""
+
+    @pytest.mark.parametrize("fixture", ["utf8_csv", "utf8_bom_csv"])
+    @pytest.mark.parametrize("configured", [False, True], ids=["auto", "dialog"])
+    def test_utf8_with_or_without_bom_is_silent(
+        self,
+        importer: ExcelImporter,
+        request: pytest.FixtureRequest,
+        fixture: str,
+        configured: bool,
+    ) -> None:
+        path: Path = request.getfixturevalue(fixture)
+        result = (
+            importer.import_file_configured(path, None, 0)
+            if configured
+            else importer.import_file(path)
+        )
+        list(result.rows)
+        assert result.stats.warnings == []
+
+    @pytest.mark.parametrize("configured", [False, True], ids=["auto", "dialog"])
+    def test_cp1252_fallback_explains_in_plain_german(
+        self, importer: ExcelImporter, cp1252_csv: Path, configured: bool
+    ) -> None:
+        result = (
+            importer.import_file_configured(cp1252_csv, None, 0)
+            if configured
+            else importer.import_file(cp1252_csv)
+        )
+        list(result.rows)
+        assert result.stats.warnings == [
+            "Die Datei war nicht als UTF-8 gespeichert und wurde als Windows-Zeichensatz "
+            "gelesen. Bitte Umlaute prüfen."
+        ]
+        assert not any("cp1252" in w or "Encoding" in w for w in result.stats.warnings)
 
 
 class TestCalamineIntegration:
@@ -1053,3 +1093,70 @@ class TestDatasetNameWithSheet:
         assert importer.import_file(utf8_csv).dataset.name == utf8_csv.stem
         configured = importer.import_file_configured(title_rows_csv, None, 4).dataset
         assert configured.name == title_rows_csv.stem
+
+
+class TestDuplicateDatasetNameSuffix:
+    """Sprint 85 / E7: dieselbe Datei zweimal importiert → „name (2)", „name (3)".
+
+    Nur der Anzeigename ändert sich: die Zeilen sind byte-identisch, bestehende
+    Datensätze werden nicht umbenannt."""
+
+    def _import(self, db_path: Path, engagement_id: int, source: Path) -> str:
+        from sampling_tool.core.cancellation import CancellationToken
+        from sampling_tool.ui.workers.tasks import ExcelImportTask
+
+        class _NoProgress:
+            def report(self, _current: int, _total: int) -> None:
+                pass
+
+        task = ExcelImportTask(
+            path=source, db_path=db_path, engagement_id=engagement_id, user_name="t"
+        )
+        return task.run(_NoProgress(), CancellationToken()).dataset.name  # type: ignore[arg-type]
+
+    def test_suffix_counts_up_and_values_stay_identical(
+        self, tmp_path: Path, utf8_csv: Path
+    ) -> None:
+        import sqlite3
+
+        from sampling_tool.core.models import Engagement
+        from sampling_tool.persistence.database import Database
+        from sampling_tool.persistence.repositories import EngagementRepo
+
+        db_path = tmp_path / "p.db"
+        db = Database(db_path)
+        db.migrate()
+        eng = EngagementRepo(db.connect()).get_or_create(
+            Engagement(auditor_name="A", client_name="C")
+        )
+        assert eng.id is not None
+        db.close()
+
+        names = [self._import(db_path, eng.id, utf8_csv) for _ in range(3)]
+
+        base = names[0]
+        assert names == [base, f"{base} (2)", f"{base} (3)"]
+        conn = sqlite3.connect(db_path)
+        try:
+            stored = conn.execute("SELECT id, name FROM datasets ORDER BY id").fetchall()
+            assert [name for _, name in stored] == names
+            values = [
+                conn.execute(
+                    "SELECT row_index, values_json FROM dataset_rows "
+                    "WHERE dataset_id = ? ORDER BY row_index",
+                    (dataset_id,),
+                ).fetchall()
+                for dataset_id, _ in stored
+            ]
+        finally:
+            conn.close()
+        assert values[0] == values[1] == values[2]
+        assert values[0]
+
+    def test_first_free_number_is_used(self) -> None:
+        from sampling_tool.ui.workers.tasks import unique_dataset_name
+
+        assert unique_dataset_name("x", []) == "x"
+        assert unique_dataset_name("x", ["x", "x (3)"]) == "x (2)"
+        assert unique_dataset_name("x", ["x", "x (2)"]) == "x (3)"
+        assert unique_dataset_name("x (2)", ["x (2)"]) == "x (2) (2)"

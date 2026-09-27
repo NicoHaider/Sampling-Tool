@@ -10,6 +10,7 @@ from pathlib import Path
 from sampling_tool.config import APP_NAME, APP_ORG, APP_ORG_DOMAIN
 from sampling_tool.logging_setup import configure_logging, install_excepthook
 from sampling_tool.ui._scaling import load_scaled_stylesheet, scale_factor
+from sampling_tool.ui._translation import install_german_qt_translation
 from sampling_tool.ui.settings_store import AppSettings, load_settings, save_settings
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,11 @@ def main() -> int:
     log_path = configure_logging(settings.log_level)
     install_excepthook()
     logger.info("Sampling-Tool gestartet (Log-Datei: %s)", log_path)
+
+    # Sprint 85 / A: vor dem ersten Dialog (der Erst-Einrichtung), sonst sieht
+    # ein neuer Anwender dort noch englische Knöpfe. Nach `configure_logging`,
+    # damit Erfolg oder Fehlschlag in der Log-Datei landet.
+    install_german_qt_translation(app)
 
     if not settings.first_run_completed:
         settings = run_first_run_wizard(settings)

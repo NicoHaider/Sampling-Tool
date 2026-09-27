@@ -420,11 +420,13 @@ ui ──▶ controllers ──▶ core ◀── io
       = int32-max). Direkt unter dem SpinBox sitzt `_lbl_size_hint`
       ("max. N verfügbar"), das via `_update_size_hint()` live bei
       Resample-Toggle aktualisiert wird. Validierung passiert in der
-      überschriebenen `accept()`-Methode: Größe < `MIN_SAMPLE_SIZE`
-      oder > `_effective_max_sample_size()` zeigt eine
-      `QMessageBox.warning` und blockiert das Dialog-Close. Vorher hat
-      `_on_resample_toggled` stilles QSpinBox-Capping gemacht – das ist
-      raus.
+      überschriebenen `accept()`-Methode: OK bleibt immer aktiv, Fehler
+      erscheinen als Inline-Meldung unter dem betroffenen Feld
+      (`_inline_errors`) und der Dialog schließt nicht. Zuletzt ruft
+      `accept()` die Probeziehung des Controllers (`set_validators`,
+      `draw_check`); deren Ergebnis verwendet `handle_new_sampling` weiter.
+      Vorher hat `_on_resample_toggled` stilles QSpinBox-Capping gemacht –
+      das ist raus.
     Verbleibender Unterschied Simple/Advanced: nur noch Methodenwahl +
     method-spezifische Felder (Cluster-/Schicht-Feld, Stratify-Mode,
     Spalten-Filter).

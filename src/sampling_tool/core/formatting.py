@@ -20,7 +20,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, time
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Context, Decimal
 from typing import Any, Final
 
 from sampling_tool.config import (
@@ -31,12 +31,19 @@ from sampling_tool.config import (
     RESTORED_STATE_LABELS,
     STRATIFY_MODE_LABELS,
 )
+from sampling_tool.core.models import SamplingMethod
 
 # 19-Zeichen-Format: konsistent zwischen UI, PDF, Excel-Report, HTML-Report.
 _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
+# Excel zeigt Zahlen mit höchstens 15 signifikanten Stellen (Sprint 85 / C).
+_MAX_SIGNIFICANT_DIGITS: Final = 15
+# Genug Stellen für jede Quantisierung eines float (max. 17 Stellen im repr);
+# unabhängig vom globalen Decimal-Kontext des Prozesses.
+_ROUNDING_CONTEXT: Final = Context(prec=40)
+
 # Detail-Schlüssel, deren WERT ein Enum-Rohwert ist und übersetzt angezeigt wird.
-_DETAIL_VALUE_LABELS: Final[dict[str, Mapping[str, str]]] = {
+_DETAIL_VALUE_LABELS: Final[dict[str, Mapping[Any, str]]] = {
     "method": METHOD_LABELS,
     "stratify_mode": STRATIFY_MODE_LABELS,
     "filter_operator": FILTER_OPERATOR_LABELS,
@@ -107,9 +114,23 @@ def format_audit_details(details: dict[str, Any]) -> str:
     parts = [
         f"{AUDIT_DETAIL_LABELS.get(key, key)}: {_format_detail_value(key, value)}"
         for key, value in details.items()
-        if value is not None
+        if value is not None and not _irrelevant_detail(key, details)
     ]
     return " · ".join(parts) if parts else "—"
+
+
+def _irrelevant_detail(key: str, details: dict[str, Any]) -> bool:
+    """Operator ohne Filter-Feld, Schichtungsmodus ohne „Geschichtet" (Sprint 85 / E1).
+
+    Beide stehen in jeder Ziehung in der DB (der Dialog setzt Defaults), sagen
+    aber nur etwas, wenn ihr Bezug gilt. Weggelassen wird nur, wenn der
+    Bezugsschlüssel vorhanden ist – ein fremdes Dict bleibt unverändert.
+    """
+    if key == "filter_operator":
+        return "filter_field" in details and details["filter_field"] is None
+    if key == "stratify_mode":
+        return "method" in details and details["method"] != SamplingMethod.STRATIFIED.value
+    return False
 
 
 def _format_detail_value(key: str, value: Any) -> str:
@@ -160,13 +181,25 @@ def format_cell_value(value: Any) -> str:
 
 
 def _format_float(value: float) -> str:
-    """Festkomma aus den `repr`-Ziffern (kürzeste verlustfreie Form); `nan`/`inf` → `str`."""
+    """Festkomma mit höchstens 15 signifikanten Stellen wie Excel; `nan`/`inf` → `str`.
+
+    Sprint 85 / C: Ausgangspunkt bleiben die `repr`-Ziffern (kürzeste
+    verlustfreie Form); erst wenn die mehr als 15 Stellen hat, wird kaufmännisch
+    auf 15 gerundet – so zeigt `0.1 + 0.2` „0.3" statt des binären Rests.
+    Reine Anzeige: Exporte und DB behalten den vollen Wert.
+    """
     if not math.isfinite(value):
         return str(value)
     # `float(...)`: Subklassen (z. B. numpy float64) haben ein eigenes repr, das
     # Decimal nicht parst. Format "f" hängt – anders als `normalize()` – nicht
-    # vom Decimal-Kontext ab.
-    text = format(Decimal(repr(float(value))), "f")
+    # vom Decimal-Kontext ab; Quantisieren bekommt einen eigenen Kontext.
+    number = Decimal(repr(float(value)))
+    if len(number.as_tuple().digits) > _MAX_SIGNIFICANT_DIGITS:
+        exponent = number.adjusted() - (_MAX_SIGNIFICANT_DIGITS - 1)
+        number = number.quantize(
+            Decimal(1).scaleb(exponent), rounding=ROUND_HALF_UP, context=_ROUNDING_CONTEXT
+        )
+    text = format(number, "f")
     # Nur Nachkommastellen kürzen – ohne Punkt würde rstrip die Ziffern von
     # ganzzahligen Beträgen wie 1e16 zerstören.
     if "." in text:

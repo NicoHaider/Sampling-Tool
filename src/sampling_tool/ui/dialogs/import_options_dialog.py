@@ -169,12 +169,16 @@ class ImportOptionsDialog(QDialog):
         self._buttons.accepted.connect(self._on_accept)
         self._buttons.rejected.connect(self.reject)
 
-        # Initiale Vorschau laden. Excel: über das (bereits auf Index 0
-        # stehende) Sheet-Dropdown. CSV: einmalig direkt.
+        # Initiale Vorschau laden. Excel: das erste Blatt mit Daten (Sprint 85 /
+        # E4 – vorher Index 0, auch wenn das Blatt leer war). CSV: einmalig direkt.
         if self._is_csv:
             self._load_preview(self._csv_preview())
         else:
-            self._on_sheet_changed(0)
+            first = _first_sheet_with_data(self._sheets)
+            if self._sheet_combo is not None and first > 0:
+                self._sheet_combo.setCurrentIndex(first)  # lädt über das Signal
+            else:
+                self._on_sheet_changed(first)
 
     # ---- Public API ----------------------------------------------------
 
@@ -329,6 +333,11 @@ class ImportOptionsDialog(QDialog):
                     item.setBackground(default_brush)
                     item.setFont(normal_font)
         # Hinweis-Text.
+        if not _has_data(self._current_preview):
+            # Sprint 85 / E4: ein leeres Blatt hat keine Kopfzeile zu erkennen.
+            self._confidence_label.setText("Dieses Blatt enthält keine Daten.")
+            self._confidence_label.setStyleSheet(f"color: {WARNING_COLOR}; font-weight: 600;")
+            return
         if no_header:
             self._confidence_label.setText(
                 "Keine Kopfzeile – alle Zeilen werden als Daten importiert "
@@ -355,7 +364,7 @@ class ImportOptionsDialog(QDialog):
     # ---- Validierung ---------------------------------------------------
 
     def _is_valid(self) -> bool:
-        if self._current_preview is None:
+        if self._current_preview is None or not _has_data(self._current_preview):
             return False
         # „keine Kopfzeile": gültig, sobald überhaupt Zeilen vorhanden sind.
         if self._no_header_check.isChecked():
@@ -388,6 +397,19 @@ class ImportOptionsDialog(QDialog):
 # ---------------------------------------------------------------------------
 # Hilfen
 # ---------------------------------------------------------------------------
+
+
+def _first_sheet_with_data(sheets: list[SheetInfo]) -> int:
+    """Index des ersten Blatts mit Zellen; 0, wenn alle leer sind (Sprint 85 / E4)."""
+    return next(
+        (i for i, info in enumerate(sheets) if info.row_count > 0 and info.column_count > 0),
+        0,
+    )
+
+
+def _has_data(preview: SheetPreview) -> bool:
+    """Enthält die Vorschau mindestens eine nicht-leere Zelle?"""
+    return any(cell not in (None, "") for row in preview.rows for cell in row)
 
 
 def _caption(text: str) -> QLabel:

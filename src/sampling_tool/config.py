@@ -117,9 +117,12 @@ METHOD_LABELS: Final[dict[str, str]] = {
 # ---------------------------------------------------------------------------
 # Schlüssel ist `ParentRelation.value` (Layer-Regel wie bei `METHOD_LABELS`).
 # Kurzform für enge Spalten (HTML-Report „Parent", AuditTrail-Details) …
-PARENT_RELATION_LABELS: Final[dict[str, str]] = {
+# `None` (Sprint 85 / E2): Bestandssample mit Eltern-Stichprobe, aber ohne
+# erfasste Ableitung – dieselbe Aussage wie die Langform unten.
+PARENT_RELATION_LABELS: Final[dict[str | None, str]] = {
     "restrict": "eingeschränkt",
     "supplement": "Nachstichprobe",
+    None: "nicht erfasst",
 }
 # … und Langform mit der Eltern-ID für Metadaten und Excel-Report. `None` ist
 # ein Bestandssample mit Eltern-Stichprobe, aber ohne erfasste Ableitung
@@ -127,7 +130,7 @@ PARENT_RELATION_LABELS: Final[dict[str, str]] = {
 PARENT_RELATION_TEXTS: Final[dict[str | None, str]] = {
     "restrict": "Eingeschränkt auf Stichprobe #{parent}",
     "supplement": "Nachstichprobe zu #{parent} (ohne Dubletten)",
-    None: "Ableitung zu #{parent} nicht erfasst (älterer Stand)",
+    None: "Ableitung zu #{parent} " + PARENT_RELATION_LABELS[None] + " (älterer Stand)",
 }
 
 # ---------------------------------------------------------------------------

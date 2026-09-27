@@ -234,6 +234,15 @@ jobs:
             echo "  NICHT belegt: dass MainWindow konstruiert wird (der Prozess steht im modalen"
             echo "  FirstRunWizard), dass das .app auf einem echten Desktop startet, dass Gatekeeper"
             echo "  es zulässt oder dass es bedienbar ist."
+            # Übersetzung (Sprint 85 / A): das Log entsteht erst nach dem
+            # Import-Vorlauf; auf einem frischen Runner baut Matplotlib dabei
+            # seinen Font-Cache, also auf die Zeile warten, solange der Prozess lebt.
+            APP_LOG="$HOME/Library/Logs/AuditSamplingTool/app.log"
+            for _ in $(seq 1 60); do
+              if grep -q "Qt translation loaded" "$APP_LOG" 2>/dev/null; then break; fi
+              kill -0 "$PID" 2>/dev/null || break
+              sleep 1
+            done
             kill "$PID"
             wait "$PID" 2>/dev/null || true
           else
@@ -247,6 +256,17 @@ jobs:
             echo "::error::Round-Trip-Smoke FAILED: der Prozess aus dem entpackten Artefakt ist vorzeitig beendet (exit $STATUS)." >&2
             exit 1
           fi
+
+          # --- Übersetzung (Sprint 85 / A): liegt im Bundle UND wurde geladen ---
+          if ! find "$OUT" -name 'qtbase_de.qm' | grep -q .; then
+            echo "::error::qtbase_de.qm fehlt im entpackten Artefakt – Standardbuttons wären englisch." >&2
+            exit 1
+          fi
+          if ! grep -q "Qt translation loaded" "$APP_LOG" 2>/dev/null; then
+            echo "::error::Das Bundle hat qtbase_de nicht geladen (kein 'Qt translation loaded' in $APP_LOG)." >&2
+            exit 1
+          fi
+          echo "Übersetzung OK: $(grep 'Qt translation loaded' "$APP_LOG" | tail -1)"
 
           # Aufräumen ist Kosmetik, keine Prüfung – mit `set -e` darf es den Step
           # nicht nachträglich rot machen.
@@ -318,8 +338,27 @@ jobs:
             Write-Host "  Belegt ist damit: kein Startup-/Import-Crash aus dem ausgelieferten Bundle."
             Write-Host "  NICHT belegt: dass MainWindow konstruiert wird (der Prozess steht im modalen"
             Write-Host "  FirstRunWizard), dass die .exe auf einem echten Desktop startet oder bedienbar ist."
+            # Uebersetzung (Sprint 85 / A): auf die Log-Zeile warten, solange der Prozess lebt.
+            $appLog = Join-Path $env:LOCALAPPDATA 'BDO\AuditSamplingTool\Logs\app.log'
+            for ($i = 0; $i -lt 60; $i++) {
+              if (Select-String -Path $appLog -Pattern 'Qt translation loaded' -Quiet -ErrorAction SilentlyContinue) { break }
+              if ($proc.HasExited) { break }
+              Start-Sleep -Seconds 1
+            }
             Stop-Process -Id $proc.Id -Force
           }
+
+          # --- Uebersetzung (Sprint 85 / A): liegt im Bundle UND wurde geladen ---
+          if (-not (Get-ChildItem -Recurse -Path $out -Filter 'qtbase_de.qm')) {
+            Write-Host "::error::qtbase_de.qm fehlt im entpackten Artefakt - Standardbuttons waeren englisch."
+            exit 1
+          }
+          $loaded = Select-String -Path $appLog -Pattern 'Qt translation loaded' -ErrorAction SilentlyContinue
+          if (-not $loaded) {
+            Write-Host "::error::Das Bundle hat qtbase_de nicht geladen (kein 'Qt translation loaded' in $appLog)."
+            exit 1
+          }
+          Write-Host "Uebersetzung OK: $($loaded[-1].Line)"
 
           # Aufraeumen ist Kosmetik, keine Pruefung, und darf den Step deshalb
           # NICHT rot machen. Auf Windows haelt der gerade beendete Prozess seine

@@ -397,6 +397,27 @@ class TestMultiSheetReportExporter:
         assert row["Parent-Sample-ID"] == 17
         assert row["Algorithmus-Version"] == "bdo-v1"
         assert row["Dataset-ID"] == 1
+        # Sprint 85 / E1: feste Spalte, aber Cluster ist nicht geschichtet.
+        assert row["Schichtungsmodus"] == "—"
+
+    def test_samples_sheet_placeholder_without_filter(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        datasets: list[Dataset],
+        audit_events: list[AuditEvent],
+    ) -> None:
+        """Sprint 85 / E1: ohne Filter-Feld kein „=" in der Operator-Spalte."""
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=1)
+        samples = [SampleResult(config=cfg, selected_row_ids=(1, 2), population_size=10, id=4)]
+        out = tmp_path / "bericht.xlsx"
+        MultiSheetReportExporter().export(
+            engagement, datasets, samples, audit_events, out, dataset_ids_by_sample={4: 1}
+        )
+        rows = list(load_workbook(out)["3. Samples"].iter_rows(values_only=True))
+        row = dict(zip(rows[0], rows[1], strict=True))
+        assert row["Filter-Operator"] == "—"
+        assert row["Schichtungsmodus"] == "—"
 
     def test_audit_trail_details_spalte_zeigt_details_json(
         self,

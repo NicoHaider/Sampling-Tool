@@ -427,6 +427,20 @@ class AuditTrailView(QWidget):
         # Default-Sortierung: neueste zuerst.
         self._table.sortByColumn(0, Qt.SortOrder.DescendingOrder)
         self._stack.setCurrentWidget(self._table if events else self._empty_label)
+        self._fit_timestamp_column()
+
+    def _fit_timestamp_column(self) -> None:
+        """Verbreitert die Zeitstempel-Spalte auf ihren Inhalt (Sprint 85 / E6).
+
+        Die Standardbreite schnitt „2026-09-…" ab. Nur verbreitern, nie
+        verkleinern: eine vom Anwender breiter gezogene Spalte bleibt.
+        """
+        header = self._table.horizontalHeader()
+        if header is None or self._proxy.rowCount() == 0:
+            return
+        needed = max(self._table.sizeHintForColumn(0), header.sectionSizeHint(0))
+        if header.sectionSize(0) < needed:
+            header.resizeSection(0, needed)
 
     def model(self) -> AuditTrailModel:
         """Zugriff aufs Model (Tests)."""

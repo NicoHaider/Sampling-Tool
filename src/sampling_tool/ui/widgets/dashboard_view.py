@@ -37,6 +37,8 @@ from sampling_tool.config import (
     BDO_GREY,
     BDO_LIGHT_GREY,
     BDO_RED_INK,
+    EVENT_TYPE_LABELS,
+    METHOD_LABELS,
     SURFACE_HOVER,
 )
 from sampling_tool.core.formatting import ensure_utc
@@ -376,7 +378,7 @@ class DashboardView(QWidget):
 
         method_counts: Counter[str] = Counter()
         for s in samples:
-            method_counts[s.config.method.value] += 1
+            method_counts[METHOD_LABELS.get(s.config.method.value, s.config.method.value)] += 1
         if method_counts:
             labels = list(method_counts.keys())
             values = [float(method_counts[k]) for k in labels]
@@ -387,6 +389,7 @@ class DashboardView(QWidget):
                 width=_CHART_WIDTH,
                 height=_CHART_HEIGHT,
                 device_pixel_ratio=self._chart_ratio(),
+                integer_ticks=True,
             )
             chart_label = QLabel()
             chart_label.setPixmap(pixmap)
@@ -403,7 +406,7 @@ class DashboardView(QWidget):
 
         type_counts: Counter[str] = Counter()
         for e in events:
-            type_counts[e.event_type] += 1
+            type_counts[EVENT_TYPE_LABELS.get(e.event_type, e.event_type)] += 1
         if type_counts:
             top = type_counts.most_common(5)
             labels = [k for k, _ in top]
@@ -415,6 +418,7 @@ class DashboardView(QWidget):
                 width=_CHART_WIDTH,
                 height=_CHART_HEIGHT,
                 device_pixel_ratio=self._chart_ratio(),
+                integer_ticks=True,
             )
             chart_label = QLabel()
             chart_label.setPixmap(pixmap)
@@ -458,7 +462,8 @@ class DashboardView(QWidget):
             if sample.id is None:
                 continue
             drawn = ensure_utc(sample.drawn_at).astimezone().strftime("%Y-%m-%d")
-            text = f"#{sample.id} · {sample.config.method.value} · n={sample.actual_size} · {drawn}"
+            method = METHOD_LABELS.get(sample.config.method.value, sample.config.method.value)
+            text = f"#{sample.id} · {method} · n={sample.actual_size} · {drawn}"
             row = _ClickableSampleLabel(text, sample.id)
             row.clicked.connect(self.sample_clicked.emit)
             layout.addWidget(row)
@@ -476,6 +481,7 @@ class DashboardView(QWidget):
             width=_CHART_WIDTH,
             height=_CHART_HEIGHT,
             device_pixel_ratio=self._chart_ratio(),
+            integer_ticks=True,
         )
         chart = QLabel()
         chart.setPixmap(pixmap)
