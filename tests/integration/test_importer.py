@@ -1093,3 +1093,70 @@ class TestDatasetNameWithSheet:
         assert importer.import_file(utf8_csv).dataset.name == utf8_csv.stem
         configured = importer.import_file_configured(title_rows_csv, None, 4).dataset
         assert configured.name == title_rows_csv.stem
+
+
+class TestDuplicateDatasetNameSuffix:
+    """Sprint 85 / E7: dieselbe Datei zweimal importiert → „name (2)", „name (3)".
+
+    Nur der Anzeigename ändert sich: die Zeilen sind byte-identisch, bestehende
+    Datensätze werden nicht umbenannt."""
+
+    def _import(self, db_path: Path, engagement_id: int, source: Path) -> str:
+        from sampling_tool.core.cancellation import CancellationToken
+        from sampling_tool.ui.workers.tasks import ExcelImportTask
+
+        class _NoProgress:
+            def report(self, _current: int, _total: int) -> None:
+                pass
+
+        task = ExcelImportTask(
+            path=source, db_path=db_path, engagement_id=engagement_id, user_name="t"
+        )
+        return task.run(_NoProgress(), CancellationToken()).dataset.name  # type: ignore[arg-type]
+
+    def test_suffix_counts_up_and_values_stay_identical(
+        self, tmp_path: Path, utf8_csv: Path
+    ) -> None:
+        import sqlite3
+
+        from sampling_tool.core.models import Engagement
+        from sampling_tool.persistence.database import Database
+        from sampling_tool.persistence.repositories import EngagementRepo
+
+        db_path = tmp_path / "p.db"
+        db = Database(db_path)
+        db.migrate()
+        eng = EngagementRepo(db.connect()).get_or_create(
+            Engagement(auditor_name="A", client_name="C")
+        )
+        assert eng.id is not None
+        db.close()
+
+        names = [self._import(db_path, eng.id, utf8_csv) for _ in range(3)]
+
+        base = names[0]
+        assert names == [base, f"{base} (2)", f"{base} (3)"]
+        conn = sqlite3.connect(db_path)
+        try:
+            stored = conn.execute("SELECT id, name FROM datasets ORDER BY id").fetchall()
+            assert [name for _, name in stored] == names
+            values = [
+                conn.execute(
+                    "SELECT row_index, values_json FROM dataset_rows "
+                    "WHERE dataset_id = ? ORDER BY row_index",
+                    (dataset_id,),
+                ).fetchall()
+                for dataset_id, _ in stored
+            ]
+        finally:
+            conn.close()
+        assert values[0] == values[1] == values[2]
+        assert values[0]
+
+    def test_first_free_number_is_used(self) -> None:
+        from sampling_tool.ui.workers.tasks import unique_dataset_name
+
+        assert unique_dataset_name("x", []) == "x"
+        assert unique_dataset_name("x", ["x", "x (3)"]) == "x (2)"
+        assert unique_dataset_name("x", ["x", "x (2)"]) == "x (3)"
+        assert unique_dataset_name("x (2)", ["x (2)"]) == "x (2) (2)"

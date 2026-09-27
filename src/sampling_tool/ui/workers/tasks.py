@@ -13,6 +13,7 @@ erlaubt parallele Reader (Main-Thread) + 1 Writer (Worker).
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -52,6 +53,22 @@ class ExcelImportTaskResult:
 
     dataset: Dataset
     stats: ImportStats
+
+
+def unique_dataset_name(name: str, existing: Iterable[str]) -> str:
+    """`name`, oder bei Kollision `name (2)`, `name (3)`, … – erste freie Nummer.
+
+    Sprint 85 / E7: zweimal dieselbe Datei importiert hieß vorher zweimal gleich
+    in der Sidebar. Nur der Anzeigename; die Werte bleiben unverändert, und
+    bestehende Datensätze werden nicht umbenannt.
+    """
+    taken = set(existing)
+    if name not in taken:
+        return name
+    n = 2
+    while f"{name} ({n})" in taken:
+        n += 1
+    return f"{name} ({n})"
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,8 +116,17 @@ class ExcelImportTask:
         # serialisiert den Writer.
         db = Database(self.db_path)
         try:
-            dataset = replace(result.dataset, engagement_id=self.engagement_id)
             with db.session() as conn:
+                # Sprint 85 / E7: in derselben Transaktion wie das Anlegen, damit
+                # kein paralleler Import denselben Namen bekommt.
+                existing = [
+                    d.name for d in DatasetRepo(conn).list_for_engagement(self.engagement_id)
+                ]
+                dataset = replace(
+                    result.dataset,
+                    engagement_id=self.engagement_id,
+                    name=unique_dataset_name(result.dataset.name, existing),
+                )
                 stored = DatasetRepo(conn).create(
                     dataset,
                     result.rows,
