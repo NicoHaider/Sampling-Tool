@@ -37,7 +37,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import export_date_token, local_export_now
+from sampling_tool.config import EVENT_TYPE_LABELS, export_date_token, local_export_now
 from sampling_tool.core.models import Engagement
 from sampling_tool.io.bdo_locations import (
     companies,
@@ -237,7 +237,10 @@ class ExportAuditPdfDialog(QDialog):
             list(event_types_available) if event_types_available else list(_DEFAULT_TYPES)
         )
         for type_name in types_to_show:
-            item = QListWidgetItem(type_name)
+            # Sprint 85 / E5: sichtbar der deutsche Name, gefiltert wird nach
+            # dem Rohwert (`userData`) – wie in der AuditTrail-Ansicht.
+            item = QListWidgetItem(EVENT_TYPE_LABELS.get(type_name, type_name))
+            item.setData(Qt.ItemDataRole.UserRole, type_name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
             self._types_list.addItem(item)
@@ -335,7 +338,7 @@ class ExportAuditPdfDialog(QDialog):
         for i in range(self._types_list.count()):
             item = self._types_list.item(i)
             if item is not None and item.checkState() == Qt.CheckState.Checked:
-                result.add(item.text())
+                result.add(str(item.data(Qt.ItemDataRole.UserRole)))
         return result
 
     def _selection_hint(self) -> str:
