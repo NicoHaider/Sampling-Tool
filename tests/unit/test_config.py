@@ -102,7 +102,19 @@ class TestReportLabelTables:
             "undo": "Rückgängig",
             "redo": "Wiederhergestellt",
             "correction": "Korrektur",
+            "backup_created": "Sicherung angelegt",
+            "backups_trashed": "Sicherungen in Papierkorb",
         }
+
+    def test_snapshot_events_and_reasons_covered(self) -> None:
+        """Sprint 88 / A4: Sicherungs-Events und Anlässe haben deutsche Namen."""
+        from sampling_tool.persistence.version_manager import (
+            SNAPSHOT_EVENT_TYPES,
+            SnapshotReason,
+        )
+
+        assert set(SNAPSHOT_EVENT_TYPES) <= set(config.EVENT_TYPE_LABELS)
+        assert set(config.SNAPSHOT_REASON_LABELS) == {r.value for r in SnapshotReason}
 
     def test_stratify_modes_covered(self) -> None:
         from sampling_tool.core.models import StratifyMode

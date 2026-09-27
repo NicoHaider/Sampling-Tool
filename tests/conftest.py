@@ -36,7 +36,7 @@ from sampling_tool.persistence.repositories import (
     EngagementRepo,
     SampleRepo,
 )
-from sampling_tool.ui import settings_store
+from sampling_tool.ui import _trash, settings_store
 from tests._test_floor import (
     ENFORCE_TEST_FLOOR_ENV,
     EXECUTED_FLOOR,
@@ -150,6 +150,17 @@ def _isolate_qsettings(
         "_qsettings",
         lambda: QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME),
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_trash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Kein Test berührt den echten Papierkorb (Sprint 88 / A3).
+
+    Ersetzt die eine Tür zum Papierkorb durch eine Attrappe, die ablehnt – die
+    Sicherungskopie bleibt dann liegen, wie im echten Fehlerfall. Tests, die
+    erfolgreiches Verschieben brauchen, setzen ihre eigene Attrappe.
+    """
+    monkeypatch.setattr(_trash, "move_to_trash", lambda _path: False)
 
 
 @pytest.fixture

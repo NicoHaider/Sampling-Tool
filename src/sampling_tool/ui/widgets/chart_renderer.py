@@ -54,6 +54,7 @@ def render_line_chart(
     device_pixel_ratio: float = 1.0,
     *,
     integer_ticks: bool = False,
+    max_x_labels: int | None = None,
 ) -> QPixmap:
     """Rendert ein Liniendiagramm als `QPixmap`."""
     return _bytes_to_pixmap(
@@ -65,6 +66,7 @@ def render_line_chart(
             height,
             device_pixel_ratio,
             integer_ticks=integer_ticks,
+            max_x_labels=max_x_labels,
         ),
         device_pixel_ratio,
     )

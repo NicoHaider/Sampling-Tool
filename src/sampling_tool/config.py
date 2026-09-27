@@ -165,6 +165,18 @@ EVENT_TYPE_LABELS: Final[dict[str, str]] = {
     "undo": "Rückgängig",
     "redo": "Wiederhergestellt",
     "correction": "Korrektur",
+    # Sprint 88 / A4: Sicherungskopien des Projekts (zählen beim Vergleich
+    # „geändert seit der letzten Kopie?" nicht mit).
+    "backup_created": "Sicherung angelegt",
+    "backups_trashed": "Sicherungen in Papierkorb",
+}
+
+# Anlass einer Sicherungskopie (Sprint 88 / A1), Schlüssel = Token im
+# Dateinamen (`SnapshotReason`). Steht so im Audit-Event.
+SNAPSHOT_REASON_LABELS: Final[dict[str, str]] = {
+    "oeffnen": "beim Öffnen",
+    "vor-migration": "vor Aktualisierung der Projektdatei",
+    "vor-ueberschreiben": "vor Überschreiben",
 }
 
 # Werte von `details["restored"]` bei Undo/Redo auf den leeren Zustand.
@@ -199,6 +211,10 @@ AUDIT_DETAIL_LABELS: Final[dict[str, str]] = {
     "reason": "Begründung",
     "report": "Bericht",
     "archived_previous": "Vorherige Fassung archiviert unter",
+    "backup_file": "Sicherungsdatei",
+    "backup_reason": "Anlass",
+    "trashed_count": "Anzahl",
+    "trashed_files": "Dateien",
 }
 
 # ---------------------------------------------------------------------------

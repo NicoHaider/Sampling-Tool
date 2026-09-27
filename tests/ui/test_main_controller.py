@@ -32,7 +32,7 @@ from sampling_tool.persistence.repositories import (
     EngagementRepo,
     SampleRepo,
 )
-from sampling_tool.persistence.version_manager import EngagementVersionManager
+from sampling_tool.persistence.version_manager import EngagementVersionManager, SnapshotReason
 from sampling_tool.ui.controllers._factories import (
     ControllerFactories,
     default_audit_pdf_factory,
@@ -58,6 +58,7 @@ from sampling_tool.ui.dialogs.duplicate_engagement_dialog import (
 from sampling_tool.ui.dialogs.new_engagement_dialog import NewEngagementDialog
 from sampling_tool.ui.main_window import MainWindow
 from sampling_tool.ui.recent import RecentEngagementsStore
+from sampling_tool.ui.settings_store import AppSettings
 
 pytestmark = pytest.mark.ui
 
@@ -1059,12 +1060,13 @@ class TestOverwriteWithBackup:
             def _record_snapshot(
                 manager: EngagementVersionManager,
                 auditor_name: str,
+                reason: SnapshotReason | None = None,
             ) -> Path:
                 assert order == []
                 assert controller.session.db is old_db
                 assert old_connection.execute("SELECT 1").fetchone() is not None
                 order.append("snapshot")
-                return real_create_snapshot(manager, auditor_name)
+                return real_create_snapshot(manager, auditor_name, reason)
 
             def _record_clear_dataset() -> None:
                 if order == ["snapshot"]:
@@ -4496,6 +4498,339 @@ class TestHighlightRefusesForeignSample:
             assert len(warnings) == 2
         finally:
             controller.engagement.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 88: Sicherungskopie nur bei Änderung, Grund im Namen, Aufbewahrung
+# ---------------------------------------------------------------------------
+
+
+def _archive_names(db_path: Path) -> list[str]:
+    return [p.name for p in _archive_db_files(db_path.parent)]
+
+
+def _backup_events(db_path: Path) -> list[tuple[str, str]]:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        return [
+            (str(row[0]), str(row[1]))
+            for row in conn.execute(
+                "SELECT event_type, details_json FROM audit_events "
+                "WHERE event_type IN ('backup_created', 'backups_trashed') ORDER BY id"
+            )
+        ]
+    finally:
+        conn.close()
+
+
+class _RecordingTrash:
+    """Papierkorb-Attrappe für den Controller – der echte bleibt tabu."""
+
+    def __init__(self, *, succeed: bool = True) -> None:
+        self.succeed = succeed
+        self.calls: list[Path] = []
+
+    def __call__(self, path: Path) -> bool:
+        self.calls.append(path)
+        if self.succeed:
+            path.unlink()
+        return self.succeed
+
+
+def _old_open_copy(db_path: Path, minute: int, reason: str | None = "oeffnen") -> Path:
+    archive = db_path.parent / "archiv"
+    archive.mkdir(exist_ok=True)
+    tag = f"+{reason}" if reason is not None else ""
+    path = archive / f"{db_path.stem}_2020-01-01_10-{minute:02d}-00-000000_Anna{tag}.db"
+    path.write_bytes(b"alte Kopie")
+    path.chmod(0o444)
+    return path
+
+
+class TestOpenSnapshotOnlyOnChange:
+    """Sprint 88 / A1+A2: „öffnen"-Kopie nur, wenn sich seit der jüngsten etwas geändert hat."""
+
+    def test_second_open_without_change_adds_no_copy(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path, _own, _other, _sample = _foreign_sample_db(tmp_path)
+        for _ in range(2):
+            controller = MainController(window, recent_store=recent_store)
+            controller.engagement.handle_open_engagement(db_path)
+            controller.engagement.handle_close_engagement()
+
+        [name] = _archive_names(db_path)
+        assert name.endswith("+oeffnen.db")
+
+    def test_reopen_inside_the_running_app_adds_no_copy(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        """Genau der Befund: zwei Kopien 30 s auseinander, dazwischen nichts geändert."""
+        db_path, _own, _other, _sample = _foreign_sample_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.engagement.handle_open_engagement(db_path)
+        finally:
+            controller.engagement.handle_close_engagement()
+        assert len(_archive_names(db_path)) == 1
+
+    def test_change_then_reopen_adds_exactly_one_copy(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path, own_id, _other, _sample = _foreign_sample_db(tmp_path)
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=_stub_sampling_factory(),  # type: ignore[arg-type]
+        )
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            controller.selection.handle_dataset_selected(own_id)
+            controller.workspace.handle_new_sampling()
+            controller.engagement.handle_open_engagement(db_path)
+            controller.engagement.handle_open_engagement(db_path)
+        finally:
+            controller.engagement.handle_close_engagement()
+        names = _archive_names(db_path)
+        assert len(names) == 2
+        assert all(n.endswith("+oeffnen.db") for n in names)
+
+    def test_backup_is_logged_once_per_copy(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path, _own, _other, _sample = _foreign_sample_db(tmp_path)
+        for _ in range(2):
+            controller = MainController(window, recent_store=recent_store)
+            controller.engagement.handle_open_engagement(db_path)
+            controller.engagement.handle_close_engagement()
+
+        [(event_type, details)] = _backup_events(db_path)
+        assert event_type == "backup_created"
+        [name] = _archive_names(db_path)
+        assert name in details
+        assert "beim Öffnen" in details
+
+    def test_tampered_triggers_always_get_a_copy(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        """Manipulationsverdacht: der Stand wird gesichert, auch ohne neues Event."""
+        db_path, _own, _other, _sample = _foreign_sample_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        controller.engagement.handle_open_engagement(db_path)
+        controller.engagement.handle_close_engagement()
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("DROP TRIGGER audit_events_no_update")
+        conn.commit()
+        conn.close()
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            with patch("sampling_tool.ui.controllers.engagement_controller.QMessageBox.warning"):
+                controller.engagement.handle_open_engagement(db_path)
+        finally:
+            controller.engagement.handle_close_engagement()
+        assert len(_archive_names(db_path)) == 2
+
+    def test_comparison_failure_never_blocks_opening(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path, _own, _other, _sample = _foreign_sample_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            with patch(
+                "sampling_tool.ui.controllers.engagement_controller."
+                "EngagementVersionManager.latest_snapshot_if_unchanged",
+                side_effect=sqlite3.DatabaseError("kaputt"),
+            ):
+                controller.engagement.handle_open_engagement(db_path)
+            assert controller.session.db is not None
+        finally:
+            controller.engagement.handle_close_engagement()
+        assert len(_archive_names(db_path)) == 1
+
+
+class TestOpenSnapshotRetention:
+    """Sprint 88 / A3: ältere „öffnen"-Kopien über N hinaus in den Papierkorb."""
+
+    def _open_with(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        db_path: Path,
+        trash: _RecordingTrash,
+        keep: int,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> MainController:
+        from sampling_tool.ui import _trash
+
+        monkeypatch.setattr(_trash, "move_to_trash", trash)
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            settings=dataclasses.replace(AppSettings.defaults(), open_snapshots_keep=keep),
+        )
+        controller.engagement.handle_open_engagement(db_path)
+        return controller
+
+    def test_surplus_open_copies_are_trashed_others_stay(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        db_path, _own, _other, _sample = _foreign_sample_db(tmp_path)
+        oldest, older, old = (_old_open_copy(db_path, m) for m in (1, 2, 3))
+        legacy = _old_open_copy(db_path, 0, None)
+        migration = _old_open_copy(db_path, 4, "vor-migration")
+        trash = _RecordingTrash()
+
+        controller = self._open_with(window, recent_store, db_path, trash, 2, monkeypatch)
+        controller.engagement.handle_close_engagement()
+
+        assert trash.calls == [older, oldest]
+        assert old.exists()
+        assert legacy.exists()
+        assert migration.exists()
+        new_copies = [
+            n for n in _archive_names(db_path) if not n.startswith(f"{db_path.stem}_2020")
+        ]
+        assert len(new_copies) == 1
+        events = _backup_events(db_path)
+        assert [e for e, _d in events] == ["backup_created", "backups_trashed"]
+        assert oldest.name in events[1][1]
+        assert older.name in events[1][1]
+
+    def test_refused_trash_keeps_copies_and_opens(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        db_path, _own, _other, _sample = _foreign_sample_db(tmp_path)
+        copies = [_old_open_copy(db_path, m) for m in (1, 2, 3)]
+        trash = _RecordingTrash(succeed=False)
+
+        controller = self._open_with(window, recent_store, db_path, trash, 1, monkeypatch)
+        try:
+            assert controller.session.db is not None
+        finally:
+            controller.engagement.handle_close_engagement()
+
+        assert len(trash.calls) == 3
+        assert all(c.exists() for c in copies)
+        assert [e for e, _d in _backup_events(db_path)] == ["backup_created"]
+
+    def test_no_new_copy_means_no_cleanup(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        db_path, _own, _other, _sample = _foreign_sample_db(tmp_path)
+        controller = self._open_with(
+            window, recent_store, db_path, _RecordingTrash(), 10, monkeypatch
+        )
+        controller.engagement.handle_close_engagement()
+        for m in (1, 2, 3):
+            _old_open_copy(db_path, m)
+        trash = _RecordingTrash()
+
+        controller = self._open_with(window, recent_store, db_path, trash, 1, monkeypatch)
+        controller.engagement.handle_close_engagement()
+
+        assert trash.calls == []
+
+
+class TestBackupSideStepsNeverBlockOpening:
+    """Sprint 88 / A: Aufräumen und Protokollieren der Sicherung scheitern still."""
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "EngagementVersionManager.trash_surplus_open_snapshots",
+            "AuditLogger.log_backup_created",
+        ],
+    )
+    def test_failure_is_logged_and_project_opens(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        target: str,
+    ) -> None:
+        db_path, _own, _other, _sample = _foreign_sample_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            with (
+                patch(
+                    f"sampling_tool.ui.controllers.engagement_controller.{target}",
+                    side_effect=OSError("kaputt"),
+                ),
+                caplog.at_level("WARNING", logger="sampling_tool.ui.controllers"),
+            ):
+                controller.engagement.handle_open_engagement(db_path)
+            assert controller.session.db is not None
+            assert window.is_workspace_visible() is True
+        finally:
+            controller.engagement.handle_close_engagement()
+        assert len(_archive_names(db_path)) == 1
+        assert any(r.levelname in {"WARNING", "ERROR"} for r in caplog.records)
+
+
+class TestSnapshotReasons:
+    """Sprint 88 / A1: „vor Migration" und „vor Überschreiben" entstehen immer."""
+
+    def test_pending_migration_always_gets_a_pre_migration_copy(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        from sampling_tool.persistence.version_manager import (
+            EngagementVersionManager,
+            SnapshotReason,
+        )
+
+        db_path = _db_at_schema_v5(tmp_path)
+        # Eine inhaltsgleiche Kopie existiert schon – trotzdem wird vor der
+        # Migration gesichert.
+        EngagementVersionManager(db_path).create_snapshot("Anna", reason=SnapshotReason.OPEN)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+        finally:
+            controller.engagement.handle_close_engagement()
+        names = _archive_names(db_path)
+        assert len(names) == 2
+        assert sum(n.endswith("+vor-migration.db") for n in names) == 1
+
+    def test_overwrite_gets_a_pre_overwrite_copy(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "ACME" / "ACME_ISAE.db"
+        _create_probe_project(target, "old-marker")
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _make_stub_new_dialog(parent, target, "ACME"),
+            duplicate_dialog_factory=lambda parent, db_path: _make_stub_duplicate_dialog(
+                parent, db_path, DuplicateEngagementChoice.OVERWRITE
+            ),
+        )
+        try:
+            with patch(
+                "sampling_tool.ui.controllers.engagement_controller.QMessageBox.information"
+            ):
+                controller.engagement.handle_new_engagement()
+        finally:
+            controller.engagement.handle_close_engagement()
+        [name] = _archive_names(target)
+        assert name.endswith("+vor-ueberschreiben.db")
+        [(event_type, details)] = _backup_events(target)
+        assert event_type == "backup_created"
+        assert "vor Überschreiben" in details
 
 
 def _project_without_saved_state(directory: Path) -> Path:

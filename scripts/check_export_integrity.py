@@ -23,8 +23,9 @@ Exit-Code:
     0  alles OK oder nichts zu prüfen (auch: keine Audit-Events; UNKLAR und
        DATEI FEHLT werden nur in der Zusammenfassung gezählt)
     1  mindestens eine ABWEICHUNG
-    2  Projektdatei nicht lesbar (nicht gefunden, keine SQLite-Datei, oder
-       z. B. nur als Cloud-Platzhalter vorhanden)
+    2  Prüfung nicht möglich: Projektdatei nicht lesbar (nicht gefunden,
+       keine SQLite-Datei, oder z. B. nur als Cloud-Platzhalter vorhanden)
+       oder Python älter als 3.11
 """
 
 from __future__ import annotations
@@ -45,11 +46,14 @@ from openpyxl import load_workbook
 
 try:
     from enum import StrEnum
-except ImportError:  # pragma: no cover – nur auf Python < 3.11 erreichbar
-    sys.exit(
+except ImportError:  # pragma: no cover – nur auf Python < 3.11 erreichbar (Subprozess-Test)
+    # Exit 2 wie „nicht lesbar", nicht 1: 1 bedeutet ABWEICHUNG (Sprint 88 / B4).
+    print(
         "check_export_integrity.py braucht Python 3.11 oder neuer "
-        f"(gefunden: {sys.version.split()[0]})."
+        f"(gefunden: {sys.version.split()[0]}).",
+        file=sys.stderr,
     )
+    sys.exit(2)
 
 _META_SHEET = "Metadaten"
 _DATASET_ID_LABEL = "Dataset-ID"

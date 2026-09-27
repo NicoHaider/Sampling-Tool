@@ -7,13 +7,16 @@ Jede `log_*`-Methode konstruiert den passenden `AuditEvent` und schreibt ihn
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from sampling_tool import __version__
+from sampling_tool.config import SNAPSHOT_REASON_LABELS
 from sampling_tool.core.models import AuditEvent, Dataset, SampleResult
 from sampling_tool.core.provenance import SamplingProvenance
 from sampling_tool.persistence.repositories import AuditRepo
+from sampling_tool.persistence.version_manager import SnapshotReason
 
 
 class AuditLogger:
@@ -158,6 +161,34 @@ class AuditLogger:
             engagement_id=self.engagement_id,
             user_name=self.user_name,
             details={"dataset_id": dataset_id},
+        )
+        return self.repo.log(event)
+
+    # ---- Sicherungskopien (Sprint 88 / A4) ------------------------------
+
+    def log_backup_created(self, path: Path, reason: SnapshotReason) -> AuditEvent:
+        """Sicherungskopie der Projektdatei unter `archiv/` angelegt."""
+        event = AuditEvent(
+            event_type="backup_created",
+            engagement_id=self.engagement_id,
+            user_name=self.user_name,
+            details={
+                "backup_file": str(path),
+                "backup_reason": SNAPSHOT_REASON_LABELS.get(reason.value, reason.value),
+            },
+        )
+        return self.repo.log(event)
+
+    def log_backups_trashed(self, paths: Sequence[Path]) -> AuditEvent:
+        """Ältere „öffnen"-Sicherungen in den Papierkorb verschoben (nicht gelöscht)."""
+        event = AuditEvent(
+            event_type="backups_trashed",
+            engagement_id=self.engagement_id,
+            user_name=self.user_name,
+            details={
+                "trashed_count": len(paths),
+                "trashed_files": [p.name for p in paths],
+            },
         )
         return self.repo.log(event)
 

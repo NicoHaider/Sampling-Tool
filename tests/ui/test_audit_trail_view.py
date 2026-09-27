@@ -1044,3 +1044,64 @@ class TestFileColumnReadable:
         view = AuditTrailView()
         qtbot.addWidget(view)
         assert view.table().textElideMode() == Qt.TextElideMode.ElideMiddle
+
+
+class TestFileColumnElidesWithoutWrapping:
+    """Sprint 88 / B1: Sprint 87 setzte `ElideMiddle`, gekürzt wurde trotzdem am
+    ersten Leerzeichen und am Ende. Ursache: `wordWrap` (Default an) – Qt bricht
+    am Leerzeichen um und kürzt die erste Zeile; die Mitte-Kürzung greift nur
+    bei einzeiligem Text."""
+
+    _NAME = "SMOKE Test 06_mehrere_sheets (Buchungen)_ID11_BDO_sampling_20260927.xlsx"
+
+    def test_cells_are_single_line_and_elided_in_the_middle(self, qtbot: QtBot) -> None:
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        view = AuditTrailView()
+        qtbot.addWidget(view)
+        view.set_events([_make_event(event_type="export", export_file=self._NAME)])
+        table = view.table()
+        option = QStyleOptionViewItem()
+        table.initViewItemOption(option)
+
+        assert table.wordWrap() is False
+        assert not option.features & QStyleOptionViewItem.ViewItemFeature.WrapText
+        assert option.textElideMode == Qt.TextElideMode.ElideMiddle
+
+    def test_shown_text_keeps_the_end_of_a_long_name_with_spaces(self, qtbot: QtBot) -> None:
+        view = AuditTrailView()
+        qtbot.addWidget(view)
+        view.set_events([_make_event(event_type="export", export_file=self._NAME)])
+        table = view.table()
+        text = str(view.proxy().index(0, 7).data())
+        width = table.fontMetrics().horizontalAdvance(text) // 2
+        shown = table.fontMetrics().elidedText(text, table.textElideMode(), width)
+        assert shown.startswith("SMOKE Test")
+        assert shown.endswith(".xlsx")
+        assert "…" in shown
+
+
+class TestActionColumnFitsLongestLabel:
+    """Sprint 88 / B2: „Wiederhergestellt" wurde zu „Wiede…tellt"."""
+
+    def test_action_column_fits_every_german_label(self, qtbot: QtBot) -> None:
+        from sampling_tool.config import EVENT_TYPE_LABELS
+
+        view = AuditTrailView()
+        qtbot.addWidget(view)
+        view.set_events([_make_event(event_type="sampling")])
+        table = view.table()
+        header = table.horizontalHeader()
+        assert header is not None
+        widest = max(table.fontMetrics().horizontalAdvance(t) for t in EVENT_TYPE_LABELS.values())
+        assert header.sectionSize(1) > widest
+
+    def test_user_widened_action_column_is_kept(self, qtbot: QtBot) -> None:
+        view = AuditTrailView()
+        qtbot.addWidget(view)
+        view.set_events([_make_event(event_type="redo")])
+        header = view.table().horizontalHeader()
+        assert header is not None
+        header.resizeSection(1, 400)
+        view.set_events([_make_event(event_type="redo"), _make_event(event_id=2)])
+        assert header.sectionSize(1) == 400

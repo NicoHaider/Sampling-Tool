@@ -332,3 +332,92 @@ class TestTopEventTypesReadable:
         )
         [call] = [c for c in seen if c["title"] == "Top-Eventtypen"]
         assert call.get("horizontal") is True
+
+
+def _figure_of(render: Any, monkeypatch: pytest.MonkeyPatch, *args: Any, **kwargs: Any) -> Figure:
+    figures: list[Figure] = []
+    real = charts._figure_to_bytes
+
+    def capture(fig: Figure, scale: float = 1.0) -> bytes:
+        figures.append(fig)
+        return real(fig, scale)
+
+    monkeypatch.setattr(charts, "_figure_to_bytes", capture)
+    render(*args, **kwargs)
+    [fig] = figures
+    return fig
+
+
+class TestHistoryAndMethodAxesReadable:
+    """Sprint 88 / B3: 30 Datumsbeschriftungen überlagerten sich; „Methoden"
+    zeigte die Ticks 1 bis 9 gedrängt."""
+
+    def test_thirty_days_get_few_non_overlapping_date_labels(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        labels = [f"{d:02d}.09." for d in range(1, 31)]
+        fig = _figure_of(
+            charts.render_line_chart_bytes,
+            monkeypatch,
+            labels,
+            [float(d % 3) for d in range(30)],
+            width=360,
+            height=160,
+            integer_ticks=True,
+            max_x_labels=6,
+        )
+        renderer = FigureCanvasAgg(fig).get_renderer()  # type: ignore[no-untyped-call]
+        shown = [t for t in fig.axes[0].get_xticklabels() if t.get_text()]
+        assert 2 <= len(shown) <= 6
+        assert shown[-1].get_text() == labels[-1]
+        boxes = [t.get_window_extent(renderer) for t in shown]
+        assert not any(a.overlaps(b) for i, a in enumerate(boxes) for b in boxes[i + 1 :])
+
+    def test_line_chart_default_is_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Berichts-Diagramme (HTML) rufen ohne `max_x_labels` – alle Labels bleiben."""
+        labels = [f"{d:02d}" for d in range(1, 11)]
+        fig = _figure_of(charts.render_line_chart_bytes, monkeypatch, labels, [1.0] * 10)
+        assert [t.get_text() for t in fig.axes[0].get_xticklabels()] == labels
+
+    def test_method_counts_get_few_integer_ticks(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fig = _figure_of(
+            charts.render_bar_chart_bytes,
+            monkeypatch,
+            ["Einfach", "Cluster"],
+            [9.0, 2.0],
+            width=360,
+            height=160,
+            integer_ticks=True,
+        )
+        ax = fig.axes[0]
+        low, high = ax.get_ylim()
+        ticks = [t for t in ax.get_yticks() if low <= t <= high]
+        assert all(float(t).is_integer() for t in ticks)
+        assert len(ticks) <= 6
+
+    def test_history_labels_are_short_german_dates(self) -> None:
+        labels, _values = dashboard_view._samples_per_day([], 30)
+        assert len(labels) == 30
+        assert all(len(label) == 6 and label[2] == "." and label[5] == "." for label in labels)
+
+    def test_dashboard_limits_history_labels(
+        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[dict[str, Any]] = []
+        real_line = chart_renderer.render_line_chart
+
+        def spy(labels: list[str], values: list[float], **kwargs: Any) -> Any:
+            seen.append(kwargs)
+            return real_line(labels, values, **kwargs)
+
+        monkeypatch.setattr(dashboard_view, "render_line_chart", spy)
+        view = DashboardView()
+        qtbot.addWidget(view)
+        view.set_data(
+            Engagement(auditor_name="A", client_name="C", id=1),
+            [],
+            [_sample(1, SamplingMethod.SIMPLE)],
+            [],
+        )
+        [call] = seen
+        assert 2 <= call["max_x_labels"] <= 8

@@ -13,6 +13,7 @@ Backend zu laden und crasht.
 
 from __future__ import annotations
 
+import math
 from io import BytesIO
 from typing import Any, Final
 
@@ -37,6 +38,8 @@ BDO_COLORS: Final[list[str]] = [
 _DPI: Final[int] = 100
 _DEFAULT_WIDTH: Final[int] = 400
 _DEFAULT_HEIGHT: Final[int] = 200
+#: Höchstzahl Intervalle an einer Zähl-Achse (`integer_ticks`), Sprint 88 / B3.
+_INTEGER_TICK_BINS: Final[int] = 5
 
 
 def render_bar_chart_bytes(
@@ -81,15 +84,26 @@ def render_line_chart_bytes(
     scale: float = 1.0,
     *,
     integer_ticks: bool = False,
+    max_x_labels: int | None = None,
 ) -> bytes:
-    """Rendert ein Liniendiagramm als PNG-Bytes (`integer_ticks` wie beim Balken)."""
+    """Rendert ein Liniendiagramm als PNG-Bytes (`integer_ticks` wie beim Balken).
+
+    `max_x_labels` (Sprint 88 / B3): höchstens so viele x-Beschriftungen, in
+    gleichen Abständen und immer inklusive der letzten (jüngsten) – 30
+    Tagesdaten überlagerten sich sonst. Default aus: Berichts-Charts bleiben
+    byte-identisch.
+    """
     fig = _make_figure(width, height, scale)
     ax = fig.add_subplot(111)
     if labels:
         ax.plot(labels, values, color=BDO_RED, marker="o", linewidth=2.0)
         ax.fill_between(range(len(labels)), values, alpha=0.15, color=BDO_RED)
     _style_axes(ax, title, integer_ticks=integer_ticks)
-    if len(labels) > 8:
+    if max_x_labels is not None and len(labels) > max_x_labels:
+        step = math.ceil(len(labels) / max_x_labels)
+        positions = list(range(len(labels) - 1, -1, -step))[::-1]
+        ax.set_xticks(positions, [labels[i] for i in positions])
+    elif len(labels) > 8:
         for label in ax.get_xticklabels():
             label.set_rotation(45)
             label.set_horizontalalignment("right")
@@ -133,7 +147,10 @@ def _style_axes(ax: Any, title: str, *, integer_ticks: bool = False, value_axis:
     """Einheitliches Styling für Bar-/Line-Charts (`value_axis`: Achse der Werte)."""
     if integer_ticks:
         value = ax.xaxis if value_axis == "x" else ax.yaxis
-        value.set_major_locator(MaxNLocator(integer=True))
+        # Sprint 88 / B3: höchstens 5 Intervalle – bei Zählwerten bis 9 zeigte
+        # die Achse sonst jede Zahl einzeln und gedrängt. Nur Dashboard-Charts
+        # setzen `integer_ticks`; Berichte bleiben byte-identisch.
+        value.set_major_locator(MaxNLocator(integer=True, nbins=_INTEGER_TICK_BINS))
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["left"].set_color(BDO_LIGHT_GREY)

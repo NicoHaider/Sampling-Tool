@@ -216,11 +216,20 @@ ui ──▶ controllers ──▶ core ◀── io
     komplette Sprint-2-Schema. Migrations-Runner liest `schema_version` und führt
     nur ausstehende Versionen aus (atomar). Details als ADR:
     `docs/adr/0003-db-migrationen.md`.
-  - `version_manager.py` – `EngagementVersionManager` legt bei jedem
+  - `version_manager.py` – `EngagementVersionManager` legt beim
     `handle_open_engagement` einen Snapshot der `.db` unter `<mandant>/archiv/`
-    ab (Dateiname `{stem}_{YYYY-MM-DD}_{HH-MM-SS}_{Auditor}.db`).
+    ab (Dateiname `{stem}_{YYYY-MM-DD}_{HH-MM-SS-ffffff}_{Auditor}[+{grund}][~n].db`).
     `.db-wal`/`.db-shm` werden NICHT mitkopiert. Compliance-Pfad für
-    ISAE-3402-Versionsnachweis.
+    ISAE-3402-Versionsnachweis. **Sprint 88:** Grund im Namen (`SnapshotReason`:
+    `+oeffnen`, `+vor-migration`, `+vor-ueberschreiben`; Altnamen ohne Grund
+    bleiben parsebar). „öffnen" nur, wenn `latest_snapshot_if_unchanged()` eine
+    Änderung sieht (Schema-Version, `max(audit_events.id)` ohne
+    `SNAPSHOT_EVENT_TYPES`, Engagement-Zeile; nur lesend, WAL via `mode=ro`) oder
+    der Append-only-Schutz manipuliert ist. Danach verschiebt
+    `trash_surplus_open_snapshots` „öffnen"-Kopien über `open_snapshots_keep`
+    hinaus in den Papierkorb (`ui/_trash.py` → `QFile.moveToTrash`, in Tests
+    global durch eine Attrappe ersetzt); „vor Migration", „vor Überschreiben"
+    und Altkopien nie. Audit-Events `backup_created` / `backups_trashed`.
 - **`audit/`** – Append-only Event-Log via Trigger.
   - `logger.py` – `AuditLogger` ist der High-Level-Eingang: `log_sampling`,
     `log_import`, `log_export`, `log_undo`, `log_redo`, `log_reset`, `log_correction`.
@@ -562,6 +571,9 @@ für Anwender-Präferenzen:
   in Sprint 57 entfernt (totes UI-Feld ohne Produktpfad-Wirkung – eine echte
   Retention-/Auto-Löschung wäre ein bewusster Compliance-Trade-off für einen
   eigenen Sprint, nicht Nebenprodukt eines generischen Settings-Felds).
+- `open_snapshots_keep` (Sprint 88, Tab „Erweitert", Default 10, 1–100) – so
+  viele „öffnen"-Sicherungen je Projekt bleiben in `archiv/`; ältere wandern
+  in den Papierkorb (nie gelöscht, siehe `version_manager.py`).
 
 ## Resource-Loading (Sprint 8.1)
 
@@ -668,8 +680,8 @@ Drei Kerndogmen, die sich durch die ganze DB-Schicht ziehen:
    DSGVO-konform. Es gibt keinen "globalen" Pool. Standard-Ablageort ist
    `~/Documents/BDO Audit Sampling/<MandantSanitized>/<MandantSanitized>.db`
    (vgl. `config.ENGAGEMENTS_DIR` + `config.sanitize_for_path`). Beim Öffnen
-   landet jeweils eine Sicherheitskopie unter `archiv/` (siehe
-   `persistence/version_manager.py`).
+   landet eine Sicherheitskopie unter `archiv/`, seit Sprint 88 nur bei
+   Änderung seit der jüngsten (siehe `persistence/version_manager.py`).
 2. **Anwendungsseitig append-only Audit-Log.** `audit_events` darf
    ausschließlich per `INSERT` befüllt werden. Zwei BEFORE-Trigger
    (`audit_events_no_update`, `audit_events_no_delete`) blockieren UPDATE/

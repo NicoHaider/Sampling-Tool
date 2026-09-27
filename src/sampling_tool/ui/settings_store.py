@@ -24,6 +24,10 @@ from sampling_tool.ui._scaling import UI_SCALE_DEFAULT, UI_SCALE_LEVELS
 
 LOG_LEVELS: Final[tuple[str, ...]] = ("INFO", "DEBUG")
 DEFAULT_UNDO_DEPTH: Final[int] = 20
+# Sprint 88 / A3: so viele „öffnen"-Sicherungen je Projekt bleiben im Archiv;
+# ältere wandern in den Papierkorb. Bereich wie im Einstellungsdialog.
+DEFAULT_OPEN_SNAPSHOTS_KEEP: Final[int] = 10
+OPEN_SNAPSHOTS_KEEP_RANGE: Final[tuple[int, int]] = (1, 100)
 DEFAULT_LOG_LEVEL: Final[str] = "INFO"
 
 # Sprint 22 – Kennungen der einzeln schaltbaren Advanced-Sampling-Funktionen.
@@ -127,6 +131,10 @@ class AppSettings:
     # ausschließlich in den Einstellungen (das Seed-Feld im Haupt-Dialog ist
     # schreibgeschützt).
     seed: int | None
+
+    # Sprint 88 / A3 (Erweitert): Aufbewahrung der automatischen Sicherungen
+    # beim Öffnen. Mit Default am Ende, damit bestehende Konstruktoren laufen.
+    open_snapshots_keep: int = DEFAULT_OPEN_SNAPSHOTS_KEEP
 
     @classmethod
     def defaults(cls) -> AppSettings:
@@ -296,6 +304,11 @@ def load_settings() -> AppSettings:
             s.value("settings/show_stratified_feature", base.show_stratified_feature)
         ),
         undo_depth=_int(s.value("settings/undo_depth", base.undo_depth), base.undo_depth),
+        open_snapshots_keep=_int_in_range(
+            s.value("settings/open_snapshots_keep", base.open_snapshots_keep),
+            base.open_snapshots_keep,
+            OPEN_SNAPSHOTS_KEEP_RANGE,
+        ),
         log_level=log_level,
         ui_scale=ui_scale,
         first_run_completed=first_run_completed,
@@ -338,6 +351,7 @@ def save_settings(settings: AppSettings) -> None:
     s.setValue("settings/show_stratified_feature", settings.show_stratified_feature)
     s.setValue("settings/first_run_completed", settings.first_run_completed)
     s.setValue("settings/undo_depth", settings.undo_depth)
+    s.setValue("settings/open_snapshots_keep", settings.open_snapshots_keep)
     s.setValue("settings/log_level", settings.log_level)
     s.setValue("settings/ui_scale", settings.ui_scale)
     s.sync()
@@ -362,6 +376,13 @@ def _bool(value: object) -> bool:
     if isinstance(value, int):
         return bool(value)
     return False
+
+
+def _int_in_range(value: object, fallback: int, bounds: tuple[int, int]) -> int:
+    """Wie `_int`, aber außerhalb von `bounds` (inklusive) gilt `fallback`."""
+    number = _int(value, fallback)
+    low, high = bounds
+    return number if low <= number <= high else fallback
 
 
 def _int(value: object, fallback: int) -> int:
