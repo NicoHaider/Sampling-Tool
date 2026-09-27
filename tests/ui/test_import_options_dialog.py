@@ -379,3 +379,56 @@ class TestMinimumSize:
         dialog = ImportOptionsDialog(simple_path, importer)
         qtbot.addWidget(dialog)
         assert dialog.minimumHeight() <= 720
+
+
+# ---------------------------------------------------------------------------
+# Sprint 85 / E4: leere Blätter
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def leading_empty_sheet_path(tmp_path: Path) -> Path:
+    """Wie `07_kanten.xlsx` im Smoke-Projekt: das erste Blatt ist leer."""
+    path = tmp_path / "kanten.xlsx"
+    wb = Workbook()
+    empty = wb.active
+    assert empty is not None
+    empty.title = "KomplettLeer"
+    data = wb.create_sheet("Daten")
+    data.append(["Konto", "Saldo"])
+    data.append(["1000", 5])
+    wb.save(path)
+    return path
+
+
+class TestFirstNonEmptySheetPreselected:
+    def test_empty_first_sheet_is_skipped(
+        self, qtbot: QtBot, importer: ExcelImporter, leading_empty_sheet_path: Path
+    ) -> None:
+        dialog = ImportOptionsDialog(leading_empty_sheet_path, importer)
+        qtbot.addWidget(dialog)
+        assert dialog._sheet_combo is not None
+        assert dialog._sheet_combo.currentData() == "Daten"
+        assert dialog._preview_table.rowCount() == 2
+
+    def test_first_sheet_stays_when_it_has_data(
+        self, qtbot: QtBot, importer: ExcelImporter, multi_sheet_path: Path
+    ) -> None:
+        dialog = ImportOptionsDialog(multi_sheet_path, importer)
+        qtbot.addWidget(dialog)
+        assert dialog._sheet_combo is not None
+        assert dialog._sheet_combo.currentIndex() == 0
+
+
+class TestEmptySheetMessage:
+    def test_empty_sheet_says_no_data(
+        self, qtbot: QtBot, importer: ExcelImporter, leading_empty_sheet_path: Path
+    ) -> None:
+        dialog = ImportOptionsDialog(leading_empty_sheet_path, importer)
+        qtbot.addWidget(dialog)
+        assert dialog._sheet_combo is not None
+        dialog._sheet_combo.setCurrentIndex(0)
+
+        assert dialog._confidence_label.text() == "Dieses Blatt enthält keine Daten."
+        assert "Header" not in dialog._confidence_label.text()
+        assert _ok_enabled(dialog) is False
