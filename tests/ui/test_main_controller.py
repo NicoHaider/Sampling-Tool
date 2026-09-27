@@ -1750,6 +1750,9 @@ class _StubSamplingDialog:
     def set_initial_seed(self, seed: int) -> None:
         """No-Op – der Stub liefert ein fixes Result unabhängig vom Seed."""
 
+    def set_validators(self, **_validators: object) -> None:
+        """No-Op – Sprint 85 / B; `_ValidatingSamplingDialog` nutzt sie wirklich."""
+
     def get_result(self) -> object:
         return self._result
 
@@ -1773,6 +1776,110 @@ def _open_dataset(controller: MainController, window: MainWindow, db_path: Path)
     ds_id = _first_item_data(window.sidebar().datasets_widget())
     controller.selection.handle_dataset_selected(ds_id)
     return ds_id
+
+
+class _ValidatingSamplingDialog(_StubSamplingDialog):
+    """Stub, der beim „OK" wie der echte Dialog die Probeziehung des Controllers ruft."""
+
+    def __init__(self, result_obj: object) -> None:
+        super().__init__(result_obj)
+        self.group_count_provider: Callable[[str], int] | None = None
+        self.draw_check: Callable[[object], str | None] | None = None
+        self.problem: str | None = None
+
+    def set_validators(self, **validators: object) -> None:
+        self.group_count_provider = validators.get("group_count_provider")  # type: ignore[assignment]
+        self.draw_check = validators.get("draw_check")  # type: ignore[assignment]
+
+    def exec(self) -> int:
+        assert self.draw_check is not None
+        self.problem = self.draw_check(self._result)
+        accepted = self.problem is None
+        return int(QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected)
+
+
+class TestSamplingDialogValidatorsWired:
+    """Sprint 85 / B: der Controller reicht Gruppen-Zähler und Probeziehung durch."""
+
+    @staticmethod
+    def _run(
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        db_path: Path,
+        config: SampleConfig,
+    ) -> tuple[MainController, _ValidatingSamplingDialog]:
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+        from sampling_tool.ui.settings_store import AppSettings
+
+        dialog = _ValidatingSamplingDialog(SamplingDialogResult(config=config))
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=lambda *_a, **_k: dialog,  # type: ignore[arg-type]
+            settings=dataclasses.replace(AppSettings.defaults(), advanced_mode=True),
+        )
+        _open_dataset(controller, window, db_path)
+        return controller, dialog
+
+    def test_group_count_matches_sampler_clusters(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, populated_db: Path
+    ) -> None:
+        controller, dialog = self._run(
+            window,
+            recent_store,
+            populated_db,
+            SampleConfig(method=SamplingMethod.CLUSTER, size=1, seed=3, cluster_field="Konto"),
+        )
+        try:
+            controller.workspace.handle_new_sampling()
+            assert dialog.group_count_provider is not None
+            assert dialog.group_count_provider("Konto") == 5
+            assert dialog.group_count_provider("fehlt") == 1  # alle leer = ein Cluster
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_failed_draw_keeps_dialog_and_persists_nothing(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, populated_db: Path
+    ) -> None:
+        controller, dialog = self._run(
+            window,
+            recent_store,
+            populated_db,
+            SampleConfig(method=SamplingMethod.CLUSTER, size=25, seed=3, cluster_field="Konto"),
+        )
+        try:
+            samples_before = window.sidebar().samples_widget().count()
+            with patch(
+                "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
+            ) as warning:
+                controller.workspace.handle_new_sampling()
+            assert dialog.problem is not None
+            assert "25 Cluster" in dialog.problem
+            assert window.sidebar().samples_widget().count() == samples_before
+            warning.assert_not_called()
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_successful_check_is_reused_not_drawn_twice(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, populated_db: Path
+    ) -> None:
+        controller, _dialog = self._run(
+            window,
+            recent_store,
+            populated_db,
+            SampleConfig(method=SamplingMethod.CLUSTER, size=2, seed=3, cluster_field="Konto"),
+        )
+        try:
+            samples_before = window.sidebar().samples_widget().count()
+            real_draw = controller.workspace._draw_sample_result
+            with patch.object(
+                controller.workspace, "_draw_sample_result", side_effect=real_draw
+            ) as draw:
+                controller.workspace.handle_new_sampling()
+            assert draw.call_count == 1
+            assert window.sidebar().samples_widget().count() == samples_before + 1
+        finally:
+            controller.engagement.handle_close_engagement()
 
 
 class TestSamplingFlow:

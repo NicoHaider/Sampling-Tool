@@ -20,6 +20,7 @@ from typing import Any, Final
 
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -72,6 +73,10 @@ from sampling_tool.ui.settings_store import SamplingFeatures
 logger = logging.getLogger(__name__)
 
 NO_FILTER_LABEL: str = "(kein Filter)"
+
+# Sprint 85 / B: Cluster- und Schicht-Feld starten ohne Auswahl. Vorher stand
+# dort die erste Spalte (oft eine ID) – damit war jede Zeile ein eigener Cluster.
+COLUMN_PLACEHOLDER: Final[str] = "Spalte wählen …"
 
 # Erster, neutraler Dropdown-Eintrag (keine Vorlage). Steht auch dann zur
 # Verfügung, wenn keine Vorlagen gespeichert sind.
@@ -207,6 +212,14 @@ class SamplingDialog(QDialog):
         # wieder auf den Platzhalter. `_applying_preset` schützt die Auswahl
         # während des Anwendens (die Widget-Updates dürfen sie nicht löschen).
         self._applying_preset = False
+        # Sprint 85 / B: vom Controller nachgereicht (`set_validators`). Der
+        # Gruppen-Zähler liefert die Anzahl Cluster/Schichten einer Spalte mit
+        # derselben Schlüssel-Semantik wie der Sampler; die Probeziehung prüft
+        # beim OK exakt auf dem Zieh-Pfad und hält den Dialog bei einem Fehler
+        # offen. Beide optional – ohne sie prüft der Dialog nur, was er selbst weiß.
+        self._group_count_provider: Callable[[str], int] | None = None
+        self._group_count_cache: dict[str, int] = {}
+        self._draw_check: Callable[[SamplingDialogResult], str | None] | None = None
 
         self._build_ui()
         self._wire_signals()
@@ -242,6 +255,25 @@ class SamplingDialog(QDialog):
         """
         self._seed_spin.setValue(seed)
 
+    def set_validators(
+        self,
+        *,
+        group_count_provider: Callable[[str], int] | None = None,
+        draw_check: Callable[[SamplingDialogResult], str | None] | None = None,
+    ) -> None:
+        """Hängt die Prüfungen an, die Daten brauchen (Sprint 85 / B).
+
+        `group_count_provider(spalte)` → Anzahl verschiedener Werte, gezählt wie
+        der Sampler Cluster und Schichten bildet (leere Zellen bilden eine
+        eigene Gruppe). `draw_check(ergebnis)` zieht probeweise und liefert eine
+        Fehlermeldung oder `None`; der Controller verwendet eine gelungene
+        Probeziehung weiter, gezogen wird also nicht doppelt.
+        """
+        self._group_count_provider = group_count_provider
+        self._group_count_cache.clear()
+        self._draw_check = draw_check
+        self._update_size_hint()
+
     # ---- Presets (Sprint 23) -------------------------------------------
 
     def current_settings_as_preset(self, name: str) -> SamplingPreset:
@@ -263,11 +295,11 @@ class SamplingDialog(QDialog):
         skipped_filters: list[str] = []
         self._size_spin.setValue(preset.size)
         self._apply_preset_method(preset.method)
-        if self._show_cluster and preset.cluster_field and preset.cluster_field in self._columns:
-            self._cluster_field.setCurrentText(preset.cluster_field)
+        if self._show_cluster and preset.cluster_field:
+            _select_column(self._cluster_field, preset.cluster_field)
         if self._show_stratified:
-            if preset.stratum_field and preset.stratum_field in self._columns:
-                self._stratum_field.setCurrentText(preset.stratum_field)
+            if preset.stratum_field:
+                _select_column(self._stratum_field, preset.stratum_field)
             if preset.stratify_mode == StratifyMode.EQUAL:
                 self._radio_equal.setChecked(True)
             else:
@@ -363,6 +395,8 @@ class SamplingDialog(QDialog):
             f"color: {BDO_GREY}; font-size: {scaled_px(11, self._factor)}px;"
         )
         size_layout.addWidget(self._lbl_size_hint)
+        self._inline_errors: dict[str, QLabel] = {}
+        size_layout.addWidget(self._new_inline_error("size"))
         form.addRow("Stichprobengröße *", size_box)
 
         # Sprint 22: Filter, Cluster und Geschichtet werden je eigenem Toggle
@@ -391,20 +425,24 @@ class SamplingDialog(QDialog):
             filter_row.addWidget(self._filter_operator, stretch=0)
             filter_row.addWidget(self._filter_value_stack, stretch=3)
             filter_widget = QWidget()
-            filter_widget.setLayout(filter_row)
+            filter_column = QVBoxLayout(filter_widget)
+            filter_column.setContentsMargins(0, 0, 0, 0)
+            filter_column.setSpacing(2)
+            filter_column.addLayout(filter_row)
+            filter_column.addWidget(self._new_inline_error("filter"))
             form.addRow("Filter (optional)", filter_widget)
 
+        # Sprint 85 / B: Methodenfelder erscheinen nur bei ihrer Methode
+        # (`_on_method_changed` schaltet die Formularzeilen um).
         if self._show_cluster:
-            self._cluster_field = QComboBox()
-            self._cluster_field.addItems(self._columns)
-            self._cluster_field.setEnabled(False)
-            form.addRow("Cluster-Feld", self._cluster_field)
+            self._cluster_field = self._column_combo()
+            self._cluster_row = self._field_with_inline_error(self._cluster_field, "cluster")
+            form.addRow("Cluster-Feld", self._cluster_row)
 
         if self._show_stratified:
-            self._stratum_field = QComboBox()
-            self._stratum_field.addItems(self._columns)
-            self._stratum_field.setEnabled(False)
-            form.addRow("Schicht-Feld", self._stratum_field)
+            self._stratum_field = self._column_combo()
+            self._stratum_row = self._field_with_inline_error(self._stratum_field, "stratum")
+            form.addRow("Schicht-Feld", self._stratum_row)
 
             stratify_box = QWidget()
             stratify_layout = QHBoxLayout(stratify_box)
@@ -418,10 +456,10 @@ class SamplingDialog(QDialog):
             stratify_layout.addWidget(self._radio_proportional)
             stratify_layout.addWidget(self._radio_equal)
             stratify_layout.addStretch(1)
-            self._radio_proportional.setEnabled(False)
-            self._radio_equal.setEnabled(False)
+            self._stratify_row = stratify_box
             form.addRow("Schicht-Verteilung", stratify_box)
 
+        self._form = form
         outer.addLayout(form)
 
         # ---- Resample-Filter (in beiden Modi sichtbar) ----
@@ -507,6 +545,32 @@ class SamplingDialog(QDialog):
         dialog_layout.addWidget(scroll, stretch=1)
         dialog_layout.addLayout(footer)
 
+    def _column_combo(self) -> QComboBox:
+        """Spaltenauswahl mit neutralem Platzhalter; die Spalte steht als `userData`."""
+        combo = QComboBox()
+        combo.addItem(COLUMN_PLACEHOLDER)
+        for column in self._columns:
+            combo.addItem(column, userData=column)
+        return combo
+
+    def _new_inline_error(self, field: str) -> QLabel:
+        """Rote Meldungszeile unter einem Feld; unsichtbar, solange sie leer ist."""
+        label = QLabel("")
+        label.setStyleSheet(f"color: {WARNING_COLOR}; font-size: {scaled_px(11, self._factor)}px;")
+        label.setWordWrap(True)
+        label.setVisible(False)
+        self._inline_errors[field] = label
+        return label
+
+    def _field_with_inline_error(self, field_widget: QWidget, field: str) -> QWidget:
+        row = QWidget()
+        layout = QVBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(field_widget)
+        layout.addWidget(self._new_inline_error(field))
+        return row
+
     def _icon_ratio(self) -> float:
         """Device-Pixel-Ratio des Bildschirms, auf dem dieser Dialog liegt.
 
@@ -590,9 +654,11 @@ class SamplingDialog(QDialog):
             self._filter_value_text.editingFinished.connect(self._reset_combo_selection)
             self._filter_value_text.textChanged.connect(self._validate)
         if self._show_cluster:
-            self._cluster_field.currentTextChanged.connect(self._validate)
+            self._cluster_field.currentIndexChanged.connect(self._validate)
+            self._cluster_field.currentIndexChanged.connect(self._update_size_hint)
         if self._show_stratified:
-            self._stratum_field.currentTextChanged.connect(self._validate)
+            self._stratum_field.currentIndexChanged.connect(self._validate)
+            self._stratify_group.buttonToggled.connect(self._validate)
         self._buttons.accepted.connect(self.accept)
         self._buttons.rejected.connect(self.reject)
 
@@ -613,11 +679,11 @@ class SamplingDialog(QDialog):
         is_cluster = self._show_cluster and self._radio_cluster.isChecked()
         is_stratified = self._show_stratified and self._radio_stratified.isChecked()
         if self._show_cluster:
-            self._cluster_field.setEnabled(is_cluster)
+            self._form.setRowVisible(self._cluster_row, is_cluster)
         if self._show_stratified:
-            self._stratum_field.setEnabled(is_stratified)
-            self._radio_proportional.setEnabled(is_stratified)
-            self._radio_equal.setEnabled(is_stratified)
+            self._form.setRowVisible(self._stratum_row, is_stratified)
+            self._form.setRowVisible(self._stratify_row, is_stratified)
+        self._update_size_hint()
         self._validate()
 
     def _refresh_filter_values(self) -> None:
@@ -677,14 +743,9 @@ class SamplingDialog(QDialog):
         # Mutual Exclusion mit dem Resample-Filter (siehe `_on_resample_toggled`).
         if checked and self._resample_checkbox.isChecked():
             self._resample_checkbox.setChecked(False)
-        # Bewusst KEIN _update_size_hint(): eine exakte „Rest nach Ausschluss"-
-        # Obergrenze (v. a. mit aktivem Spaltenfilter) bräuchte einen dedizierten
-        # Count, den der Match-Count-Provider nicht liefert (sein restrict-auf-IDs
-        # schließt das Sample EIN, kann es nicht AUSschließen); die Filter+
-        # Nachstichprobe-Komposition ist laut Plan out-of-scope. Ein zu großer
-        # Ergänzungs-Zug wird beim Ziehen im Controller validiert (klare deutsche
-        # Fehlermeldung), also kein stiller Fehlschlag. Der Hint würde hier nur
-        # einen irreführenden Wert zeigen – deshalb nur validieren.
+        # Sprint 85 / B: der Hinweis zieht die aktive Stichprobe ab (vorher
+        # zeigte er die ganze Population, im Smoke-Test 500 statt 490).
+        self._update_size_hint()
         self._validate()
 
     def _filter_is_active(self) -> bool:
@@ -745,58 +806,101 @@ class SamplingDialog(QDialog):
         self._match_count_cache[key] = count
         return count
 
-    def _effective_max_sample_size(self) -> int:
-        """Aktuell zulässige Maximalgröße der Stichprobe.
+    def _available_rows(self) -> int:
+        """Datensätze, aus denen die Ziehung tatsächlich wählen kann (kann 0 sein).
 
-        Entscheidungstabelle (F = aktiver Filter mit Provider, R = Resampling):
-        F/R nein/nein → Datasetgröße; nein/ja → Größe des bestehenden Samples;
-        ja/nein → Provider(…, False); ja/ja → Provider(…, True). Der Provider
-        (Full-Table-Scan) wird nie mit `None` oder ohne brauchbaren Wert
-        aufgerufen.
+        F = aktiver Filter mit Provider, R = Einschränken, E = Ergänzen:
+        ohne F → Datasetgröße, Größe der aktiven Stichprobe (R) bzw. Datasetgröße
+        minus aktive Stichprobe (E); mit F → Treffer gesamt, Treffer in der
+        Stichprobe (R) bzw. Differenz der beiden (E). Der Provider (Full-Table-
+        Scan) wird nie ohne brauchbaren Wert aufgerufen und ist memoisiert.
         """
         restrict = self._resample_checkbox.isChecked()
+        supplement = self._supplement_checkbox.isChecked()
+        drawn = len(self._current_sample.selected_row_ids) if self._current_sample else 0
         provider = self._filter_match_count_provider
         if provider is not None and self._filter_is_active():
             field, operator, value = self._active_filter_query()
-            return max(self._match_count(provider, field, operator, value, restrict), 1)
+            hits = self._match_count(provider, field, operator, value, False)
+            if not (restrict or supplement) or self._current_sample is None:
+                return hits
+            hits_in_sample = self._match_count(provider, field, operator, value, True)
+            return hits_in_sample if restrict else hits - hits_in_sample
         if restrict and self._current_sample is not None:
-            return max(len(self._current_sample.selected_row_ids), 1)
-        return self._max_population
+            return drawn
+        if supplement:
+            return self._dataset.row_count - drawn
+        return self._dataset.row_count
+
+    def _effective_max_sample_size(self) -> int:
+        """Aktuell zulässige Maximalgröße der Stichprobe (mindestens 1, für den Hinweis)."""
+        return max(self._available_rows(), 1)
+
+    def _narrowing_note(self) -> str:
+        """Zusatz, wenn eine Gruppenzahl nur die ganze Population beschreibt."""
+        if self._filter_is_active():
+            return " (vor Filter)"
+        if self._resample_checkbox.isChecked() or self._supplement_checkbox.isChecked():
+            return " (vor Auswahl)"
+        return ""
+
+    def _group_count(self, column: str) -> int | None:
+        """Anzahl Gruppen einer Spalte über den Controller-Zähler (memoisiert)."""
+        if self._group_count_provider is None:
+            return None
+        cached = self._group_count_cache.get(column)
+        if cached is None:
+            # Ein Full-Table-Scan (~0,5 s bei 500.000 Zeilen, Sprint 85 gemessen),
+            # einmal je Spalte und Dialog.
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                cached = self._group_count_provider(column)
+            finally:
+                QApplication.restoreOverrideCursor()
+            self._group_count_cache[column] = cached
+        return cached
 
     def _update_size_hint(self) -> None:
         """Aktualisiert den Hint-Text unter dem Size-SpinBox."""
+        if self._selected_method() == SamplingMethod.CLUSTER:
+            column = _selected_column(self._cluster_field)
+            clusters = self._group_count(column) if column is not None else None
+            if clusters is not None:
+                self._lbl_size_hint.setText(
+                    f"max. {_format_int(clusters)} Cluster verfügbar{self._narrowing_note()}"
+                )
+                return
         max_n = self._effective_max_sample_size()
         self._lbl_size_hint.setText(f"max. {_format_int(max_n)} verfügbar")
 
     def accept(self) -> None:
-        """QDialog-Accept mit zusätzlicher Größen-Validierung."""
-        size = self._size_spin.value()
-        max_n = self._effective_max_sample_size()
-        if size < MIN_SAMPLE_SIZE:
-            QMessageBox.warning(
-                self,
-                "Ungültige Stichprobengröße",
-                f"Die Stichprobengröße muss mindestens {MIN_SAMPLE_SIZE} betragen.",
-            )
+        """Prüft alles vor dem Schließen; bei einem Fehler bleibt der Dialog offen.
+
+        Sprint 85 / B: Meldungen stehen unter dem betroffenen Feld, alle
+        Eingaben bleiben stehen. Was nur die Daten wissen, prüft zuletzt die
+        Probeziehung des Controllers (`set_validators`).
+        """
+        self._clear_messages()
+        errors = self._field_errors()
+        if errors:
+            for field, message in errors.items():
+                self._show_message(field, message)
             return
-        if size > max_n:
-            QMessageBox.warning(
-                self,
-                "Stichprobengröße zu groß",
-                f"Die gewählte Größe ({_format_int(size)}) übersteigt die "
-                f"verfügbare Datenmenge ({_format_int(max_n)}).\n\n"
-                f"Bitte wähle einen Wert zwischen 1 und {_format_int(max_n)}.",
-            )
-            return
-        other = self._validation_error()
-        if other is not None:
-            self._error_label.setText(other)
-            return
-        self._result = SamplingDialogResult(
+        result = SamplingDialogResult(
             config=self._build_config(),
             from_sample_only=self._resample_checkbox.isChecked(),
             exclude_sample_ids=self._supplement_checkbox.isChecked(),
         )
+        if self._draw_check is not None:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                problem = self._draw_check(result)
+            finally:
+                QApplication.restoreOverrideCursor()
+            if problem is not None:
+                self._show_message("size", problem)
+                return
+        self._result = result
         super().accept()
 
     # ---- Validierung ---------------------------------------------------
@@ -832,10 +936,10 @@ class SamplingDialog(QDialog):
             method=method,
             size=self._size_spin.value(),
             seed=self._seed_spin.value(),
-            cluster_field=self._cluster_field.currentText()
+            cluster_field=_selected_column(self._cluster_field)
             if method == SamplingMethod.CLUSTER
             else None,
-            stratum_field=self._stratum_field.currentText()
+            stratum_field=_selected_column(self._stratum_field)
             if method == SamplingMethod.STRATIFIED
             else None,
             stratify_mode=stratify_mode,
@@ -844,28 +948,102 @@ class SamplingDialog(QDialog):
             filter_operator=filter_operator,
         )
 
-    def _validation_error(self) -> str | None:
+    def _field_errors(self) -> dict[str, str]:
+        """Alle Fehler, die der Dialog selbst erkennen kann – je Feld eine Meldung.
+
+        Schlüssel: `general`, `size`, `filter`, `cluster`, `stratum`. Die
+        Reihenfolge der Prüfungen folgt dem Formular von oben nach unten.
+        """
         if not self._columns:
-            return "Das Dataset hat keine Spalten – Sampling nicht möglich."
+            return {"general": "Das Dataset hat keine Spalten – Sampling nicht möglich."}
+        errors: dict[str, str] = {}
         method = self._selected_method()
-        if method == SamplingMethod.CLUSTER and not self._cluster_field.currentText():
-            return "Cluster-Sampling benötigt ein Cluster-Feld."
-        if method == SamplingMethod.STRATIFIED and not self._stratum_field.currentText():
-            return "Geschichtete Stichprobe benötigt ein Schicht-Feld."
-        if self._show_filter and self._filter_field.currentText() != NO_FILTER_LABEL:
-            if self._filter_operator.currentData() in _ORDERING_OPERATORS:
-                if not self._filter_value_text.text().strip():
-                    return "Bitte einen Schwellenwert für den Vergleich eingeben."
-            elif self._filter_value.count() == 0:
-                return "Das Filterfeld enthält keine Werte – Filter entfernen."
+        cluster_column = (
+            _selected_column(self._cluster_field) if method == SamplingMethod.CLUSTER else None
+        )
+        stratum_column = (
+            _selected_column(self._stratum_field) if method == SamplingMethod.STRATIFIED else None
+        )
+        if method == SamplingMethod.CLUSTER and cluster_column is None:
+            errors["cluster"] = "Bitte ein Cluster-Feld wählen."
+        if method == SamplingMethod.STRATIFIED and stratum_column is None:
+            errors["stratum"] = "Bitte ein Schicht-Feld wählen."
+        filter_error = self._filter_error()
+        if filter_error is not None:
+            errors["filter"] = filter_error
+            return errors
+        size_error = self._size_error(cluster_column, stratum_column)
+        if size_error is not None:
+            errors["size"] = size_error
+        return errors
+
+    def _filter_error(self) -> str | None:
+        if not self._show_filter or self._filter_field.currentText() == NO_FILTER_LABEL:
+            return None
+        if self._filter_operator.currentData() in _ORDERING_OPERATORS:
+            if not self._filter_value_text.text().strip():
+                return "Bitte einen Schwellenwert für den Vergleich eingeben."
+        elif self._filter_value.count() == 0:
+            return "Das Filterfeld enthält keine Werte – Filter entfernen."
+        provider = self._filter_match_count_provider
+        if provider is not None and self._filter_is_active():
+            field, operator, value = self._active_filter_query()
+            if self._match_count(provider, field, operator, value, False) == 0:
+                return "Der Filter trifft keinen Datensatz – bitte Wert oder Feld ändern."
         return None
 
+    def _size_error(self, cluster_column: str | None, stratum_column: str | None) -> str | None:
+        size = self._size_spin.value()
+        if size < MIN_SAMPLE_SIZE:
+            return f"Die Stichprobengröße muss mindestens {MIN_SAMPLE_SIZE} betragen."
+        available = self._available_rows()
+        if available <= 0:
+            return "Es sind keine ungezogenen Datensätze mehr übrig."
+        if size > available:
+            return (
+                f"Die Größe ({_format_int(size)}) übersteigt die verfügbaren Datensätze "
+                f"({_format_int(available)})."
+            )
+        # Gruppenzahlen gelten für die ganze Population; mit Filter oder Auswahl
+        # entscheidet erst die Probeziehung (exakt auf dem Zieh-Pfad).
+        if self._narrowing_note():
+            return None
+        clusters = self._group_count(cluster_column) if cluster_column is not None else None
+        if clusters is not None and size > clusters:
+            return (
+                f"Es gibt nur {_format_int(clusters)} Cluster in „{cluster_column}“ – "
+                f"bitte höchstens {_format_int(clusters)} wählen."
+            )
+        strata = self._group_count(stratum_column) if stratum_column is not None else None
+        if strata is not None and size < strata:
+            return (
+                f"„{stratum_column}“ hat {_format_int(strata)} Schichten; aus jeder wird "
+                f"mindestens ein Datensatz gezogen – bitte mindestens {_format_int(strata)} "
+                "wählen."
+            )
+        return None
+
+    def _show_message(self, field: str, message: str) -> None:
+        label = self._inline_errors.get(field)
+        if label is None:
+            self._error_label.setText(message)
+            return
+        label.setText(message)
+        label.setVisible(True)
+
+    def _clear_messages(self) -> None:
+        self._error_label.setText("")
+        for label in self._inline_errors.values():
+            label.setText("")
+            label.setVisible(False)
+
     def _validate(self) -> None:
-        message = self._validation_error()
-        self._error_label.setText(message or "")
-        ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
-        if ok_btn is not None:
-            ok_btn.setEnabled(message is None)
+        """Jede Eingabeänderung räumt alte Meldungen weg; geprüft wird beim OK.
+
+        Sprint 85 / B: OK bleibt immer aktiv – ein gesperrter Knopf ohne
+        Erklärung ließ Anwender raten, was fehlt.
+        """
+        self._clear_messages()
 
     # ---- Preset-Anwendung (intern) -------------------------------------
 
@@ -1003,6 +1181,19 @@ class SamplingDialog(QDialog):
 # ---------------------------------------------------------------------------
 # Hilfen
 # ---------------------------------------------------------------------------
+
+
+def _selected_column(combo: QComboBox) -> str | None:
+    """Gewählte Spalte einer `_column_combo` – `None` beim Platzhalter."""
+    column = combo.currentData()
+    return column if isinstance(column, str) else None
+
+
+def _select_column(combo: QComboBox, column: str) -> None:
+    """Wählt `column`, falls die Population sie hat; sonst bleibt die Auswahl."""
+    index = combo.findData(column)
+    if index >= 0:
+        combo.setCurrentIndex(index)
 
 
 def _display(value: Any) -> str:

@@ -63,7 +63,8 @@ from sampling_tool.ui.controllers.workspace_session import WorkspaceSession
 from sampling_tool.ui.dataset_id_store import DatasetIdColumnStore
 from sampling_tool.ui.dialogs.import_options_dialog import ImportOptionsResult
 from sampling_tool.ui.dialogs.progress_dialog import TaskProgressDialog
-from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialog, SamplingDialogResult
+from sampling_tool.ui.settings_store import SamplingFeatures
 from sampling_tool.ui.workers.tasks import ExcelImportTask, ExcelImportTaskResult
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,20 @@ def _count_filter_matches(
         return sum(1 for _, v in pairs if matches_filter(v, operator, value))
     rows_iter = repo.iter_rows(dataset_id)
     return sum(1 for r in rows_iter if matches_filter(r.get(column), operator, value))
+
+
+def _count_groups(repo: DatasetRepo, dataset_id: int, column: str) -> int:
+    """Anzahl Cluster bzw. Schichten einer Spalte – so gezählt wie der Sampler.
+
+    Der Sampler bildet Gruppen über `dict`-Schlüssel des Zellwerts; leere
+    Zellen (auch fehlende Schlüssel) bilden eine eigene Gruppe. Ein `set` über
+    dieselben Werte hat dieselbe Gleichheits-Semantik – anders als
+    `distinct_values`, das leere Werte auslässt und über `repr` dedupliziert.
+    Dieselben Lesepfade wie `_count_filter_matches` (Pairs, sonst iter_rows).
+    """
+    if DatasetRepo.supports_field_pairs(column):
+        return len({value for _, value in repo.iter_row_field_pairs(dataset_id, column)})
+    return len({row.get(column) for row in repo.iter_rows(dataset_id)})
 
 
 class WorkspaceController:
@@ -370,17 +385,22 @@ class WorkspaceController:
         resolved_seed = self._resolve_initial_seed(dataset_id)
         if resolved_seed is not None:
             dialog.set_initial_seed(resolved_seed)
+
+        checked = self._attach_dialog_validators(dialog, repo, s.dataset, features)
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         result = dialog.get_result()
         if result is None:
             return
 
-        try:
-            sample_result = self._draw_sample_result(repo, s.dataset, result)
-        except SamplingError as exc:
-            s.error(f"Stichprobe konnte nicht gezogen werden: {exc}")
-            return
+        sample_result = checked[0][1] if checked and checked[0][0] is result else None
+        if sample_result is None:
+            # Letzte Verteidigung: ein Dialog ohne Probeziehung zieht hier wie bisher.
+            try:
+                sample_result = self._draw_sample_result(repo, s.dataset, result)
+            except SamplingError as exc:
+                s.error(f"Stichprobe konnte nicht gezogen werden: {exc}")
+                return
 
         # Sprint 36 / WP-B: eine Nachstichprobe zieht aus derselben Eltern-
         # Stichproben-Lineage wie das Sub-Sampling (from_sample_only).
@@ -595,6 +615,42 @@ class WorkspaceController:
             )
             return None
         return seed
+
+    def _attach_dialog_validators(
+        self,
+        dialog: SamplingDialog,
+        repo: DatasetRepo,
+        dataset: Dataset,
+        features: SamplingFeatures,
+    ) -> list[tuple[SamplingDialogResult, SampleResult]]:
+        """Gibt dem Dialog Gruppen-Zähler und Probeziehung mit (Sprint 85 / B).
+
+        Die Probeziehung läuft auf genau dem Pfad, der danach zieht. Scheitert
+        sie, bleibt der Dialog mit allen Eingaben offen; gelingt sie, steht
+        `[geprüftes SamplingDialogResult, SampleResult]` in der zurückgegebenen
+        Liste. Der Aufrufer verwendet das Ergebnis nur, wenn `get_result()`
+        genau dieses Objekt ist (kein zweiter Zug; gleicher Seed und gleiche
+        Daten ergäben ohnehin dasselbe).
+        """
+        assert dataset.id is not None
+        dataset_id = dataset.id
+        checked: list[tuple[SamplingDialogResult, SampleResult]] = []
+
+        def draw_check(candidate: SamplingDialogResult) -> str | None:
+            try:
+                drawn = self._draw_sample_result(repo, dataset, candidate)
+            except SamplingError as exc:
+                return str(exc)
+            checked[:] = [(candidate, drawn)]
+            return None
+
+        group_count_provider: Callable[[str], int] | None = (
+            (lambda column: _count_groups(repo, dataset_id, column))
+            if features.show_cluster or features.show_stratified
+            else None
+        )
+        dialog.set_validators(group_count_provider=group_count_provider, draw_check=draw_check)
+        return checked
 
     def _make_match_count_provider(
         self, repo: DatasetRepo, dataset_id: int

@@ -25,6 +25,7 @@ from sampling_tool.ui.dialogs.sampling_dialog import (
     _HINT_ICON_PX,
     _SEED_HINT,
     _SEED_TOOLTIP,
+    COLUMN_PLACEHOLDER,
     NO_FILTER_LABEL,
     SamplingDialog,
     _parse_filter_threshold,
@@ -73,23 +74,24 @@ class TestSamplingDialog:
         dialog = SamplingDialog(*_make_dataset(), features=_ALL)
         qtbot.addWidget(dialog)
         assert dialog._radio_simple.isChecked()
-        assert dialog._cluster_field.isEnabled() is False
-        assert dialog._stratum_field.isEnabled() is False
+        # Sprint 85 / B: Methodenfelder sind ausgeblendet statt ausgegraut.
+        assert not dialog._cluster_field.isVisibleTo(dialog)
+        assert not dialog._stratum_field.isVisibleTo(dialog)
 
     def test_switching_to_cluster_enables_cluster_field(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(*_make_dataset(), features=_ALL)
         qtbot.addWidget(dialog)
         dialog._radio_cluster.setChecked(True)
-        assert dialog._cluster_field.isEnabled() is True
-        assert dialog._stratum_field.isEnabled() is False
+        assert dialog._cluster_field.isVisibleTo(dialog)
+        assert not dialog._stratum_field.isVisibleTo(dialog)
 
     def test_switching_to_stratified_enables_stratum_and_mode(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(*_make_dataset(), features=_ALL)
         qtbot.addWidget(dialog)
         dialog._radio_stratified.setChecked(True)
-        assert dialog._stratum_field.isEnabled() is True
-        assert dialog._radio_proportional.isEnabled() is True
-        assert dialog._radio_equal.isEnabled() is True
+        assert dialog._stratum_field.isVisibleTo(dialog)
+        assert dialog._radio_proportional.isVisibleTo(dialog)
+        assert dialog._radio_equal.isVisibleTo(dialog)
 
     def test_filter_field_change_populates_values(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(*_make_dataset(), features=_ALL)
@@ -107,11 +109,15 @@ class TestSamplingDialog:
         dialog._filter_field.setCurrentText(NO_FILTER_LABEL)
         assert dialog._filter_value.isEnabled() is False
 
-    def test_validation_blocks_cluster_without_field(self, qtbot: QtBot) -> None:
+    def test_validation_blocks_dataset_without_columns(self, qtbot: QtBot) -> None:
         ds = Dataset(name="leer", columns=())
         dialog = SamplingDialog(ds, features=_ALL)
         qtbot.addWidget(dialog)
-        assert _ok_enabled(dialog) is False
+        # Sprint 85 / B: OK bleibt aktiv, der Klick erklärt und schließt nicht.
+        assert _ok_enabled(dialog) is True
+        dialog.accept()
+        assert dialog.get_result() is None
+        assert "keine Spalten" in dialog._error_label.text()
 
     def test_simple_get_result_returns_correct_config(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(*_make_dataset(), features=_ALL)
@@ -320,46 +326,22 @@ class TestSamplingDialogSizeHint:
         dialog._resample_checkbox.setChecked(False)
         assert "12" in dialog._lbl_size_hint.text()
 
-    def test_size_zu_gross_zeigt_messagebox(
-        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        warnings: list[tuple[str, str]] = []
-
-        def fake_warning(*args: object, **_kwargs: object) -> int:
-            # args: (parent, title, text, ...)
-            warnings.append((str(args[1]), str(args[2])))
-            return 0
-
-        from PyQt6.QtWidgets import QMessageBox
-
-        monkeypatch.setattr(QMessageBox, "warning", fake_warning)
-
+    def test_size_zu_gross_zeigt_inline_meldung(self, qtbot: QtBot) -> None:
+        """Sprint 85 / B: Meldung unter dem Feld statt Modal; der Dialog bleibt offen."""
         dialog = SamplingDialog(*_make_dataset(), features=_NONE)
         qtbot.addWidget(dialog)
         # Dataset hat 12 Zeilen; 1000 muss fehlschlagen.
         dialog._size_spin.setValue(1000)
         dialog.accept()
 
-        assert len(warnings) == 1
-        title, text = warnings[0]
-        assert "groß" in title.lower() or "groß" in text.lower()
-        # Dialog wurde nicht akzeptiert.
+        message = dialog._inline_errors["size"].text()
+        assert "übersteigt" in message
+        assert "12" in message
         assert dialog.result() != int(dialog.DialogCode.Accepted)
         assert dialog.get_result() is None
+        assert dialog._size_spin.value() == 1000
 
-    def test_size_unter_minimum_zeigt_messagebox(
-        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        warnings: list[tuple[str, str]] = []
-
-        def fake_warning(*args: object, **_kwargs: object) -> int:
-            warnings.append((str(args[1]), str(args[2])))
-            return 0
-
-        from PyQt6.QtWidgets import QMessageBox
-
-        monkeypatch.setattr(QMessageBox, "warning", fake_warning)
-
+    def test_size_unter_minimum_zeigt_inline_meldung(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(*_make_dataset(), features=_NONE)
         qtbot.addWidget(dialog)
         # MIN_SAMPLE_SIZE ist 1; setRange erlaubt eigentlich kein 0 –
@@ -369,7 +351,7 @@ class TestSamplingDialogSizeHint:
         dialog._size_spin.setValue(0)
         dialog.accept()
 
-        assert len(warnings) == 1
+        assert "mindestens" in dialog._inline_errors["size"].text()
         assert dialog.result() != int(dialog.DialogCode.Accepted)
 
     def test_size_spin_hat_kein_hartes_cap(self, qtbot: QtBot) -> None:
@@ -808,10 +790,14 @@ class TestFilterOperatorUI:
         qtbot.addWidget(dialog)
         dialog._filter_field.setCurrentText("Betrag")
         _select_operator(dialog, FilterOperator.GT)
-        # Leerer Schwellenwert → OK gesperrt.
-        assert _ok_enabled(dialog) is False
+        # Leerer Schwellenwert → OK erklärt unter dem Filter und schließt nicht.
+        dialog.accept()
+        assert dialog.get_result() is None
+        assert "Schwellenwert" in dialog._inline_errors["filter"].text()
         dialog._filter_value_text.setText("500")
-        assert _ok_enabled(dialog) is True
+        dialog._size_spin.setValue(1)
+        dialog.accept()
+        assert dialog.get_result() is not None
 
     def test_apply_preset_ordering_operator(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(*_make_dataset(), features=_FILTER)
@@ -1115,3 +1101,256 @@ class TestUiScale:
         dialog = SamplingDialog(*_make_dataset(), features=_ALL, ui_scale_factor=1.15)
         qtbot.addWidget(dialog)
         assert "font-size: 13px" in dialog._lbl_size_hint.styleSheet()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 85 / B: der Dialog prüft vor dem Schließen und verwirft keine Eingaben
+# ---------------------------------------------------------------------------
+
+
+def _kostenstellen_dataset() -> tuple[Dataset, Callable[[str], list[Any]]]:
+    """500 Buchungen, 10 Kostenstellen – wie „06 (Buchungen)" im Smoke-Projekt."""
+    distinct: dict[str, list[Any]] = {
+        "BuchungsID": [f"B{i:04d}" for i in range(1, 501)],
+        "Kostenstelle": [f"KST{i:02d}" for i in range(1, 11)],
+    }
+    dataset = Dataset(name="06", columns=("BuchungsID", "Kostenstelle"), row_count=500)
+    return dataset, lambda field: distinct.get(field, [])
+
+
+_GROUP_COUNTS = {"BuchungsID": 500, "Kostenstelle": 10, "Land": 3, "Konto": 12, "Betrag": 12}
+
+
+def _cluster_dialog(qtbot: QtBot, **kwargs: Any) -> SamplingDialog:
+    dialog = SamplingDialog(*_kostenstellen_dataset(), features=_ALL, **kwargs)
+    qtbot.addWidget(dialog)
+    dialog.set_validators(group_count_provider=_GROUP_COUNTS.__getitem__)
+    return dialog
+
+
+def _inline(dialog: SamplingDialog, field: str) -> QLabel:
+    label = dialog._inline_errors[field]
+    return label
+
+
+class TestValidationKeepsInput:
+    def test_too_many_clusters_keeps_dialog_and_input(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot)
+        dialog._radio_cluster.setChecked(True)
+        dialog._cluster_field.setCurrentText("Kostenstelle")
+        dialog._size_spin.setValue(25)
+
+        dialog.accept()
+
+        assert dialog.get_result() is None
+        assert dialog.result() != int(dialog.DialogCode.Accepted)
+        assert dialog._radio_cluster.isChecked()
+        assert dialog._cluster_field.currentText() == "Kostenstelle"
+        assert dialog._size_spin.value() == 25
+        message = _inline(dialog, "size")
+        assert message.isVisibleTo(dialog)
+        assert "10" in message.text()
+        assert "Cluster" in message.text()
+
+    def test_cluster_without_field_shows_message_under_field(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot)
+        dialog._radio_cluster.setChecked(True)
+        dialog._size_spin.setValue(2)
+
+        dialog.accept()
+
+        assert dialog.get_result() is None
+        assert _inline(dialog, "cluster").isVisibleTo(dialog)
+        assert "Cluster-Feld" in _inline(dialog, "cluster").text()
+
+    def test_ok_stays_enabled_for_invalid_input(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot)
+        dialog._radio_cluster.setChecked(True)
+        assert _ok_enabled(dialog) is True
+
+    def test_size_above_available_is_inline_not_modal(
+        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+
+        modal: list[object] = []
+        monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: modal.append(a))
+        dialog = _cluster_dialog(qtbot)
+        dialog._size_spin.setValue(900)
+
+        dialog.accept()
+
+        assert modal == []
+        assert dialog.get_result() is None
+        assert "500" in _inline(dialog, "size").text()
+
+    def test_filter_without_hits_is_reported_under_filter(self, qtbot: QtBot) -> None:
+        dialog = SamplingDialog(
+            *_make_dataset(), features=_ALL, filter_match_count_provider=lambda *_a: 0
+        )
+        qtbot.addWidget(dialog)
+        dialog._filter_field.setCurrentText("Land")
+        dialog._size_spin.setValue(1)
+
+        dialog.accept()
+
+        assert dialog.get_result() is None
+        assert "keinen Datensatz" in _inline(dialog, "filter").text()
+
+    def test_message_clears_when_input_changes(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot)
+        dialog._radio_cluster.setChecked(True)
+        dialog._cluster_field.setCurrentText("Kostenstelle")
+        dialog._size_spin.setValue(25)
+        dialog.accept()
+        assert _inline(dialog, "size").text()
+
+        dialog._size_spin.setValue(2)
+
+        assert _inline(dialog, "size").text() == ""
+
+    def test_draw_check_failure_keeps_dialog_open(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot)
+        dialog.set_validators(
+            group_count_provider=_GROUP_COUNTS.__getitem__,
+            draw_check=lambda _result: "Schicht 'A' hat nur 1 Elemente.",
+        )
+        dialog._size_spin.setValue(5)
+
+        dialog.accept()
+
+        assert dialog.get_result() is None
+        assert "Schicht 'A'" in _inline(dialog, "size").text()
+
+    def test_draw_check_sees_the_returned_result(self, qtbot: QtBot) -> None:
+        checked: list[object] = []
+
+        def check(result: object) -> None:
+            checked.append(result)
+
+        dialog = _cluster_dialog(qtbot)
+        dialog.set_validators(group_count_provider=_GROUP_COUNTS.__getitem__, draw_check=check)
+        dialog._size_spin.setValue(5)
+
+        dialog.accept()
+
+        assert dialog.get_result() is not None
+        assert checked == [dialog.get_result()]
+
+
+class TestAvailabilityHint:
+    @pytest.mark.parametrize(
+        ("case", "expected"),
+        [
+            ("einfach", "max. 500 verfügbar"),
+            ("cluster", "max. 10 Cluster verfügbar"),
+            ("ergaenzen", "max. 490 verfügbar"),
+            ("einschraenken", "max. 10 verfügbar"),
+        ],
+    )
+    def test_hint_matches_situation(self, qtbot: QtBot, case: str, expected: str) -> None:
+        dialog = _cluster_dialog(
+            qtbot,
+            current_sample=SampleResult(
+                config=SampleConfig(method=SamplingMethod.SIMPLE, size=10, seed=1),
+                selected_row_ids=tuple(range(1, 11)),
+                population_size=500,
+                id=1,
+            ),
+        )
+        if case == "cluster":
+            dialog._radio_cluster.setChecked(True)
+            dialog._cluster_field.setCurrentText("Kostenstelle")
+        elif case == "ergaenzen":
+            dialog._supplement_checkbox.setChecked(True)
+        elif case == "einschraenken":
+            dialog._resample_checkbox.setChecked(True)
+        assert dialog._lbl_size_hint.text() == expected
+
+    def test_supplement_with_filter_subtracts_sample_hits(self, qtbot: QtBot) -> None:
+        def count(_f: str, _op: FilterOperator, _v: Any, restrict: bool) -> int:
+            return 4 if restrict else 30
+
+        dialog = SamplingDialog(
+            *_kostenstellen_dataset(),
+            features=_ALL,
+            filter_match_count_provider=count,
+            current_sample=_make_sample((1, 2, 3, 4, 5, 6)),
+        )
+        qtbot.addWidget(dialog)
+        dialog._filter_field.setCurrentText("Kostenstelle")
+        dialog._supplement_checkbox.setChecked(True)
+        assert dialog._lbl_size_hint.text() == "max. 26 verfügbar"
+
+    def test_cluster_hint_with_filter_says_before_filter(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot, filter_match_count_provider=lambda *_a: 30)
+        dialog._radio_cluster.setChecked(True)
+        dialog._cluster_field.setCurrentText("Kostenstelle")
+        dialog._filter_field.setCurrentText("Kostenstelle")
+        assert dialog._lbl_size_hint.text() == "max. 10 Cluster verfügbar (vor Filter)"
+
+
+class TestMethodFieldsVisibility:
+    def test_fields_follow_method(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot)
+        dialog.show()
+        cluster = dialog._cluster_field
+        stratum = dialog._stratum_field
+        distribution = dialog._radio_proportional
+
+        assert not cluster.isVisibleTo(dialog)
+        assert not stratum.isVisibleTo(dialog)
+        assert not distribution.isVisibleTo(dialog)
+
+        dialog._radio_cluster.setChecked(True)
+        assert cluster.isVisibleTo(dialog)
+        assert not stratum.isVisibleTo(dialog)
+
+        dialog._radio_stratified.setChecked(True)
+        assert not cluster.isVisibleTo(dialog)
+        assert stratum.isVisibleTo(dialog)
+        assert distribution.isVisibleTo(dialog)
+
+
+class TestNoClusterDefault:
+    def test_fields_start_without_selection(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot)
+        assert dialog._cluster_field.currentData() is None
+        assert dialog._cluster_field.currentText() == COLUMN_PLACEHOLDER
+        assert dialog._stratum_field.currentData() is None
+
+    def test_stratified_without_field_is_rejected(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot)
+        dialog._radio_stratified.setChecked(True)
+        dialog._size_spin.setValue(20)
+        dialog.accept()
+        assert dialog.get_result() is None
+        assert "Schicht-Feld" in _inline(dialog, "stratum").text()
+
+    def test_fewer_draws_than_strata_is_rejected(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot)
+        dialog._radio_stratified.setChecked(True)
+        dialog._stratum_field.setCurrentText("Kostenstelle")
+        dialog._size_spin.setValue(5)
+        dialog.accept()
+        assert dialog.get_result() is None
+        assert "10" in _inline(dialog, "size").text()
+
+
+class TestPresetFillsClusterField:
+    def test_preset_selects_cluster_field(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot)
+        dialog.apply_preset(
+            SamplingPreset(
+                name="KST",
+                method=SamplingMethod.CLUSTER,
+                size=2,
+                cluster_field="Kostenstelle",
+            )
+        )
+        assert dialog._radio_cluster.isChecked()
+        assert dialog._cluster_field.currentData() == "Kostenstelle"
+        dialog.accept()
+        result = dialog.get_result()
+        assert result is not None
+        assert result.config.cluster_field == "Kostenstelle"
