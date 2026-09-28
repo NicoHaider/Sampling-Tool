@@ -8,7 +8,8 @@ Pflichtfelder gemäß altem VBA-Sheet „Eingabe KDaten":
 
 Validierung: OK-Button bleibt deaktiviert, solange ein Feld leer ist.
 Der Save-Pfad wird im Anschluss über einen `QFileDialog` ausgewählt – die
-Dialog-Instanz hält ihn nach `exec()` in `_db_path`.
+Dialog-Instanz hält ihn nach `exec()` in `_db_path`. Existiert das
+vorgeschlagene Projekt schon, entfällt der `QFileDialog` (Sprint 90).
 """
 
 from __future__ import annotations
@@ -58,6 +59,7 @@ class NewEngagementDialog(QDialog):
         self.setMinimumWidth(440)
 
         self._db_path: Path | None = None
+        self._renaming = initial_engagement is not None
         self._engagements_dir = engagements_dir if engagements_dir is not None else ENGAGEMENTS_DIR
 
         # ---- Felder ----
@@ -210,9 +212,16 @@ class NewEngagementDialog(QDialog):
             )
             return
         default_target = default_dir / self._default_target_name(sanitized)
-        # Sprint 89 / E2: keine System-Rückfrage „Ersetzen?" – bei einem
-        # vorhandenen Projekt fragt die App selbst (`DuplicateEngagementDialog`:
-        # öffnen, anderer Name, überschreiben mit Sicherung).
+        # Sprint 90 / A: der native macOS-Speicherdialog ignoriert
+        # `DontConfirmOverwrite` und fragt „Ersetzen?" vor der App-Rückfrage
+        # (`DuplicateEngagementDialog`). Existiert das Projekt schon, entfällt
+        # der Speicherdialog deshalb. Nicht im Anderer-Name-Flow
+        # (`initial_engagement`), sonst käme dieselbe Rückfrage im Kreis.
+        if default_target.exists() and not self._renaming:
+            self._db_path = default_target
+            self.accept()
+            return
+        # Sprint 89 / E2: wirkt unter Windows/Linux.
         path_str, _filter = QFileDialog.getSaveFileName(
             self,
             "Projekt speichern",

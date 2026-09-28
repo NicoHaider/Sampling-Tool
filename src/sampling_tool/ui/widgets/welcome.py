@@ -23,14 +23,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import (
-    BDO_DARK_GREY,
-    BDO_GREY,
-    ENGAGEMENTS_DIR,
-    LEGACY_ENGAGEMENTS_DIR,
-)
+from sampling_tool.config import BDO_DARK_GREY, BDO_GREY
 from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui.recent import RecentEntry
+from sampling_tool.ui.settings_store import open_dialog_start_dir
 
 _OUTER_MARGIN: Final[int] = 40
 
@@ -204,14 +200,10 @@ class WelcomeScreen(QWidget):
     # ---- Slots ---------------------------------------------------------
 
     def _on_open_clicked(self) -> None:
-        # Sprint 89 / G1: Bestandsnutzer haben ihre Projekte noch im alten Ordner.
-        start_dir = next(
-            (str(d) for d in (ENGAGEMENTS_DIR, LEGACY_ENGAGEMENTS_DIR) if d.exists()), ""
-        )
         path_str, _filter = QFileDialog.getOpenFileName(
             self,
             "Projekt öffnen",
-            start_dir,
+            open_dialog_start_dir(),
             "SQLite-Projekt (*.db);;Alle Dateien (*)",
         )
         if path_str:

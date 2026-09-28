@@ -1156,3 +1156,31 @@ class TestOneUnselectAction:
         qtbot.addWidget(win)
         assert win._action_reset_sample.text() == "Auswahl aufheben"
         assert win._action_reset_sample.toolTip() == "Auswahl aufheben"
+
+
+class TestOpenDialogStartsInProjectsFolder:
+    """Sprint 90 / B: Menü „Projekt öffnen" startet im eingestellten Projektordner
+    – wie der Startbildschirm, über dieselbe Hilfsfunktion."""
+
+    def test_menu_open_dialog_uses_configured_folder(
+        self, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dataclasses import replace
+
+        from sampling_tool.ui.settings_store import load_settings, save_settings
+
+        folder = tmp_path / "meine-projekte"
+        folder.mkdir()
+        save_settings(replace(load_settings(), engagements_dir=folder))
+        captured: list[str] = []
+
+        def _fake_open(_parent: object, _caption: str, directory: str, _f: str) -> tuple[str, str]:
+            captured.append(directory)
+            return ("", "")
+
+        monkeypatch.setattr("sampling_tool.ui.main_window.QFileDialog.getOpenFileName", _fake_open)
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win._on_open_clicked()
+
+        assert captured == [str(folder)]

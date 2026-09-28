@@ -583,6 +583,46 @@ class TestMainController:
         finally:
             controller.engagement.handle_close_engagement()
 
+    def test_existing_project_goes_straight_to_app_prompt(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        tmp_path: Path,
+    ) -> None:
+        """Sprint 90 / A: vorhandenes Projekt → nur die App-Rückfrage, kein
+        Speicherdialog (dessen macOS-„Ersetzen?" wäre die zweite Rückfrage)."""
+
+        class _FilledDialog(NewEngagementDialog):
+            def exec(self) -> int:
+                self._auditor_position.setText("Senior")
+                self._client_name.setText("ACME")
+                self._on_accept()
+                return self.result()
+
+        probe = _FilledDialog(window, engagements_dir=tmp_path)
+        existing = tmp_path / "ACME" / probe._default_target_name("ACME")
+        existing.parent.mkdir()
+        existing.touch()
+        duplicate_calls: list[Path] = []
+
+        def _no_save_dialog(*_a: object, **_k: object) -> tuple[str, str]:
+            raise AssertionError("Speicherdialog darf nicht erscheinen")
+
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            dialog_factory=lambda parent, _s, _p: _FilledDialog(parent, engagements_dir=tmp_path),
+            duplicate_dialog_factory=lambda parent, db_path: _record_duplicate(
+                duplicate_calls, parent, db_path, DuplicateEngagementChoice.CANCEL
+            ),
+        )
+        with patch(
+            "sampling_tool.ui.dialogs.new_engagement_dialog.QFileDialog.getSaveFileName",
+            side_effect=_no_save_dialog,
+        ):
+            controller.engagement.handle_new_engagement()
+        assert duplicate_calls == [existing]
+
     def test_new_engagement_with_duplicate_cancel_aborts(
         self,
         window: MainWindow,
