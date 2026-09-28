@@ -30,7 +30,6 @@ from PyQt6.QtWidgets import (
 from sampling_tool.config import (
     APP_NAME,
     BDO_LIGHT_GREY,
-    ENGAGEMENTS_DIR,
     METHOD_LABELS,
 )
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
@@ -47,7 +46,7 @@ from sampling_tool.ui._window_menu import (
 from sampling_tool.ui._window_state import WindowStateController
 from sampling_tool.ui._window_toolbar import _TOOLBAR_ICON_SIZE, build_toolbar
 from sampling_tool.ui.recent import RecentEntry
-from sampling_tool.ui.settings_store import open_qsettings
+from sampling_tool.ui.settings_store import open_dialog_start_dir, open_qsettings
 from sampling_tool.ui.widgets.audit_trail_view import AuditTrailView
 from sampling_tool.ui.widgets.dashboard_view import DashboardView
 from sampling_tool.ui.widgets.data_table import _DEFAULT_ROW_HEIGHT, DataTableView
@@ -564,11 +563,10 @@ class MainWindow(QMainWindow):
     # ---- Slots ---------------------------------------------------------
 
     def _on_open_clicked(self) -> None:
-        start_dir = str(ENGAGEMENTS_DIR) if ENGAGEMENTS_DIR.exists() else ""
         path_str, _filter = QFileDialog.getOpenFileName(
             self,
             "Projekt öffnen",
-            start_dir,
+            open_dialog_start_dir(),
             "SQLite-Projekt (*.db);;Alle Dateien (*)",
         )
         if path_str:

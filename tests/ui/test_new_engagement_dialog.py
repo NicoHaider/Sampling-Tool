@@ -183,3 +183,66 @@ class TestNoSecondOverwritePrompt:
         options = save.call_args.kwargs.get("options")
         assert options is not None
         assert options & QFileDialog.Option.DontConfirmOverwrite
+
+
+def _fill(dialog: NewEngagementDialog, client: str = "ACME") -> None:
+    dialog._auditor_name.setText("Anna")
+    dialog._auditor_position.setText("Senior")
+    dialog._client_name.setText(client)
+
+
+def _save_dialog_must_not_open(*_args: object, **_kwargs: object) -> tuple[str, str]:
+    raise AssertionError("Speicherdialog darf bei vorhandenem Projekt nicht erscheinen")
+
+
+class TestExistingTargetSkipsSaveDialog:
+    """Sprint 90 / A: macOS' Speicherdialog ignoriert `DontConfirmOverwrite` und
+    fragt „Ersetzen?" immer. Existiert die vorgeschlagene Datei schon, geht es
+    deshalb ohne Speicherdialog direkt zur App-Rückfrage „Projekt existiert bereits"."""
+
+    def test_existing_default_target_accepts_without_save_dialog(
+        self, qtbot: QtBot, tmp_path: Path
+    ) -> None:
+        dialog = NewEngagementDialog(engagements_dir=tmp_path)
+        qtbot.addWidget(dialog)
+        _fill(dialog)
+        existing = tmp_path / "ACME" / dialog._default_target_name("ACME")
+        existing.parent.mkdir()
+        existing.touch()
+
+        with patch(
+            "sampling_tool.ui.dialogs.new_engagement_dialog.QFileDialog.getSaveFileName",
+            side_effect=_save_dialog_must_not_open,
+        ):
+            dialog._on_accept()
+
+        assert dialog.result() == int(NewEngagementDialog.DialogCode.Accepted)
+        assert dialog.get_db_path() == existing
+
+    def test_rename_flow_opens_save_dialog_despite_existing_target(
+        self, qtbot: QtBot, tmp_path: Path
+    ) -> None:
+        """„Anderen Namen wählen" führt in den Speicherdialog, sonst drehte sich
+        die Rückfrage im Kreis."""
+        from sampling_tool.core.models import Engagement
+
+        prefill = Engagement(
+            auditor_name="Anna",
+            auditor_position="Senior",
+            client_name="ACME",
+            audit_type="IDW PS 951",
+        )
+        dialog = NewEngagementDialog(engagements_dir=tmp_path, initial_engagement=prefill)
+        qtbot.addWidget(dialog)
+        existing = tmp_path / "ACME" / dialog._default_target_name("ACME")
+        existing.parent.mkdir()
+        existing.touch()
+
+        with patch(
+            "sampling_tool.ui.dialogs.new_engagement_dialog.QFileDialog.getSaveFileName",
+            return_value=("", ""),
+        ) as save:
+            dialog._on_accept()
+
+        save.assert_called_once()
+        assert dialog.result() != int(NewEngagementDialog.DialogCode.Accepted)

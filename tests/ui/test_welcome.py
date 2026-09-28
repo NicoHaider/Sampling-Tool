@@ -102,3 +102,74 @@ class TestWelcomeLayout:
         viewport = scroll.viewport()
         assert viewport is not None
         assert content.sizeHint().height() > viewport.height()
+
+
+class TestOpenDialogStartDir:
+    """Sprint 90 / B: gemeinsame Startordner-Logik für „Projekt öffnen"."""
+
+    def test_configured_folder_wins(self, tmp_path: Path) -> None:
+        from dataclasses import replace
+
+        from sampling_tool.ui.settings_store import (
+            load_settings,
+            open_dialog_start_dir,
+            save_settings,
+        )
+
+        folder = tmp_path / "meine-projekte"
+        folder.mkdir()
+        save_settings(replace(load_settings(), engagements_dir=folder))
+        assert open_dialog_start_dir() == str(folder)
+
+    def test_missing_configured_folder_falls_back_to_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dataclasses import replace
+
+        from sampling_tool.ui import settings_store
+
+        default = tmp_path / "default"
+        default.mkdir()
+        monkeypatch.setattr(settings_store, "ENGAGEMENTS_DIR", default)
+        settings_store.save_settings(
+            replace(settings_store.load_settings(), engagements_dir=tmp_path / "weg")
+        )
+        assert settings_store.open_dialog_start_dir() == str(default)
+
+    def test_nothing_exists_gives_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dataclasses import replace
+
+        from sampling_tool.ui import settings_store
+
+        monkeypatch.setattr(settings_store, "ENGAGEMENTS_DIR", tmp_path / "fehlt")
+        settings_store.save_settings(
+            replace(settings_store.load_settings(), engagements_dir=tmp_path / "weg")
+        )
+        assert settings_store.open_dialog_start_dir() == ""
+
+    def test_welcome_open_dialog_uses_configured_folder(
+        self, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dataclasses import replace
+
+        from sampling_tool.ui.settings_store import load_settings, save_settings
+
+        folder = tmp_path / "meine-projekte"
+        folder.mkdir()
+        save_settings(replace(load_settings(), engagements_dir=folder))
+        captured: list[str] = []
+
+        def _fake_open(_parent: object, _caption: str, directory: str, _f: str) -> tuple[str, str]:
+            captured.append(directory)
+            return ("", "")
+
+        monkeypatch.setattr(
+            "sampling_tool.ui.widgets.welcome.QFileDialog.getOpenFileName", _fake_open
+        )
+        screen = WelcomeScreen()
+        qtbot.addWidget(screen)
+        screen._on_open_clicked()
+
+        assert captured == [str(folder)]

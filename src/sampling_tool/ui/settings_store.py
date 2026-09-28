@@ -326,6 +326,17 @@ def _detect_existing_user(raw_engagements_dir: str, default_dir: Path) -> bool:
     return default_dir.exists()
 
 
+def open_dialog_start_dir() -> str:
+    """Startordner für „Projekt öffnen" (Menü und Startbildschirm).
+
+    Eingestellter Projektordner, sonst `ENGAGEMENTS_DIR`, sonst leer (der
+    Dialog nimmt dann seinen eigenen Default)."""
+    for folder in (load_settings().engagements_dir, ENGAGEMENTS_DIR):
+        if folder.is_dir():
+            return str(folder)
+    return ""
+
+
 def save_settings(settings: AppSettings) -> None:
     """Schreibt die `AppSettings` nach `QSettings`."""
     s = _qsettings()

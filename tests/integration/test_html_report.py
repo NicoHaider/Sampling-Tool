@@ -382,7 +382,7 @@ class TestSampleFilterColumn:
     ) -> None:
         row = _sample_table_cells(_render(tmp_path, engagement, [_sample(1)]))["#1"]
         assert row["Filter"] == "—"
-        assert row["Filter"] == row["Parent"]
+        assert row["Filter"] == row["Übergeordnete Stichprobe"]
 
     def test_ungefilterte_stichprobe_mit_restoperator_zeigt_kein_symbol(
         self, tmp_path: Path, engagement: Engagement
@@ -595,7 +595,13 @@ class TestParentColumnDerivation:
     ) -> None:
         sample = replace(_sample(1), parent_sample_id=17, parent_relation=relation)
         row = _sample_table_cells(_render(tmp_path, engagement, [sample]))["#1"]
-        assert row["Parent"] == expected
+        assert row["Übergeordnete Stichprobe"] == expected
+
+    def test_spaltenkopf_ist_deutsch(self, tmp_path: Path, engagement: Engagement) -> None:
+        """Sprint 90 / C: wie Excel-Report und Metadaten, nicht „Parent"."""
+        html = _render(tmp_path, engagement, [_sample(1)])
+        assert "<th>Übergeordnete Stichprobe</th>" in html
+        assert "<th>Parent</th>" not in html
 
 
 class TestLegacyParentLabel:
@@ -607,7 +613,7 @@ class TestLegacyParentLabel:
 
         sample = replace(_sample(1), parent_sample_id=1, parent_relation=None)
         row = _sample_table_cells(_render(tmp_path, engagement, [sample]))["#1"]
-        assert row["Parent"] == f"#1 ({PARENT_RELATION_LABELS[None]})"
+        assert row["Übergeordnete Stichprobe"] == f"#1 ({PARENT_RELATION_LABELS[None]})"
         assert PARENT_RELATION_LABELS[None] in PARENT_RELATION_TEXTS[None]
 
 
@@ -676,5 +682,5 @@ class TestReportSpeaksGerman:
         rows = _sample_table_cells(_render(tmp_path, engagement, readable_samples()))
         assert "Einfach" in rows["#1"]["Methode"]
         assert "Geschichtet" in rows["#2"]["Methode"]
-        assert rows["#2"]["Parent"] == "#1 (eingeschränkt)"
-        assert rows["#3"]["Parent"] == "#1 (Nachstichprobe)"
+        assert rows["#2"]["Übergeordnete Stichprobe"] == "#1 (eingeschränkt)"
+        assert rows["#3"]["Übergeordnete Stichprobe"] == "#1 (Nachstichprobe)"
