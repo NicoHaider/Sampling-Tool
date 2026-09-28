@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import QMessageBox
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.core.models import Engagement
 from sampling_tool.core.undo import UndoManager
+from sampling_tool.io.sync_folders import sync_folder_hint
 from sampling_tool.persistence.database import (
     CURRENT_SCHEMA_VERSION,
     Database,
@@ -388,6 +389,7 @@ class EngagementController:
         s.window.set_filter_only_sample(False)
         s.window.clear_table()
         s.window.set_engagement(None)
+        s.window.show_sync_folder_hint(None)
         s.window.set_datasets([])
         s.window.set_samples([])
         s.window.show_welcome()
@@ -441,6 +443,22 @@ class EngagementController:
         # Letzten UI-State (Dataset/Sample/Filter) wiederherstellen, sofern
         # einer für dieses Engagement persistiert wurde.
         self._restore_state()
+        self._hint_sync_folder(db_path)
+
+    def _hint_sync_folder(self, db_path: Path) -> None:
+        """Hinweis, wenn das Projekt in einem Sync-Ordner liegt (Sprint 89 / G2).
+
+        Blockiert nichts. Die Statusleiste meldet es einmal pro Projekt und
+        Sitzung, der Hinweis beim Projektnamen bleibt, solange es offen ist.
+        """
+        s = self.session
+        hint = sync_folder_hint(db_path)
+        key = db_path.resolve()
+        announce = hint is not None and key not in s.sync_hints_announced
+        if announce:
+            s.sync_hints_announced.add(key)
+            logger.info("Project %s is in a synced folder", db_path.name)
+        s.window.show_sync_folder_hint(hint, announce=announce)
 
     def _restore_state(self) -> None:
         """Wendet den zuletzt persistierten `EngagementState` aufs UI an.

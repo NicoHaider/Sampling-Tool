@@ -102,6 +102,9 @@ class WorkspaceSession:
 
         # Session-State (alle Default leer)
         self.db: Database | None = None
+        # Sprint 89 / G2: Projekte, deren Sync-Ordner-Hinweis diese Sitzung
+        # schon in der Statusleiste stand.
+        self.sync_hints_announced: set[Path] = set()
         self.engagement: Engagement | None = None
         self.dataset: Dataset | None = None
         self.sample: SampleResult | None = None

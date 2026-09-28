@@ -8167,3 +8167,53 @@ class TestUnselectSample:
         from sampling_tool.config import EVENT_TYPE_LABELS
 
         assert EVENT_TYPE_LABELS["reset"] == "Auswahl aufgehoben"
+
+
+# ---------------------------------------------------------------------------
+# Sprint 89 / G: Hinweis bei Projekten in synchronisierten Ordnern
+# ---------------------------------------------------------------------------
+
+
+class TestSyncFolderHint:
+    def _project_in(self, folder: Path) -> Path:
+        folder.mkdir(parents=True)
+        db_path = folder / "ACME.db"
+        db = Database(db_path)
+        db.migrate()
+        EngagementRepo(db.connect()).get_or_create(
+            Engagement(auditor_name="Anna", client_name="ACME", audit_type="ISAE 3402")
+        )
+        db.close()
+        return db_path
+
+    def test_hint_once_per_project_and_session(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path = self._project_in(tmp_path / "OneDrive - BDO" / "ACME")
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            with patch.object(
+                window, "show_sync_folder_hint", wraps=window.show_sync_folder_hint
+            ) as hint:
+                controller.engagement.handle_open_engagement(db_path)
+                controller.engagement.handle_open_engagement(db_path)
+            announced = [c for c in hint.call_args_list if c.kwargs.get("announce")]
+            assert len(announced) == 1
+            text = hint.call_args_list[-1].args[0]
+            assert text is not None
+            assert "synchronisierten Ordner" in text
+            assert window.sidebar().sync_hint_text() == text
+        finally:
+            controller.engagement.handle_close_engagement()
+        assert window.sidebar().sync_hint_text() is None
+
+    def test_local_project_has_no_hint(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path = self._project_in(tmp_path / "lokal" / "ACME")
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            assert window.sidebar().sync_hint_text() is None
+        finally:
+            controller.engagement.handle_close_engagement()

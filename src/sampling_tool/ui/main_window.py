@@ -231,6 +231,17 @@ class MainWindow(QMainWindow):
             engagement.client_name if engagement is not None else "Kein Projekt"
         )
 
+    def show_sync_folder_hint(self, text: str | None, *, announce: bool = False) -> None:
+        """Sync-Ordner-Hinweis beim Projektnamen (Sprint 89 / G2).
+
+        `announce` meldet ihn zusätzlich in der Statusleiste – der Controller
+        tut das einmal pro Projekt und Sitzung. `None` entfernt den Hinweis.
+        """
+        self._sidebar.set_sync_hint(text)
+        status = self.statusBar()
+        if announce and text is not None and status is not None:
+            status.showMessage(text, 15000)
+
     def set_datasets(self, datasets: list[Dataset]) -> None:
         """Datasets in der Sidebar aktualisieren."""
         self._sidebar.set_datasets(datasets)

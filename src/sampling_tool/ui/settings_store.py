@@ -19,7 +19,7 @@ from typing import Final
 
 from PyQt6.QtCore import QSettings
 
-from sampling_tool.config import APP_NAME, APP_ORG, ENGAGEMENTS_DIR
+from sampling_tool.config import APP_NAME, APP_ORG, ENGAGEMENTS_DIR, LEGACY_ENGAGEMENTS_DIR
 from sampling_tool.ui._scaling import UI_SCALE_DEFAULT, UI_SCALE_LEVELS
 
 LOG_LEVELS: Final[tuple[str, ...]] = ("INFO", "DEBUG")
@@ -255,12 +255,15 @@ def load_settings() -> AppSettings:
     if ui_scale not in UI_SCALE_LEVELS:
         ui_scale = base.ui_scale
 
+    # Sprint 89 / G1: ohne gespeicherten Ordner gilt für Bestandsnutzer der
+    # alte Default weiter, sofern er existiert – nichts wird verschoben.
+    default_dir = LEGACY_ENGAGEMENTS_DIR if LEGACY_ENGAGEMENTS_DIR.exists() else ENGAGEMENTS_DIR
     has_first_run_key = s.contains("settings/first_run_completed")
     raw_engagements_dir = _str(s.value("settings/engagements_dir", ""))
     if has_first_run_key:
         first_run_completed = _bool(s.value("settings/first_run_completed", False))
     else:
-        first_run_completed = _detect_existing_user(raw_engagements_dir, base.engagements_dir)
+        first_run_completed = _detect_existing_user(raw_engagements_dir, default_dir)
         if first_run_completed:
             # Migration einmalig persistieren – beim nächsten Start fällt
             # die Heuristik dann nicht mehr ins Gewicht.
@@ -270,7 +273,7 @@ def load_settings() -> AppSettings:
     return replace(
         base,
         default_auditor_name=_str(s.value("settings/default_auditor_name", "")),
-        engagements_dir=Path(_str(s.value("settings/engagements_dir", str(base.engagements_dir)))),
+        engagements_dir=Path(_str(s.value("settings/engagements_dir", str(default_dir)))),
         reset_keeps_filter=_bool(s.value("settings/reset_keeps_filter", base.reset_keeps_filter)),
         default_include_briefpapier=_bool(
             s.value("settings/default_include_briefpapier", base.default_include_briefpapier)

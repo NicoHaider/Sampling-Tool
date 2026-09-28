@@ -347,3 +347,47 @@ class TestOpenSnapshotsKeep:
         s.setValue("settings/open_snapshots_keep", raw)
         s.sync()
         assert load_settings().open_snapshots_keep == int(raw)
+
+
+class TestProjectFolderDefaultOutsideDocuments:
+    """Sprint 89 / G1: Neuinstallationen nutzen `~/BDO Audit Sampling`."""
+
+    def test_new_default_is_not_in_documents(self) -> None:
+        from sampling_tool.config import ENGAGEMENTS_DIR
+
+        assert Path.home() / "BDO Audit Sampling" == ENGAGEMENTS_DIR
+        assert AppSettings.defaults().engagements_dir == ENGAGEMENTS_DIR
+
+    def test_existing_user_without_key_keeps_the_old_folder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from sampling_tool.ui import settings_store
+
+        legacy = tmp_path / "Documents" / "BDO Audit Sampling"
+        legacy.mkdir(parents=True)
+        monkeypatch.setattr(settings_store, "LEGACY_ENGAGEMENTS_DIR", legacy)
+        loaded = load_settings()
+        assert loaded.engagements_dir == legacy
+        assert loaded.first_run_completed is True
+
+    def test_saved_folder_always_wins(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from sampling_tool.ui import settings_store
+
+        legacy = tmp_path / "legacy"
+        legacy.mkdir()
+        monkeypatch.setattr(settings_store, "LEGACY_ENGAGEMENTS_DIR", legacy)
+        s = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, APP_ORG, APP_NAME)
+        s.setValue("settings/engagements_dir", str(tmp_path / "eigener"))
+        s.sync()
+        assert load_settings().engagements_dir == tmp_path / "eigener"
+
+    def test_fresh_install_gets_the_new_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from sampling_tool.ui import settings_store
+
+        monkeypatch.setattr(settings_store, "LEGACY_ENGAGEMENTS_DIR", tmp_path / "fehlt")
+        monkeypatch.setattr(settings_store, "ENGAGEMENTS_DIR", tmp_path / "neu")
+        assert load_settings().engagements_dir == tmp_path / "neu"

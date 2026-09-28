@@ -115,9 +115,19 @@ class NavigationSidebar(QFrame):
         self._engagement_saved.setWordWrap(True)
         self._engagement_saved.setVisible(False)
 
+        # Sprint 89 / G2: Projekt liegt in einem Sync-Ordner. Leise Zeile beim
+        # Projektnamen, der volle Text als Tooltip; die Statusleiste meldet es
+        # einmal pro Projekt und Sitzung.
+        self._sync_hint = QLabel("")
+        self._sync_hint.setProperty("engagementSubtitle", True)
+        self._sync_hint.setWordWrap(True)
+        self._sync_hint.setVisible(False)
+        self._sync_hint_text: str | None = None
+
         layout.addWidget(self._engagement_title)
         layout.addWidget(self._engagement_subtitle)
         layout.addWidget(self._engagement_saved)
+        layout.addWidget(self._sync_hint)
 
         # Datasets
         layout.addWidget(_section_label("Datensätze"))
@@ -155,6 +165,17 @@ class NavigationSidebar(QFrame):
         self._engagement_title.setText(engagement.client_name)
         parts = [p for p in (engagement.audit_type, engagement.auditor_name) if p]
         self._engagement_subtitle.setText(" · ".join(parts))
+
+    def set_sync_hint(self, text: str | None) -> None:
+        """Zeigt (oder entfernt mit `None`) den Sync-Ordner-Hinweis beim Projekt."""
+        self._sync_hint_text = text
+        self._sync_hint.setText("ⓘ Liegt in einem synchronisierten Ordner" if text else "")
+        self._sync_hint.setToolTip(text or "")
+        self._sync_hint.setVisible(text is not None)
+
+    def sync_hint_text(self) -> str | None:
+        """Der aktuelle Sync-Ordner-Hinweis (Tests)."""
+        return self._sync_hint_text
 
     def set_saved_at(self, moment: datetime | None) -> None:
         """Zeigt, wann zuletzt in die Projektdatei geschrieben wurde.

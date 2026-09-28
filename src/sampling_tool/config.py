@@ -258,13 +258,21 @@ SUPPORTED_CSV_SUFFIXES: Final[tuple[str, ...]] = (".csv", ".tsv")
 # Standard-Ablageort aller Engagement-Dateien. Pro Mandant entsteht ein
 # Unterordner mit der `.db`-Datei und einem `archiv/`-Verzeichnis für
 # Auto-Snapshots beim Öffnen.
-ENGAGEMENTS_DIR: Final[Path] = Path.home() / "Documents" / "BDO Audit Sampling"
+#
+# Sprint 89 / G1: für Neuinstallationen außerhalb von `~/Documents` – dort
+# synchronisiert iCloud („Schreibtisch & Dokumente") bzw. OneDrive oft
+# ungefragt, und SQLite mit WAL verträgt das nicht. Bestehende Einstellungen
+# und Projekte bleiben, wo sie sind (`LEGACY_ENGAGEMENTS_DIR`).
+ENGAGEMENTS_DIR: Final[Path] = Path.home() / "BDO Audit Sampling"
+LEGACY_ENGAGEMENTS_DIR: Final[Path] = Path.home() / "Documents" / "BDO Audit Sampling"
 
 # Ablage für ein optionales Briefpapier (PNG/JPG/PDF), das beim Generieren
 # von PDF-Reports als Hintergrund eingelegt wird. User-Override für das
 # echte BDO-Briefpapier; wenn dort nichts liegt, fällt die App auf das in
 # `DEFAULT_BRIEFPAPIER` mitgelieferte Platzhalter-PDF zurück (Sprint 7).
-BRIEFPAPIER_DIR: Final[Path] = ENGAGEMENTS_DIR / "briefpapier"
+# Bleibt am bisherigen Ort (nur gelesen, kein SQLite) – ein dort abgelegtes
+# Briefpapier wirkt nach Sprint 89 unverändert.
+BRIEFPAPIER_DIR: Final[Path] = LEGACY_ENGAGEMENTS_DIR / "briefpapier"
 BRIEFPAPIER_DEFAULT_NAME: Final[str] = "bdo_letterhead"
 
 # Paket-Default: das Platzhalter-Briefpapier wird mit dem Build ausgeliefert
