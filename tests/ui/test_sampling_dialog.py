@@ -1245,6 +1245,49 @@ class TestValidationKeepsInput:
         assert checked == [dialog.get_result()]
 
 
+class TestNoBlockingCursorOnAccept:
+    """Sprint 91 / A: OK-Knopf statt Pixmap-Wait-Cursor (macOS-Absturz, siehe
+
+    `tests/unit/test_no_pixmap_cursor.py`). Der Wait-Cursor wandelte Qt unter
+    macOS über `QImage::toCGImage()` um – ein ungültiger Farbraum dabei ließ
+    die App beim Klick auf OK zweimal ohne Meldung abstürzen.
+    """
+
+    def test_ok_button_disabled_during_draw_check_and_reenabled_after(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot)
+        seen_enabled: list[bool] = []
+
+        def check(_result: object) -> None:
+            seen_enabled.append(_ok_enabled(dialog))
+
+        dialog.set_validators(group_count_provider=_GROUP_COUNTS.__getitem__, draw_check=check)
+        dialog._size_spin.setValue(5)
+
+        dialog.accept()
+
+        assert seen_enabled == [False]
+        assert _ok_enabled(dialog) is True
+        assert QApplication.overrideCursor() is None
+
+    def test_ok_button_reenabled_even_if_draw_check_raises(self, qtbot: QtBot) -> None:
+        dialog = _cluster_dialog(qtbot)
+        seen_enabled: list[bool] = []
+
+        def check(_result: object) -> None:
+            seen_enabled.append(_ok_enabled(dialog))
+            raise RuntimeError("boom")
+
+        dialog.set_validators(group_count_provider=_GROUP_COUNTS.__getitem__, draw_check=check)
+        dialog._size_spin.setValue(5)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            dialog.accept()
+
+        assert seen_enabled == [False]
+        assert _ok_enabled(dialog) is True
+        assert QApplication.overrideCursor() is None
+
+
 class TestAvailabilityHint:
     @pytest.mark.parametrize(
         ("case", "expected"),

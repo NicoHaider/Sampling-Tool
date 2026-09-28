@@ -492,6 +492,21 @@ class AuditTrailView(QWidget):
         """Anzahl sichtbarer Zeilen nach Filter (Tests)."""
         return self._proxy.rowCount()
 
+    def reset_filters(self) -> None:
+        """Setzt Suchfeld und alle Filter auf „Alle"/leer zurück (Sprint 91 / B).
+
+        `set_events` behält eine bestehende Combo-Auswahl bewusst bei (reines
+        Neuladen im selben Projekt) – ein Projektwechsel ist aber ein neuer
+        Kontext, in dem ein stehen gebliebener Filter ein frisches Projekt
+        fälschlich leer wirken lässt.
+        """
+        self._search_debounce.stop()
+        self._search.clear()
+        self._proxy.set_search_text("")
+        self._action_combo.setCurrentIndex(0)
+        self._user_combo.setCurrentIndex(0)
+        self._range_combo.setCurrentIndex(0)
+
     # ---- Slots ----------------------------------------------------------
 
     def _on_search_changed(self, _text: str) -> None:
