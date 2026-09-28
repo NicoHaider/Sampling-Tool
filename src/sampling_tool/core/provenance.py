@@ -40,7 +40,7 @@ class SamplingProvenance:
     Deckt die Mindest-Feldliste aus REVIEW_CODEBASE_2026-07.md (A-001) ab:
     Dataset, Methode, angeforderte/tatsächliche Größe, Population, Seed,
     Filter (Feld/Operator/Wert), Cluster-/Stratum-Feld, Stratify-Modus,
-    Parent-Sample, Algorithmus-/App-Version, Ersteller/Zeitpunkt.
+    übergeordnete Stichprobe, Algorithmus-/App-Version, Ersteller/Zeitpunkt.
     """
 
     dataset_id: int | None
@@ -174,7 +174,7 @@ class SamplingProvenance:
             ("Cluster-Feld", _or_dash(self.cluster_field)),
             ("Schicht-Feld", _or_dash(self.stratum_field)),
             ("Schichtungsmodus", self.stratify_mode_label),
-            ("Parent-Sample-ID", _or_dash(self.parent_sample_id)),
+            ("Übergeordnete Stichprobe", _or_dash(self.parent_sample_id)),
             ("Ableitung", self.derivation_text),
             ("Algorithmus-Version", self.algorithm_version),
             ("App-Version", self.app_version),

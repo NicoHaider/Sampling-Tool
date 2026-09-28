@@ -244,7 +244,7 @@ class TestExportSample:
         assert meta["Angeforderte Größe"] == "5"
         assert meta["Tatsächliche Größe"] == "7"
         assert meta["Filter-Operator"] == "≥"
-        assert meta["Parent-Sample-ID"] == "17"
+        assert meta["Übergeordnete Stichprobe"] == "17"
         assert meta["Algorithmus-Version"] == "bdo-v1"
         assert meta["App-Version"] == __version__
         assert meta["Erstellt von"] == "anna"

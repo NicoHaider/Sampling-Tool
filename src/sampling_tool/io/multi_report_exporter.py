@@ -216,13 +216,14 @@ class MultiSheetReportExporter:
                     evt.user_name,
                     evt.sample_id if evt.sample_id is not None else "—",
                     evt.sample_size if evt.sample_size is not None else "—",
-                    (f"{evt.sample_percent:.2f}" if evt.sample_percent is not None else "—"),
+                    evt.sample_percent / 100 if evt.sample_percent is not None else "—",
                     evt.seed if evt.seed is not None else "—",
                     Path(evt.export_file or evt.import_file or "").name or "—",
                     f"#{evt.corrects_event_id}" if evt.corrects_event_id is not None else "—",
                     format_event_details(evt),
                 ],
             )
+            _format_percent(ws, header.index("%") + 1)
         autosize_columns(ws, len(header), min_width=12)
         ws.freeze_panes = "A2"
 
@@ -250,7 +251,7 @@ class MultiSheetReportExporter:
             "Cluster-Feld",
             "Schicht-Feld",
             "Schichtungsmodus",
-            "Parent-Sample-ID",
+            "Übergeordnete Stichprobe",
             "Ableitung",
             "Algorithmus-Version",
             "Dataset-ID",
@@ -295,7 +296,7 @@ class MultiSheetReportExporter:
                         else population_text
                     ),
                     provenance.dataset_rows if provenance.dataset_rows is not None else "—",
-                    round(percent, 2),
+                    percent / 100,
                     provenance.seed,
                     provenance.filter_field or "—",
                     provenance.filter_operator_symbol if provenance.has_filter else "—",
@@ -311,6 +312,7 @@ class MultiSheetReportExporter:
                     provenance.created_by,
                 ],
             )
+            _format_percent(ws, header.index("Anteil %") + 1)
         autosize_columns(ws, len(header), min_width=12)
         ws.freeze_panes = "A2"
 
@@ -371,6 +373,19 @@ def _style_header_row(ws: Worksheet, columns: int) -> None:
         cell.fill = _HEADER_FILL
         cell.font = _HEADER_FONT
         cell.alignment = _HEADER_ALIGN
+
+
+def _format_percent(ws: Worksheet, column: int) -> None:
+    """Prozentzelle der zuletzt geschriebenen Zeile als Zahl mit Prozentformat.
+
+    Sprint 89 / D2: vorher stand im AuditTrail-Blatt Text (`'2.00'`), im
+    Samples-Blatt eine gerundete Zahl ohne Format – Excel konnte mit keinem
+    von beiden rechnen wie mit einem Anteil. Gespeichert wird der Bruch
+    (0,02), angezeigt „2,00 %".
+    """
+    cell = ws.cell(row=ws.max_row, column=column)
+    if isinstance(cell.value, int | float):
+        cell.number_format = "0.00%"
 
 
 def _format_now() -> str:

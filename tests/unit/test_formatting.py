@@ -86,7 +86,7 @@ class TestFormatAuditDetails:
 
     def test_joins_multiple_keys_compactly(self) -> None:
         result = format_audit_details({"filter_operator": "gte", "parent_sample_id": 17})
-        assert result == "Filter-Operator: ≥ · Parent-Sample-ID: 17"
+        assert result == "Filter-Operator: ≥ · Übergeordnete Stichprobe: 17"
 
     def test_bool_value_renders_german(self) -> None:
         assert format_audit_details({"flag": True}) == "flag: ja"

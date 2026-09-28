@@ -213,7 +213,7 @@ AUDIT_DETAIL_LABELS: Final[dict[str, str]] = {
     "cluster_field": "Cluster-Feld",
     "stratum_field": "Schicht-Feld",
     "stratify_mode": "Schichtungsmodus",
-    "parent_sample_id": "Parent-Sample-ID",
+    "parent_sample_id": "Übergeordnete Stichprobe",
     "parent_relation": "Ableitung",
     "algorithm_version": "Algorithmus-Version",
     "app_version": "App-Version",

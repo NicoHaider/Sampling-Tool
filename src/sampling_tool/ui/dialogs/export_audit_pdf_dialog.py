@@ -280,7 +280,9 @@ class ExportAuditPdfDialog(QDialog):
         """GroupBox mit zwei voneinander unabhängigen Dropdowns: Gesellschaft
         und Standort. Sie filtern sich NICHT gegenseitig – jede Gesellschaft ist
         mit jedem Standort kombinierbar (Kern der Sprint-33-Anforderung)."""
-        gb = QGroupBox("BDO-Gesellschaft & Standort")
+        # Sprint 89 / D5: kein „&" – in Gruppentiteln ist es ein Tastenkürzel-Marker
+        # und verschwand, zurück blieb „BDO-Gesellschaft  Standort".
+        gb = QGroupBox("BDO-Gesellschaft / Standort")
         form = QFormLayout(gb)
 
         self._company_combo = QComboBox()

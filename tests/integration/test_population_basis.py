@@ -291,3 +291,24 @@ class TestSamplingDetailsBySample:
         mapping = AuditRepo(db.connect()).sampling_details_by_sample(engagement_id)
         assert mapping[sample_id]["population_basis"] == "auswahl"
         assert mapping[sample_id]["dataset_rows"] == 1
+
+
+class TestExcelPercentIsANumber:
+    """Sprint 89 / D2: „%" ist in allen Blättern eine Zahl mit Prozentformat."""
+
+    def test_both_sheets(self, tmp_path: Path, engagement: Engagement) -> None:
+        out = MultiSheetReportExporter().export(
+            engagement,
+            [],
+            [_filtered_sample(10, 45)],
+            [_sampling_event(10, 45, _NEW_DETAILS)],
+            tmp_path / "r.xlsx",
+        )
+        wb = load_workbook(out)
+        for sheet, column in (("2. AuditTrail", "%"), ("3. Samples", "Anteil %")):
+            ws = wb[sheet]
+            header = [c.value for c in ws[1]]
+            cell = ws.cell(row=2, column=header.index(column) + 1)
+            assert isinstance(cell.value, float), sheet
+            assert cell.value == pytest.approx(5 / 45)
+            assert "%" in cell.number_format, sheet
