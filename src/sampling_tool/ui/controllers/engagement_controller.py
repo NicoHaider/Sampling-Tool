@@ -426,6 +426,9 @@ class EngagementController:
         s.reload_datasets()
         s.window.set_samples([])
         s.window.clear_table()
+        # Sonst zeigte ein stehen gebliebener AuditTrail-Filter das neue
+        # Projekt fälschlich leer an, obwohl es schon Events hat (Sprint 91 / B).
+        s.window.audit_trail_view().reset_filters()
         # Sonst stünden Datensatz, Zeilenzahl und aktive Stichprobe des zuvor
         # offenen Projekts weiter in der Statusleiste (Sprint 82 / Befund E).
         # `_restore_state` überschreibt das, wenn es einen Datensatz zurückholt.

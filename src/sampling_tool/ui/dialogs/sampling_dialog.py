@@ -20,7 +20,6 @@ from typing import Any, Final
 
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import (
-    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -60,12 +59,14 @@ from sampling_tool.core.models import (
     StratifyMode,
 )
 from sampling_tool.core.presets import SamplingPreset
+from sampling_tool.ui._busy_indicator import busy_indicator
 from sampling_tool.ui._dialog_buttons import mark_secondary_buttons
 from sampling_tool.ui._dialog_sizing import (
     clamp_dialog_height_to_screen,
     clamp_dialog_width_to_screen,
     content_min_width,
 )
+from sampling_tool.ui._number_format import format_int as _format_int
 from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui.preset_store import PresetStore
 from sampling_tool.ui.settings_store import SamplingFeatures
@@ -846,11 +847,8 @@ class SamplingDialog(QDialog):
         if cached is None:
             # Ein Full-Table-Scan (~0,5 s bei 500.000 Zeilen, Sprint 85 gemessen),
             # einmal je Spalte und Dialog.
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            try:
+            with busy_indicator(self):
                 cached = self._group_count_provider(column)
-            finally:
-                QApplication.restoreOverrideCursor()
             self._group_count_cache[column] = cached
         return cached
 
@@ -886,11 +884,9 @@ class SamplingDialog(QDialog):
             exclude_sample_ids=self._supplement_checkbox.isChecked(),
         )
         if self._draw_check is not None:
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            try:
+            ok_button = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
+            with busy_indicator(ok_button):
                 problem = self._draw_check(result)
-            finally:
-                QApplication.restoreOverrideCursor()
             if problem is not None:
                 self._show_message("size", problem)
                 return
@@ -1232,8 +1228,3 @@ def _generate_random_seed() -> int:
 def _safe_int_max() -> int:
     # QSpinBox unterstützt nur 32-Bit-signed → wir kappen SEED_MAX entsprechend.
     return min(SEED_MAX, _SPINBOX_MAX)
-
-
-def _format_int(value: int) -> str:
-    """Tausenderpunkte für deutsche Locale (12345 → '12.345')."""
-    return f"{value:,}".replace(",", ".")

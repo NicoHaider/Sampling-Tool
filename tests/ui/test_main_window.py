@@ -247,6 +247,23 @@ class TestMainWindowState:
         assert win._action_redo.isEnabled() is True
 
 
+class TestStatusRowsThousandsSeparator:
+    """Sprint 91 / C: „500000 Zeilen" ohne Punkt (Cowork-Befund 28.09.2026)."""
+
+    def test_large_row_count_gets_german_thousands_separator(
+        self, qtbot: QtBot, dataset_with_repo: tuple[Dataset, DatasetRepo]
+    ) -> None:
+        from dataclasses import replace
+
+        dataset, repo = dataset_with_repo
+        big_dataset = replace(dataset, row_count=500_000)
+        win = MainWindow()
+        qtbot.addWidget(win)
+        win.show_workspace()
+        win.show_dataset(big_dataset, repo)
+        assert win._status_rows.text() == "500.000 Zeilen"
+
+
 class TestSwitchEngagementToolbar:
     """Sprint 5.6: neuer Toolbar-Button 'Projekt wechseln' (Sprint 27 umbenannt)."""
 

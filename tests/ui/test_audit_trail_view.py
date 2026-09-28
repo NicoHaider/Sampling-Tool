@@ -238,6 +238,41 @@ class TestAuditTrailView:
             view._refresh_button.click()
 
 
+class TestResetFilters:
+    """Sprint 91 / B: Filter dürfen einen Projektwechsel nicht überleben.
+
+    `set_events` hält Combo-Auswahl bewusst beim reinen Neuladen im selben
+    Projekt (siehe `_update_user_combo`) – ein neues Projekt ist aber ein
+    neuer Kontext, in dem ein alter Filter („Aktion: Stichprobe") ein frisches
+    Projekt fälschlich leer wirken lässt.
+    """
+
+    def test_reset_filters_clears_action_user_range_and_search(self, view: AuditTrailView) -> None:
+        events = [
+            _make_event(event_type="export", user="anna", event_id=1, timestamp=FROZEN_NOW),
+            _make_event(event_type="import", user="bob", event_id=2, timestamp=FROZEN_NOW),
+        ]
+        view.set_events(events)
+        view._action_combo.setCurrentIndex(view._action_combo.findData("export"))
+        view._user_combo.setCurrentIndex(view._user_combo.findData("anna"))
+        _set_range(view, _RANGE_TODAY)
+        _search_via_ui(view, "anna")
+        assert view.visible_row_count() == 1
+
+        view.reset_filters()
+
+        assert view._action_combo.currentIndex() == 0
+        assert view._user_combo.currentIndex() == 0
+        assert view._range_combo.currentIndex() == 0
+        assert view._search.text() == ""
+        assert view.visible_row_count() == 2
+
+    def test_reset_filters_on_already_default_view_is_a_noop(self, view: AuditTrailView) -> None:
+        view.set_events([_make_event(event_id=1)])
+        view.reset_filters()
+        assert view.visible_row_count() == 1
+
+
 class TestAuditTrailFilterProxyExtras:
     """Sprint 14 / T-002 – Filter-Proxy-Branches die zuvor uncovered waren.
 

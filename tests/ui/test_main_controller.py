@@ -4970,6 +4970,41 @@ class TestOpenOtherProjectShowsNoDataset:
             controller.engagement.handle_close_engagement()
 
 
+class TestAuditTrailFilterResetOnProjectSwitch:
+    """Sprint 91 / B (Cowork-Befund 28.09.2026): ein stehen gebliebener
+
+    „Aktion"-Filter ließ ein frisches Projekt fälschlich leer wirken, obwohl
+    es bereits das Ereignis „Sicherung angelegt" hatte.
+    """
+
+    def test_action_filter_resets_when_switching_project(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        other_db = _project_without_saved_state(tmp_path / "neukunde")
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(populated_db)
+            audit_view = window.audit_trail_view()
+            # Erstes Öffnen legt genau eine "öffnen"-Sicherung an (Sprint 88).
+            assert audit_view.visible_row_count() == 1
+
+            idx = audit_view._action_combo.findData("sampling")
+            assert idx >= 0
+            audit_view._action_combo.setCurrentIndex(idx)
+            assert audit_view.visible_row_count() == 0
+
+            controller.engagement.handle_open_engagement(other_db)
+
+            assert audit_view._action_combo.currentIndex() == 0
+            assert audit_view.visible_row_count() == 1
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
 # ---------------------------------------------------------------------------
 # Sprint 9.3 / Sprint 22: aufgelöste Feature-Sichtbarkeit wird an die
 # SamplingDialog-Factory durchgereicht (vorher ein einzelnes advanced_mode-Bool).

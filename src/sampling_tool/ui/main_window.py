@@ -34,6 +34,7 @@ from sampling_tool.config import (
 )
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
 from sampling_tool.persistence.repositories import DatasetRepo
+from sampling_tool.ui._number_format import format_int
 from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui._window_layout import (
     build_workspace,
@@ -281,7 +282,7 @@ class MainWindow(QMainWindow):
         if dataset.id is not None:
             self._sidebar.select_dataset(dataset.id)
         self._status_dataset.setText(dataset.name)
-        self._status_rows.setText(f"{dataset.row_count} Zeilen")
+        self._status_rows.setText(f"{format_int(dataset.row_count)} Zeilen")
         self.set_active_sample_label(None)
         self._sidebar.set_active_sample(None)
         self._action_new_sample.setEnabled(True)
