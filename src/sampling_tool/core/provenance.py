@@ -21,6 +21,7 @@ from typing import Any, Final
 
 from sampling_tool.config import (
     FILTER_OPERATOR_LABELS,
+    LEGACY_DERIVED_FILTER_POPULATION_NOTES,
     LEGACY_FILTER_POPULATION_NOTE,
     METHOD_LABELS,
     PARENT_RELATION_LABELS,
@@ -118,6 +119,8 @@ class SamplingProvenance:
         return population_text(
             self.population_size,
             legacy_filter=self.has_filter and self.population_predates_basis,
+            parent_sample_id=self.parent_sample_id,
+            parent_relation=self.parent_relation,
         )
 
     @property
@@ -226,15 +229,31 @@ class SamplingProvenance:
         }
 
 
-def population_text(population_size: int, *, legacy_filter: bool) -> str:
+def population_text(
+    population_size: int,
+    *,
+    legacy_filter: bool,
+    parent_sample_id: int | None = None,
+    parent_relation: str | None = None,
+) -> str:
     """Anzeige der Population (Sprint 89 / B4).
 
-    Bis Sprint 88 war die Population einer Filter-Ziehung der ganze Datensatz.
-    Solche Werte werden nicht umgeschrieben, sondern mit Hinweis angezeigt.
+    Bis Sprint 88 zählte der Filter bei der Population nicht mit: bei einer
+    einfachen Filter-Ziehung stand dort der ganze Datensatz, bei Einschränken
+    die übergeordnete Stichprobe, bei Ergänzen der Datensatz ohne bereits
+    gezogene Zeilen. Solche Werte werden nicht umgeschrieben, sondern mit dem
+    passenden Hinweis angezeigt.
     """
-    if legacy_filter:
-        return f"{population_size} ({LEGACY_FILTER_POPULATION_NOTE})"
-    return str(population_size)
+    if not legacy_filter:
+        return str(population_size)
+    note = (
+        LEGACY_FILTER_POPULATION_NOTE
+        if parent_sample_id is None
+        else LEGACY_DERIVED_FILTER_POPULATION_NOTES.get(
+            parent_relation, LEGACY_DERIVED_FILTER_POPULATION_NOTES[None]
+        )
+    )
+    return f"{population_size} ({note})"
 
 
 def population_predates_basis(sampling_details: Mapping[str, Any] | None) -> bool:
@@ -259,7 +278,12 @@ def format_event_details(event: AuditEvent) -> str:
     legacy = population_predates_basis(event.details) and (
         event.details.get("filter_field") is not None
     )
-    population = f"Population: {population_text(event.total_count, legacy_filter=legacy)}"
+    population = "Population: " + population_text(
+        event.total_count,
+        legacy_filter=legacy,
+        parent_sample_id=event.details.get("parent_sample_id"),
+        parent_relation=event.details.get("parent_relation"),
+    )
     return population if details == _MISSING else f"{population} · {details}"
 
 

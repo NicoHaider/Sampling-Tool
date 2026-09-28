@@ -143,3 +143,44 @@ class TestSearch:
         dialog = UserGuideDialog(_GUIDE)
         qtbot.addWidget(dialog)
         assert dialog.find_shortcut().key() == QKeySequence(QKeySequence.StandardKey.Find)
+
+
+class TestLinks:
+    """Review-Befund: ein relativer Link leerte das Handbuch bis zum Neustart."""
+
+    _LINKED = (
+        "# Handbuch\n\n[Installation](INSTALL_USER.md) · [Kapitel 2](#2-zweites-kapitel)"
+        " · [Web](https://example.org)\n\n"
+        + "Absatz.\n\n" * 200
+        + "## 2. Zweites Kapitel\n\nZiel.\n"
+    )
+
+    def test_relative_document_link_keeps_the_guide(self, qtbot: QtBot) -> None:
+        from PyQt6.QtCore import QUrl
+
+        dialog = UserGuideDialog(self._LINKED)
+        qtbot.addWidget(dialog)
+        dialog.browser().anchorClicked.emit(QUrl("INSTALL_USER.md"))
+        assert "Zweites Kapitel" in dialog.browser().toPlainText()
+        assert "nicht in der App" in dialog.status_text()
+
+    def test_toc_anchor_jumps_to_the_heading(self, qtbot: QtBot) -> None:
+        from PyQt6.QtCore import QUrl
+
+        dialog = UserGuideDialog(self._LINKED)
+        qtbot.addWidget(dialog)
+        dialog.browser().anchorClicked.emit(QUrl("#2-zweites-kapitel"))
+        block = dialog.browser().textCursor().block()
+        assert block.text() == "2. Zweites Kapitel"
+
+    def test_web_link_opens_outside(self, qtbot: QtBot) -> None:
+        from PyQt6.QtCore import QUrl
+
+        dialog = UserGuideDialog(self._LINKED)
+        qtbot.addWidget(dialog)
+        with patch(
+            "sampling_tool.ui.dialogs.user_guide_dialog.QDesktopServices.openUrl"
+        ) as open_url:
+            dialog.browser().anchorClicked.emit(QUrl("https://example.org"))
+        open_url.assert_called_once()
+        assert "Zweites Kapitel" in dialog.browser().toPlainText()

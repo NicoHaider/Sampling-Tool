@@ -189,6 +189,16 @@ POPULATION_BASIS_SELECTION: Final[str] = "auswahl"
 LEGACY_FILTER_POPULATION_NOTE: Final[str] = (
     "gesamter Datensatz, Filter nicht eingerechnet; Stand vor Sprint 89"
 )
+# Abgeleitete Ziehungen hatten schon vorher eine andere Bezugsgröße – der
+# Hinweis nennt sie, statt „gesamter Datensatz" zu behaupten. Schlüssel ist
+# `ParentRelation.value`; `None` = Ableitung nicht erfasst (vor Migration 006).
+LEGACY_DERIVED_FILTER_POPULATION_NOTES: Final[dict[str | None, str]] = {
+    "restrict": "übergeordnete Stichprobe, Filter nicht eingerechnet; Stand vor Sprint 89",
+    "supplement": (
+        "Datensatz ohne bereits gezogene Zeilen, Filter nicht eingerechnet; Stand vor Sprint 89"
+    ),
+    None: "Filter nicht eingerechnet; Stand vor Sprint 89",
+}
 
 # Werte von `details["restored"]` bei Undo/Redo auf den leeren Zustand.
 RESTORED_STATE_LABELS: Final[dict[str, str]] = {

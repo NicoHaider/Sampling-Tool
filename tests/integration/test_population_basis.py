@@ -312,3 +312,45 @@ class TestExcelPercentIsANumber:
             assert isinstance(cell.value, float), sheet
             assert cell.value == pytest.approx(5 / 45)
             assert "%" in cell.number_format, sheet
+
+
+class TestLegacyNoteForDerivedDraws:
+    """Review-Befund: alte Einschränken-/Ergänzen-Ziehungen mit Filter hatten NICHT
+    den ganzen Datensatz als Population – der Hinweis darf das nicht behaupten."""
+
+    @pytest.mark.parametrize(
+        ("relation", "expected"),
+        [
+            ("restrict", "übergeordnete Stichprobe"),
+            ("supplement", "ohne bereits gezogene Zeilen"),
+            (None, "Filter nicht eingerechnet"),
+        ],
+    )
+    def test_event_note(self, relation: str | None, expected: str) -> None:
+        details = {**_OLD_DETAILS, "parent_sample_id": 1, "parent_relation": relation}
+        text = format_event_details(_sampling_event(2, 20, details))
+        assert expected in text
+        assert "gesamter Datensatz" not in text
+        assert "Stand vor Sprint 89" in text
+
+    def test_sample_level_note(self, tmp_path: Path, engagement: Engagement) -> None:
+        from dataclasses import replace
+
+        from sampling_tool.core.models import ParentRelation
+
+        derived = replace(
+            _filtered_sample(2, 20), parent_sample_id=1, parent_relation=ParentRelation.RESTRICT
+        )
+        out = MultiSheetReportExporter().export(
+            engagement,
+            [],
+            [derived],
+            [],
+            tmp_path / "r.xlsx",
+            sampling_details_by_sample={2: _OLD_DETAILS},
+        )
+        ws = load_workbook(out)["3. Samples"]
+        header = [c.value for c in ws[1]]
+        population = next(ws.iter_rows(2, values_only=True))[header.index("Population")]
+        assert "übergeordnete Stichprobe" in population
+        assert "gesamter Datensatz" not in population

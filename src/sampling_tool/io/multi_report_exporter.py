@@ -207,7 +207,7 @@ class MultiSheetReportExporter:
         _style_header_row(ws, len(header))
 
         chronological = sorted(events, key=lambda e: (e.timestamp, e.id or 0))
-        for evt in chronological:
+        for row_number, evt in enumerate(chronological, start=2):
             safe_row(
                 ws,
                 [
@@ -223,7 +223,7 @@ class MultiSheetReportExporter:
                     format_event_details(evt),
                 ],
             )
-            _format_percent(ws, header.index("%") + 1)
+            _format_percent(ws, row_number, header.index("%") + 1)
         autosize_columns(ws, len(header), min_width=12)
         ws.freeze_panes = "A2"
 
@@ -262,7 +262,7 @@ class MultiSheetReportExporter:
         _style_header_row(ws, len(header))
 
         ordered = sorted(samples, key=lambda s: s.drawn_at)
-        for sample in ordered:
+        for row_number, sample in enumerate(ordered, start=2):
             dataset_id = dataset_ids_by_sample.get(sample.id) if sample.id is not None else None
             provenance = SamplingProvenance.from_sample_result(
                 sample,
@@ -312,7 +312,7 @@ class MultiSheetReportExporter:
                     provenance.created_by,
                 ],
             )
-            _format_percent(ws, header.index("Anteil %") + 1)
+            _format_percent(ws, row_number, header.index("Anteil %") + 1)
         autosize_columns(ws, len(header), min_width=12)
         ws.freeze_panes = "A2"
 
@@ -375,15 +375,16 @@ def _style_header_row(ws: Worksheet, columns: int) -> None:
         cell.alignment = _HEADER_ALIGN
 
 
-def _format_percent(ws: Worksheet, column: int) -> None:
-    """Prozentzelle der zuletzt geschriebenen Zeile als Zahl mit Prozentformat.
+def _format_percent(ws: Worksheet, row: int, column: int) -> None:
+    """Prozentzelle einer Zeile als Zahl mit Prozentformat.
 
     Sprint 89 / D2: vorher stand im AuditTrail-Blatt Text (`'2.00'`), im
     Samples-Blatt eine gerundete Zahl ohne Format – Excel konnte mit keinem
     von beiden rechnen wie mit einem Anteil. Gespeichert wird der Bruch
-    (0,02), angezeigt „2,00 %".
+    (0,02), angezeigt „2,00 %". Die Zeile kommt vom Aufrufer: `ws.max_row`
+    durchsucht bei openpyxl alle Zellen und machte das Blatt quadratisch langsam.
     """
-    cell = ws.cell(row=ws.max_row, column=column)
+    cell = ws.cell(row=row, column=column)
     if isinstance(cell.value, int | float):
         cell.number_format = "0.00%"
 
