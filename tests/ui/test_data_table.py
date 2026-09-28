@@ -826,5 +826,10 @@ class TestNumericColumnsFitLongestValue:
         view = self._view(qtbot, db, engagement_id, late_value=-17009.25)
         index = view.table_model().index(0, 0)  # „t1" passt immer
         assert view._tooltip_for(index) is None
+        header = view.horizontalHeader()
+        assert header is not None
+        # Sonst klemmt der Stil (z. B. Fusion unter Linux) die Breite nach oben.
+        header.setMinimumSectionSize(1)
         view.setColumnWidth(0, 4)
+        assert view.columnWidth(0) == 4
         assert view._tooltip_for(index) == "t1"
