@@ -7769,3 +7769,101 @@ class TestCreatedByIsUser:
             assert "system" not in meta.values()
         finally:
             controller.engagement.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 89 / A: Migration nur einmal sichern, Projektdatei sauber schließen
+# ---------------------------------------------------------------------------
+
+
+def _end_app_without_checkpoint(controller: MainController) -> None:
+    """Wie ein App-Ende vor Sprint 89: Verbindung weg, WAL bleibt liegen."""
+    db = controller.session.db
+    assert db is not None
+    controller.session.window.data_table().clear_dataset()
+    conn = db.connect()
+    conn.setconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, True)
+    db.close()
+    controller.session.reset_to_welcome()
+
+
+class TestMigrationBackedUpOnce:
+    def test_reopen_after_unclean_end_adds_no_second_pre_migration_copy(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path = _db_at_schema_v5(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        controller.engagement.handle_open_engagement(db_path)
+        _end_app_without_checkpoint(controller)
+        assert db_path.with_name(db_path.name + "-wal").stat().st_size > 0
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            assert controller.session.db is not None
+        finally:
+            controller.engagement.handle_close_engagement()
+
+        names = _archive_names(db_path)
+        assert sum(n.endswith("+vor-migration.db") for n in names) == 1
+        assert sum(n.endswith("+oeffnen.db") for n in names) <= 1
+        assert len(names) <= 2
+
+
+class TestProjectFileClosedCleanly:
+    def _spy(self) -> contextlib.AbstractContextManager[object]:
+        return patch.object(
+            Database,
+            "checkpoint_and_close",
+            autospec=True,
+            side_effect=Database.checkpoint_and_close,
+        )
+
+    def test_close_checkpoints(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path, _own, _other, _sample = _foreign_sample_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        controller.engagement.handle_open_engagement(db_path)
+        with self._spy() as spy:
+            controller.engagement.handle_close_engagement()
+        assert spy.call_count == 1  # type: ignore[attr-defined]
+        wal = db_path.with_name(db_path.name + "-wal")
+        assert not wal.exists() or wal.stat().st_size == 0
+
+    def test_switching_project_checkpoints_the_previous_one(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        (tmp_path / "a").mkdir()
+        (tmp_path / "b").mkdir()
+        first, _own, _other, _sample = _foreign_sample_db(tmp_path / "a")
+        second, _own2, _other2, _sample2 = _foreign_sample_db(tmp_path / "b")
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(first)
+            previous = controller.session.db
+            with self._spy() as spy:
+                controller.engagement.handle_open_engagement(second)
+            assert [c.args[0] for c in spy.call_args_list] == [previous]  # type: ignore[attr-defined]
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_shutdown_checkpoints_and_forgets_the_project(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path, _own, _other, _sample = _foreign_sample_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        controller.engagement.handle_open_engagement(db_path)
+        with self._spy() as spy:
+            controller.shutdown()
+        assert spy.call_count == 1  # type: ignore[attr-defined]
+        assert controller.session.db is None
+        wal = db_path.with_name(db_path.name + "-wal")
+        assert not wal.exists() or wal.stat().st_size == 0
+
+    def test_shutdown_without_project_is_a_no_op(
+        self, window: MainWindow, recent_store: RecentEngagementsStore
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        controller.shutdown()
+        assert controller.session.db is None

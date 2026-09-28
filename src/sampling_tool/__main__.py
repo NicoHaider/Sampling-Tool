@@ -6,6 +6,7 @@ import logging
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import Protocol
 
 from sampling_tool.config import APP_NAME, APP_ORG, APP_ORG_DOMAIN
 from sampling_tool.logging_setup import configure_logging, install_excepthook
@@ -68,9 +69,26 @@ def main() -> int:
     window = MainWindow()
     window.apply_ui_scale(factor)
     # Reference muss am Leben bleiben (sonst werden Signal-Slots GC'd).
-    window.controller = MainController(window, settings=settings)  # type: ignore[attr-defined]
+    controller = MainController(window, settings=settings)
+    window.controller = controller  # type: ignore[attr-defined]
     window.show()
-    return app.exec()
+    return run_event_loop(app, controller)
+
+
+class _EventLoop(Protocol):
+    def exec(self) -> int: ...
+
+
+class _ShutsDown(Protocol):
+    def shutdown(self) -> None: ...
+
+
+def run_event_loop(app: _EventLoop, controller: _ShutsDown) -> int:
+    """Ereignisschleife, danach die offene Projektdatei schließen (Sprint 89 / A2)."""
+    try:
+        return app.exec()
+    finally:
+        controller.shutdown()
 
 
 def run_first_run_wizard(initial: AppSettings) -> AppSettings:

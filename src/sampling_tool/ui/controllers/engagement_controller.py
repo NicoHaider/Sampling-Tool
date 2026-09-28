@@ -144,7 +144,7 @@ class EngagementController:
         detached_active_db = False
         if s.db is not None and _paths_refer_to_same_file(s.db.db_path, db_path):
             s.window.data_table().clear_dataset()
-            s.db.close()
+            s.db.checkpoint_and_close()
             s.db = None
             s.undo_manager = None
             s.state_repo = None
@@ -209,9 +209,9 @@ class EngagementController:
             return
         triggers_tampered = result.audit_triggers_tampered
         # Aus dem read-only Preflight, nicht aus `Database`: dessen `connect()`
-        # schaltet WAL ein und verändert damit schon die Datei. Liegt nach
-        # einem Absturz eine neuere Version nur im WAL, gilt die Migration
-        # hier als ausstehend – das irrt zur sicheren Seite (Sprint 84 / B).
+        # schaltet WAL ein und verändert damit schon die Datei. Der Preflight
+        # liest einen liegengebliebenen WAL mit (Sprint 89 / A1) – eine dort
+        # schon abgeschlossene Migration steht also nicht mehr aus.
         migration_pending = result.schema_version < CURRENT_SCHEMA_VERSION
 
         # Compliance-Snapshot BEVOR die Session anfängt. Ohne ausstehende
@@ -401,7 +401,7 @@ class EngagementController:
         """Setzt internen State auf ein frisches/geöffnetes Engagement und aktualisiert das UI."""
         s = self.session
         if s.db is not None and s.db is not db:
-            s.db.close()
+            s.db.checkpoint_and_close()
 
         s.db = db
         s.engagement = engagement

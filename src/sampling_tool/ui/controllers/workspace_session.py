@@ -646,7 +646,7 @@ class WorkspaceSession:
     def reset_to_welcome(self) -> None:
         """Schließt DB und leert allen Session-State – Welcome-Screen-Zustand."""
         if self.db is not None:
-            self.db.close()
+            self.db.checkpoint_and_close()
         self.db = None
         self.engagement = None
         self.dataset = None

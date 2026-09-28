@@ -5,12 +5,20 @@ die Append-only-Trigger auf `audit_events` noch intakt sind – der Schutz ist
 NUR anwendungsseitig, ein externer SQLite-Editor kann sie entfernen oder
 entkernen (Sprint 52 / S2.7, S-004). Das ist Tamper-**Erkennung** +
 Wiederherstellung, KEIN kryptografischer Manipulationsnachweis.
+
+Sprint 89 / A1: Liegt ein nicht leerer WAL neben der Datei (App nicht sauber
+beendet), wird aus einer Temp-Kopie von `.db` + `-wal` gelesen – sonst sähe
+der Preflight eine dort schon abgeschlossene Migration nicht und legte bei
+jedem Öffnen erneut eine „vor Migration"-Kopie an.
 """
 
 from __future__ import annotations
 
+import logging
 import re
+import shutil
 import sqlite3
+import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -22,6 +30,8 @@ from sampling_tool.persistence.database import (
     CURRENT_SCHEMA_VERSION,
     SCHEMA_VERSION_TABLE,
 )
+
+logger = logging.getLogger(__name__)
 
 _SQLITE_HEADER_MAGIC: Final = b"SQLite format 3\x00"
 
@@ -165,6 +175,17 @@ def _read_schema_version(conn: sqlite3.Connection) -> int:
     return int(row["v"]) if row["v"] is not None else 0
 
 
+def _wal_path(db_path: Path) -> Path:
+    return db_path.with_name(f"{db_path.name}-wal")
+
+
+def _has_pending_wal(db_path: Path) -> bool:
+    try:
+        return _wal_path(db_path).stat().st_size > 0
+    except OSError:
+        return False
+
+
 def preflight_check(db_path: Path) -> PreflightResult:
     """Prüft, ob `db_path` sicher snapshot- und migrierbar ist – rein lesend.
 
@@ -172,12 +193,22 @@ def preflight_check(db_path: Path) -> PreflightResult:
     Dateien daneben an (kein WAL/SHM, kein `archiv/`). Erst nach erfolgreicher
     Prüfung darf der Aufrufer (Task 3) den regulären Snapshot+Migrate-Pfad
     anstoßen.
+
+    Mit nicht leerem WAL daneben (Sprint 89 / A1) wird eine Temp-Kopie aus
+    `.db` + `-wal` geprüft, damit Schema-Version und Trigger dem Stand
+    entsprechen, den die App gleich öffnet. Scheitert die Kopie, wird die
+    Hauptdatei allein gelesen – das irrt zur sicheren Seite (Migration gilt
+    als ausstehend, also wird vorher gesichert).
     """
     if not _has_sqlite_header(db_path):
         return PreflightRejected(
             PreflightRejectionReason.NOT_SQLITE,
             "Die ausgewählte Datei ist keine gültige Datenbank-Datei.",
         )
+    if _has_pending_wal(db_path):
+        through_wal = _check_through_wal_copy(db_path)
+        if through_wal is not None:
+            return through_wal
 
     # `mode=ro` allein reicht NICHT: Ist die Kandidaten-Datei WAL-mode-getaggt
     # (jede von `Database.connect()` erzeugte DB ist das dauerhaft, weil
@@ -195,7 +226,33 @@ def preflight_check(db_path: Path) -> PreflightResult:
     # greifend korrekt prozent-encoded (Default-Installpfad enthält ein
     # Leerzeichen: `~/Documents/BDO Audit Sampling/...`; Zielplattform auch
     # Windows mit Laufwerksbuchstaben-Pfaden).
-    uri = f"{db_path.resolve().as_uri()}?mode=ro&immutable=1"
+    return _check_uri(f"{db_path.resolve().as_uri()}?mode=ro&immutable=1")
+
+
+def _check_through_wal_copy(db_path: Path) -> PreflightResult | None:
+    """Prüft eine Temp-Kopie von `.db` + `-wal`; `None`, wenn die Kopie scheitert.
+
+    Nur so lässt sich der WAL lesen, ohne neben dem Original etwas anzulegen:
+    ein `mode=ro`-Zugriff ohne `immutable` erzeugt dort einen `-shm`-Index.
+    Die Kopie ist privat, der `-shm` entsteht im Temp-Ordner.
+    """
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        copy = Path(tmp) / db_path.name
+        try:
+            shutil.copyfile(db_path, copy)
+            shutil.copyfile(_wal_path(db_path), _wal_path(copy))
+        except OSError:
+            logger.warning(
+                "Could not copy %s with its WAL for the preflight; reading the main file only",
+                db_path.name,
+                exc_info=True,
+            )
+            return None
+        return _check_uri(f"{copy.resolve().as_uri()}?mode=ro")
+
+
+def _check_uri(uri: str) -> PreflightResult:
+    """Die eigentlichen Prüfungen auf einer read-only geöffneten Datei."""
     conn: sqlite3.Connection | None = None
     try:
         # `connect()` selbst gehört mit in dieses try: eine TOCTOU-Lücke

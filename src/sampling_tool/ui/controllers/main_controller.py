@@ -154,6 +154,19 @@ class MainController:
         # Sprint 22: „Ansicht"-Menü-Checks aus den app-weiten Toggles spiegeln.
         self.session.sync_view_menu()
 
+    # ---- App-Ende ------------------------------------------------------
+
+    def shutdown(self) -> None:
+        """App-Ende (Sprint 89 / A2): offene Projektdatei sauber schließen.
+
+        Vorher blieb die Datei bis zum Prozessende offen, ihr WAL lag danach
+        neben ihr. Wirft nie – ein Fehler beim Schließen wird nur protokolliert.
+        """
+        if self.session.db is None:
+            return
+        self.session.window.data_table().clear_dataset()
+        self.session.reset_to_welcome()
+
     # ---- Signal-Routing ------------------------------------------------
 
     def _connect_signals(self) -> None:
