@@ -159,7 +159,9 @@ FILTER_OPERATOR_LABELS: Final[dict[str, str]] = {
 # Reihenfolge = Reihenfolge im „Aktion"-Filter des AuditTrail-Tabs.
 EVENT_TYPE_LABELS: Final[dict[str, str]] = {
     "sampling": "Stichprobe",
-    "reset": "Zurückgesetzt",
+    # Sprint 89 / C: der Event-Typ bleibt `reset`, er hebt nur die Markierung
+    # einer Stichprobe auf – gelöscht wird nichts.
+    "reset": "Auswahl aufgehoben",
     "import": "Import",
     "export": "Export",
     "undo": "Rückgängig",
@@ -225,6 +227,7 @@ AUDIT_DETAIL_LABELS: Final[dict[str, str]] = {
     "trashed_count": "Anzahl",
     "trashed_files": "Dateien",
     "dataset_rows": "Datensatz gesamt",
+    "aufgehoben": "Aufgehoben",
     # Technische Markierung, in der Details-Zeile ausgeblendet (Sprint 89 / B3).
     "population_basis": "Population bezogen auf",
 }

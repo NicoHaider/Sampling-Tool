@@ -572,10 +572,10 @@ class WorkspaceSession:
         if status is not None:
             status.showMessage(message, 8000)
 
-    # ---- Sampling-Reset (Sprint 20) ------------------------------------
+    # ---- Auswahl aufheben (Sprint 20, Sprint 89 / C) --------------------
 
     def reset_sampling(self) -> bool:
-        """Setzt ausschließlich den gezogenen-Stichprobe-/Ergebnis-State zurück.
+        """Hebt die Auswahl auf: aktive Stichprobe, Markierung und Filter.
 
         Leert die aktive Stichprobe, das Tabellen-Highlight und den
         Sample-Filter – der UI-Zustand ist danach „noch nie gezogen".

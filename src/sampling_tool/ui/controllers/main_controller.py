@@ -184,8 +184,10 @@ class MainController:
         w.import_excel_requested.connect(self.workspace.handle_import_excel)
         w.clear_loaded_datasets_requested.connect(self.workspace.handle_clear_loaded_datasets)
         w.new_sample_requested.connect(self.workspace.handle_new_sampling)
+        # Sprint 89 / C: Menü und Toolbar teilen eine Aktion; beide Signale
+        # führen zur selben Methode.
         w.reset_sample_requested.connect(self.workspace.handle_reset)
-        w.reset_sampling_requested.connect(self.workspace.handle_reset_sampling)
+        w.reset_sampling_requested.connect(self.workspace.handle_reset)
         w.undo_requested.connect(self.workspace.handle_undo)
         w.redo_requested.connect(self.workspace.handle_redo)
         # Selektion

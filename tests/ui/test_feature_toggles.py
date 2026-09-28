@@ -402,7 +402,7 @@ class TestToggleSamplingNeutrality:
                 first = tuple(controller.session.sample.selected_row_ids)
                 seed1 = controller.session.sample.config.seed
 
-                controller.workspace.handle_reset_sampling()
+                controller.workspace.handle_reset()
                 assert controller.session.sample is None
 
                 # Filter-Funktion SICHTBAR schalten – aber KEINEN Filter setzen.

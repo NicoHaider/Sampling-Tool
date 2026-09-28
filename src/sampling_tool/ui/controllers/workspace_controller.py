@@ -479,67 +479,36 @@ class WorkspaceController:
     # ---- Reset ---------------------------------------------------------
 
     def handle_reset(self) -> None:
-        """Auswahl zurücksetzen (Highlights entfernen, Filter raus)."""
-        s = self.session
-        if not s.has_engagement():
-            return
-        if s.sample is None and not s.filter_active_sample_id:
-            return
+        """Auswahl aufheben (Menü und Toolbar, Sprint 89 / C).
 
-        answer = QMessageBox.question(
-            s.window,
-            "Auswahl zurücksetzen",
-            "Sollen die aktuelle Sample-Hervorhebung und der Filter entfernt werden?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-
-        assert s.db is not None
-        assert s.engagement is not None
-        assert s.engagement.id is not None
-        if s.dataset is not None and s.dataset.id is not None:
-            dataset_id = s.dataset.id
-            self._log_audit_event_safely("Der Reset", lambda al: al.log_reset(dataset_id))
-
-        s.sample = None
-        s.active_sample_id = None
-        if s.settings.reset_keeps_filter and s.filter_active_sample_id is not None:
-            # User-Setting: Filter bleibt aktiv, nur das Sample-Highlight geht.
-            s.window.data_table().clear_highlight()
-            s.window.clear_active_sample()
-        else:
-            s.filter_active_sample_id = None
-            s.window.clear_sample_filter()
-            s.window.set_filter_only_sample(False)
-            s.window.data_table().clear_highlight()
-            s.window.clear_active_sample()
-        self._push_undo_snapshot()
-        s.update_undo_redo_state()
-        s.refresh_views()
-        s.persist_state()
-
-    def handle_reset_sampling(self) -> None:
-        """Sampling zurücksetzen (Toolbar, Sprint 20): gezogene Stichprobe leeren.
-
-        Audit-safe In-Memory-Reset: aktive Stichprobe, Highlight und
-        Sample-Filter werden geleert; importierte Population und Sampling-
-        Parameter bleiben erhalten, persistierte Sample-/Audit-Zeilen
-        ebenso (Append-only-Trail). Mit Bestätigungsdialog; Statusmeldung
-        nach Erfolg.
+        Hebt Markierung und Stichproben-Filter auf; mit `reset_keeps_filter`
+        bleibt der Filter stehen. Audit-safe: die Stichprobe bleibt in der
+        Projektdatei und im AuditTrail (Append-only) und kann jederzeit wieder
+        ausgewählt werden. Das `reset`-Event nennt die Stichprobe.
         """
         s = self.session
         if not s.has_engagement():
             return
-        if s.sample is None and s.filter_active_sample_id is None:
+        sample_id = next(
+            (
+                candidate
+                for candidate in (
+                    s.sample.id if s.sample is not None else None,
+                    s.filter_active_sample_id,
+                )
+                if candidate is not None
+            ),
+            None,
+        )
+        if sample_id is None:
             return
 
         answer = QMessageBox.question(
             s.window,
-            "Sampling zurücksetzen",
-            "Die gezogene Stichprobe und die berechneten Ergebnisse werden entfernt.\n"
-            "Importierte Daten und Sampling-Parameter bleiben erhalten. Fortfahren?",
+            "Auswahl aufheben",
+            f"Die Markierung von Stichprobe #{sample_id} wird aufgehoben.\n\n"
+            "Die Stichprobe bleibt im Projekt und im AuditTrail erhalten und kann "
+            "jederzeit wieder ausgewählt werden.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -551,10 +520,18 @@ class WorkspaceController:
         assert s.engagement.id is not None
         if s.dataset is not None and s.dataset.id is not None:
             dataset_id = s.dataset.id
-            self._log_audit_event_safely("Der Reset", lambda al: al.log_reset(dataset_id))
+            self._log_audit_event_safely(
+                "Das Aufheben der Auswahl", lambda al: al.log_reset(dataset_id, sample_id)
+            )
 
-        if not s.reset_sampling():
-            return
+        if s.settings.reset_keeps_filter and s.filter_active_sample_id is not None:
+            # User-Setting: Filter bleibt aktiv, nur die Markierung geht.
+            s.sample = None
+            s.active_sample_id = None
+            s.window.data_table().clear_highlight()
+            s.window.clear_active_sample()
+        else:
+            s.reset_sampling()
         self._push_undo_snapshot()
         s.update_undo_redo_state()
         s.refresh_views()
@@ -563,7 +540,8 @@ class WorkspaceController:
         status = s.window.statusBar()
         if status is not None:
             status.showMessage(
-                "Sampling zurückgesetzt – importierte Daten und Parameter bleiben erhalten.",
+                f"Auswahl von Stichprobe #{sample_id} aufgehoben – "
+                "die Stichprobe bleibt im Projekt erhalten.",
                 5000,
             )
 

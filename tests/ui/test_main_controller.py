@@ -6300,7 +6300,7 @@ class TestSupplementarySampling:
 
 
 class TestResetSampling:
-    """`WorkspaceSession.reset_sampling()` + `handle_reset_sampling()`.
+    """`WorkspaceSession.reset_sampling()` + `handle_reset()` („Auswahl aufheben").
 
     Reset leert ausschließlich den gezogenen-Stichprobe-/Ergebnis-State
     (aktive Stichprobe, Highlight, Sample-Filter). Population (Dataset) und
@@ -6435,7 +6435,7 @@ class TestResetSampling:
         finally:
             controller.engagement.handle_close_engagement()
 
-    def test_handle_reset_sampling_confirmation_clears(
+    def test_handle_reset_confirmation_clears(
         self,
         window: MainWindow,
         recent_store: RecentEngagementsStore,
@@ -6453,13 +6453,13 @@ class TestResetSampling:
                 "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.Yes,
             ):
-                controller.workspace.handle_reset_sampling()
+                controller.workspace.handle_reset()
             assert controller.session.sample is None
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
             controller.engagement.handle_close_engagement()
 
-    def test_handle_reset_sampling_cancelled_keeps_sample(
+    def test_handle_reset_cancelled_keeps_sample(
         self,
         window: MainWindow,
         recent_store: RecentEngagementsStore,
@@ -6477,7 +6477,7 @@ class TestResetSampling:
                 "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.No,
             ):
-                controller.workspace.handle_reset_sampling()
+                controller.workspace.handle_reset()
             assert controller.session.sample is not None
             assert len(window.data_table().table_model().highlighted_row_ids()) == 2
         finally:
@@ -6685,7 +6685,7 @@ class TestAuditTrailRobustness:
         populated_db: Path,
     ) -> None:
         """N-003: symmetric to test_reset_survives_audit_log_failure, but for
-        the toolbar 'Sampling zurücksetzen' path (handle_reset_sampling)."""
+        the toolbar path – since Sprint 89 the same action and method (handle_reset)."""
         from PyQt6.QtWidgets import QMessageBox
 
         from sampling_tool.persistence.repositories import AuditRepo
@@ -6708,7 +6708,7 @@ class TestAuditTrailRobustness:
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as mock_warning,
             ):
-                controller.workspace.handle_reset_sampling()  # darf NICHT werfen
+                controller.workspace.handle_reset()  # darf NICHT werfen
             mock_warning.assert_called_once()
             assert controller.session.sample is None
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
@@ -6991,7 +6991,7 @@ class TestReproducibilityViaController:
                 r1 = tuple(first.selected_row_ids)
                 seed1 = first.config.seed
 
-                controller.workspace.handle_reset_sampling()
+                controller.workspace.handle_reset()
                 assert controller.session.sample is None
 
                 controller.workspace.handle_new_sampling()
@@ -7024,7 +7024,7 @@ class TestReproducibilityViaController:
                     assert controller.session.sample is not None
                     samples.append(tuple(controller.session.sample.selected_row_ids))
                     seeds_used.append(controller.session.sample.config.seed)
-                    controller.workspace.handle_reset_sampling()
+                    controller.workspace.handle_reset()
                     assert controller.session.sample is None
             assert seeds_used[0] == seeds_used[1] == seeds_used[2]
             assert samples[0] == samples[1] == samples[2]
@@ -7085,7 +7085,7 @@ class TestSeedRelocationReproducibility:
                 r1 = tuple(controller.session.sample.selected_row_ids)
                 seed1 = controller.session.sample.config.seed
 
-                controller.workspace.handle_reset_sampling()
+                controller.workspace.handle_reset()
                 assert controller.session.sample is None
 
                 controller.workspace.handle_new_sampling()
@@ -8089,3 +8089,81 @@ class TestSampleExportShowsPopulationBasis:
         meta = {r[0]: r[1] for r in ws.iter_rows(2, values_only=True)}
         assert meta["Population (Zeilen)"] == f"5 ({LEGACY_FILTER_POPULATION_NOTE})"
         assert meta["Datensatz gesamt"] == "5"
+
+
+# ---------------------------------------------------------------------------
+# Sprint 89 / C: Ein „Auswahl aufheben", ehrlich beschrieben
+# ---------------------------------------------------------------------------
+
+
+class TestUnselectSample:
+    def _controller(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, db_path: Path
+    ) -> MainController:
+        controller = MainController(window, recent_store=recent_store)
+        _open_dataset(controller, window, db_path)
+        controller.selection.handle_sample_selected(1)
+        return controller
+
+    @pytest.mark.parametrize("action", ["_action_reset_sample", "_action_reset_sampling"])
+    def test_menu_and_toolbar_ask_the_same_honest_question(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        action: str,
+    ) -> None:
+        controller = self._controller(window, recent_store, populated_db)
+        try:
+            with patch(
+                "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.No,
+            ) as question:
+                getattr(window, action).trigger()
+            question.assert_called_once()
+            title, text = question.call_args.args[1:3]
+            assert title == "Auswahl aufheben"
+            assert "Stichprobe #1" in text
+            assert "bleibt" in text
+            assert "erhalten" in text
+            assert "entfernt" not in text
+            assert controller.session.sample is not None
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_event_names_the_unselected_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.persistence.repositories import AuditRepo
+
+        controller = self._controller(window, recent_store, populated_db)
+        try:
+            with patch(
+                "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ):
+                window._action_reset_sampling.trigger()
+            assert controller.session.sample is None
+            assert controller.session.db is not None
+            [event] = [
+                e
+                for e in AuditRepo(controller.session.db.connect()).list_for_engagement(1)
+                if e.event_type == "reset"
+            ]
+            assert event.sample_id == 1
+            assert event.details["aufgehoben"] == "Auswahl"
+            # Die Stichprobe bleibt im Projekt.
+            assert SampleRepo(controller.session.db.connect()).get_by_id(1) is not None
+            status = window.statusBar()
+            assert status is not None
+            assert "#1" in status.currentMessage()
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_audit_trail_label(self) -> None:
+        from sampling_tool.config import EVENT_TYPE_LABELS
+
+        assert EVENT_TYPE_LABELS["reset"] == "Auswahl aufgehoben"

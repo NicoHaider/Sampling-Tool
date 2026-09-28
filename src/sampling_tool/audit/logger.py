@@ -172,13 +172,15 @@ class AuditLogger:
         )
         return self.repo.log(event)
 
-    def log_reset(self, dataset_id: int) -> AuditEvent:
-        """Reset eines Datasets (alle Auswahlmarkierungen zurücksetzen)."""
+    def log_reset(self, dataset_id: int, sample_id: int | None = None) -> AuditEvent:
+        """Auswahl aufgehoben (Sprint 89 / C): Markierung und Filter weg, die
+        Stichprobe bleibt im Projekt. `sample_id` nennt, welche es war."""
         event = AuditEvent(
             event_type="reset",
             engagement_id=self.engagement_id,
             user_name=self.user_name,
-            details={"dataset_id": dataset_id},
+            sample_id=sample_id,
+            details={"dataset_id": dataset_id, "aufgehoben": "Auswahl"},
         )
         return self.repo.log(event)
 

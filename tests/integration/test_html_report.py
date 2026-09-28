@@ -657,7 +657,7 @@ class TestReportSpeaksGerman:
             "Stichprobe",
             "Rückgängig",
             "Wiederhergestellt",
-            "Zurückgesetzt",
+            "Auswahl aufgehoben",
             "Einfach",
             "Geschichtet",
             "Schichtungsmodus: Proportional",

@@ -767,7 +767,7 @@ class TestPdfSpeaksGerman:
             "Stichprobe",
             "Rückgängig",
             "Wiederhergestellt",
-            "Zurückgesetzt",
+            "Auswahl aufgehoben",
             "Einfach",
             "Geschichtet",
             "eingeschränkt",

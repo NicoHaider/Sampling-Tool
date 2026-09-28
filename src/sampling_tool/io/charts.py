@@ -58,7 +58,7 @@ def render_bar_chart_bytes(
     `integer_ticks` (Sprint 85 / D) für Zähl-Diagramme: nur ganze Zahlen an der
     Werteachse statt 0.25-Schritten. `horizontal` (Sprint 87 / E1) legt die
     Balken quer: lange deutsche Kategorien („Wiederhergestellt",
-    „Zurückgesetzt") stehen dann untereinander statt sich an der x-Achse zu
+    „Auswahl aufgehoben") stehen dann untereinander statt sich an der x-Achse zu
     überlappen; der erste Eintrag steht oben. Beide Default aus – die
     Berichts-Charts bleiben byte-identisch.
     """
