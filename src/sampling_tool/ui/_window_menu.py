@@ -234,6 +234,12 @@ def build_menu(window: MainWindow) -> None:
     assert help_menu is not None
     window._help_menu = help_menu
 
+    # Sprint 89 / F: das Handbuch direkt aus der App (F1 bzw. Cmd+?).
+    window._action_user_guide = QAction("Handbuch", window)
+    window._action_user_guide.setShortcut(QKeySequence.StandardKey.HelpContents)
+    window._action_user_guide.triggered.connect(window.user_guide_requested.emit)
+    help_menu.addAction(window._action_user_guide)
+
     window._action_hotkeys = QAction("Tastatur-Shortcuts…", window)
     window._action_hotkeys.triggered.connect(window.hotkeys_requested.emit)
     help_menu.addAction(window._action_hotkeys)

@@ -34,8 +34,10 @@ elif IS_WINDOWS:
 # `sampling_tool.resources`:
 #   - `package_resource("foo/bar")` → `_MEIPASS/sampling_tool/foo/bar`
 #   - `shared_resource("foo/bar")`  → `_MEIPASS/resources/foo/bar`
+#   - `doc_resource("foo")`         → `_MEIPASS/docs/foo` (Handbuch, Sprint 89)
 datas = [
     (str(ROOT / "resources"), "resources"),
+    (str(ROOT / "docs" / "USER_GUIDE.md"), "docs"),
     (
         str(ROOT / "src" / "sampling_tool" / "persistence" / "migrations"),
         "sampling_tool/persistence/migrations",

@@ -84,6 +84,8 @@ class MainWindow(QMainWindow):
     about_requested = pyqtSignal()
     settings_requested = pyqtSignal()
     hotkeys_requested = pyqtSignal()
+    # Sprint 89 / F – „Hilfe → Handbuch" (docs/USER_GUIDE.md).
+    user_guide_requested = pyqtSignal()
     # Sprint 28 – Menü „Stichprobe → Vorlagen verwalten…": öffnet das
     # Vorlagen-Verwaltungsfenster (app-weit, auch ohne offenes Projekt).
     manage_templates_requested = pyqtSignal()
@@ -124,6 +126,7 @@ class MainWindow(QMainWindow):
     _action_undo: QAction
     _action_redo: QAction
     _action_hotkeys: QAction
+    _action_user_guide: QAction
     _action_bug_report: QAction
     _action_about: QAction
     _action_switch_engagement: QAction
