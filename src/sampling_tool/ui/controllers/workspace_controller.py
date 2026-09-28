@@ -15,7 +15,7 @@ Reproducibility-relevante Pfade:
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Final
@@ -35,6 +35,7 @@ from sampling_tool.core.models import (
     DatasetRow,
     FilterOperator,
     ParentRelation,
+    SampleConfig,
     SampleResult,
     Snapshot,
 )
@@ -113,6 +114,28 @@ def _count_groups(repo: DatasetRepo, dataset_id: int, column: str) -> int:
     if DatasetRepo.supports_field_pairs(column):
         return len({value for _, value in repo.iter_row_field_pairs(dataset_id, column)})
     return len({row.get(column) for row in repo.iter_rows(dataset_id)})
+
+
+class _PoolCounter:
+    """Zählt beim Durchreichen die Zeilen, aus denen der Sampler zieht (Sprint 89 / B2).
+
+    Dieselbe `matches_filter`-Prüfung wie `BaseSampler._collect_pool`; die
+    Zeilen selbst laufen unverändert und in derselben Reihenfolge durch – die
+    Ziehung bleibt bit-identisch, nur die dokumentierte Population ändert sich.
+    """
+
+    def __init__(self, config: SampleConfig) -> None:
+        self._config = config
+        self.count = 0
+
+    def wrap(self, rows: Iterable[DatasetRow]) -> Iterator[DatasetRow]:
+        field = self._config.filter_field
+        for row in rows:
+            if field is None or matches_filter(
+                row.get(field), self._config.filter_operator, self._config.filter_value
+            ):
+                self.count += 1
+            yield row
 
 
 class WorkspaceController:
@@ -430,7 +453,7 @@ class WorkspaceController:
                 sample_id = SampleRepo(conn).create_from_result(sample_result, s.dataset.id)
                 stored = replace(sample_result, id=sample_id)
                 AuditLogger(AuditRepo(conn), s.user_name(), s.engagement.id).log_sampling(
-                    stored, sample_id, dataset_id
+                    stored, sample_id, dataset_id, dataset_rows=s.dataset.row_count
                 )
         except Exception as exc:  # pragma: no cover – defensiv
             logger.exception("Sample persistieren fehlgeschlagen")
@@ -688,6 +711,11 @@ class WorkspaceController:
         der P-002/P-003-Fastpaths nehmen – sie geht immer über den klassischen
         `sample(rows)`-Pfad, damit der Ausschluss-Filter greift. Gefilterte und
         Resample-Ziehungen laufen ebenfalls klassisch.
+
+        Sprint 89 / B2: `population_size` ist die Auswahlgrundlage – die Zeilen,
+        aus denen tatsächlich gezogen wurde (nach Filter, Einschränken,
+        Ergänzen-Ausschluss). Die Fastpaths ziehen ungefiltert aus dem ganzen
+        Datensatz, dort ist das `dataset.row_count`.
         """
         s = self.session
         assert dataset.id is not None
@@ -729,11 +757,13 @@ class WorkspaceController:
             effective_rows, population_size = self._build_supplement_iterator(
                 repo, dataset, parent.selected_row_ids
             )
-            return sampler.sample(effective_rows, population_size=population_size)
-        effective_rows, population_size = self._build_sampling_iterator(
-            repo, dataset, result.from_sample_only
-        )
-        return sampler.sample(effective_rows, population_size=population_size)
+        else:
+            effective_rows, population_size = self._build_sampling_iterator(
+                repo, dataset, result.from_sample_only
+            )
+        pool = _PoolCounter(result.config)
+        drawn = sampler.sample(pool.wrap(effective_rows), population_size=population_size)
+        return replace(drawn, population_size=pool.count)
 
     def _build_sampling_iterator(
         self,

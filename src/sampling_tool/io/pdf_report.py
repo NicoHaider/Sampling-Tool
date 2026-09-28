@@ -38,8 +38,9 @@ from reportlab.platypus import (
 )
 
 from sampling_tool.config import BDO_GREY, BDO_RED, DEFAULT_BRIEFPAPIER, EVENT_TYPE_LABELS
-from sampling_tool.core.formatting import format_audit_details, format_event_timestamp
+from sampling_tool.core.formatting import format_event_timestamp
 from sampling_tool.core.models import AuditEvent, Engagement
+from sampling_tool.core.provenance import format_event_details
 from sampling_tool.io._atomic import atomic_output
 from sampling_tool.io.bdo_locations import BdoCompany, BdoLocation
 from sampling_tool.io.briefpapier import BriefpapierConfig, get_default_briefpapier
@@ -73,18 +74,21 @@ _CELL_STRING_THRESHOLD: Final[int] = 60
 # Großzügige „Datei"-Spalte (72mm), damit Dateinamen nicht mehr rechts aus
 # der Tabelle laufen. Summe == 257mm.
 _EVENT_TABLE_COL_WIDTHS: Final[tuple[float, ...]] = (
-    35 * mm,
-    45 * mm,
-    35 * mm,
-    18 * mm,
-    20 * mm,
     32 * mm,
-    72 * mm,
+    45 * mm,
+    20 * mm,
+    30 * mm,
+    16 * mm,
+    18 * mm,
+    28 * mm,
+    68 * mm,
 )
 
+# Sprint 89 / B1: „Stichprobe" wie auf dem Bildschirm, im Excel- und HTML-Bericht.
 _EVENT_TABLE_HEADER: Final[list[str]] = [
     "Zeitstempel",
     "Aktion",
+    "Stichprobe",
     "User",
     "Größe",
     "%",
@@ -399,10 +403,13 @@ def _build_chunk_table(
             # Lange Pfade umbrechen, indem wir nur den Dateinamen anzeigen
             filename = Path(filename).name
 
+        sample = f"#{evt.sample_id}" if evt.sample_id is not None else "—"
+
         data.append(
             [
                 _format_cell(format_event_timestamp(evt.timestamp), cell_style),
-                _format_action_cell(action_text, evt.details, cell_style),
+                _format_action_cell(action_text, format_event_details(evt), cell_style),
+                sample,
                 _format_cell(evt.user_name, cell_style),
                 size,
                 percent,
@@ -422,7 +429,7 @@ def _build_chunk_table(
 
 def _format_action_cell(
     action_text: str,
-    details: dict[str, Any],
+    detail_line: str,
     cell_style: ParagraphStyle,
 ) -> str | Paragraph:
     """Wie `_format_cell`, hängt aber additiv/kompakt eine Details-Zeile an
@@ -430,9 +437,8 @@ def _format_action_cell(
     Landscape-Tabelle aus Sprint 33 bleibt unverändert). Events ohne
     `details` (die meisten Nicht-Sampling-Events, alle Alt-Events) verhalten
     sich exakt wie vor diesem Sprint."""
-    if not details:
+    if detail_line == "—":
         return _format_cell(action_text, cell_style)
-    detail_line = format_audit_details(details)
     # Sprint 81: `BDO_GREY` statt des früheren #7F7F7F-Literals. Der Wert ist
     # mitgewandert (4,00:1 → 5,33:1) – bei 7 pt auf Papier ist das die Stelle,
     # an der ein zu heller Grauton am ehesten unlesbar wird.
@@ -451,7 +457,7 @@ def _build_chunk_style(correction_rows: list[int]) -> TableStyle:
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
             ("FONTSIZE", (0, 0), (-1, 0), 9),
-            ("ALIGN", (3, 1), (5, -1), "RIGHT"),
+            ("ALIGN", (4, 1), (6, -1), "RIGHT"),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("GRID", (0, 0), (-1, -1), 0.25, _GREY_LIGHT),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.whitesmoke]),

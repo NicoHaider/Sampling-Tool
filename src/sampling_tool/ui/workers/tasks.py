@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.core.cancellation import CancellationToken
@@ -169,6 +169,8 @@ class SampleExportTask:
     # Sprint 84 / C: vom Controller aufgelöster Dateiname (z. B. `…_2.xlsx`
     # nach der Rückfrage). `None` = Namensmuster des Exporters.
     filename: str | None = None
+    # Sprint 89 / B4: Population stammt von vor Sprint 89 (Hinweis bei Filter).
+    population_predates_basis: bool = False
 
     def run(self, progress: ProgressReporter, cancellation: CancellationToken) -> Path:
         cancellation.raise_if_cancelled()
@@ -199,6 +201,7 @@ class SampleExportTask:
                 engagement=self.engagement,
                 now=self.now,
                 filename=self.filename,
+                population_predates_basis=self.population_predates_basis,
             )
         finally:
             db.close()
@@ -252,6 +255,7 @@ class ExcelReportTask:
     output_path: Path
     sheets: set[str]
     dataset_ids_by_sample: dict[int, int] = field(default_factory=dict)
+    sampling_details_by_sample: dict[int, dict[str, Any]] | None = None
 
     def run(self, progress: ProgressReporter, cancellation: CancellationToken) -> Path:
         cancellation.raise_if_cancelled()
@@ -264,6 +268,7 @@ class ExcelReportTask:
             self.output_path,
             sheets=self.sheets,
             dataset_ids_by_sample=self.dataset_ids_by_sample,
+            sampling_details_by_sample=self.sampling_details_by_sample,
         )
         cancellation.raise_if_cancelled()
         progress.report(1, 1)
@@ -283,6 +288,7 @@ class HtmlReportTask:
     include_audit_trail: bool
     include_samples_table: bool
     dataset_ids_by_sample: dict[int, int] = field(default_factory=dict)
+    sampling_details_by_sample: dict[int, dict[str, Any]] | None = None
 
     def run(self, progress: ProgressReporter, cancellation: CancellationToken) -> Path:
         cancellation.raise_if_cancelled()
@@ -297,6 +303,7 @@ class HtmlReportTask:
             include_audit_trail=self.include_audit_trail,
             include_samples_table=self.include_samples_table,
             dataset_ids_by_sample=self.dataset_ids_by_sample,
+            sampling_details_by_sample=self.sampling_details_by_sample,
         )
         cancellation.raise_if_cancelled()
         progress.report(1, 1)

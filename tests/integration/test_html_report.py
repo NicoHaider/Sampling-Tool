@@ -420,11 +420,9 @@ class TestSampleFilterColumn:
         neu aus `sample.config` berechnet."""
         real = SamplingProvenance.from_sample_result
 
-        def _fake(
-            result: SampleResult, *, dataset_id: int | None, app_version: str
-        ) -> SamplingProvenance:
+        def _fake(result: SampleResult, **kwargs: Any) -> SamplingProvenance:
             return replace(
-                real(result, dataset_id=dataset_id, app_version=app_version),
+                real(result, **kwargs),
                 filter_field="AusProvenienz",
                 filter_value="P",
                 filter_operator="ne",

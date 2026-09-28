@@ -7867,3 +7867,225 @@ class TestProjectFileClosedCleanly:
         controller = MainController(window, recent_store=recent_store)
         controller.shutdown()
         assert controller.session.db is None
+
+
+# ---------------------------------------------------------------------------
+# Sprint 89 / B: Population = Auswahlgrundlage, Datensatzgröße zusätzlich
+# ---------------------------------------------------------------------------
+
+
+class TestPopulationIsSelectionBasis:
+    """Population ist die Zahl der Zeilen, aus denen tatsächlich gezogen wurde."""
+
+    def _draw(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        db_path: Path,
+        *,
+        restrict: bool = False,
+        supplement: bool = False,
+    ) -> tuple[SampleResult, list[object]]:
+        from sampling_tool.core.models import FilterOperator
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(
+                method=SamplingMethod.SIMPLE,
+                size=1,
+                seed=11,
+                filter_field="Betrag",
+                filter_operator=FilterOperator.GT,
+                filter_value=20,
+            ),
+            from_sample_only=restrict,
+            exclude_sample_ids=supplement,
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, db_path)
+            if restrict or supplement:
+                controller.selection.handle_sample_selected(1)
+            controller.workspace.handle_new_sampling()
+            drawn = controller.session.sample
+            assert drawn is not None
+            assert controller.session.db is not None
+            assert controller.session.engagement is not None
+            assert controller.session.engagement.id is not None
+            events = [
+                e
+                for e in AuditRepo(controller.session.db.connect()).list_for_engagement(
+                    controller.session.engagement.id
+                )
+                if e.event_type == "sampling"
+            ]
+            return drawn, list(events)
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_filter_draw_population_is_the_match_count(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.core.sampling import SimpleSampler
+
+        drawn, [event] = self._draw(window, recent_store, populated_db)
+
+        # Betrag > 20 trifft Zeilen 3, 4, 5.
+        assert drawn.population_size == 3
+        oracle = SimpleSampler(drawn.config).sample(
+            DatasetRow(row_id=i, values={"Konto": f"K{i}", "Betrag": i * 10}) for i in range(1, 6)
+        )
+        assert drawn.selected_row_ids == oracle.selected_row_ids
+        assert event.total_count == 3  # type: ignore[attr-defined]
+        assert event.sample_percent == pytest.approx(100 / 3)  # type: ignore[attr-defined]
+        assert event.details["dataset_rows"] == 5  # type: ignore[attr-defined]
+        assert event.details["population_basis"] == "auswahl"  # type: ignore[attr-defined]
+
+    def test_filter_plus_supplement_counts_the_remaining_matches(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        drawn, _events = self._draw(window, recent_store, populated_db, supplement=True)
+        # Stichprobe #1 hat 2 und 4; Betrag > 20 ohne diese: 3 und 5.
+        assert drawn.population_size == 2
+        assert set(drawn.selected_row_ids) <= {3, 5}
+
+    def test_filter_plus_restrict_counts_matches_inside_the_parent(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        drawn, [event] = self._draw(window, recent_store, populated_db, restrict=True)
+        # Innerhalb von #1 (2, 4) erfüllt nur 4 den Filter.
+        assert drawn.population_size == 1
+        assert drawn.selected_row_ids == (4,)
+        assert event.details["dataset_rows"] == 5  # type: ignore[attr-defined]
+
+    def test_unfiltered_draw_records_dataset_rows_too(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=3)
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.workspace.handle_new_sampling()
+            assert controller.session.sample is not None
+            assert controller.session.sample.population_size == 5
+            assert controller.session.db is not None
+            [event] = [
+                e
+                for e in AuditRepo(controller.session.db.connect()).list_for_engagement(1)
+                if e.event_type == "sampling"
+            ]
+            assert event.details["dataset_rows"] == 5
+            assert event.details["population_basis"] == "auswahl"
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+class TestSampleExportShowsPopulationBasis:
+    """Sprint 89 / B4: Sample-Export-Metadaten mit „Datensatz gesamt" und Altbestand-Hinweis."""
+
+    def _legacy_filter_sample(self, db_path: Path) -> int:
+        from sampling_tool.core.models import AuditEvent, FilterOperator
+        from sampling_tool.persistence.repositories import AuditRepo
+
+        db = Database(db_path)
+        try:
+            conn = db.connect()
+            [ds] = DatasetRepo(conn).list_for_engagement(1)
+            assert ds.id is not None
+            sample_id = SampleRepo(conn).create_from_result(
+                SampleResult(
+                    config=SampleConfig(
+                        method=SamplingMethod.SIMPLE,
+                        size=1,
+                        seed=5,
+                        filter_field="Betrag",
+                        filter_operator=FilterOperator.GT,
+                        filter_value=20,
+                    ),
+                    selected_row_ids=(4,),
+                    population_size=5,
+                ),
+                ds.id,
+            )
+            # Event wie vor Sprint 89: ohne `population_basis`.
+            AuditRepo(conn).log(
+                AuditEvent(
+                    event_type="sampling",
+                    engagement_id=1,
+                    sample_id=sample_id,
+                    sample_size=1,
+                    total_count=5,
+                    details={"method": "simple", "filter_field": "Betrag"},
+                )
+            )
+        finally:
+            db.close()
+        return sample_id
+
+    def test_legacy_filter_sample_export_carries_the_note(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        from openpyxl import load_workbook
+
+        from sampling_tool.config import LEGACY_FILTER_POPULATION_NOTE
+        from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialogResult
+
+        sample_id = self._legacy_filter_sample(populated_db)
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        result = ExportSampleDialogResult(
+            columns=["Konto", "Betrag"],
+            custom_name="alt",
+            custom_id=str(sample_id),
+            output_dir=out_dir,
+        )
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            export_dialog_factory=lambda *_a: _StubExportDialog(result),  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.selection.handle_sample_selected(sample_id)
+            with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
+                controller.export.handle_export_sample()
+        finally:
+            controller.engagement.handle_close_engagement()
+
+        [xlsx] = list(out_dir.glob("*.xlsx"))
+        ws = load_workbook(xlsx)["Metadaten"]
+        meta = {r[0]: r[1] for r in ws.iter_rows(2, values_only=True)}
+        assert meta["Population (Zeilen)"] == f"5 ({LEGACY_FILTER_POPULATION_NOTE})"
+        assert meta["Datensatz gesamt"] == "5"

@@ -65,6 +65,24 @@ class AuditRepo:
         )
         return [self._to_model(r) for r in cursor]
 
+    def sampling_details_by_sample(self, engagement_id: int) -> dict[int, dict[str, Any]]:
+        """`details` des Sampling-Events je Stichprobe (Sprint 89 / B4).
+
+        Die Berichte lesen daraus, ob eine Population schon die
+        Auswahlgrundlage ist (`population_basis`). Ohne Anzeige-Limit – anders
+        als `list_for_engagement` – damit auch alte Stichproben gefunden werden.
+        """
+        cursor = self.conn.execute(
+            "SELECT sample_id, details_json FROM audit_events "
+            "WHERE engagement_id = ? AND event_type = 'sampling' AND sample_id IS NOT NULL "
+            "ORDER BY id",
+            (engagement_id,),
+        )
+        return {
+            int(row["sample_id"]): _json_loads(row["details_json"]) if row["details_json"] else {}
+            for row in cursor
+        }
+
     def correct(self, original_id: int, corrected_event: AuditEvent) -> AuditEvent:
         """Schreibt einen Korrektur-Event (event_type='correction', verweist auf Original)."""
         patched = replace(

@@ -179,6 +179,15 @@ SNAPSHOT_REASON_LABELS: Final[dict[str, str]] = {
     "vor-ueberschreiben": "vor Überschreiben",
 }
 
+# Sprint 89 / B3: Bezugsgröße der Population im Sampling-Event. Ab Sprint 89
+# ist die Population die Auswahlgrundlage (Zeilen nach Filter, Einschränken,
+# Ergänzen-Ausschluss). Fehlt der Schlüssel, stammt das Event von davor – bei
+# Filter-Ziehungen war die Population damals der ganze Datensatz.
+POPULATION_BASIS_SELECTION: Final[str] = "auswahl"
+LEGACY_FILTER_POPULATION_NOTE: Final[str] = (
+    "gesamter Datensatz, Filter nicht eingerechnet; Stand vor Sprint 89"
+)
+
 # Werte von `details["restored"]` bei Undo/Redo auf den leeren Zustand.
 RESTORED_STATE_LABELS: Final[dict[str, str]] = {
     "empty": "leerer Zustand (keine Stichprobe)",
@@ -215,6 +224,9 @@ AUDIT_DETAIL_LABELS: Final[dict[str, str]] = {
     "backup_reason": "Anlass",
     "trashed_count": "Anzahl",
     "trashed_files": "Dateien",
+    "dataset_rows": "Datensatz gesamt",
+    # Technische Markierung, in der Details-Zeile ausgeblendet (Sprint 89 / B3).
+    "population_basis": "Population bezogen auf",
 }
 
 # ---------------------------------------------------------------------------

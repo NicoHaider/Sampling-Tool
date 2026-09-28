@@ -126,6 +126,10 @@ def _irrelevant_detail(key: str, details: dict[str, Any]) -> bool:
     aber nur etwas, wenn ihr Bezug gilt. Weggelassen wird nur, wenn der
     Bezugsschlüssel vorhanden ist – ein fremdes Dict bleibt unverändert.
     """
+    if key == "population_basis":
+        # Sprint 89 / B3: technische Markierung – ihre Aussage trägt die
+        # Population-Anzeige (`provenance.format_event_details`).
+        return True
     if key == "filter_operator":
         return "filter_field" in details and details["filter_field"] is None
     if key == "stratify_mode":

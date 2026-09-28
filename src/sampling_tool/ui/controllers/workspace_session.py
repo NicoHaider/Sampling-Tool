@@ -16,7 +16,7 @@ import logging
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
@@ -334,6 +334,14 @@ class WorkspaceSession:
                     dataset_ids_by_sample[sample.id] = ds.id
         events = audit_repo.list_for_engagement(engagement_id, limit=AUDIT_EVENT_DISPLAY_LIMIT)
         return datasets, samples, events, dataset_ids_by_sample
+
+    def sampling_details_by_sample(self) -> dict[int, dict[str, Any]]:
+        """`details` des Sampling-Events je Stichprobe (Sprint 89 / B4) – für die
+        Population-Anzeige der Berichte und des Sample-Exports."""
+        assert self.db is not None
+        assert self.engagement is not None
+        assert self.engagement.id is not None
+        return AuditRepo(self.db.connect()).sampling_details_by_sample(self.engagement.id)
 
     # ---- Briefpapier + Export-Pfade -------------------------------------
 

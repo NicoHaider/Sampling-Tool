@@ -26,6 +26,7 @@ from sampling_tool.io.bdo_locations import company_by_key, location_by_key
 from sampling_tool.io.pdf_report import (
     _CELL_STRING_THRESHOLD,
     _EVENT_TABLE_COL_WIDTHS,
+    _EVENT_TABLE_HEADER,
     AuditTrailPDF,
     _build_event_table,
 )
@@ -620,7 +621,7 @@ class TestLongFilenameWraps:
 
     def test_andere_spalten_behalten_schnellpfad(self) -> None:
         evt = _with_file("export_file", _NAME_SMOKE)
-        user_cell, _, _ = _first_row_cell(evt, 2)
+        user_cell, _, _ = _first_row_cell(evt, _EVENT_TABLE_HEADER.index("User"))
         timestamp_cell, _, _ = _first_row_cell(evt, 0)
 
         assert user_cell == "anna"
