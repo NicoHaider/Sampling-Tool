@@ -824,7 +824,7 @@ class TestNumericColumnsFitLongestValue:
     ) -> None:
         db, engagement_id = db_with_engagement
         view = self._view(qtbot, db, engagement_id, late_value=-17009.25)
-        index = view.model().index(0, 0)  # „t1" passt immer
+        index = view.table_model().index(0, 0)  # „t1" passt immer
         assert view._tooltip_for(index) is None
         view.setColumnWidth(0, 4)
         assert view._tooltip_for(index) == "t1"

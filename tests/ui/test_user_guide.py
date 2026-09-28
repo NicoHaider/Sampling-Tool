@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -36,8 +37,8 @@ class TestResourcePath:
     def test_frozen_path_lives_in_the_bundle(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(resources.sys, "frozen", True, raising=False)
-        monkeypatch.setattr(resources.sys, "_MEIPASS", str(tmp_path), raising=False)
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
         assert resources.doc_resource("USER_GUIDE.md") == tmp_path / "docs" / "USER_GUIDE.md"
 
     def test_spec_bundles_the_guide(self) -> None:
