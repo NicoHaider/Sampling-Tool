@@ -25,17 +25,25 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Sequence
-from typing import Any, ClassVar, Final
+from typing import Any, ClassVar, Final, cast
 
 from PyQt6 import sip
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QRect, Qt
-from PyQt6.QtGui import QBrush, QColor, QPainter, QPaintEvent, QResizeEvent
-from PyQt6.QtWidgets import QAbstractButton, QHeaderView, QLabel, QTableView, QWidget
+from PyQt6.QtCore import QAbstractTableModel, QEvent, QModelIndex, QRect, Qt
+from PyQt6.QtGui import QBrush, QColor, QHelpEvent, QPainter, QPaintEvent, QResizeEvent
+from PyQt6.QtWidgets import (
+    QAbstractButton,
+    QHeaderView,
+    QLabel,
+    QTableView,
+    QToolTip,
+    QWidget,
+)
 
 from sampling_tool.config import BDO_GREY, SAMPLE_HIGHLIGHT_ALPHA, SAMPLE_HIGHLIGHT_COLOR
 from sampling_tool.core.formatting import format_cell_value
 from sampling_tool.core.models import Dataset, DatasetRow
 from sampling_tool.persistence.repositories import DatasetRepo
+from sampling_tool.ui._cell_width import cell_width
 from sampling_tool.ui._fonts import relative_font
 from sampling_tool.ui._scaling import scaled_px
 
@@ -44,6 +52,8 @@ HIGHLIGHT_ALPHA: int = SAMPLE_HIGHLIGHT_ALPHA
 
 _MIN_COLUMN_WIDTH: int = 60
 _MAX_COLUMN_WIDTH: int = 320
+# Sprint 89 / E3: so viele Zeilen bestimmen die Breite der Zahlenspalten.
+_NUMERIC_SAMPLE_ROWS: Final[int] = 1000
 _EMPTY_MESSAGE: str = "Keine Datensätze – Datei importieren"
 #: Der Empty-State-Hinweis steht eine Stufe größer als der Tabelleninhalt.
 #: RELATIV, nicht absolut: bei der Default-Schrift (13px) ergibt das die 15px,
@@ -111,6 +121,16 @@ class DatasetTableModel(QAbstractTableModel):
         self._visible_indices = None
         self._highlight = frozenset()
         self.endResetModel()
+
+    def leading_rows(self, limit: int) -> list[DatasetRow]:
+        """Die ersten `limit` Zeilen des Datensatzes – eine Abfrage, am Cache vorbei.
+
+        Für das Breiten-Maß der Zahlenspalten (Sprint 89 / E3); `row_index`
+        beginnt je nach Import bei 0 oder 1, daher die Obergrenze + 1.
+        """
+        if self._repo is None or self._dataset_id is None:
+            return []
+        return self._repo.get_rows_in_range(self._dataset_id, 0, limit + 1)[:limit]
 
     def clear(self) -> None:
         """Leert das Modell vollständig (Welcome-Screen-Zustand)."""
@@ -520,3 +540,59 @@ class DataTableView(QTableView):
                 header.resizeSection(col, min_width)
             elif width > max_width:
                 header.resizeSection(col, max_width)
+        self._widen_numeric_columns(max_width)
+
+    def _widen_numeric_columns(self, max_width: int) -> None:
+        """Zahlenspalten: längster Wert der ersten 1.000 Zeilen plus Vorzeichen (Sprint 89 / E3).
+
+        `resizeColumnsToContents` sieht nur 100 Zeilen (siehe oben); ein langer
+        Betrag weiter unten – „-17009.25" in `08_gross` – wurde gekürzt. Eine
+        Abfrage über die ersten `_NUMERIC_SAMPLE_ROWS` Zeilen, nie über alle.
+        Platz für ein Minus auch dann, wenn der längste Wert positiv ist.
+        """
+        header = self.horizontalHeader()
+        dataset = self._model.dataset()
+        if header is None or dataset is None:
+            return
+        rows = self._model.leading_rows(_NUMERIC_SAMPLE_ROWS)
+        metrics = self.fontMetrics()
+        for col, column in enumerate(dataset.columns):
+            texts = [
+                text if text.startswith("-") else f"-{text}"
+                for row in rows
+                if _is_number(value := row.values.get(column))
+                for text in (format_cell_value(value),)
+            ]
+            if not texts:
+                continue
+            widest = max(texts, key=metrics.horizontalAdvance)
+            needed = min(cell_width(self, widest), max_width)
+            if header.sectionSize(col) < needed:
+                header.resizeSection(col, needed)
+
+    def _tooltip_for(self, index: QModelIndex) -> str | None:
+        """Voller Zellwert als Tooltip – nur wenn die Zelle ihn gekürzt zeigt (Sprint 89 / E3)."""
+        if not index.isValid():
+            return None
+        text = index.data(Qt.ItemDataRole.DisplayRole)
+        if not isinstance(text, str) or not text:
+            return None
+        if cell_width(self, text) <= self.columnWidth(index.column()):
+            return None
+        return text
+
+    def viewportEvent(self, event: QEvent | None) -> bool:  # noqa: N802
+        if event is not None and event.type() == QEvent.Type.ToolTip:
+            help_event = cast(QHelpEvent, event)
+            tooltip = self._tooltip_for(self.indexAt(help_event.pos()))
+            if tooltip is None:
+                QToolTip.hideText()
+            else:
+                QToolTip.showText(help_event.globalPos(), tooltip, self.viewport())
+            return True
+        return super().viewportEvent(event)
+
+
+def _is_number(value: object) -> bool:
+    """Zahl im Sinne der Rechtsbündigkeit (`TextAlignmentRole`) – `bool` nicht."""
+    return isinstance(value, int | float) and not isinstance(value, bool)

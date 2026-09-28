@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
 from sampling_tool.config import BDO_GREY, EVENT_TYPE_LABELS
 from sampling_tool.core.formatting import ensure_utc, format_optional_timestamp
 from sampling_tool.core.models import AuditEvent
+from sampling_tool.ui._cell_width import cell_width
 from sampling_tool.ui._dialog_buttons import mark_secondary
 
 _COLUMNS: Final[tuple[str, ...]] = (
@@ -60,8 +61,6 @@ _COLUMNS: Final[tuple[str, ...]] = (
 )
 _FILE_COLUMN: Final[int] = _COLUMNS.index("Datei")
 _ACTION_COLUMN: Final[int] = _COLUMNS.index("Aktion")
-# Innenabstand links + rechts einer Zelle (Style-Margins), großzügig gerundet.
-_CELL_TEXT_PADDING: Final[int] = 24
 
 # Spezial-Wert für ComboBoxen, der „kein Filter" bedeutet.
 _FILTER_ALL: Final[str] = "Alle"
@@ -464,13 +463,16 @@ class AuditTrailView(QWidget):
         Gemessen an ALLEN Labels, nicht nur den gerade gezeigten – sonst
         springt die Spalte, sobald ein „Wiederhergestellt" dazukommt. Wie beim
         Zeitstempel: nur verbreitern, nie verkleinern.
+
+        Sprint 89 / E1: gemessen wie Qt die Zelle selbst misst (Stil samt
+        Stylesheet-Padding und Schrift), nicht als Schriftbreite + feste
+        Zugabe – die reichte unter macOS für „Sicherungen in Papierkorb" nicht.
         """
         header = self._table.horizontalHeader()
         if header is None:
             return
-        metrics = self._table.fontMetrics()
-        widest = max(metrics.horizontalAdvance(label) for label in EVENT_TYPE_LABELS.values())
-        needed = max(widest + _CELL_TEXT_PADDING, header.sectionSizeHint(_ACTION_COLUMN))
+        widest = max(cell_width(self._table, label) for label in EVENT_TYPE_LABELS.values())
+        needed = max(widest, header.sectionSizeHint(_ACTION_COLUMN))
         if header.sectionSize(_ACTION_COLUMN) < needed:
             header.resizeSection(_ACTION_COLUMN, needed)
 

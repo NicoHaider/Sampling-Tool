@@ -25,7 +25,9 @@ def _capture_suggested_path(dialog: NewEngagementDialog) -> str:
     vorgeschlagenen Default-Pfad (das 3. Argument von `getSaveFileName`)."""
     captured: dict[str, str] = {}
 
-    def _fake_save(parent: object, caption: str, directory: str, filt: str) -> tuple[str, str]:
+    def _fake_save(
+        parent: object, caption: str, directory: str, filt: str, **_kwargs: object
+    ) -> tuple[str, str]:
         captured["directory"] = directory
         return ("", "")  # User-Cancel → `_on_accept` bricht danach ab
 
@@ -156,3 +158,28 @@ class TestDefaultFilenameWithAuditType:
         assert dialog._selected_audit_type() == ""
         # Defensiver Fallback: kein `_`-Anhängsel ohne Inhalt.
         assert dialog._default_target_name("ACME") == "ACME.db"
+
+
+class TestNoSecondOverwritePrompt:
+    """Sprint 89 / E2: nur EINE Rückfrage bei vorhandenem Projekt.
+
+    Das macOS-„Ersetzen?" des Speicherdialogs kam vor dem App-Dialog „Projekt
+    existiert bereits" – der fragt selbst (öffnen, anderer Name, überschreiben).
+    """
+
+    def test_save_dialog_does_not_confirm_overwrite(self, qtbot: QtBot) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        dialog = NewEngagementDialog()
+        qtbot.addWidget(dialog)
+        dialog._auditor_name.setText("Anna")
+        dialog._auditor_position.setText("Senior")
+        dialog._client_name.setText("ACME")
+        with patch(
+            "sampling_tool.ui.dialogs.new_engagement_dialog.QFileDialog.getSaveFileName",
+            return_value=("", ""),
+        ) as save:
+            dialog._on_accept()
+        options = save.call_args.kwargs.get("options")
+        assert options is not None
+        assert options & QFileDialog.Option.DontConfirmOverwrite
