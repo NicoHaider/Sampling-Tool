@@ -12,6 +12,7 @@ hinterlegte aus.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -20,6 +21,8 @@ from pathlib import Path
 from typing import Final
 
 from sampling_tool.resources import package_resource
+
+logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION_TABLE: Final = "schema_version"
 APPLICATION_ID: Final = 0x42444F53  # "BDOS" – BDO Sampling; SQLite PRAGMA application_id
@@ -272,6 +275,26 @@ class Database:
         """Schließt die Connection (idempotent)."""
         if self._conn is not None:
             self._conn.close()
+            self._conn = None
+
+    def checkpoint_and_close(self) -> None:
+        """Schließt die Projektdatei sauber: WAL in die Datei, dann schließen.
+
+        Sprint 89 / A2: Ohne ausdrückliches Schließen blieb nach dem App-Ende
+        ein WAL mit allen Änderungen der Sitzung neben der Datei liegen.
+        Best effort und idempotent – ein Fehler wird nur protokolliert und
+        blockiert nie das Schließen oder Beenden.
+        """
+        if self._conn is None:
+            return
+        try:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+        except Exception:
+            logger.warning("WAL checkpoint of %s failed", self.db_path.name, exc_info=True)
+        try:
+            self.close()
+        except Exception:
+            logger.warning("Closing %s failed", self.db_path.name, exc_info=True)
             self._conn = None
 
 

@@ -26,6 +26,7 @@ from sampling_tool.io.bdo_locations import company_by_key, location_by_key
 from sampling_tool.io.pdf_report import (
     _CELL_STRING_THRESHOLD,
     _EVENT_TABLE_COL_WIDTHS,
+    _EVENT_TABLE_HEADER,
     AuditTrailPDF,
     _build_event_table,
 )
@@ -620,7 +621,7 @@ class TestLongFilenameWraps:
 
     def test_andere_spalten_behalten_schnellpfad(self) -> None:
         evt = _with_file("export_file", _NAME_SMOKE)
-        user_cell, _, _ = _first_row_cell(evt, 2)
+        user_cell, _, _ = _first_row_cell(evt, _EVENT_TABLE_HEADER.index("User"))
         timestamp_cell, _, _ = _first_row_cell(evt, 0)
 
         assert user_cell == "anna"
@@ -766,10 +767,57 @@ class TestPdfSpeaksGerman:
             "Stichprobe",
             "Rückgängig",
             "Wiederhergestellt",
-            "Zurückgesetzt",
+            "Auswahl aufgehoben",
             "Einfach",
             "Geschichtet",
             "eingeschränkt",
             "Nachstichprobe",
         ):
             assert label in text, label
+
+
+class TestEventTableLayoutSprint89:
+    """Sprint 89 / D1: Details als eigene Zeile, keine halb leeren Seiten."""
+
+    def test_details_are_a_full_width_row_below_the_event(self) -> None:
+        from reportlab.platypus import Paragraph as RLParagraph
+
+        evt = replace(
+            _evt("sampling", seconds=0, sample_size=7, seed=99, evt_id=1),
+            details={"method": "simple", "algorithm_version": "bdo-v1"},
+        )
+        (table,) = [f for f in _build_event_table([evt]) if isinstance(f, Table)]
+        action = table._cellvalues[1][_EVENT_TABLE_HEADER.index("Aktion")]
+        assert action == "Stichprobe"
+        detail = table._cellvalues[2][0]
+        assert isinstance(detail, RLParagraph)
+        assert "bdo-v1" in detail.getPlainText()
+        spans = [c for c in table._spanCmds if c[0] == "SPAN"]
+        assert ("SPAN", (0, 2), (-1, 2)) in spans
+
+    def test_event_without_details_has_no_extra_row(self) -> None:
+        (table,) = [
+            f for f in _build_event_table([_evt("import", evt_id=1)]) if isinstance(f, Table)
+        ]
+        assert len(table._cellvalues) == 2
+
+    def test_tall_event_starts_on_the_first_page(
+        self, engagement: Engagement, tmp_path: Path
+    ) -> None:
+        """Ein Event, höher als der Rest der Seite, wird geteilt statt verschoben.
+
+        Vorher rutschte es komplett auf Seite 2 und ließ den Rest von Seite 1 leer.
+        """
+        small = [_evt("import", seconds=i, evt_id=i + 1) for i in range(3)]
+        tall = replace(
+            _evt("sampling", seconds=100, sample_size=1, seed=1, evt_id=100),
+            details={"filter_field": "Text", "filter_value": "ANFANG " + "wort " * 2500},
+        )
+        out = tmp_path / "tall.pdf"
+        AuditTrailPDF(briefpapier=None).render(
+            engagement, [*small, tall], out, include_statistics=False
+        )
+        pages = [p.extract_text() for p in PdfReader(str(out)).pages]
+        assert len(pages) >= 2
+        assert "ANFANG" in pages[0]
+        assert "Zeitstempel" in pages[1]

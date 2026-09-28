@@ -6,9 +6,11 @@ import logging
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import Protocol
 
 from sampling_tool.config import APP_NAME, APP_ORG, APP_ORG_DOMAIN
 from sampling_tool.logging_setup import configure_logging, install_excepthook
+from sampling_tool.ui._info_icon import install_info_icon
 from sampling_tool.ui._scaling import load_scaled_stylesheet, scale_factor
 from sampling_tool.ui._translation import install_german_qt_translation
 from sampling_tool.ui.settings_store import AppSettings, load_settings, save_settings
@@ -48,6 +50,8 @@ def main() -> int:
     app.setOrganizationName(APP_ORG)
     app.setOrganizationDomain(APP_ORG_DOMAIN)
 
+    # Sprint 89 / D4: vor dem Stylesheet, sonst legt es sich um den alten Style.
+    install_info_icon(app)
     settings = load_settings()
     factor = scale_factor(settings.ui_scale)
     app.setStyleSheet(load_scaled_stylesheet(factor))
@@ -68,9 +72,26 @@ def main() -> int:
     window = MainWindow()
     window.apply_ui_scale(factor)
     # Reference muss am Leben bleiben (sonst werden Signal-Slots GC'd).
-    window.controller = MainController(window, settings=settings)  # type: ignore[attr-defined]
+    controller = MainController(window, settings=settings)
+    window.controller = controller  # type: ignore[attr-defined]
     window.show()
-    return app.exec()
+    return run_event_loop(app, controller)
+
+
+class _EventLoop(Protocol):
+    def exec(self) -> int: ...
+
+
+class _ShutsDown(Protocol):
+    def shutdown(self) -> None: ...
+
+
+def run_event_loop(app: _EventLoop, controller: _ShutsDown) -> int:
+    """Ereignisschleife, danach die offene Projektdatei schließen (Sprint 89 / A2)."""
+    try:
+        return app.exec()
+    finally:
+        controller.shutdown()
 
 
 def run_first_run_wizard(initial: AppSettings) -> AppSettings:

@@ -6300,7 +6300,7 @@ class TestSupplementarySampling:
 
 
 class TestResetSampling:
-    """`WorkspaceSession.reset_sampling()` + `handle_reset_sampling()`.
+    """`WorkspaceSession.reset_sampling()` + `handle_reset()` („Auswahl aufheben").
 
     Reset leert ausschließlich den gezogenen-Stichprobe-/Ergebnis-State
     (aktive Stichprobe, Highlight, Sample-Filter). Population (Dataset) und
@@ -6435,7 +6435,7 @@ class TestResetSampling:
         finally:
             controller.engagement.handle_close_engagement()
 
-    def test_handle_reset_sampling_confirmation_clears(
+    def test_handle_reset_confirmation_clears(
         self,
         window: MainWindow,
         recent_store: RecentEngagementsStore,
@@ -6453,13 +6453,13 @@ class TestResetSampling:
                 "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.Yes,
             ):
-                controller.workspace.handle_reset_sampling()
+                controller.workspace.handle_reset()
             assert controller.session.sample is None
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
         finally:
             controller.engagement.handle_close_engagement()
 
-    def test_handle_reset_sampling_cancelled_keeps_sample(
+    def test_handle_reset_cancelled_keeps_sample(
         self,
         window: MainWindow,
         recent_store: RecentEngagementsStore,
@@ -6477,7 +6477,7 @@ class TestResetSampling:
                 "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.No,
             ):
-                controller.workspace.handle_reset_sampling()
+                controller.workspace.handle_reset()
             assert controller.session.sample is not None
             assert len(window.data_table().table_model().highlighted_row_ids()) == 2
         finally:
@@ -6685,7 +6685,7 @@ class TestAuditTrailRobustness:
         populated_db: Path,
     ) -> None:
         """N-003: symmetric to test_reset_survives_audit_log_failure, but for
-        the toolbar 'Sampling zurücksetzen' path (handle_reset_sampling)."""
+        the toolbar path – since Sprint 89 the same action and method (handle_reset)."""
         from PyQt6.QtWidgets import QMessageBox
 
         from sampling_tool.persistence.repositories import AuditRepo
@@ -6708,7 +6708,7 @@ class TestAuditTrailRobustness:
                     "sampling_tool.ui.controllers.workspace_session.QMessageBox.warning"
                 ) as mock_warning,
             ):
-                controller.workspace.handle_reset_sampling()  # darf NICHT werfen
+                controller.workspace.handle_reset()  # darf NICHT werfen
             mock_warning.assert_called_once()
             assert controller.session.sample is None
             assert window.data_table().table_model().highlighted_row_ids() == frozenset()
@@ -6991,7 +6991,7 @@ class TestReproducibilityViaController:
                 r1 = tuple(first.selected_row_ids)
                 seed1 = first.config.seed
 
-                controller.workspace.handle_reset_sampling()
+                controller.workspace.handle_reset()
                 assert controller.session.sample is None
 
                 controller.workspace.handle_new_sampling()
@@ -7024,7 +7024,7 @@ class TestReproducibilityViaController:
                     assert controller.session.sample is not None
                     samples.append(tuple(controller.session.sample.selected_row_ids))
                     seeds_used.append(controller.session.sample.config.seed)
-                    controller.workspace.handle_reset_sampling()
+                    controller.workspace.handle_reset()
                     assert controller.session.sample is None
             assert seeds_used[0] == seeds_used[1] == seeds_used[2]
             assert samples[0] == samples[1] == samples[2]
@@ -7085,7 +7085,7 @@ class TestSeedRelocationReproducibility:
                 r1 = tuple(controller.session.sample.selected_row_ids)
                 seed1 = controller.session.sample.config.seed
 
-                controller.workspace.handle_reset_sampling()
+                controller.workspace.handle_reset()
                 assert controller.session.sample is None
 
                 controller.workspace.handle_new_sampling()
@@ -7767,5 +7767,453 @@ class TestCreatedByIsUser:
             }
             assert meta["Erstellt von"] == "pruefer.in"
             assert "system" not in meta.values()
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 89 / A: Migration nur einmal sichern, Projektdatei sauber schließen
+# ---------------------------------------------------------------------------
+
+
+def _end_app_without_checkpoint(controller: MainController) -> None:
+    """Wie ein App-Ende vor Sprint 89: Verbindung weg, WAL bleibt liegen."""
+    db = controller.session.db
+    assert db is not None
+    controller.session.window.data_table().clear_dataset()
+    conn = db.connect()
+    conn.setconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, True)
+    db.close()
+    controller.session.reset_to_welcome()
+
+
+class TestMigrationBackedUpOnce:
+    def test_reopen_after_unclean_end_adds_no_second_pre_migration_copy(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path = _db_at_schema_v5(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        controller.engagement.handle_open_engagement(db_path)
+        _end_app_without_checkpoint(controller)
+        assert db_path.with_name(db_path.name + "-wal").stat().st_size > 0
+
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            assert controller.session.db is not None
+        finally:
+            controller.engagement.handle_close_engagement()
+
+        names = _archive_names(db_path)
+        assert sum(n.endswith("+vor-migration.db") for n in names) == 1
+        assert sum(n.endswith("+oeffnen.db") for n in names) <= 1
+        assert len(names) <= 2
+
+
+class TestProjectFileClosedCleanly:
+    def _spy(self) -> contextlib.AbstractContextManager[object]:
+        return patch.object(
+            Database,
+            "checkpoint_and_close",
+            autospec=True,
+            side_effect=Database.checkpoint_and_close,
+        )
+
+    def test_close_checkpoints(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path, _own, _other, _sample = _foreign_sample_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        controller.engagement.handle_open_engagement(db_path)
+        with self._spy() as spy:
+            controller.engagement.handle_close_engagement()
+        assert spy.call_count == 1  # type: ignore[attr-defined]
+        wal = db_path.with_name(db_path.name + "-wal")
+        assert not wal.exists() or wal.stat().st_size == 0
+
+    def test_switching_project_checkpoints_the_previous_one(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        (tmp_path / "a").mkdir()
+        (tmp_path / "b").mkdir()
+        first, _own, _other, _sample = _foreign_sample_db(tmp_path / "a")
+        second, _own2, _other2, _sample2 = _foreign_sample_db(tmp_path / "b")
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(first)
+            previous = controller.session.db
+            with self._spy() as spy:
+                controller.engagement.handle_open_engagement(second)
+            assert [c.args[0] for c in spy.call_args_list] == [previous]  # type: ignore[attr-defined]
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_shutdown_checkpoints_and_forgets_the_project(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path, _own, _other, _sample = _foreign_sample_db(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        controller.engagement.handle_open_engagement(db_path)
+        with self._spy() as spy:
+            controller.shutdown()
+        assert spy.call_count == 1  # type: ignore[attr-defined]
+        assert controller.session.db is None
+        wal = db_path.with_name(db_path.name + "-wal")
+        assert not wal.exists() or wal.stat().st_size == 0
+
+    def test_shutdown_without_project_is_a_no_op(
+        self, window: MainWindow, recent_store: RecentEngagementsStore
+    ) -> None:
+        controller = MainController(window, recent_store=recent_store)
+        controller.shutdown()
+        assert controller.session.db is None
+
+
+# ---------------------------------------------------------------------------
+# Sprint 89 / B: Population = Auswahlgrundlage, Datensatzgröße zusätzlich
+# ---------------------------------------------------------------------------
+
+
+class TestPopulationIsSelectionBasis:
+    """Population ist die Zahl der Zeilen, aus denen tatsächlich gezogen wurde."""
+
+    def _draw(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        db_path: Path,
+        *,
+        restrict: bool = False,
+        supplement: bool = False,
+    ) -> tuple[SampleResult, list[object]]:
+        from sampling_tool.core.models import FilterOperator
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(
+                method=SamplingMethod.SIMPLE,
+                size=1,
+                seed=11,
+                filter_field="Betrag",
+                filter_operator=FilterOperator.GT,
+                filter_value=20,
+            ),
+            from_sample_only=restrict,
+            exclude_sample_ids=supplement,
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, db_path)
+            if restrict or supplement:
+                controller.selection.handle_sample_selected(1)
+            controller.workspace.handle_new_sampling()
+            drawn = controller.session.sample
+            assert drawn is not None
+            assert controller.session.db is not None
+            assert controller.session.engagement is not None
+            assert controller.session.engagement.id is not None
+            events = [
+                e
+                for e in AuditRepo(controller.session.db.connect()).list_for_engagement(
+                    controller.session.engagement.id
+                )
+                if e.event_type == "sampling"
+            ]
+            return drawn, list(events)
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_filter_draw_population_is_the_match_count(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.core.sampling import SimpleSampler
+
+        drawn, [event] = self._draw(window, recent_store, populated_db)
+
+        # Betrag > 20 trifft Zeilen 3, 4, 5.
+        assert drawn.population_size == 3
+        oracle = SimpleSampler(drawn.config).sample(
+            DatasetRow(row_id=i, values={"Konto": f"K{i}", "Betrag": i * 10}) for i in range(1, 6)
+        )
+        assert drawn.selected_row_ids == oracle.selected_row_ids
+        assert event.total_count == 3  # type: ignore[attr-defined]
+        assert event.sample_percent == pytest.approx(100 / 3)  # type: ignore[attr-defined]
+        assert event.details["dataset_rows"] == 5  # type: ignore[attr-defined]
+        assert event.details["population_basis"] == "auswahl"  # type: ignore[attr-defined]
+
+    def test_filter_plus_supplement_counts_the_remaining_matches(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        drawn, _events = self._draw(window, recent_store, populated_db, supplement=True)
+        # Stichprobe #1 hat 2 und 4; Betrag > 20 ohne diese: 3 und 5.
+        assert drawn.population_size == 2
+        assert set(drawn.selected_row_ids) <= {3, 5}
+
+    def test_filter_plus_restrict_counts_matches_inside_the_parent(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        drawn, [event] = self._draw(window, recent_store, populated_db, restrict=True)
+        # Innerhalb von #1 (2, 4) erfüllt nur 4 den Filter.
+        assert drawn.population_size == 1
+        assert drawn.selected_row_ids == (4,)
+        assert event.details["dataset_rows"] == 5  # type: ignore[attr-defined]
+
+    def test_unfiltered_draw_records_dataset_rows_too(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.persistence.repositories import AuditRepo
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
+        result = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=3)
+        )
+        factory = lambda _p, _d, _r, _s, _am, _mcp=None, _factor=None: _StubSamplingDialog(result)  # noqa: E731
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            sampling_dialog_factory=factory,  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.workspace.handle_new_sampling()
+            assert controller.session.sample is not None
+            assert controller.session.sample.population_size == 5
+            assert controller.session.db is not None
+            [event] = [
+                e
+                for e in AuditRepo(controller.session.db.connect()).list_for_engagement(1)
+                if e.event_type == "sampling"
+            ]
+            assert event.details["dataset_rows"] == 5
+            assert event.details["population_basis"] == "auswahl"
+        finally:
+            controller.engagement.handle_close_engagement()
+
+
+class TestSampleExportShowsPopulationBasis:
+    """Sprint 89 / B4: Sample-Export-Metadaten mit „Datensatz gesamt" und Altbestand-Hinweis."""
+
+    def _legacy_filter_sample(self, db_path: Path) -> int:
+        from sampling_tool.core.models import AuditEvent, FilterOperator
+        from sampling_tool.persistence.repositories import AuditRepo
+
+        db = Database(db_path)
+        try:
+            conn = db.connect()
+            [ds] = DatasetRepo(conn).list_for_engagement(1)
+            assert ds.id is not None
+            sample_id = SampleRepo(conn).create_from_result(
+                SampleResult(
+                    config=SampleConfig(
+                        method=SamplingMethod.SIMPLE,
+                        size=1,
+                        seed=5,
+                        filter_field="Betrag",
+                        filter_operator=FilterOperator.GT,
+                        filter_value=20,
+                    ),
+                    selected_row_ids=(4,),
+                    population_size=5,
+                ),
+                ds.id,
+            )
+            # Event wie vor Sprint 89: ohne `population_basis`.
+            AuditRepo(conn).log(
+                AuditEvent(
+                    event_type="sampling",
+                    engagement_id=1,
+                    sample_id=sample_id,
+                    sample_size=1,
+                    total_count=5,
+                    details={"method": "simple", "filter_field": "Betrag"},
+                )
+            )
+        finally:
+            db.close()
+        return sample_id
+
+    def test_legacy_filter_sample_export_carries_the_note(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        from openpyxl import load_workbook
+
+        from sampling_tool.config import LEGACY_FILTER_POPULATION_NOTE
+        from sampling_tool.ui.dialogs.export_sample_dialog import ExportSampleDialogResult
+
+        sample_id = self._legacy_filter_sample(populated_db)
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        result = ExportSampleDialogResult(
+            columns=["Konto", "Betrag"],
+            custom_name="alt",
+            custom_id=str(sample_id),
+            output_dir=out_dir,
+        )
+        controller = MainController(
+            window,
+            recent_store=recent_store,
+            export_dialog_factory=lambda *_a: _StubExportDialog(result),  # type: ignore[arg-type]
+        )
+        try:
+            _open_dataset(controller, window, populated_db)
+            controller.selection.handle_sample_selected(sample_id)
+            with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
+                controller.export.handle_export_sample()
+        finally:
+            controller.engagement.handle_close_engagement()
+
+        [xlsx] = list(out_dir.glob("*.xlsx"))
+        ws = load_workbook(xlsx)["Metadaten"]
+        meta = {r[0]: r[1] for r in ws.iter_rows(2, values_only=True)}
+        assert meta["Population (Zeilen)"] == f"5 ({LEGACY_FILTER_POPULATION_NOTE})"
+        assert meta["Datensatz gesamt"] == "5"
+
+
+# ---------------------------------------------------------------------------
+# Sprint 89 / C: Ein „Auswahl aufheben", ehrlich beschrieben
+# ---------------------------------------------------------------------------
+
+
+class TestUnselectSample:
+    def _controller(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, db_path: Path
+    ) -> MainController:
+        controller = MainController(window, recent_store=recent_store)
+        _open_dataset(controller, window, db_path)
+        controller.selection.handle_sample_selected(1)
+        return controller
+
+    @pytest.mark.parametrize("action", ["_action_reset_sample", "_action_reset_sampling"])
+    def test_menu_and_toolbar_ask_the_same_honest_question(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+        action: str,
+    ) -> None:
+        controller = self._controller(window, recent_store, populated_db)
+        try:
+            with patch(
+                "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.No,
+            ) as question:
+                getattr(window, action).trigger()
+            question.assert_called_once()
+            title, text = question.call_args.args[1:3]
+            assert title == "Auswahl aufheben"
+            assert "Stichprobe #1" in text
+            assert "bleibt" in text
+            assert "erhalten" in text
+            assert "entfernt" not in text
+            assert controller.session.sample is not None
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_event_names_the_unselected_sample(
+        self,
+        window: MainWindow,
+        recent_store: RecentEngagementsStore,
+        populated_db: Path,
+    ) -> None:
+        from sampling_tool.persistence.repositories import AuditRepo
+
+        controller = self._controller(window, recent_store, populated_db)
+        try:
+            with patch(
+                "sampling_tool.ui.controllers.workspace_controller.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ):
+                window._action_reset_sampling.trigger()
+            assert controller.session.sample is None
+            assert controller.session.db is not None
+            [event] = [
+                e
+                for e in AuditRepo(controller.session.db.connect()).list_for_engagement(1)
+                if e.event_type == "reset"
+            ]
+            assert event.sample_id == 1
+            assert event.details["aufgehoben"] == "Auswahl"
+            # Die Stichprobe bleibt im Projekt.
+            assert SampleRepo(controller.session.db.connect()).get_by_id(1) is not None
+            status = window.statusBar()
+            assert status is not None
+            assert "#1" in status.currentMessage()
+        finally:
+            controller.engagement.handle_close_engagement()
+
+    def test_audit_trail_label(self) -> None:
+        from sampling_tool.config import EVENT_TYPE_LABELS
+
+        assert EVENT_TYPE_LABELS["reset"] == "Auswahl aufgehoben"
+
+
+# ---------------------------------------------------------------------------
+# Sprint 89 / G: Hinweis bei Projekten in synchronisierten Ordnern
+# ---------------------------------------------------------------------------
+
+
+class TestSyncFolderHint:
+    def _project_in(self, folder: Path) -> Path:
+        folder.mkdir(parents=True)
+        db_path = folder / "ACME.db"
+        db = Database(db_path)
+        db.migrate()
+        EngagementRepo(db.connect()).get_or_create(
+            Engagement(auditor_name="Anna", client_name="ACME", audit_type="ISAE 3402")
+        )
+        db.close()
+        return db_path
+
+    def test_hint_once_per_project_and_session(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path = self._project_in(tmp_path / "OneDrive - BDO" / "ACME")
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            with patch.object(
+                window, "show_sync_folder_hint", wraps=window.show_sync_folder_hint
+            ) as hint:
+                controller.engagement.handle_open_engagement(db_path)
+                controller.engagement.handle_open_engagement(db_path)
+            announced = [c for c in hint.call_args_list if c.kwargs.get("announce")]
+            assert len(announced) == 1
+            text = hint.call_args_list[-1].args[0]
+            assert text is not None
+            assert "synchronisierten Ordner" in text
+            assert window.sidebar().sync_hint_text() == text
+        finally:
+            controller.engagement.handle_close_engagement()
+        assert window.sidebar().sync_hint_text() is None
+
+    def test_local_project_has_no_hint(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path = self._project_in(tmp_path / "lokal" / "ACME")
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            assert window.sidebar().sync_hint_text() is None
         finally:
             controller.engagement.handle_close_engagement()

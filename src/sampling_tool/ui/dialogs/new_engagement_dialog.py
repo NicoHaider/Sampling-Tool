@@ -210,11 +210,15 @@ class NewEngagementDialog(QDialog):
             )
             return
         default_target = default_dir / self._default_target_name(sanitized)
+        # Sprint 89 / E2: keine System-Rückfrage „Ersetzen?" – bei einem
+        # vorhandenen Projekt fragt die App selbst (`DuplicateEngagementDialog`:
+        # öffnen, anderer Name, überschreiben mit Sicherung).
         path_str, _filter = QFileDialog.getSaveFileName(
             self,
             "Projekt speichern",
             str(default_target),
             f"SQLite-Projekt (*{DB_FILE_SUFFIX})",
+            options=QFileDialog.Option.DontConfirmOverwrite,
         )
         if not path_str:
             return

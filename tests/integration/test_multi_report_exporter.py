@@ -394,7 +394,7 @@ class TestMultiSheetReportExporter:
         assert row["Angeforderte Größe"] == 5
         assert row["Tatsächliche Größe"] == 7
         assert row["Filter-Operator"] == "≥"
-        assert row["Parent-Sample-ID"] == 17
+        assert row["Übergeordnete Stichprobe"] == 17
         assert row["Algorithmus-Version"] == "bdo-v1"
         assert row["Dataset-ID"] == 1
         # Sprint 85 / E1: feste Spalte, aber Cluster ist nicht geschichtet.
@@ -465,7 +465,7 @@ class TestMultiSheetReportExporter:
 
 class TestSamplesSheetDerivation:
     """Sprint 83 / A: „3. Samples" hat eine Spalte „Ableitung" direkt nach
-    „Parent-Sample-ID" – Einschränkung und Nachstichprobe unterscheidbar."""
+    „Übergeordnete Stichprobe" – Einschränkung und Nachstichprobe unterscheidbar."""
 
     def test_ableitung_column(
         self,
@@ -514,7 +514,7 @@ class TestSamplesSheetDerivation:
         MultiSheetReportExporter().export(engagement, datasets, samples, audit_events, out)
         rows = list(load_workbook(out)["3. Samples"].iter_rows(values_only=True))
         header = list(rows[0])
-        assert header[header.index("Parent-Sample-ID") + 1] == "Ableitung"
+        assert header[header.index("Übergeordnete Stichprobe") + 1] == "Ableitung"
         by_id = {r[0]: dict(zip(header, r, strict=True)) for r in rows[1:]}
         assert by_id[1]["Ableitung"] == "—"
         assert by_id[2]["Ableitung"] == "Eingeschränkt auf Stichprobe #1"

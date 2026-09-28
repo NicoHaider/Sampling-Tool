@@ -14,19 +14,22 @@ bleibt. `app_version` wird von jedem Aufrufer explizit übergeben
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final
 
 from sampling_tool.config import (
     FILTER_OPERATOR_LABELS,
+    LEGACY_DERIVED_FILTER_POPULATION_NOTES,
+    LEGACY_FILTER_POPULATION_NOTE,
     METHOD_LABELS,
     PARENT_RELATION_LABELS,
     PARENT_RELATION_TEXTS,
     STRATIFY_MODE_LABELS,
 )
-from sampling_tool.core.formatting import format_optional_timestamp
-from sampling_tool.core.models import SampleResult, SamplingMethod
+from sampling_tool.core.formatting import format_audit_details, format_optional_timestamp
+from sampling_tool.core.models import AuditEvent, SampleResult, SamplingMethod
 
 _MISSING: Final[str] = "—"
 
@@ -38,7 +41,7 @@ class SamplingProvenance:
     Deckt die Mindest-Feldliste aus REVIEW_CODEBASE_2026-07.md (A-001) ab:
     Dataset, Methode, angeforderte/tatsächliche Größe, Population, Seed,
     Filter (Feld/Operator/Wert), Cluster-/Stratum-Feld, Stratify-Modus,
-    Parent-Sample, Algorithmus-/App-Version, Ersteller/Zeitpunkt.
+    übergeordnete Stichprobe, Algorithmus-/App-Version, Ersteller/Zeitpunkt.
     """
 
     dataset_id: int | None
@@ -59,6 +62,11 @@ class SamplingProvenance:
     app_version: str
     created_by: str
     drawn_at: datetime
+    #: Zeilen des ganzen Datensatzes (Sprint 89 / B3), `None` = nicht bekannt.
+    dataset_rows: int | None = None
+    #: Sprint 89 / B4: das Sampling-Event trägt keine `population_basis` – die
+    #: Population stammt von vor Sprint 89 (bei Filter: ganzer Datensatz).
+    population_predates_basis: bool = False
 
     @classmethod
     def from_sample_result(
@@ -67,6 +75,8 @@ class SamplingProvenance:
         *,
         dataset_id: int | None,
         app_version: str,
+        dataset_rows: int | None = None,
+        population_predates_basis: bool = False,
     ) -> SamplingProvenance:
         """Baut die Provenienz aus einem persistierten `SampleResult`.
 
@@ -99,6 +109,18 @@ class SamplingProvenance:
             app_version=app_version,
             created_by=result.created_by,
             drawn_at=result.drawn_at,
+            dataset_rows=dataset_rows,
+            population_predates_basis=population_predates_basis,
+        )
+
+    @property
+    def population_text(self) -> str:
+        """Population wie gespeichert; alte Filter-Ziehungen mit Hinweis (Sprint 89 / B4)."""
+        return population_text(
+            self.population_size,
+            legacy_filter=self.has_filter and self.population_predates_basis,
+            parent_sample_id=self.parent_sample_id,
+            parent_relation=self.parent_relation,
         )
 
     @property
@@ -146,7 +168,8 @@ class SamplingProvenance:
             ("Sampling-Methode", self.method_label),
             ("Angeforderte Größe", str(self.size_requested)),
             ("Tatsächliche Größe", str(self.size_actual)),
-            ("Population (Zeilen)", str(self.population_size)),
+            ("Population (Zeilen)", self.population_text),
+            ("Datensatz gesamt", _or_dash(self.dataset_rows)),
             ("Seed", str(self.seed)),
             ("Filter-Feld", _or_dash(self.filter_field)),
             ("Filter-Operator", self.filter_operator_symbol),
@@ -154,7 +177,7 @@ class SamplingProvenance:
             ("Cluster-Feld", _or_dash(self.cluster_field)),
             ("Schicht-Feld", _or_dash(self.stratum_field)),
             ("Schichtungsmodus", self.stratify_mode_label),
-            ("Parent-Sample-ID", _or_dash(self.parent_sample_id)),
+            ("Übergeordnete Stichprobe", _or_dash(self.parent_sample_id)),
             ("Ableitung", self.derivation_text),
             ("Algorithmus-Version", self.algorithm_version),
             ("App-Version", self.app_version),
@@ -204,6 +227,64 @@ class SamplingProvenance:
             "app_version": self.app_version,
             "created_by": self.created_by,
         }
+
+
+def population_text(
+    population_size: int,
+    *,
+    legacy_filter: bool,
+    parent_sample_id: int | None = None,
+    parent_relation: str | None = None,
+) -> str:
+    """Anzeige der Population (Sprint 89 / B4).
+
+    Bis Sprint 88 zählte der Filter bei der Population nicht mit: bei einer
+    einfachen Filter-Ziehung stand dort der ganze Datensatz, bei Einschränken
+    die übergeordnete Stichprobe, bei Ergänzen der Datensatz ohne bereits
+    gezogene Zeilen. Solche Werte werden nicht umgeschrieben, sondern mit dem
+    passenden Hinweis angezeigt.
+    """
+    if not legacy_filter:
+        return str(population_size)
+    note = (
+        LEGACY_FILTER_POPULATION_NOTE
+        if parent_sample_id is None
+        else LEGACY_DERIVED_FILTER_POPULATION_NOTES.get(
+            parent_relation, LEGACY_DERIVED_FILTER_POPULATION_NOTES[None]
+        )
+    )
+    return f"{population_size} ({note})"
+
+
+def population_predates_basis(sampling_details: Mapping[str, Any] | None) -> bool:
+    """`True`, wenn das Sampling-Event keine `population_basis` trägt (vor Sprint 89).
+
+    Ohne Event (`None`) lässt sich die Bezugsgröße nicht belegen – das gilt
+    ebenfalls als alter Stand.
+    """
+    return sampling_details is None or "population_basis" not in sampling_details
+
+
+def format_event_details(event: AuditEvent) -> str:
+    """Details-Zeile eines Events für Berichte (PDF, Excel-, HTML-AuditTrail).
+
+    Stichproben-Events beginnen mit „Population: N" (Sprint 89 / B3) – die
+    PDF-Tabelle hat keine eigene Spalte dafür. Alte Filter-Ziehungen tragen
+    den Hinweis aus `population_text`.
+    """
+    details = format_audit_details(event.details)
+    if event.event_type != "sampling" or event.total_count is None:
+        return details
+    legacy = population_predates_basis(event.details) and (
+        event.details.get("filter_field") is not None
+    )
+    population = "Population: " + population_text(
+        event.total_count,
+        legacy_filter=legacy,
+        parent_sample_id=event.details.get("parent_sample_id"),
+        parent_relation=event.details.get("parent_relation"),
+    )
+    return population if details == _MISSING else f"{population} · {details}"
 
 
 def _or_dash(value: Any) -> str:

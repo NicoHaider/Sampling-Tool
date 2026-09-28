@@ -695,3 +695,21 @@ class TestGermanActionLabels:
         assert item is not None
         assert item.text() == "zukunft"
         assert dialog._selected_types() == {"zukunft"}
+
+
+class TestGroupTitlesHaveNoMnemonicAmpersand:
+    """Sprint 89 / D5: „&" in einem Gruppentitel ist ein Tastenkürzel-Marker –
+    „BDO-Gesellschaft & Standort" erschien als „BDO-Gesellschaft  Standort"."""
+
+    def test_bdo_group_title(self, qtbot: QtBot) -> None:
+        from PyQt6.QtWidgets import QGroupBox
+
+        dialog = ExportAuditPdfDialog(
+            engagement=_engagement(),
+            event_types_available=["sampling"],
+            briefpapier_available=True,
+        )
+        qtbot.addWidget(dialog)
+        titles = [box.title() for box in dialog.findChildren(QGroupBox)]
+        assert "BDO-Gesellschaft / Standort" in titles
+        assert not [t for t in titles if "&" in t.replace("&&", "")]

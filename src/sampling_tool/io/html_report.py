@@ -29,9 +29,13 @@ from jinja2 import (
 
 from sampling_tool import __version__
 from sampling_tool.config import EVENT_TYPE_LABELS, METHOD_LABELS, PARENT_RELATION_LABELS
-from sampling_tool.core.formatting import format_audit_details, format_optional_timestamp
+from sampling_tool.core.formatting import format_optional_timestamp
 from sampling_tool.core.models import AuditEvent, Dataset, Engagement, SampleResult
-from sampling_tool.core.provenance import SamplingProvenance
+from sampling_tool.core.provenance import (
+    SamplingProvenance,
+    format_event_details,
+    population_predates_basis,
+)
 from sampling_tool.io._atomic import atomic_output
 from sampling_tool.io.charts import (
     render_bar_chart_bytes,
@@ -64,6 +68,8 @@ class _SampleView:
     method_label: str
     actual_size: int
     population_size: int
+    population_str: str
+    dataset_rows_str: str
     percent_str: str
     drawn_at_str: str
     size_requested: int
@@ -133,12 +139,15 @@ class HtmlReportGenerator:
         include_audit_trail: bool = True,
         include_samples_table: bool = True,
         dataset_ids_by_sample: dict[int, int] | None = None,
+        sampling_details_by_sample: dict[int, dict[str, Any]] | None = None,
     ) -> Path:
         """Erzeugt den Report und schreibt ihn als .html nach `output_path`.
 
         Die `include_*`-Flags schalten optionale Blöcke ab. Standard ist „alles
         an" – damit bleiben bestehende Aufrufer unverändert. `dataset_ids_by_
         sample` (Sprint 43 / A-001) bildet `sample.id -> dataset.id` ab.
+        `sampling_details_by_sample` (Sprint 89 / B4) liefert je Stichprobe die
+        Details ihres Sampling-Events für den Altbestand-Hinweis der Population.
         """
         target = (
             output_path
@@ -162,7 +171,15 @@ class HtmlReportGenerator:
             "title": f"Audit-Bericht – {engagement.client_name}",
             "engagement": engagement,
             "datasets": datasets,
-            "samples": [_to_sample_view(s, resolved_dataset_ids) for s in samples],
+            "samples": [
+                _to_sample_view(
+                    s,
+                    resolved_dataset_ids,
+                    {ds.id: ds.row_count for ds in datasets if ds.id is not None},
+                    sampling_details_by_sample,
+                )
+                for s in samples
+            ],
             "events": [_to_event_view(e) for e in audit_events],
             "stats": {
                 "datasets": len(datasets),
@@ -192,11 +209,26 @@ class HtmlReportGenerator:
 # ---------------------------------------------------------------------------
 
 
-def _to_sample_view(sample: SampleResult, dataset_ids_by_sample: dict[int, int]) -> _SampleView:
+def _to_sample_view(
+    sample: SampleResult,
+    dataset_ids_by_sample: dict[int, int],
+    dataset_rows_by_id: dict[int, int] | None = None,
+    sampling_details_by_sample: dict[int, dict[str, Any]] | None = None,
+) -> _SampleView:
     percent = sample.actual_size / sample.population_size * 100.0 if sample.population_size else 0.0
     dataset_id = dataset_ids_by_sample.get(sample.id) if sample.id is not None else None
+    rows_by_id = dataset_rows_by_id or {}
     provenance = SamplingProvenance.from_sample_result(
-        sample, dataset_id=dataset_id, app_version=__version__
+        sample,
+        dataset_id=dataset_id,
+        app_version=__version__,
+        dataset_rows=rows_by_id.get(dataset_id) if dataset_id is not None else None,
+        population_predates_basis=(
+            sampling_details_by_sample is not None
+            and population_predates_basis(
+                sampling_details_by_sample.get(sample.id) if sample.id is not None else None
+            )
+        ),
     )
     return _SampleView(
         id=sample.id,
@@ -204,6 +236,8 @@ def _to_sample_view(sample: SampleResult, dataset_ids_by_sample: dict[int, int])
         method_label=provenance.method_label,
         actual_size=sample.actual_size,
         population_size=sample.population_size,
+        population_str=provenance.population_text,
+        dataset_rows_str="—" if provenance.dataset_rows is None else str(provenance.dataset_rows),
         percent_str=f"{percent:.2f} %",
         drawn_at_str=format_optional_timestamp(sample.drawn_at),
         size_requested=provenance.size_requested,
@@ -253,7 +287,7 @@ def _to_event_view(event: AuditEvent) -> _EventView:
         seed=event.seed,
         filename=filename,
         corrects_event_id=event.corrects_event_id,
-        details_str=format_audit_details(event.details),
+        details_str=format_event_details(event),
     )
 
 

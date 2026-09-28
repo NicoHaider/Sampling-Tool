@@ -327,3 +327,63 @@ class TestPreflightSchema6:
         assert isinstance(result, PreflightRejected)
         assert result.reason == PreflightRejectionReason.SCHEMA_TOO_NEW
         assert db_path.read_bytes() == bytes_before
+
+
+def _v5_project_with_migration_only_in_wal(tmp_path: Path) -> Path:
+    """v5-Projekt, das auf v6 migriert wurde – die Migration steht NUR im WAL.
+
+    Genau der Befund aus Sprint 89: die App hat die Projektdatei beim Beenden
+    nie geschlossen, der Checkpoint blieb aus. `NO_CKPT_ON_CLOSE` bildet das ab.
+    """
+    from sampling_tool.resources import package_resource
+
+    migrations = tmp_path / "migrations_v5"
+    migrations.mkdir()
+    for script in sorted(package_resource("persistence/migrations").glob("00[1-5]_*.sql")):
+        (migrations / script.name).write_bytes(script.read_bytes())
+    db_path = tmp_path / "v5.db"
+    db = Database(db_path)
+    db.migrate(migrations_root=migrations)
+    db.close()
+
+    db = Database(db_path)
+    conn = db.connect()
+    conn.execute("PRAGMA wal_autocheckpoint = 0").fetchall()
+    db.migrate()
+    conn.setconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, True)
+    db.close()
+    assert db_path.with_name(db_path.name + "-wal").stat().st_size > 0
+    return db_path
+
+
+class TestSchemaVersionReadThroughWal:
+    """Sprint 89 / A1: steht die Migration schon im WAL, ist sie nicht mehr ausstehend."""
+
+    def test_migration_only_in_wal_is_not_pending(self, tmp_path: Path) -> None:
+        db_path = _v5_project_with_migration_only_in_wal(tmp_path)
+
+        result = preflight_check(db_path)
+
+        assert result == PreflightAccepted(schema_version=CURRENT_SCHEMA_VERSION)
+
+    def test_reading_through_the_wal_leaves_everything_untouched(self, tmp_path: Path) -> None:
+        db_path = _v5_project_with_migration_only_in_wal(tmp_path)
+        before = {p.name: p.read_bytes() for p in [db_path, *_sibling_files(db_path)]}
+
+        preflight_check(db_path)
+
+        after = {p.name: p.read_bytes() for p in [db_path, *_sibling_files(db_path)]}
+        assert after == before
+
+    def test_copy_failure_falls_back_to_the_safe_side(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Lässt sich der WAL nicht mitlesen, gilt die Migration als ausstehend."""
+        db_path = _v5_project_with_migration_only_in_wal(tmp_path)
+
+        def refuse(*_args: object, **_kwargs: object) -> None:
+            raise OSError("kein Platz")
+
+        monkeypatch.setattr("sampling_tool.persistence.db_preflight.shutil.copyfile", refuse)
+
+        assert preflight_check(db_path) == PreflightAccepted(schema_version=5)

@@ -16,7 +16,7 @@ import logging
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
@@ -102,6 +102,9 @@ class WorkspaceSession:
 
         # Session-State (alle Default leer)
         self.db: Database | None = None
+        # Sprint 89 / G2: Projekte, deren Sync-Ordner-Hinweis diese Sitzung
+        # schon in der Statusleiste stand.
+        self.sync_hints_announced: set[Path] = set()
         self.engagement: Engagement | None = None
         self.dataset: Dataset | None = None
         self.sample: SampleResult | None = None
@@ -335,6 +338,14 @@ class WorkspaceSession:
         events = audit_repo.list_for_engagement(engagement_id, limit=AUDIT_EVENT_DISPLAY_LIMIT)
         return datasets, samples, events, dataset_ids_by_sample
 
+    def sampling_details_by_sample(self) -> dict[int, dict[str, Any]]:
+        """`details` des Sampling-Events je Stichprobe (Sprint 89 / B4) – für die
+        Population-Anzeige der Berichte und des Sample-Exports."""
+        assert self.db is not None
+        assert self.engagement is not None
+        assert self.engagement.id is not None
+        return AuditRepo(self.db.connect()).sampling_details_by_sample(self.engagement.id)
+
     # ---- Briefpapier + Export-Pfade -------------------------------------
 
     def resolve_briefpapier(self) -> BriefpapierConfig | None:
@@ -564,10 +575,10 @@ class WorkspaceSession:
         if status is not None:
             status.showMessage(message, 8000)
 
-    # ---- Sampling-Reset (Sprint 20) ------------------------------------
+    # ---- Auswahl aufheben (Sprint 20, Sprint 89 / C) --------------------
 
     def reset_sampling(self) -> bool:
-        """Setzt ausschließlich den gezogenen-Stichprobe-/Ergebnis-State zurück.
+        """Hebt die Auswahl auf: aktive Stichprobe, Markierung und Filter.
 
         Leert die aktive Stichprobe, das Tabellen-Highlight und den
         Sample-Filter – der UI-Zustand ist danach „noch nie gezogen".
@@ -646,7 +657,7 @@ class WorkspaceSession:
     def reset_to_welcome(self) -> None:
         """Schließt DB und leert allen Session-State – Welcome-Screen-Zustand."""
         if self.db is not None:
-            self.db.close()
+            self.db.checkpoint_and_close()
         self.db = None
         self.engagement = None
         self.dataset = None

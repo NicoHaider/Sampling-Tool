@@ -1105,3 +1105,33 @@ class TestActionColumnFitsLongestLabel:
         header.resizeSection(1, 400)
         view.set_events([_make_event(event_type="redo"), _make_event(event_id=2)])
         assert header.sectionSize(1) == 400
+
+
+class TestActionColumnMeasuredByTheStyle:
+    """Sprint 89 / E1: „Sicherungen in Papierkorb" wurde unter macOS gekürzt.
+
+    Die Breite kam aus Schriftbreite + fester Zugabe (24 px); das Zell-Padding
+    des Stylesheets plus die Ränder des macOS-Styles waren mehr. Maßstab ist
+    jetzt Qts eigener Bedarf je Label – geprüft mit einem Stil, dessen Padding
+    von der alten Konstante abweicht.
+    """
+
+    @pytest.mark.parametrize("padding", ["4px 8px", "4px 24px"])
+    def test_every_label_fits_under_the_stylesheet(self, qtbot: QtBot, padding: str) -> None:
+        from sampling_tool.config import EVENT_TYPE_LABELS
+        from sampling_tool.ui._scaling import load_scaled_stylesheet
+
+        view = AuditTrailView()
+        qtbot.addWidget(view)
+        view.setStyleSheet(
+            load_scaled_stylesheet(1.3) + f"\nQTableView::item {{ padding: {padding}; }}"
+        )
+        view.set_events(
+            [
+                _make_event(event_type=event_type, event_id=i)
+                for i, event_type in enumerate(EVENT_TYPE_LABELS, start=1)
+            ]
+        )
+        header = view.table().horizontalHeader()
+        assert header is not None
+        assert header.sectionSize(1) >= view.table().sizeHintForColumn(1)

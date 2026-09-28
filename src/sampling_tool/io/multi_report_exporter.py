@@ -34,14 +34,18 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from sampling_tool import __version__
 from sampling_tool.config import BDO_RED, EVENT_TYPE_LABELS, METHOD_LABELS, excel_argb
-from sampling_tool.core.formatting import format_audit_details, format_optional_timestamp
+from sampling_tool.core.formatting import format_optional_timestamp
 from sampling_tool.core.models import (
     AuditEvent,
     Dataset,
     Engagement,
     SampleResult,
 )
-from sampling_tool.core.provenance import SamplingProvenance
+from sampling_tool.core.provenance import (
+    SamplingProvenance,
+    format_event_details,
+    population_predates_basis,
+)
 from sampling_tool.io._atomic import AtomicReplaceError, atomic_output
 from sampling_tool.io._xlsx_safe import safe_row
 from sampling_tool.io._xlsx_util import autosize_columns as autosize_columns
@@ -76,6 +80,7 @@ class MultiSheetReportExporter:
         output_path: Path,
         sheets: set[str] | None = None,
         dataset_ids_by_sample: dict[int, int] | None = None,
+        sampling_details_by_sample: dict[int, dict[str, Any]] | None = None,
     ) -> Path:
         """Schreibt die .xlsx atomar nach `output_path` und gibt den Pfad zurück.
 
@@ -83,6 +88,9 @@ class MultiSheetReportExporter:
         `ALL_SHEETS`. `None` oder leeres Set ⇒ alle Sheets. `dataset_ids_by_
         sample` (Sprint 43 / A-001) bildet `sample.id -> dataset.id` ab, weil
         die flache `samples`-Liste diese Zuordnung sonst nicht kennt.
+        `sampling_details_by_sample` (Sprint 89 / B4): Details des Sampling-
+        Events je Stichprobe – daraus folgt der Altbestand-Hinweis zur
+        Population. `None` = nicht bekannt, kein Hinweis.
         """
         target = (
             output_path
@@ -101,7 +109,13 @@ class MultiSheetReportExporter:
             if SHEET_AUDIT_TRAIL in active:
                 self._write_audit_trail(wb, audit_events)
             if SHEET_SAMPLES in active:
-                self._write_samples(wb, samples, dataset_ids_by_sample or {})
+                self._write_samples(
+                    wb,
+                    samples,
+                    dataset_ids_by_sample or {},
+                    {ds.id: ds.row_count for ds in datasets if ds.id is not None},
+                    sampling_details_by_sample,
+                )
             if SHEET_STATISTIKEN in active:
                 self._write_statistiken(wb, samples, audit_events)
 
@@ -193,7 +207,7 @@ class MultiSheetReportExporter:
         _style_header_row(ws, len(header))
 
         chronological = sorted(events, key=lambda e: (e.timestamp, e.id or 0))
-        for evt in chronological:
+        for row_number, evt in enumerate(chronological, start=2):
             safe_row(
                 ws,
                 [
@@ -202,13 +216,14 @@ class MultiSheetReportExporter:
                     evt.user_name,
                     evt.sample_id if evt.sample_id is not None else "—",
                     evt.sample_size if evt.sample_size is not None else "—",
-                    (f"{evt.sample_percent:.2f}" if evt.sample_percent is not None else "—"),
+                    evt.sample_percent / 100 if evt.sample_percent is not None else "—",
                     evt.seed if evt.seed is not None else "—",
                     Path(evt.export_file or evt.import_file or "").name or "—",
                     f"#{evt.corrects_event_id}" if evt.corrects_event_id is not None else "—",
-                    format_audit_details(evt.details),
+                    format_event_details(evt),
                 ],
             )
+            _format_percent(ws, row_number, header.index("%") + 1)
         autosize_columns(ws, len(header), min_width=12)
         ws.freeze_panes = "A2"
 
@@ -217,6 +232,8 @@ class MultiSheetReportExporter:
         wb: Workbook,
         samples: list[SampleResult],
         dataset_ids_by_sample: dict[int, int],
+        dataset_rows_by_id: dict[int, int],
+        sampling_details_by_sample: dict[int, dict[str, Any]] | None,
     ) -> None:
         ws = wb.create_sheet("3. Samples")
         header = [
@@ -225,6 +242,7 @@ class MultiSheetReportExporter:
             "Angeforderte Größe",
             "Tatsächliche Größe",
             "Population",
+            "Datensatz gesamt",
             "Anteil %",
             "Seed",
             "Filter-Feld",
@@ -233,7 +251,7 @@ class MultiSheetReportExporter:
             "Cluster-Feld",
             "Schicht-Feld",
             "Schichtungsmodus",
-            "Parent-Sample-ID",
+            "Übergeordnete Stichprobe",
             "Ableitung",
             "Algorithmus-Version",
             "Dataset-ID",
@@ -244,11 +262,21 @@ class MultiSheetReportExporter:
         _style_header_row(ws, len(header))
 
         ordered = sorted(samples, key=lambda s: s.drawn_at)
-        for sample in ordered:
+        for row_number, sample in enumerate(ordered, start=2):
             dataset_id = dataset_ids_by_sample.get(sample.id) if sample.id is not None else None
             provenance = SamplingProvenance.from_sample_result(
-                sample, dataset_id=dataset_id, app_version=__version__
+                sample,
+                dataset_id=dataset_id,
+                app_version=__version__,
+                dataset_rows=dataset_rows_by_id.get(dataset_id) if dataset_id is not None else None,
+                population_predates_basis=(
+                    sampling_details_by_sample is not None
+                    and population_predates_basis(
+                        sampling_details_by_sample.get(sample.id) if sample.id is not None else None
+                    )
+                ),
             )
+            population_text = provenance.population_text
             percent = (
                 sample.actual_size / sample.population_size * 100.0
                 if sample.population_size
@@ -261,8 +289,14 @@ class MultiSheetReportExporter:
                     provenance.method_label,
                     provenance.size_requested,
                     provenance.size_actual,
-                    provenance.population_size,
-                    round(percent, 2),
+                    # Zahl, solange kein Hinweis dranhängt – dann bleibt Excel rechenbar.
+                    (
+                        provenance.population_size
+                        if population_text == str(provenance.population_size)
+                        else population_text
+                    ),
+                    provenance.dataset_rows if provenance.dataset_rows is not None else "—",
+                    percent / 100,
                     provenance.seed,
                     provenance.filter_field or "—",
                     provenance.filter_operator_symbol if provenance.has_filter else "—",
@@ -278,6 +312,7 @@ class MultiSheetReportExporter:
                     provenance.created_by,
                 ],
             )
+            _format_percent(ws, row_number, header.index("Anteil %") + 1)
         autosize_columns(ws, len(header), min_width=12)
         ws.freeze_panes = "A2"
 
@@ -338,6 +373,20 @@ def _style_header_row(ws: Worksheet, columns: int) -> None:
         cell.fill = _HEADER_FILL
         cell.font = _HEADER_FONT
         cell.alignment = _HEADER_ALIGN
+
+
+def _format_percent(ws: Worksheet, row: int, column: int) -> None:
+    """Prozentzelle einer Zeile als Zahl mit Prozentformat.
+
+    Sprint 89 / D2: vorher stand im AuditTrail-Blatt Text (`'2.00'`), im
+    Samples-Blatt eine gerundete Zahl ohne Format – Excel konnte mit keinem
+    von beiden rechnen wie mit einem Anteil. Gespeichert wird der Bruch
+    (0,02), angezeigt „2,00 %". Die Zeile kommt vom Aufrufer: `ws.max_row`
+    durchsucht bei openpyxl alle Zellen und machte das Blatt quadratisch langsam.
+    """
+    cell = ws.cell(row=row, column=column)
+    if isinstance(cell.value, int | float):
+        cell.number_format = "0.00%"
 
 
 def _format_now() -> str:

@@ -651,3 +651,47 @@ class TestMigration006:
                 old_app.migrate()
         finally:
             old_app.close()
+
+
+class TestCheckpointAndClose:
+    """Sprint 89 / A2: Beim Schließen wandert der WAL in die Projektdatei."""
+
+    def test_wal_is_truncated_even_with_another_connection_open(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "p.db"
+        db = Database(db_path)
+        db.migrate()
+        # Ein zweiter, untätiger Leser verhindert den impliziten Checkpoint
+        # beim Schließen – nur der ausdrückliche greift dann noch.
+        other = sqlite3.connect(str(db_path))
+        try:
+            db.checkpoint_and_close()
+            wal = db_path.with_name(db_path.name + "-wal")
+            assert not wal.exists() or wal.stat().st_size == 0
+        finally:
+            other.close()
+
+    def test_failing_checkpoint_still_closes_and_only_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        closed: list[bool] = []
+
+        class _BrokenConnection:
+            def execute(self, _sql: str) -> None:
+                raise sqlite3.OperationalError("database is locked")
+
+            def close(self) -> None:
+                closed.append(True)
+
+        db = Database(tmp_path / "p.db")
+        db._conn = _BrokenConnection()  # type: ignore[assignment]
+        with caplog.at_level("WARNING", logger="sampling_tool.persistence.database"):
+            db.checkpoint_and_close()
+
+        assert closed == [True]
+        assert db._conn is None
+        assert any(r.levelname == "WARNING" for r in caplog.records)
+
+    def test_never_connected_is_a_no_op(self, tmp_path: Path) -> None:
+        db = Database(tmp_path / "p.db")
+        db.checkpoint_and_close()
+        assert not (tmp_path / "p.db").exists()

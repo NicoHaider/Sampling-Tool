@@ -39,7 +39,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import BDO_GREY, DEFAULT_BRIEFPAPIER, SEED_MAX
+from sampling_tool.config import BDO_GREY, DEFAULT_BRIEFPAPIER, SEED_MAX, WARNING_COLOR
 from sampling_tool.io.bdo_locations import (
     companies,
     default_company,
@@ -47,6 +47,7 @@ from sampling_tool.io.bdo_locations import (
     locations,
 )
 from sampling_tool.io.briefpapier import validate_briefpapier
+from sampling_tool.io.sync_folders import SYNC_FOLDER_SETTINGS_HINT, sync_folder_hint
 from sampling_tool.logging_setup import log_file_path
 from sampling_tool.ui._dialog_buttons import mark_secondary, mark_secondary_buttons
 from sampling_tool.ui._dialog_sizing import (
@@ -247,6 +248,13 @@ class SettingsDialog(QDialog):
         wrapper = QWidget()
         wrapper.setLayout(row)
         form.addRow("Projekt-Ordner", wrapper)
+        # Sprint 89 / G3: derselbe Hinweis wie beim Öffnen eines Projekts.
+        self._sync_hint = QLabel("")
+        self._sync_hint.setWordWrap(True)
+        self._sync_hint.setStyleSheet(f"color: {WARNING_COLOR};")
+        form.addRow("", self._sync_hint)
+        self._engagements_dir.textChanged.connect(self._update_sync_hint)
+        self._update_sync_hint(self._engagements_dir.text())
 
         language = QLabel("Sprache: Deutsch (weitere folgen)")
         language.setStyleSheet(f"color: {BDO_GREY};")
@@ -488,6 +496,14 @@ class SettingsDialog(QDialog):
     def _on_reroll_seed(self) -> None:
         """Setzt einen neuen zufälligen festen Seed (immer > 0)."""
         self._seed_spin.setValue(secrets.randbelow(_SEED_SPIN_MAX) + 1)
+
+    def _update_sync_hint(self, text: str) -> None:
+        folder = text.strip()
+        hint = (
+            sync_folder_hint(Path(folder), template=SYNC_FOLDER_SETTINGS_HINT) if folder else None
+        )
+        self._sync_hint.setText(hint or "")
+        self._sync_hint.setVisible(hint is not None)
 
     def _on_browse_engagements_dir(self) -> None:
         start = self._engagements_dir.text() or str(self._initial.engagements_dir)

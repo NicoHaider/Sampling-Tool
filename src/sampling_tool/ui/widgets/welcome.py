@@ -23,7 +23,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sampling_tool.config import BDO_DARK_GREY, BDO_GREY, ENGAGEMENTS_DIR
+from sampling_tool.config import (
+    BDO_DARK_GREY,
+    BDO_GREY,
+    ENGAGEMENTS_DIR,
+    LEGACY_ENGAGEMENTS_DIR,
+)
 from sampling_tool.ui._scaling import scaled_px
 from sampling_tool.ui.recent import RecentEntry
 
@@ -199,7 +204,10 @@ class WelcomeScreen(QWidget):
     # ---- Slots ---------------------------------------------------------
 
     def _on_open_clicked(self) -> None:
-        start_dir = str(ENGAGEMENTS_DIR) if ENGAGEMENTS_DIR.exists() else ""
+        # Sprint 89 / G1: Bestandsnutzer haben ihre Projekte noch im alten Ordner.
+        start_dir = next(
+            (str(d) for d in (ENGAGEMENTS_DIR, LEGACY_ENGAGEMENTS_DIR) if d.exists()), ""
+        )
         path_str, _filter = QFileDialog.getOpenFileName(
             self,
             "Projekt öffnen",

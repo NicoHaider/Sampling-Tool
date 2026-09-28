@@ -14,6 +14,7 @@ from pytestqt.qtbot import QtBot
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import DatasetRepo, EngagementRepo
+from sampling_tool.ui._cell_width import cell_width
 from sampling_tool.ui._scaling import load_scaled_stylesheet, scaled_px
 from sampling_tool.ui.widgets.data_table import (
     _MAX_COLUMN_WIDTH,
@@ -758,3 +759,77 @@ class TestRowNumberAffordance:
             view.deleteLater()
             qtbot.wait(10)
         qtbot.wait(60)
+
+
+class TestNumericColumnsFitLongestValue:
+    """Sprint 89 / E3: „-17009.25" wurde in `08_gross` zu „-17009...." gekürzt.
+
+    Die Spaltenbreite kam aus 100 gesampelten Zeilen; ein langer Betrag weiter
+    unten fiel nicht auf. Jetzt: längster Wert der ersten 1.000 Zeilen plus
+    Vorzeichen, ohne den ganzen Datensatz zu lesen.
+    """
+
+    def _view(
+        self, qtbot: QtBot, db: Database, engagement_id: int, *, late_value: float
+    ) -> DataTableView:
+        rows = tuple(
+            DatasetRow(
+                row_id=i,
+                values={"Text": f"t{i}", "Betrag": late_value if i == 700 else 5.5},
+            )
+            for i in range(1, 1201)
+        )
+        dataset, repo = _persist_dataset(
+            db, engagement_id, rows, columns=("Text", "Betrag"), name="gross"
+        )
+        view = DataTableView()
+        qtbot.addWidget(view)
+        view.set_dataset(dataset, repo)
+        return view
+
+    def test_negative_amount_fits(
+        self, qtbot: QtBot, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        db, engagement_id = db_with_engagement
+        view = self._view(qtbot, db, engagement_id, late_value=-17009.25)
+        assert view.columnWidth(1) >= cell_width(view, "-17009.25")
+
+    def test_room_for_a_sign_even_if_the_longest_is_positive(
+        self, qtbot: QtBot, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        db, engagement_id = db_with_engagement
+        view = self._view(qtbot, db, engagement_id, late_value=17009.25)
+        assert view.columnWidth(1) >= cell_width(view, "-17009.25")
+
+    def test_only_the_leading_rows_are_read(
+        self, qtbot: QtBot, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        from unittest.mock import patch as _patch
+
+        db, engagement_id = db_with_engagement
+        calls: list[tuple[int, int]] = []
+        original = DatasetRepo.get_rows_in_range
+
+        def spy(repo: DatasetRepo, dataset_id: int, start: int, end: int) -> list[DatasetRow]:
+            calls.append((start, end))
+            return original(repo, dataset_id, start, end)
+
+        with _patch.object(DatasetRepo, "get_rows_in_range", spy):
+            self._view(qtbot, db, engagement_id, late_value=-1.0)
+        assert calls
+        assert all(end - start <= 1001 for start, end in calls)
+
+    def test_tooltip_only_when_cut(
+        self, qtbot: QtBot, db_with_engagement: tuple[Database, int]
+    ) -> None:
+        db, engagement_id = db_with_engagement
+        view = self._view(qtbot, db, engagement_id, late_value=-17009.25)
+        index = view.table_model().index(0, 0)  # „t1" passt immer
+        assert view._tooltip_for(index) is None
+        header = view.horizontalHeader()
+        assert header is not None
+        # Sonst klemmt der Stil (z. B. Fusion unter Linux) die Breite nach oben.
+        header.setMinimumSectionSize(1)
+        view.setColumnWidth(0, 4)
+        assert view.columnWidth(0) == 4
+        assert view._tooltip_for(index) == "t1"

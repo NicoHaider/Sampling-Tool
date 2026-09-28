@@ -154,6 +154,19 @@ class MainController:
         # Sprint 22: „Ansicht"-Menü-Checks aus den app-weiten Toggles spiegeln.
         self.session.sync_view_menu()
 
+    # ---- App-Ende ------------------------------------------------------
+
+    def shutdown(self) -> None:
+        """App-Ende (Sprint 89 / A2): offene Projektdatei sauber schließen.
+
+        Vorher blieb die Datei bis zum Prozessende offen, ihr WAL lag danach
+        neben ihr. Wirft nie – ein Fehler beim Schließen wird nur protokolliert.
+        """
+        if self.session.db is None:
+            return
+        self.session.window.data_table().clear_dataset()
+        self.session.reset_to_welcome()
+
     # ---- Signal-Routing ------------------------------------------------
 
     def _connect_signals(self) -> None:
@@ -171,8 +184,10 @@ class MainController:
         w.import_excel_requested.connect(self.workspace.handle_import_excel)
         w.clear_loaded_datasets_requested.connect(self.workspace.handle_clear_loaded_datasets)
         w.new_sample_requested.connect(self.workspace.handle_new_sampling)
+        # Sprint 89 / C: Menü und Toolbar teilen eine Aktion; beide Signale
+        # führen zur selben Methode.
         w.reset_sample_requested.connect(self.workspace.handle_reset)
-        w.reset_sampling_requested.connect(self.workspace.handle_reset_sampling)
+        w.reset_sampling_requested.connect(self.workspace.handle_reset)
         w.undo_requested.connect(self.workspace.handle_undo)
         w.redo_requested.connect(self.workspace.handle_redo)
         # Selektion
@@ -191,6 +206,7 @@ class MainController:
         w.about_requested.connect(self.help.handle_about)
         w.settings_requested.connect(self.help.handle_settings)
         w.hotkeys_requested.connect(self.help.handle_hotkeys)
+        w.user_guide_requested.connect(self.help.handle_user_guide)
         # Sprint 28: Vorlagen-Verwaltungsfenster (einziger Einstiegspunkt).
         w.manage_templates_requested.connect(self.help.handle_manage_templates)
         # Ansicht-Menü (Sprint 22): Einzel-Toggles + Panel-Toggles

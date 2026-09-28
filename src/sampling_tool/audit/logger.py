@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from sampling_tool import __version__
-from sampling_tool.config import SNAPSHOT_REASON_LABELS
+from sampling_tool.config import POPULATION_BASIS_SELECTION, SNAPSHOT_REASON_LABELS
 from sampling_tool.core.models import AuditEvent, Dataset, SampleResult
 from sampling_tool.core.provenance import SamplingProvenance
 from sampling_tool.persistence.repositories import AuditRepo
@@ -34,10 +34,22 @@ class AuditLogger:
 
     # ---- Sampling -------------------------------------------------------
 
-    def log_sampling(self, sample: SampleResult, sample_id: int, dataset_id: int) -> AuditEvent:
+    def log_sampling(
+        self,
+        sample: SampleResult,
+        sample_id: int,
+        dataset_id: int,
+        *,
+        dataset_rows: int | None = None,
+    ) -> AuditEvent:
         """Stichprobe gezogen – inkl. Größe, Population, Anteil, Seed, Methode
         sowie der vollen Reproduktions-Provenienz (Sprint 43 / A-001: Operator,
-        Parent-Sample, Algorithmus-/App-Version, angeforderte Größe, Ersteller)."""
+        Parent-Sample, Algorithmus-/App-Version, angeforderte Größe, Ersteller).
+
+        Sprint 89 / B3: `population_basis` markiert, dass die Population die
+        Auswahlgrundlage ist (nach Filter/Einschränken/Ergänzen); fehlt der
+        Schlüssel, stammt das Event aus der Zeit davor. `dataset_rows` ist die
+        Zeilenzahl des ganzen Datensatzes."""
         percent = (
             sample.actual_size / sample.population_size * 100.0 if sample.population_size else 0.0
         )
@@ -53,7 +65,13 @@ class AuditLogger:
             sample_percent=percent,
             total_count=sample.population_size,
             seed=sample.config.seed,
-            details=provenance.to_audit_details(),
+            # Neue Schlüssel vorn: in der Details-Zeile steht „Datensatz gesamt"
+            # direkt hinter der Population.
+            details={
+                "dataset_rows": dataset_rows,
+                "population_basis": POPULATION_BASIS_SELECTION,
+                **provenance.to_audit_details(),
+            },
         )
         return self.repo.log(event)
 
@@ -154,13 +172,15 @@ class AuditLogger:
         )
         return self.repo.log(event)
 
-    def log_reset(self, dataset_id: int) -> AuditEvent:
-        """Reset eines Datasets (alle Auswahlmarkierungen zurücksetzen)."""
+    def log_reset(self, dataset_id: int, sample_id: int | None = None) -> AuditEvent:
+        """Auswahl aufgehoben (Sprint 89 / C): Markierung und Filter weg, die
+        Stichprobe bleibt im Projekt. `sample_id` nennt, welche es war."""
         event = AuditEvent(
             event_type="reset",
             engagement_id=self.engagement_id,
             user_name=self.user_name,
-            details={"dataset_id": dataset_id},
+            sample_id=sample_id,
+            details={"dataset_id": dataset_id, "aufgehoben": "Auswahl"},
         )
         return self.repo.log(event)
 

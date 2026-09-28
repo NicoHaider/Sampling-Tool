@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import QMessageBox
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.config import ARCHIVE_DIR_NAME
 from sampling_tool.core.models import AuditEvent
+from sampling_tool.core.provenance import population_predates_basis
 from sampling_tool.io.bdo_locations import company_by_key, location_by_key
 from sampling_tool.io.exporter import ExcelExporter, ExportError
 from sampling_tool.persistence.repositories import AuditRepo
@@ -189,6 +190,9 @@ class ExportController:
             # Auditor im Dialog gelesen hat.
             now=result.now,
             filename=target.path.name,
+            population_predates_basis=population_predates_basis(
+                s.sampling_details_by_sample().get(sample.id) if sample.id is not None else None
+            ),
         )
         progress_dialog = TaskProgressDialog("Exportiere Sample…", s.window)
         try:
@@ -335,6 +339,7 @@ class ExportController:
             output_path=target.path,
             sheets=result.sheets,
             dataset_ids_by_sample=dataset_ids_by_sample,
+            sampling_details_by_sample=s.sampling_details_by_sample(),
         )
         progress_dialog = TaskProgressDialog("Erstelle Excel-Report…", s.window)
         try:
@@ -388,6 +393,7 @@ class ExportController:
             include_audit_trail=result.include_audit_trail,
             include_samples_table=result.include_samples_table,
             dataset_ids_by_sample=dataset_ids_by_sample,
+            sampling_details_by_sample=s.sampling_details_by_sample(),
         )
         progress_dialog = TaskProgressDialog("Erstelle HTML-Report…", s.window)
         try:

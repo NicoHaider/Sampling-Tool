@@ -113,3 +113,41 @@ class TestHighDpiRoundingPolicy:
             QGuiApplication.highDpiScaleFactorRoundingPolicy()
             == Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
         )
+
+
+class TestShutdownAfterEventLoop:
+    """Sprint 89 / A2: nach dem Ende der Ereignisschleife wird das Projekt geschlossen."""
+
+    def test_shutdown_runs_after_exec(self) -> None:
+        from sampling_tool.__main__ import run_event_loop
+
+        calls: list[str] = []
+
+        class _App:
+            def exec(self) -> int:
+                calls.append("exec")
+                return 3
+
+        class _Controller:
+            def shutdown(self) -> None:
+                calls.append("shutdown")
+
+        assert run_event_loop(_App(), _Controller()) == 3
+        assert calls == ["exec", "shutdown"]
+
+    def test_shutdown_runs_even_if_exec_raises(self) -> None:
+        from sampling_tool.__main__ import run_event_loop
+
+        calls: list[str] = []
+
+        class _App:
+            def exec(self) -> int:
+                raise RuntimeError("kaputt")
+
+        class _Controller:
+            def shutdown(self) -> None:
+                calls.append("shutdown")
+
+        with pytest.raises(RuntimeError):
+            run_event_loop(_App(), _Controller())
+        assert calls == ["shutdown"]

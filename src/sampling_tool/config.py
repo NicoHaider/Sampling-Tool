@@ -159,7 +159,9 @@ FILTER_OPERATOR_LABELS: Final[dict[str, str]] = {
 # Reihenfolge = Reihenfolge im „Aktion"-Filter des AuditTrail-Tabs.
 EVENT_TYPE_LABELS: Final[dict[str, str]] = {
     "sampling": "Stichprobe",
-    "reset": "Zurückgesetzt",
+    # Sprint 89 / C: der Event-Typ bleibt `reset`, er hebt nur die Markierung
+    # einer Stichprobe auf – gelöscht wird nichts.
+    "reset": "Auswahl aufgehoben",
     "import": "Import",
     "export": "Export",
     "undo": "Rückgängig",
@@ -177,6 +179,25 @@ SNAPSHOT_REASON_LABELS: Final[dict[str, str]] = {
     "oeffnen": "beim Öffnen",
     "vor-migration": "vor Aktualisierung der Projektdatei",
     "vor-ueberschreiben": "vor Überschreiben",
+}
+
+# Sprint 89 / B3: Bezugsgröße der Population im Sampling-Event. Ab Sprint 89
+# ist die Population die Auswahlgrundlage (Zeilen nach Filter, Einschränken,
+# Ergänzen-Ausschluss). Fehlt der Schlüssel, stammt das Event von davor – bei
+# Filter-Ziehungen war die Population damals der ganze Datensatz.
+POPULATION_BASIS_SELECTION: Final[str] = "auswahl"
+LEGACY_FILTER_POPULATION_NOTE: Final[str] = (
+    "gesamter Datensatz, Filter nicht eingerechnet; Stand vor Sprint 89"
+)
+# Abgeleitete Ziehungen hatten schon vorher eine andere Bezugsgröße – der
+# Hinweis nennt sie, statt „gesamter Datensatz" zu behaupten. Schlüssel ist
+# `ParentRelation.value`; `None` = Ableitung nicht erfasst (vor Migration 006).
+LEGACY_DERIVED_FILTER_POPULATION_NOTES: Final[dict[str | None, str]] = {
+    "restrict": "übergeordnete Stichprobe, Filter nicht eingerechnet; Stand vor Sprint 89",
+    "supplement": (
+        "Datensatz ohne bereits gezogene Zeilen, Filter nicht eingerechnet; Stand vor Sprint 89"
+    ),
+    None: "Filter nicht eingerechnet; Stand vor Sprint 89",
 }
 
 # Werte von `details["restored"]` bei Undo/Redo auf den leeren Zustand.
@@ -202,7 +223,7 @@ AUDIT_DETAIL_LABELS: Final[dict[str, str]] = {
     "cluster_field": "Cluster-Feld",
     "stratum_field": "Schicht-Feld",
     "stratify_mode": "Schichtungsmodus",
-    "parent_sample_id": "Parent-Sample-ID",
+    "parent_sample_id": "Übergeordnete Stichprobe",
     "parent_relation": "Ableitung",
     "algorithm_version": "Algorithmus-Version",
     "app_version": "App-Version",
@@ -215,6 +236,10 @@ AUDIT_DETAIL_LABELS: Final[dict[str, str]] = {
     "backup_reason": "Anlass",
     "trashed_count": "Anzahl",
     "trashed_files": "Dateien",
+    "dataset_rows": "Datensatz gesamt",
+    "aufgehoben": "Aufgehoben",
+    # Technische Markierung, in der Details-Zeile ausgeblendet (Sprint 89 / B3).
+    "population_basis": "Population bezogen auf",
 }
 
 # ---------------------------------------------------------------------------
@@ -243,13 +268,21 @@ SUPPORTED_CSV_SUFFIXES: Final[tuple[str, ...]] = (".csv", ".tsv")
 # Standard-Ablageort aller Engagement-Dateien. Pro Mandant entsteht ein
 # Unterordner mit der `.db`-Datei und einem `archiv/`-Verzeichnis für
 # Auto-Snapshots beim Öffnen.
-ENGAGEMENTS_DIR: Final[Path] = Path.home() / "Documents" / "BDO Audit Sampling"
+#
+# Sprint 89 / G1: für Neuinstallationen außerhalb von `~/Documents` – dort
+# synchronisiert iCloud („Schreibtisch & Dokumente") bzw. OneDrive oft
+# ungefragt, und SQLite mit WAL verträgt das nicht. Bestehende Einstellungen
+# und Projekte bleiben, wo sie sind (`LEGACY_ENGAGEMENTS_DIR`).
+ENGAGEMENTS_DIR: Final[Path] = Path.home() / "BDO Audit Sampling"
+LEGACY_ENGAGEMENTS_DIR: Final[Path] = Path.home() / "Documents" / "BDO Audit Sampling"
 
 # Ablage für ein optionales Briefpapier (PNG/JPG/PDF), das beim Generieren
 # von PDF-Reports als Hintergrund eingelegt wird. User-Override für das
 # echte BDO-Briefpapier; wenn dort nichts liegt, fällt die App auf das in
 # `DEFAULT_BRIEFPAPIER` mitgelieferte Platzhalter-PDF zurück (Sprint 7).
-BRIEFPAPIER_DIR: Final[Path] = ENGAGEMENTS_DIR / "briefpapier"
+# Bleibt am bisherigen Ort (nur gelesen, kein SQLite) – ein dort abgelegtes
+# Briefpapier wirkt nach Sprint 89 unverändert.
+BRIEFPAPIER_DIR: Final[Path] = LEGACY_ENGAGEMENTS_DIR / "briefpapier"
 BRIEFPAPIER_DEFAULT_NAME: Final[str] = "bdo_letterhead"
 
 # Paket-Default: das Platzhalter-Briefpapier wird mit dem Build ausgeliefert

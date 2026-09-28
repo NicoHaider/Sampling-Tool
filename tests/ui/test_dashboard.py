@@ -258,7 +258,13 @@ class TestGermanTileTitles:
         assert "Events" not in captions
 
 
-_LONG_EVENT_LABELS = ["Wiederhergestellt", "Zurückgesetzt", "Stichprobe", "Rückgängig", "Korrektur"]
+_LONG_EVENT_LABELS = [
+    "Wiederhergestellt",
+    "Auswahl aufgehoben",
+    "Stichprobe",
+    "Rückgängig",
+    "Korrektur",
+]
 
 
 class TestTopEventTypesReadable:

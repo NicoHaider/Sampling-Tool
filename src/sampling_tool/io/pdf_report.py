@@ -38,8 +38,9 @@ from reportlab.platypus import (
 )
 
 from sampling_tool.config import BDO_GREY, BDO_RED, DEFAULT_BRIEFPAPIER, EVENT_TYPE_LABELS
-from sampling_tool.core.formatting import format_audit_details, format_event_timestamp
+from sampling_tool.core.formatting import format_event_timestamp
 from sampling_tool.core.models import AuditEvent, Engagement
+from sampling_tool.core.provenance import format_event_details
 from sampling_tool.io._atomic import atomic_output
 from sampling_tool.io.bdo_locations import BdoCompany, BdoLocation
 from sampling_tool.io.briefpapier import BriefpapierConfig, get_default_briefpapier
@@ -70,21 +71,29 @@ CHUNK_SIZE: Final[int] = 500
 _CELL_STRING_THRESHOLD: Final[int] = 60
 
 # Sprint 33 – A4-Querformat: nutzbare Breite 297mm − 2×20mm Rand = 257mm.
-# Großzügige „Datei"-Spalte (72mm), damit Dateinamen nicht mehr rechts aus
-# der Tabelle laufen. Summe == 257mm.
+# Sprint 89 / D1: die Details stehen nicht mehr in der „Aktion"-Spalte, sondern
+# in einer eigenen Zeile über die volle Breite unter dem Event. Die Spalten sind
+# danach gewichtet, was in ihnen steht; „Datei" bleibt die breiteste, damit
+# Dateinamen nicht rechts aus der Tabelle laufen. Summe == 257mm.
 _EVENT_TABLE_COL_WIDTHS: Final[tuple[float, ...]] = (
-    35 * mm,
-    45 * mm,
-    35 * mm,
-    18 * mm,
+    34 * mm,
+    40 * mm,
+    22 * mm,
+    34 * mm,
+    17 * mm,
     20 * mm,
-    32 * mm,
-    72 * mm,
+    26 * mm,
+    64 * mm,
 )
 
+# Sprint 89 / D1: ab dieser Höhe (pt) auf der Seite wird ein Event geteilt.
+_MIN_ROW_SPLIT_HEIGHT: Final[int] = 40
+
+# Sprint 89 / B1: „Stichprobe" wie auf dem Bildschirm, im Excel- und HTML-Bericht.
 _EVENT_TABLE_HEADER: Final[list[str]] = [
     "Zeitstempel",
     "Aktion",
+    "Stichprobe",
     "User",
     "Größe",
     "%",
@@ -376,33 +385,55 @@ def _build_chunk_table(
     chunk: list[AuditEvent],
     cell_style: ParagraphStyle,
 ) -> Table:
-    """Eine Sub-Table mit Header + bis zu CHUNK_SIZE Datenzeilen."""
+    """Eine Sub-Table mit Header + bis zu CHUNK_SIZE Events.
+
+    Sprint 89 / D1: je Event eine Zeile mit den Spalten, darunter – falls
+    vorhanden – eine Details-Zeile über die volle Breite. Zeilen dürfen über
+    einen Seitenumbruch hinweg geteilt werden (`splitInRow`), damit ein hohes
+    Event nicht den Rest einer Seite leer lässt; der Kopf wiederholt sich.
+    """
     data: list[list[Any]] = [list(_EVENT_TABLE_HEADER)]
     correction_rows: list[int] = []
+    detail_rows: list[int] = []
+    bands: list[tuple[int, int]] = []
     # Sprint 82 / G: Dateinamen haben keine Leerzeichen, also muss der Stil
     # innerhalb eines Wortes umbrechen dürfen. Bewusst `splitLongWords` statt
     # `wordWrap="CJK"`: CJK lässt ein Satzzeichen am Zeilenende über die
     # Innenbreite hängen (z. B. den Punkt vor „xlsx").
     file_style = ParagraphStyle("BDOTableCellFile", parent=cell_style, splitLongWords=True)
+    # Sprint 81: `BDO_GREY` statt des früheren #7F7F7F-Literals (5,33:1) – bei
+    # 7 pt auf Papier ist das die Stelle, an der ein zu heller Grauton am
+    # ehesten unlesbar wird.
+    detail_style = ParagraphStyle(
+        "BDOTableDetail",
+        parent=cell_style,
+        fontSize=7,
+        leading=9,
+        textColor=colors.HexColor(BDO_GREY),
+        splitLongWords=True,
+    )
+    empty_detail_cells = [""] * (len(_EVENT_TABLE_HEADER) - 1)
 
-    for i, evt in enumerate(chunk, start=1):
+    for evt in chunk:
         action_text = EVENT_TYPE_LABELS.get(evt.event_type, evt.event_type)
         if evt.corrects_event_id is not None:
             action_text = f"{action_text} → #{evt.corrects_event_id}"
-            correction_rows.append(i)
 
         percent = f"{evt.sample_percent:.2f} %" if evt.sample_percent is not None else "—"
         size = str(evt.sample_size) if evt.sample_size is not None else "—"
         seed = str(evt.seed) if evt.seed is not None else "—"
+        sample = f"#{evt.sample_id}" if evt.sample_id is not None else "—"
         filename = evt.export_file or evt.import_file or "—"
         if filename != "—":
             # Lange Pfade umbrechen, indem wir nur den Dateinamen anzeigen
             filename = Path(filename).name
 
+        first = len(data)
         data.append(
             [
                 _format_cell(format_event_timestamp(evt.timestamp), cell_style),
-                _format_action_cell(action_text, evt.details, cell_style),
+                _format_cell(action_text, cell_style),
+                sample,
                 _format_cell(evt.user_name, cell_style),
                 size,
                 percent,
@@ -410,57 +441,65 @@ def _build_chunk_table(
                 _format_file_cell(filename, file_style),
             ]
         )
+        detail_line = format_event_details(evt)
+        if detail_line != "—":
+            data.append([Paragraph(_escape(detail_line), detail_style), *empty_detail_cells])
+            detail_rows.append(len(data) - 1)
+        last = len(data) - 1
+        bands.append((first, last))
+        if evt.corrects_event_id is not None:
+            correction_rows.extend(range(first, last + 1))
 
+    # reportlab teilt mit `splitByRow` zuerst zwischen Zeilen – das gelingt
+    # immer, ein hohes Event rutschte so ganz auf die nächste Seite. Deshalb
+    # zuerst in der Zeile; `splitInRow` ist dabei die Mindesthöhe, damit kurze
+    # Zeilen nicht zerrissen werden (dann wird doch zwischen Zeilen geteilt).
     table = Table(
         data,
         colWidths=list(_EVENT_TABLE_COL_WIDTHS),
         repeatRows=1,
+        splitByRow=0,
+        splitInRow=_MIN_ROW_SPLIT_HEIGHT,
     )
-    table.setStyle(_build_chunk_style(correction_rows))
+    table.setStyle(_build_chunk_style(correction_rows, detail_rows, bands))
     return table
 
 
-def _format_action_cell(
-    action_text: str,
-    details: dict[str, Any],
-    cell_style: ParagraphStyle,
-) -> str | Paragraph:
-    """Wie `_format_cell`, hängt aber additiv/kompakt eine Details-Zeile an
-    (Sprint 43 / A-001) – ohne neue Spalte, ohne Layout-Redesign (die
-    Landscape-Tabelle aus Sprint 33 bleibt unverändert). Events ohne
-    `details` (die meisten Nicht-Sampling-Events, alle Alt-Events) verhalten
-    sich exakt wie vor diesem Sprint."""
-    if not details:
-        return _format_cell(action_text, cell_style)
-    detail_line = format_audit_details(details)
-    # Sprint 81: `BDO_GREY` statt des früheren #7F7F7F-Literals. Der Wert ist
-    # mitgewandert (4,00:1 → 5,33:1) – bei 7 pt auf Papier ist das die Stelle,
-    # an der ein zu heller Grauton am ehesten unlesbar wird.
-    return Paragraph(
-        f"{_escape(action_text)}<br/>"
-        f"<font color='{BDO_GREY}' size='7'>{_escape(detail_line)}</font>",
-        cell_style,
-    )
+def _build_chunk_style(
+    correction_rows: list[int],
+    detail_rows: list[int] | None = None,
+    bands: list[tuple[int, int]] | None = None,
+) -> TableStyle:
+    """Basisformat, Details-Zeilen, Bänderung je Event + Korrektur-Highlights.
 
-
-def _build_chunk_style(correction_rows: list[int]) -> TableStyle:
-    """Basisformat + Korrektur-Highlights für die betroffenen Rows."""
+    `bands` sind die (erste, letzte) Tabellenzeile je Event: Event- und
+    Details-Zeile teilen Hintergrund und bekommen erst darunter eine Linie –
+    sie lesen sich als ein Eintrag.
+    """
     style = TableStyle(
         [
             ("BACKGROUND", (0, 0), (-1, 0), _BDO_RED_COLOR),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
             ("FONTSIZE", (0, 0), (-1, 0), 9),
-            ("ALIGN", (3, 1), (5, -1), "RIGHT"),
+            ("FONTSIZE", (0, 1), (-1, -1), 8),
+            ("ALIGN", (4, 0), (6, -1), "RIGHT"),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("GRID", (0, 0), (-1, -1), 0.25, _GREY_LIGHT),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.whitesmoke]),
+            ("BOX", (0, 0), (-1, -1), 0.25, _GREY_LIGHT),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.25, _GREY_LIGHT),
             ("LEFTPADDING", (0, 0), (-1, -1), 4),
             ("RIGHTPADDING", (0, 0), (-1, -1), 4),
             ("TOPPADDING", (0, 0), (-1, -1), 3),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
         ]
     )
+    for index, (first, last) in enumerate(bands or []):
+        if index % 2:
+            style.add("BACKGROUND", (0, first), (-1, last), colors.whitesmoke)
+        style.add("LINEBELOW", (0, last), (-1, last), 0.25, _GREY_LIGHT)
+    for row_idx in detail_rows or []:
+        style.add("SPAN", (0, row_idx), (-1, row_idx))
+        style.add("TOPPADDING", (0, row_idx), (-1, row_idx), 0)
     for row_idx in correction_rows:
         style.add("BACKGROUND", (0, row_idx), (-1, row_idx), _GREY_CORRECTION)
     return style

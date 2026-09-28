@@ -153,6 +153,19 @@ def _isolate_qsettings(
 
 
 @pytest.fixture(autouse=True)
+def _no_real_legacy_projects_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Der alte Projektordner `~/Documents/BDO Audit Sampling` ist tabu (Sprint 89 / G1).
+
+    `load_settings` nimmt ihn für Bestandsnutzer ohne gespeicherten Ordner. Auf
+    einem Entwickler-Mac existiert er – ohne diese Umleitung hinge das Ergebnis
+    vom Rechner ab. Kein `HOME`-Umbiegen, nur die eine Konstante.
+    """
+    monkeypatch.setattr(
+        settings_store, "LEGACY_ENGAGEMENTS_DIR", tmp_path / "kein-alter-projektordner"
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_real_trash(monkeypatch: pytest.MonkeyPatch) -> None:
     """Kein Test berührt den echten Papierkorb (Sprint 88 / A3).
 

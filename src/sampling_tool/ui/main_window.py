@@ -84,6 +84,8 @@ class MainWindow(QMainWindow):
     about_requested = pyqtSignal()
     settings_requested = pyqtSignal()
     hotkeys_requested = pyqtSignal()
+    # Sprint 89 / F – „Hilfe → Handbuch" (docs/USER_GUIDE.md).
+    user_guide_requested = pyqtSignal()
     # Sprint 28 – Menü „Stichprobe → Vorlagen verwalten…": öffnet das
     # Vorlagen-Verwaltungsfenster (app-weit, auch ohne offenes Projekt).
     manage_templates_requested = pyqtSignal()
@@ -124,6 +126,7 @@ class MainWindow(QMainWindow):
     _action_undo: QAction
     _action_redo: QAction
     _action_hotkeys: QAction
+    _action_user_guide: QAction
     _action_bug_report: QAction
     _action_about: QAction
     _action_switch_engagement: QAction
@@ -227,6 +230,17 @@ class MainWindow(QMainWindow):
         self._status_engagement.setText(
             engagement.client_name if engagement is not None else "Kein Projekt"
         )
+
+    def show_sync_folder_hint(self, text: str | None, *, announce: bool = False) -> None:
+        """Sync-Ordner-Hinweis beim Projektnamen (Sprint 89 / G2).
+
+        `announce` meldet ihn zusätzlich in der Statusleiste – der Controller
+        tut das einmal pro Projekt und Sitzung. `None` entfernt den Hinweis.
+        """
+        self._sidebar.set_sync_hint(text)
+        status = self.statusBar()
+        if announce and text is not None and status is not None:
+            status.showMessage(text, 15000)
 
     def set_datasets(self, datasets: list[Dataset]) -> None:
         """Datasets in der Sidebar aktualisieren."""

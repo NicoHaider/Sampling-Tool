@@ -51,3 +51,14 @@ def shared_resource(relative: str) -> Path:
         else Path(__file__).resolve().parents[2] / "resources"
     )
     return base / relative
+
+
+def doc_resource(relative: str) -> Path:
+    """Findet eine Datei im `docs/`-Ordner des Projekts/Bundles (Sprint 89 / F).
+
+    Das Handbuch (`USER_GUIDE.md`) liegt im Repo unter `docs/`, nicht unter
+    `resources/` – im Bundle landet es per `sampling_tool.spec` unter
+    `_MEIPASS/docs/`.
+    """
+    base = _meipass() / "docs" if is_frozen() else Path(__file__).resolve().parents[2] / "docs"
+    return base / relative

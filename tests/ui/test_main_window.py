@@ -842,10 +842,12 @@ class TestResetSamplingToolbar:
         assert i_reset == i_new + 1
 
     def test_reset_sampling_action_emits_signal(self, qtbot: QtBot) -> None:
+        # Sprint 89 / C: Toolbar und Menü teilen eine Aktion – sie meldet
+        # `reset_sample_requested`, wie der Menüeintrag immer schon.
         win = MainWindow()
         qtbot.addWidget(win)
         win.set_reset_enabled(True)
-        with qtbot.waitSignal(win.reset_sampling_requested, timeout=1000):
+        with qtbot.waitSignal(win.reset_sample_requested, timeout=1000):
             win._action_reset_sampling.trigger()
 
     def test_set_reset_enabled_toggles_toolbar_and_menu_actions(self, qtbot: QtBot) -> None:
@@ -1138,3 +1140,19 @@ class TestUiScaleApplication:
         win.apply_ui_scale(1.15)
 
         assert calls == [1.15]
+
+
+class TestOneUnselectAction:
+    """Sprint 89 / C: Menü und Toolbar teilen EINE Aktion „Auswahl aufheben"."""
+
+    def test_menu_and_toolbar_are_the_same_action(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        assert win._action_reset_sampling is win._action_reset_sample
+        assert win._action_reset_sample in win._toolbar.actions()
+
+    def test_text_and_tooltip_match(self, qtbot: QtBot) -> None:
+        win = MainWindow()
+        qtbot.addWidget(win)
+        assert win._action_reset_sample.text() == "Auswahl aufheben"
+        assert win._action_reset_sample.toolTip() == "Auswahl aufheben"

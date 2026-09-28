@@ -678,8 +678,10 @@ Drei Kerndogmen, die sich durch die ganze DB-Schicht ziehen:
 
 1. **Eine SQLite-Datei pro Engagement.** Mandanten-Trennung, einfaches Archivieren,
    DSGVO-konform. Es gibt keinen "globalen" Pool. Standard-Ablageort ist
-   `~/Documents/BDO Audit Sampling/<MandantSanitized>/<MandantSanitized>.db`
-   (vgl. `config.ENGAGEMENTS_DIR` + `config.sanitize_for_path`). Beim Öffnen
+   `~/BDO Audit Sampling/<MandantSanitized>/<MandantSanitized>.db`
+   (vgl. `config.ENGAGEMENTS_DIR` + `config.sanitize_for_path`; seit Sprint 89,
+   Bestandsnutzer ohne gespeicherten Ordner behalten
+   `config.LEGACY_ENGAGEMENTS_DIR` = `~/Documents/BDO Audit Sampling`). Beim Öffnen
    landet eine Sicherheitskopie unter `archiv/`, seit Sprint 88 nur bei
    Änderung seit der jüngsten (siehe `persistence/version_manager.py`).
 2. **Anwendungsseitig append-only Audit-Log.** `audit_events` darf

@@ -96,7 +96,7 @@ class TestReportLabelTables:
     def test_event_type_labels_are_binding(self) -> None:
         assert config.EVENT_TYPE_LABELS == {
             "sampling": "Stichprobe",
-            "reset": "Zurückgesetzt",
+            "reset": "Auswahl aufgehoben",
             "import": "Import",
             "export": "Export",
             "undo": "Rückgängig",

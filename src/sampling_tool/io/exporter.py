@@ -79,6 +79,7 @@ class ExcelExporter:
         engagement: Engagement | None = None,
         now: datetime | None = None,
         filename: str | None = None,
+        population_predates_basis: bool = False,
     ) -> Path:
         """Exportiert die gezogenen Zeilen.
 
@@ -107,6 +108,10 @@ class ExcelExporter:
         `filename` (Sprint 84 / C) ersetzt den aus dem Muster gebauten Namen –
         der Controller reicht ihn durch, wenn die Zieldatei schon existierte
         und der Anwender „Neuen Namen verwenden" gewählt hat. `None` = Muster.
+
+        `population_predates_basis` (Sprint 89 / B4): das Sampling-Event trägt
+        keine `population_basis` – bei Filter-Ziehungen bekommt die Population
+        in den Metadaten den Hinweis „gesamter Datensatz".
         """
         self._validate(columns, dataset)
 
@@ -123,7 +128,7 @@ class ExcelExporter:
         wb = Workbook()
         try:
             self._write_sample_sheet(wb, sample_rows, columns)
-            self._write_metadata_sheet(wb, sample, dataset, engagement)
+            self._write_metadata_sheet(wb, sample, dataset, engagement, population_predates_basis)
             try:
                 with atomic_output(target) as tmp:
                     wb.save(tmp)
@@ -227,11 +232,16 @@ class ExcelExporter:
         sample: SampleResult,
         dataset: Dataset,
         engagement: Engagement | None,
+        population_predates_basis: bool = False,
     ) -> None:
         ws = wb.create_sheet(_SHEET_META)
 
         provenance = SamplingProvenance.from_sample_result(
-            sample, dataset_id=dataset.id, app_version=__version__
+            sample,
+            dataset_id=dataset.id,
+            app_version=__version__,
+            dataset_rows=dataset.row_count,
+            population_predates_basis=population_predates_basis,
         )
 
         rows: list[tuple[str, Any]] = [

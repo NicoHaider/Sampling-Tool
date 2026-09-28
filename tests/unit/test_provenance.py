@@ -97,7 +97,7 @@ class TestToOrderedFields:
         assert fields["Schicht-Feld"] == "—"
         # Sprint 85 / E1: Cluster ist nicht geschichtet – kein Schichtungsmodus.
         assert "Schichtungsmodus" not in fields
-        assert fields["Parent-Sample-ID"] == "17"
+        assert fields["Übergeordnete Stichprobe"] == "17"
         assert fields["Algorithmus-Version"] == "bdo-v1"
         assert fields["App-Version"] == "0.8.0"
         assert fields["Erstellt von"] == "anna"
@@ -111,7 +111,7 @@ class TestToOrderedFields:
         )
         fields = dict(provenance.to_ordered_fields())
         assert fields["Dataset-ID"] == "—"
-        assert fields["Parent-Sample-ID"] == "—"
+        assert fields["Übergeordnete Stichprobe"] == "—"
         assert fields["Filter-Feld"] == "—"
         assert fields["Filter-Wert"] == "—"
         assert fields["Cluster-Feld"] == "—"
@@ -211,7 +211,7 @@ class TestParentRelation:
             _cluster_sample(), dataset_id=1, app_version="0.8.0"
         )
         labels = [label for label, _value in provenance.to_ordered_fields()]
-        assert labels[labels.index("Parent-Sample-ID") + 1] == "Ableitung"
+        assert labels[labels.index("Übergeordnete Stichprobe") + 1] == "Ableitung"
 
     @pytest.mark.parametrize("relation", [ParentRelation.RESTRICT, ParentRelation.SUPPLEMENT])
     def test_audit_details_carry_raw_relation(self, relation: ParentRelation) -> None:

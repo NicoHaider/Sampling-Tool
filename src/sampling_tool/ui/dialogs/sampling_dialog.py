@@ -248,7 +248,7 @@ class SamplingDialog(QDialog):
         Zufalls-Seed. Der Controller reicht hier den aufgelösten Seed durch
         (fester Seed aus den Einstellungen, sonst – Sprint 82 / C – der Seed
         der jüngsten Stichprobe dieses Datensatzes aus der Projektdatei), damit
-        eine erneute Ziehung (auch nach „Sampling zurücksetzen" oder erneutem
+        eine erneute Ziehung (auch nach „Auswahl aufheben" oder erneutem
         Öffnen des Projekts) denselben Seed verwendet und die Stichprobe
         bit-genau reproduziert (ISAE-3402). Das Feld bleibt schreibgeschützt;
         geändert wird der Seed nur in den Einstellungen.

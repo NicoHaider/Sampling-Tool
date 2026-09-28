@@ -730,3 +730,19 @@ class TestOpenSnapshotsKeepField:
         )
         dialog._on_reset_defaults()
         assert dialog._open_snapshots_keep.value() == 10
+
+
+class TestSyncFolderHintInSettings:
+    """Sprint 89 / G3: Hinweis beim Projekt-Ordner, wenn er synchronisiert wird."""
+
+    def test_hint_follows_the_folder(self, qtbot: QtBot, tmp_path: Path) -> None:
+        from dataclasses import replace
+
+        dialog = SettingsDialog(replace(AppSettings.defaults(), engagements_dir=tmp_path / "lokal"))
+        qtbot.addWidget(dialog)
+        assert dialog._sync_hint.isHidden()
+        dialog._engagements_dir.setText(str(tmp_path / "Dropbox" / "Projekte"))
+        assert not dialog._sync_hint.isHidden()
+        assert "Dieser Ordner wird synchronisiert" in dialog._sync_hint.text()
+        dialog._engagements_dir.setText(str(tmp_path / "lokal"))
+        assert dialog._sync_hint.isHidden()

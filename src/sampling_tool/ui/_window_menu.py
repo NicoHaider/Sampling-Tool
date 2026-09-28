@@ -200,21 +200,16 @@ def build_menu(window: MainWindow) -> None:
 
     sample_menu.addSeparator()
 
-    window._action_reset_sample = QAction("Auswahl zurücksetzen", window)
+    # Sprint 89 / C: EINE Aktion „Auswahl aufheben" für Menü und Toolbar. Bis
+    # Sprint 88 gab es zwei („Auswahl zurücksetzen" im Menü, „Sampling
+    # zurücksetzen" in der Toolbar), die praktisch dasselbe taten. Der
+    # Toolbar-Name `_action_reset_sampling` bleibt als Verweis auf dieselbe
+    # Instanz, weil `MainWindow` beide Namen schaltet.
+    window._action_reset_sample = QAction("Auswahl aufheben", window)
+    window._action_reset_sample.setToolTip("Auswahl aufheben")
     window._action_reset_sample.triggered.connect(window.reset_sample_requested.emit)
     sample_menu.addAction(window._action_reset_sample)
-
-    # Sprint 20: Toolbar-Twin „Sampling zurücksetzen". Löst einen
-    # audit-safe In-Memory-Reset der gezogenen Stichprobe aus. Hier
-    # erzeugt (nicht ins Menü gehängt), damit die Action vor
-    # `_set_workspace_actions_enabled` unten existiert; build_toolbar
-    # platziert sie neben „Neue Stichprobe".
-    window._action_reset_sampling = QAction("Sampling zurücksetzen", window)
-    window._action_reset_sampling.setToolTip(
-        "Gezogene Stichprobe und Ergebnisse zurücksetzen "
-        "(importierte Daten und Parameter bleiben erhalten)"
-    )
-    window._action_reset_sampling.triggered.connect(window.reset_sampling_requested.emit)
+    window._action_reset_sampling = window._action_reset_sample
 
     sample_menu.addSeparator()
     style = window.style()
@@ -238,6 +233,12 @@ def build_menu(window: MainWindow) -> None:
     help_menu = menu_bar.addMenu("&Hilfe")
     assert help_menu is not None
     window._help_menu = help_menu
+
+    # Sprint 89 / F: das Handbuch direkt aus der App (F1 bzw. Cmd+?).
+    window._action_user_guide = QAction("Handbuch", window)
+    window._action_user_guide.setShortcut(QKeySequence.StandardKey.HelpContents)
+    window._action_user_guide.triggered.connect(window.user_guide_requested.emit)
+    help_menu.addAction(window._action_user_guide)
 
     window._action_hotkeys = QAction("Tastatur-Shortcuts…", window)
     window._action_hotkeys.triggered.connect(window.hotkeys_requested.emit)
