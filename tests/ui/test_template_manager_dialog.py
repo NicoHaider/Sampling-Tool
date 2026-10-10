@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import QInputDialog, QMessageBox
 from pytestqt.qtbot import QtBot
 
 from sampling_tool.config import APP_NAME, APP_ORG, DEFAULT_SAMPLE_SIZE
-from sampling_tool.core.models import SamplingMethod, StratifyMode
+from sampling_tool.core.models import FilterCondition, FilterOperator, SamplingMethod, StratifyMode
 from sampling_tool.core.presets import SamplingPreset
 from sampling_tool.ui.dialogs.template_manager_dialog import TemplateManagerDialog
 from sampling_tool.ui.preset_store import PresetStore
@@ -172,7 +172,7 @@ class TestCreateNewTemplate:
         assert got is not None
         assert got.method == SamplingMethod.SIMPLE
         assert got.size == DEFAULT_SAMPLE_SIZE
-        assert got.filter_field is None
+        assert got.filters == ()
         assert got.cluster_field is None
         assert got.stratum_field is None
         assert got.stratify_mode == StratifyMode.PROPORTIONAL
@@ -248,3 +248,38 @@ class TestUiScale:
         dialog = TemplateManagerDialog(PresetStore(), ui_scale_factor=1.15)
         qtbot.addWidget(dialog)
         assert "font-size: 13px" in dialog._filter_hint.styleSheet()
+
+
+class TestTemplateManagerMultiFilter:
+    """Sprint 92: alle Filter einer Vorlage werden angezeigt und beim Speichern
+    unverändert mitgereicht (vorher ging dabei der Operator verloren)."""
+
+    _CONDS = (
+        FilterCondition("Kostenstelle", FilterOperator.EQ, "Vertrieb"),
+        FilterCondition("Betrag", FilterOperator.GTE, 1000),
+    )
+
+    def test_shows_all_filters(self, qtbot: QtBot) -> None:
+        store = PresetStore()
+        store.save(
+            SamplingPreset(name="Zwei", method=SamplingMethod.SIMPLE, size=3, filters=self._CONDS)
+        )
+        dialog = TemplateManagerDialog(store)
+        qtbot.addWidget(dialog)
+        _select(dialog, "Zwei")
+        assert dialog._lbl_filter.text() == "Kostenstelle = Vertrieb UND Betrag ≥ 1.000"
+
+    def test_save_keeps_filters_and_operators(self, qtbot: QtBot) -> None:
+        store = PresetStore()
+        store.save(
+            SamplingPreset(name="Zwei", method=SamplingMethod.SIMPLE, size=3, filters=self._CONDS)
+        )
+        dialog = TemplateManagerDialog(store)
+        qtbot.addWidget(dialog)
+        _select(dialog, "Zwei")
+        dialog._edit_size.setValue(9)
+        dialog._on_save_edit()
+        saved = store.get("Zwei")
+        assert saved is not None
+        assert saved.size == 9
+        assert saved.filters == self._CONDS

@@ -26,6 +26,7 @@ from datetime import date, datetime, time
 from typing import Any, Final
 
 from sampling_tool.core.models import (
+    FilterCondition,
     FilterOperator,
     SampleConfig,
     SamplingMethod,
@@ -43,9 +44,7 @@ class SamplingPreset:
     cluster_field: str | None = None
     stratum_field: str | None = None
     stratify_mode: StratifyMode = StratifyMode.PROPORTIONAL
-    filter_field: str | None = None
-    filter_value: Any = None
-    filter_operator: FilterOperator = FilterOperator.EQ
+    filters: tuple[FilterCondition, ...] = ()
 
     @classmethod
     def from_config(cls, name: str, config: SampleConfig) -> SamplingPreset:
@@ -61,9 +60,7 @@ class SamplingPreset:
             cluster_field=config.cluster_field,
             stratum_field=config.stratum_field,
             stratify_mode=config.stratify_mode,
-            filter_field=config.filter_field,
-            filter_value=config.filter_value,
-            filter_operator=config.filter_operator,
+            filters=config.filters,
         )
 
     def to_config(self, seed: int) -> SampleConfig:
@@ -79,9 +76,7 @@ class SamplingPreset:
             cluster_field=self.cluster_field,
             stratum_field=self.stratum_field,
             stratify_mode=self.stratify_mode,
-            filter_field=self.filter_field,
-            filter_value=self.filter_value,
-            filter_operator=self.filter_operator,
+            filters=self.filters,
         )
 
 
@@ -131,9 +126,14 @@ def _preset_to_dict(preset: SamplingPreset) -> dict[str, Any]:
         "cluster_field": preset.cluster_field,
         "stratum_field": preset.stratum_field,
         "stratify_mode": preset.stratify_mode.value,
-        "filter_field": preset.filter_field,
-        "filter_value": _encode_filter_value(preset.filter_value),
-        "filter_operator": preset.filter_operator.value,
+        "filters": [
+            {
+                "field": c.field,
+                "operator": c.operator.value,
+                "value": _encode_filter_value(c.value),
+            }
+            for c in preset.filters
+        ],
     }
 
 
@@ -145,9 +145,31 @@ def _preset_from_dict(data: dict[str, Any]) -> SamplingPreset:
         cluster_field=data.get("cluster_field"),
         stratum_field=data.get("stratum_field"),
         stratify_mode=StratifyMode(data.get("stratify_mode", StratifyMode.PROPORTIONAL.value)),
-        filter_field=data.get("filter_field"),
-        filter_value=_decode_filter_value(data.get("filter_value")),
-        filter_operator=FilterOperator(data.get("filter_operator", FilterOperator.EQ.value)),
+        filters=_filters_from_dict(data),
+    )
+
+
+def _filters_from_dict(data: dict[str, Any]) -> tuple[FilterCondition, ...]:
+    """Filter einer gespeicherten Vorlage: `filters` (ab Sprint 92), sonst das
+    Einzelfilter-Format davor (`filter_field`/`filter_value`/`filter_operator`)."""
+    if "filters" in data:
+        return tuple(
+            FilterCondition(
+                field=str(item["field"]),
+                operator=FilterOperator(item.get("operator", FilterOperator.EQ.value)),
+                value=_decode_filter_value(item.get("value")),
+            )
+            for item in data["filters"]
+        )
+    field = data.get("filter_field")
+    if field is None:
+        return ()
+    return (
+        FilterCondition(
+            field=str(field),
+            operator=FilterOperator(data.get("filter_operator", FilterOperator.EQ.value)),
+            value=_decode_filter_value(data.get("filter_value")),
+        ),
     )
 
 

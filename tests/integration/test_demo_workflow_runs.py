@@ -55,8 +55,8 @@ class TestDemoFullWorkflowRuns:
 
         exports = sorted(output.glob("*_BDO_sampling_*.xlsx"))
         assert len(exports) == 2, f"erwarte 2 Sample-Exporte, gefunden: {[p.name for p in exports]}"
-        assert any(p.name.startswith("DemoSimple_ID001_") for p in exports)
-        assert any(p.name.startswith("DemoStratified_ID002_") for p in exports)
+        assert any(p.name.startswith("DemoSimple_ID_001_") for p in exports)
+        assert any(p.name.startswith("DemoStratified_ID_002_") for p in exports)
 
         # Alle acht Schritte müssen gelaufen sein – ein stiller Teil-Abbruch
         # mit Exit-Code 0 würde sonst durchrutschen.

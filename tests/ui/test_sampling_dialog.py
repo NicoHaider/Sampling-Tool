@@ -20,6 +20,7 @@ from pytestqt.qtbot import QtBot
 
 from sampling_tool.core.models import (
     Dataset,
+    FilterCondition,
     FilterOperator,
     SampleConfig,
     SampleResult,
@@ -139,7 +140,7 @@ class TestSamplingDialog:
         assert result.config.method == SamplingMethod.SIMPLE
         assert result.config.size == 5
         assert result.config.seed == 42
-        assert result.config.filter_field == "Land"
+        assert result.config.filters[0].field == "Land"
         assert result.from_sample_only is False
 
     def test_resample_checkbox_updates_size_hint(self, qtbot: QtBot) -> None:
@@ -478,7 +479,7 @@ class TestSamplingDialogGranularFeatures:
         result = dialog.get_result()
         assert result is not None
         assert result.config.method == SamplingMethod.SIMPLE
-        assert result.config.filter_field is None
+        assert result.config.filters == ()
 
     def test_only_filter_selected_value_lands_in_config(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(*_make_dataset(), features=SamplingFeatures(show_filter=True))
@@ -489,7 +490,7 @@ class TestSamplingDialogGranularFeatures:
         dialog.accept()
         result = dialog.get_result()
         assert result is not None
-        assert result.config.filter_field == "Land"
+        assert result.config.filters[0].field == "Land"
 
     def test_only_cluster_shows_method_box_with_cluster_radio(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(*_make_dataset(), features=SamplingFeatures(show_cluster=True))
@@ -564,7 +565,7 @@ class TestSamplingDialogGranularFeatures:
         result = dialog.get_result()
         assert result is not None
         assert result.config.method == SamplingMethod.SIMPLE
-        assert result.config.filter_field is None
+        assert result.config.filters == ()
         assert result.config.cluster_field is None
         assert result.config.stratum_field is None
 
@@ -625,14 +626,18 @@ def _select_operator(dialog: SamplingDialog, operator: FilterOperator) -> None:
 
 
 def _make_match_provider() -> tuple[
-    Callable[[str, FilterOperator, Any, bool], int],
+    Callable[[tuple[FilterCondition, ...], bool], int],
     list[tuple[str, FilterOperator, Any, bool]],
 ]:
-    """Zähl-Fake für den Match-Count-Provider: liefert 3 (restrict) bzw. 7."""
+    """Zähl-Fake für den Match-Count-Provider: liefert 3 (restrict) bzw. 7.
+
+    Protokolliert je Aufruf (Feld, Operator, Wert, restrict) der einen Bedingung –
+    diese Tests setzen nur die erste Filterzeile."""
     calls: list[tuple[str, FilterOperator, Any, bool]] = []
 
-    def provider(field: str, operator: FilterOperator, value: Any, restrict: bool) -> int:
-        calls.append((field, operator, value, restrict))
+    def provider(filters: tuple[FilterCondition, ...], restrict: bool) -> int:
+        (only,) = filters
+        calls.append((only.field, only.operator, only.value, restrict))
         return 3 if restrict else 7
 
     return provider, calls
@@ -769,9 +774,9 @@ class TestFilterOperatorUI:
         dialog._filter_field.setCurrentText("Land")
         dialog._filter_value.setCurrentIndex(0)  # "AUT"
         cfg = dialog._build_config()
-        assert cfg.filter_operator == FilterOperator.EQ
-        assert cfg.filter_field == "Land"
-        assert cfg.filter_value == "AUT"
+        assert cfg.filters[0].operator == FilterOperator.EQ
+        assert cfg.filters[0].field == "Land"
+        assert cfg.filters[0].value == "AUT"
 
     def test_build_config_ordering_mode(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(*_make_dataset(), features=_FILTER)
@@ -780,17 +785,16 @@ class TestFilterOperatorUI:
         _select_operator(dialog, FilterOperator.GTE)
         dialog._filter_value_text.setText("1000")
         cfg = dialog._build_config()
-        assert cfg.filter_operator == FilterOperator.GTE
-        assert cfg.filter_field == "Betrag"
-        assert cfg.filter_value == 1000
-        assert type(cfg.filter_value) is int
+        assert cfg.filters[0].operator == FilterOperator.GTE
+        assert cfg.filters[0].field == "Betrag"
+        assert cfg.filters[0].value == 1000
+        assert type(cfg.filters[0].value) is int
 
     def test_build_config_no_filter_is_bit_identical(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(*_make_dataset(), features=_FILTER)
         qtbot.addWidget(dialog)
         cfg = dialog._build_config()
-        assert cfg.filter_field is None
-        assert cfg.filter_value is None
+        assert cfg.filters == ()
 
     def test_validation_blocks_empty_threshold(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(*_make_dataset(), features=_FILTER)
@@ -813,9 +817,7 @@ class TestFilterOperatorUI:
             name="p",
             method=SamplingMethod.SIMPLE,
             size=3,
-            filter_field="Betrag",
-            filter_value=1000,
-            filter_operator=FilterOperator.GT,
+            filters=(FilterCondition("Betrag", FilterOperator.GT, 1000),),
         )
         dialog.apply_preset(preset)
         assert dialog._filter_operator.currentData() == FilterOperator.GT
@@ -830,9 +832,7 @@ class TestFilterOperatorUI:
             name="p",
             method=SamplingMethod.SIMPLE,
             size=3,
-            filter_field="Land",
-            filter_value="AUT",
-            filter_operator=FilterOperator.EQ,
+            filters=(FilterCondition("Land", FilterOperator.EQ, "AUT"),),
         )
         dialog.apply_preset(preset)
         assert dialog._filter_operator.currentData() == FilterOperator.EQ
@@ -847,11 +847,11 @@ class TestFilterOperatorUI:
         qtbot.addWidget(dialog)
         dialog._filter_field.setCurrentText("Land")
         dialog._filter_value.setCurrentIndex(0)  # EQ / "AUT"
-        assert dialog._active_filter_query()[2] == dialog._build_config().filter_value
+        assert dialog._active_filters()[0].value == dialog._build_config().filters[0].value
         dialog._filter_field.setCurrentText("Betrag")
         _select_operator(dialog, FilterOperator.LT)  # Ordering / Schwellenwert
         dialog._filter_value_text.setText("500")
-        assert dialog._active_filter_query()[2] == dialog._build_config().filter_value == 500
+        assert dialog._active_filters()[0].value == dialog._build_config().filters[0].value == 500
 
     def test_apply_preset_refreshes_size_hint(self, qtbot: QtBot) -> None:
         # Ordering-Preset: der Schwellenwert wird per setText gesetzt (kein
@@ -867,9 +867,7 @@ class TestFilterOperatorUI:
             name="p",
             method=SamplingMethod.SIMPLE,
             size=3,
-            filter_field="Betrag",
-            filter_value=1000,
-            filter_operator=FilterOperator.GT,
+            filters=(FilterCondition("Betrag", FilterOperator.GT, 1000),),
         )
         dialog.apply_preset(preset)
         assert ("Betrag", FilterOperator.GT, 1000, False) in calls
@@ -1318,7 +1316,7 @@ class TestAvailabilityHint:
         assert dialog._lbl_size_hint.text() == expected
 
     def test_supplement_with_filter_subtracts_sample_hits(self, qtbot: QtBot) -> None:
-        def count(_f: str, _op: FilterOperator, _v: Any, restrict: bool) -> int:
+        def count(_filters: tuple[FilterCondition, ...], restrict: bool) -> int:
             return 4 if restrict else 30
 
         dialog = SamplingDialog(

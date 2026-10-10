@@ -10,6 +10,7 @@ from sampling_tool import __version__
 from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.core.models import (
     Dataset,
+    FilterCondition,
     FilterOperator,
     SampleConfig,
     SampleResult,
@@ -73,9 +74,7 @@ class TestLogSampling:
             size=10,
             seed=42,
             cluster_field="Land",
-            filter_field="Betrag",
-            filter_value=100,
-            filter_operator=FilterOperator.NE,
+            filters=(FilterCondition("Betrag", FilterOperator.NE, 100),),
         )
         sample = SampleResult(
             config=cfg,

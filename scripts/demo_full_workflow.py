@@ -7,8 +7,8 @@ Aufruf:
 Alle Artefakte landen unter `./demo_output/` (bzw. `--output`):
     - engagement.db          – frische SQLite mit aktuellem Schema
     - source_data.xlsx       – generierte Quelldatei (200 Buchungssätze)
-    - DemoSimple_ID001_BDO_sampling_<datum>.xlsx      – SimpleSampler (25 Zeilen)
-    - DemoStratified_ID002_BDO_sampling_<datum>.xlsx  – geschichtet nach Land (15)
+    - DemoSimple_ID_001_BDO_sampling_<datum>.xlsx      – SimpleSampler (25 Zeilen)
+    - DemoStratified_ID_002_BDO_sampling_<datum>.xlsx  – geschichtet nach Land (15)
     - audit_trail.pdf        – PDF-Report aller Audit-Events
 
 Das Skript dient gleichzeitig als manueller Smoke-Test für den

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 from sampling_tool.core.models import (
+    FilterCondition,
     FilterOperator,
     ParentRelation,
     SampleConfig,
@@ -12,7 +14,11 @@ from sampling_tool.core.models import (
     SamplingMethod,
     StratifyMode,
 )
-from sampling_tool.persistence._json import _json_or_none, _json_or_none_load
+from sampling_tool.persistence._json import (
+    _json_dumps,
+    _json_loads,
+    _json_or_none,
+)
 from sampling_tool.persistence.database import savepoint
 
 
@@ -30,31 +36,35 @@ class SampleRepo:
         Export gebaut werden, trug weiter den Dataclass-Default.
         """
         cfg = result.config
+        # Sprint 92: Altspalten nur bei genau einem Filter wie früher befüllen –
+        # bei mehreren sähe ein Leser der Altspalten sonst nur einen Teil.
+        only = cfg.filters[0] if len(cfg.filters) == 1 else None
         with savepoint(self.conn, "sample_create"):
             cur = self.conn.execute(
                 "INSERT INTO samples "
                 "(dataset_id, method, sample_size, population_size, seed, "
                 " filter_field, filter_value, cluster_field, stratum_field, "
                 " stratify_mode, filter_operator, parent_sample_id, created_at, created_by, "
-                " algorithm_version, parent_relation) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " algorithm_version, parent_relation, filters) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     dataset_id,
                     cfg.method.value,
                     cfg.size,
                     result.population_size,
                     cfg.seed,
-                    cfg.filter_field,
-                    _json_or_none(cfg.filter_value),
+                    only.field if only else None,
+                    _json_or_none(only.value) if only else None,
                     cfg.cluster_field,
                     cfg.stratum_field,
                     cfg.stratify_mode.value,
-                    cfg.filter_operator.value,
+                    only.operator.value if only else FilterOperator.EQ.value,
                     result.parent_sample_id,
                     result.drawn_at,
                     result.created_by,
                     result.algorithm_version,
                     result.parent_relation.value if result.parent_relation else None,
+                    _filters_to_json(cfg.filters),
                 ),
             )
             sample_id = cur.lastrowid
@@ -125,9 +135,7 @@ class SampleRepo:
                 if row["stratify_mode"]
                 else StratifyMode.PROPORTIONAL
             ),
-            filter_field=row["filter_field"],
-            filter_value=_json_or_none_load(row["filter_value"]),
-            filter_operator=FilterOperator(row["filter_operator"]),
+            filters=_filters_from_json(row["filters"]),
         )
         return SampleResult(
             config=config,
@@ -142,3 +150,22 @@ class SampleRepo:
             created_by=row["created_by"],
             id=row["id"],
         )
+
+
+def _filters_to_json(filters: tuple[FilterCondition, ...]) -> str:
+    """`samples.filters`: JSON-Liste; der Wert wie die Altspalte `filter_value`."""
+    return _json_dumps(
+        [{"field": c.field, "operator": c.operator.value, "value": c.value} for c in filters]
+    )
+
+
+def _filters_from_json(text: str | None) -> tuple[FilterCondition, ...]:
+    items: Any = _json_loads(text) if text else []
+    return tuple(
+        FilterCondition(
+            field=item["field"],
+            operator=FilterOperator(item["operator"]),
+            value=item.get("value"),
+        )
+        for item in items
+    )

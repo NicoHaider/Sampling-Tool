@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -583,9 +584,9 @@ class TestMigration006:
     """Sprint 83: Ableitung (`samples.parent_relation`) + Import-Herkunft
     (`datasets.source_sheet`/`header_row`). Nur ADD COLUMN, KEIN Backfill."""
 
-    def test_fresh_db_has_version_6_and_new_columns(self, db: Database) -> None:
+    def test_fresh_db_has_new_columns(self, db: Database) -> None:
         conn = db.connect()
-        assert db.schema_version() == 6
+        assert db.schema_version() >= 6
         sample_cols = {r["name"] for r in conn.execute("PRAGMA table_info(samples)")}
         dataset_cols = {r["name"] for r in conn.execute("PRAGMA table_info(datasets)")}
         assert "parent_relation" in sample_cols
@@ -604,7 +605,7 @@ class TestMigration006:
         upgraded = Database(db_path)
         try:
             upgraded.migrate()
-            assert upgraded.schema_version() == 6
+            assert upgraded.schema_version() == CURRENT_SCHEMA_VERSION
             after = _snapshot_tables(upgraded.connect())
         finally:
             upgraded.close()
@@ -615,7 +616,8 @@ class TestMigration006:
             (None, None)
         ]
         # Alle anderen Spalten und `dataset_rows` byte-gleich.
-        new_columns = {"parent_relation", "source_sheet", "header_row"}
+        # `filters` (007, Sprint 92) ist ungefiltert '[]' – eigener Test unten.
+        new_columns = {"parent_relation", "source_sheet", "header_row", "filters"}
         for table, rows in before.items():
             stripped = [
                 {k: v for k, v in row.items() if k not in new_columns} for row in after[table]
@@ -645,6 +647,101 @@ class TestMigration006:
         fresh.close()
 
         monkeypatch.setattr("sampling_tool.persistence.database.CURRENT_SCHEMA_VERSION", 5)
+        old_app = Database(db_path)
+        try:
+            with pytest.raises(MigrationError, match="neuer als"):
+                old_app.migrate()
+        finally:
+            old_app.close()
+
+
+_V6_MIGRATIONS: tuple[str, ...] = (
+    *_V5_MIGRATIONS,
+    "006_provenance_import_and_derivation.sql",
+)
+
+
+def _build_v6_db_with_filtered_samples(db_path: Path) -> None:
+    """Sprint-91-Stand (Schema 6): eine gefilterte, eine ungefilterte, eine mit
+    Datums-Filterwert und eine mit Nicht-JSON-Altwert."""
+    legacy = Database(db_path)
+    try:
+        conn = legacy.connect()
+        for name in _V6_MIGRATIONS:
+            conn.executescript(_migration_sql(name))
+        assert legacy.schema_version() == 6
+        with legacy.session() as c:
+            c.execute("INSERT INTO engagements (auditor_name, client_name) VALUES ('A', 'B')")
+            c.execute(
+                "INSERT INTO datasets (engagement_id, name, row_count, columns_json) "
+                "VALUES (1, 'DS', 3, '[]')"
+            )
+            insert = (
+                "INSERT INTO samples (dataset_id, method, sample_size, population_size, seed, "
+                "filter_field, filter_value, filter_operator) VALUES (1, 'simple', 1, 3, 1, ?, ?, ?)"
+            )
+            c.execute(insert, ("Kostenstelle", '"Vertrieb"', "eq"))
+            c.execute(insert, (None, None, "eq"))
+            c.execute(insert, ("Betrag", "1000", "gte"))
+            c.execute(insert, ("Text", "kein json", "ne"))
+    finally:
+        legacy.close()
+
+
+class TestMigration007:
+    """Sprint 92 / A4: `samples.filters` mit Backfill aus den Altspalten."""
+
+    def test_v6_db_backfills_filters(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "v6.db"
+        _build_v6_db_with_filtered_samples(db_path)
+        upgraded = Database(db_path)
+        try:
+            upgraded.migrate()
+            assert upgraded.schema_version() == 7
+            rows = (
+                upgraded.connect()
+                .execute("SELECT filters, filter_field, filter_value FROM samples ORDER BY id")
+                .fetchall()
+            )
+        finally:
+            upgraded.close()
+        assert [json.loads(r["filters"]) for r in rows] == [
+            [{"field": "Kostenstelle", "operator": "eq", "value": "Vertrieb"}],
+            [],
+            [{"field": "Betrag", "operator": "gte", "value": 1000}],
+            [{"field": "Text", "operator": "ne", "value": "kein json"}],
+        ]
+        # Altspalten bleiben unverändert stehen.
+        assert [r["filter_field"] for r in rows] == ["Kostenstelle", None, "Betrag", "Text"]
+        assert rows[0]["filter_value"] == '"Vertrieb"'
+
+    def test_backfilled_samples_read_as_before(self, tmp_path: Path) -> None:
+        from sampling_tool.core.models import FilterCondition, FilterOperator
+        from sampling_tool.persistence.repositories import SampleRepo
+
+        db_path = tmp_path / "v6.db"
+        _build_v6_db_with_filtered_samples(db_path)
+        upgraded = Database(db_path)
+        try:
+            upgraded.migrate()
+            repo = SampleRepo(upgraded.connect())
+            first, second = repo.get_by_id(1), repo.get_by_id(2)
+        finally:
+            upgraded.close()
+        assert first is not None
+        assert second is not None
+        assert first.config.filters == (
+            FilterCondition("Kostenstelle", FilterOperator.EQ, "Vertrieb"),
+        )
+        assert second.config.filters == ()
+
+    def test_v7_db_blocked_in_v6_app(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        db_path = tmp_path / "v7.db"
+        fresh = Database(db_path)
+        fresh.migrate()
+        fresh.close()
+
+        monkeypatch.setattr("sampling_tool.persistence.database.CURRENT_SCHEMA_VERSION", 6)
         old_app = Database(db_path)
         try:
             with pytest.raises(MigrationError, match="neuer als"):

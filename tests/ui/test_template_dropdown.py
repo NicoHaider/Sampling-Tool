@@ -22,6 +22,8 @@ from sampling_tool.config import APP_NAME, APP_ORG
 from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
+    FilterCondition,
+    FilterOperator,
     SamplingMethod,
 )
 from sampling_tool.core.presets import SamplingPreset
@@ -111,8 +113,7 @@ class TestPresetDropdown:
                 name="Gross",
                 method=SamplingMethod.SIMPLE,
                 size=9,
-                filter_field="Land",
-                filter_value="AUT",
+                filters=(FilterCondition("Land", FilterOperator.EQ, "AUT"),),
             )
         )
         dialog = SamplingDialog(*_make_dataset(), features=_ALL, preset_store=store)
@@ -126,8 +127,8 @@ class TestPresetDropdown:
         cfg = dialog._build_config()
         assert cfg.method == SamplingMethod.SIMPLE
         assert cfg.size == 9
-        assert cfg.filter_field == "Land"
-        assert cfg.filter_value == "AUT"
+        assert cfg.filters[0].field == "Land"
+        assert cfg.filters[0].value == "AUT"
         # Anwenden zieht NICHT – kein Ergebnis …
         assert dialog.get_result() is None
         # … und lässt den Seed in Ruhe (Reproduzierbarkeits-Neutralität).
@@ -200,8 +201,7 @@ class TestPresetDropdown:
                 name="MitFilter",
                 method=SamplingMethod.SIMPLE,
                 size=4,
-                filter_field="Land",
-                filter_value="AUT",
+                filters=(FilterCondition("Land", FilterOperator.EQ, "AUT"),),
             )
         )
         dataset = Dataset(name="t", columns=("Konto", "Betrag"), row_count=10)
@@ -224,7 +224,7 @@ class TestPresetDropdown:
         assert dialog._size_spin.value() == 4
         # … und der Filter selbst ist neutralisiert (kein Crash).
         assert dialog._filter_field.currentText() == NO_FILTER_LABEL
-        assert dialog._build_config().filter_field is None
+        assert dialog._build_config().filters == ()
         # Die (teilweise) angewandte Vorlage bleibt im Dropdown ausgewählt –
         # die filter-bedingte Widget-Änderung räumt die Auswahl nicht weg
         # (`_applying_preset`-Guard).

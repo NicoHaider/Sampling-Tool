@@ -6,6 +6,7 @@ Bug-Mail-Adresse). Keine Logik, nur Konstanten.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Final
@@ -147,6 +148,9 @@ STRATIFY_MODE_LABELS: Final[dict[str, str]] = {
     "equal": "Gleich",
 }
 
+# Sprint 92: höchstens so viele Filterbedingungen je Stichprobe (UND-verknüpft).
+MAX_FILTERS: Final[int] = 5
+
 FILTER_OPERATOR_LABELS: Final[dict[str, str]] = {
     "eq": "=",
     "ne": "≠",
@@ -217,6 +221,7 @@ AUDIT_DETAIL_LABELS: Final[dict[str, str]] = {
     "rows_above_header": "Zeilen über der Kopfzeile",
     "method": "Methode",
     "size_requested": "Angeforderte Größe",
+    "filters": "Filter",
     "filter_field": "Filter-Feld",
     "filter_value": "Filter-Wert",
     "filter_operator": "Filter-Operator",
@@ -395,7 +400,20 @@ def sanitize_for_path(name: str) -> str:
 #
 # Die Datei-Endung ist BEWUSST nicht Teil des Patterns: sie ist Sache des
 # Aufrufers (derselbe Berichtstyp wird als .xlsx und als .html exportiert).
-EXPORT_FILENAME_PATTERN: Final[str] = "{name}_ID{id}_BDO_{type}_{date}"
+#
+# Sprint 92 / B: Unterstrich zwischen „ID" und der ID. Formatiert wird das
+# Pattern nur in `build_export_filename` – Vorschau und Writer rufen beide sie.
+EXPORT_FILENAME_PATTERN: Final[str] = "{name}_ID_{id}_BDO_{type}_{date}"
+
+# Fallbacks, wenn ein Token nach dem Sanitizing leer ist. Der Dialog lässt
+# leeren Namen bzw. leere ID gar nicht erst durch (`_export_base.py`).
+EXPORT_NAME_FALLBACK: Final[str] = "export"
+EXPORT_ID_FALLBACK: Final[str] = "0"
+
+# „ID" am Anfang der eingegebenen ID (Groß/Klein egal), gefolgt von Ziffer,
+# Trennzeichen oder Ende – das Pattern schreibt „ID_" schon selbst. Entfernt
+# wird „ID" samt EINEM Trennzeichen; eine Ziffer bleibt stehen.
+_ID_PREFIX_RE: Final = re.compile(r"^id(?:[_\- ]|(?=\d)|$)", re.IGNORECASE)
 
 # Typ-Token und Endung des Sample-Exports. Sie stehen hier zusammen, weil
 # genau dieses Paar zwischen Dialog (`ui/dialogs/export_sample_dialog.py`)
@@ -433,6 +451,33 @@ def local_export_now() -> datetime:
     entgegen (Muster aus Sprint 73, `ui/widgets/audit_trail_view.py`).
     """
     return datetime.now()
+
+
+def export_id_token(raw_id: str) -> str:
+    """ID-Token eines Export-Dateinamens: sanitized, ohne doppeltes „ID" (Sprint 92 / B).
+
+    `ID20261002` → `20261002`, `id_4711` → `4711`, `ID-A7` → `A7`; `IDX5` bleibt.
+    Leer, wenn nichts übrig bleibt (z. B. nur „ID") – der Dialog meldet dann
+    „ID fehlt.", der Writer nimmt `EXPORT_ID_FALLBACK`.
+    """
+    token = sanitize_export_filename_token(raw_id)
+    return _ID_PREFIX_RE.sub("", token, count=1).strip()
+
+
+def build_export_filename(name: str, export_id: str, type_token: str, now: datetime) -> str:
+    """Export-Dateiname ohne Endung – die eine Stelle, die das Pattern formatiert.
+
+    Kapselt Sanitizing, ID-Präfix und Fallbacks. Vorschau
+    (`ExportTargetWidget.preview_filename`) und Writer
+    (`ExcelExporter.build_filename`) rufen nur diese Funktion, damit die
+    geschriebene Datei garantiert so heißt wie die Vorschau.
+    """
+    return EXPORT_FILENAME_PATTERN.format(
+        name=sanitize_export_filename_token(name) or EXPORT_NAME_FALLBACK,
+        id=export_id_token(export_id) or EXPORT_ID_FALLBACK,
+        type=type_token,
+        date=export_date_token(now),
+    )
 
 
 def sanitize_export_filename_token(token: str) -> str:

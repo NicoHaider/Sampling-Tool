@@ -86,7 +86,7 @@ class ExportHtmlReportDialog(QDialog):
         # Sprint 74: EINE Uhr-Lesung für Dialog UND Widget. Vorher las
         # `default_id` hier eine eigene Uhr und das `{date}`-Token im Widget
         # eine zweite – im selben Dateinamen konnten zwei verschiedene Tage
-        # stehen (…_ID20260812_BDO_report_20260813.html).
+        # stehen (…_ID_20260812_BDO_report_20260813.html).
         now = now_provider()
         self._target = ExportTargetWidget(
             default_name=engagement.client_name,

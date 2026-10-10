@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from sampling_tool.core.models import (
+    FilterCondition,
     FilterOperator,
     SampleConfig,
     SamplingMethod,
@@ -36,12 +37,7 @@ from tests.unit.test_golden_vectors import (
 def _single_filter_config(
     field: str, operator: FilterOperator, value: Any, **kwargs: Any
 ) -> SampleConfig:
-    return SampleConfig(
-        filter_field=field,
-        filter_value=value,
-        filter_operator=operator,
-        **kwargs,
-    )
+    return SampleConfig(filters=(FilterCondition(field, operator, value),), **kwargs)
 
 
 GOLDEN_SINGLE_FILTER_SIMPLE: dict[int, tuple[int, ...]] = {

@@ -14,6 +14,7 @@ import pytest
 from sampling_tool.core.models import (
     AuditEvent,
     Engagement,
+    FilterCondition,
     FilterOperator,
     ParentRelation,
     SampleConfig,
@@ -261,9 +262,7 @@ class TestHtmlReportGenerator:
             size=5,
             seed=99,
             cluster_field="Land",
-            filter_field="Betrag",
-            filter_value=100,
-            filter_operator=FilterOperator.GTE,
+            filters=(FilterCondition("Betrag", FilterOperator.GTE, 100),),
         )
         samples = [
             SampleResult(
@@ -364,12 +363,12 @@ class TestSampleFilterColumn:
             tmp_path,
             engagement,
             [
-                _sample(1, filter_field="Kostenstelle", filter_value="Vertrieb"),
+                _sample(
+                    1, filters=(FilterCondition("Kostenstelle", FilterOperator.EQ, "Vertrieb"),)
+                ),
                 _sample(
                     2,
-                    filter_field="Betrag",
-                    filter_value=100,
-                    filter_operator=FilterOperator.GTE,
+                    filters=(FilterCondition("Betrag", FilterOperator.GTE, 100),),
                 ),
             ],
         )
@@ -384,13 +383,23 @@ class TestSampleFilterColumn:
         assert row["Filter"] == "—"
         assert row["Filter"] == row["Übergeordnete Stichprobe"]
 
-    def test_ungefilterte_stichprobe_mit_restoperator_zeigt_kein_symbol(
-        self, tmp_path: Path, engagement: Engagement
-    ) -> None:
-        """Der Sampling-Dialog übernimmt den Operator auch bei „(kein Filter)" –
-        maßgeblich ist allein `filter_field is None` (wie `_collect_pool`)."""
-        html = _render(tmp_path, engagement, [_sample(1, filter_operator=FilterOperator.GT)])
-        assert _sample_table_cells(html)["#1"]["Filter"] == "—"
+    def test_mehrere_filter_mit_und(self, tmp_path: Path, engagement: Engagement) -> None:
+        """Sprint 92: alle Bedingungen in einer Zelle, UND-verknüpft."""
+        html = _render(
+            tmp_path,
+            engagement,
+            [
+                _sample(
+                    1,
+                    filters=(
+                        FilterCondition("Kostenstelle", FilterOperator.EQ, "Vertrieb"),
+                        FilterCondition("Betrag", FilterOperator.GTE, 1000),
+                    ),
+                )
+            ],
+        )
+        cell = _sample_table_cells(html)["#1"]["Filter"]
+        assert cell == "Kostenstelle = Vertrieb UND Betrag ≥ 1.000"
 
     def test_filterwert_mit_spitzer_klammer_wird_escaped(
         self, tmp_path: Path, engagement: Engagement
@@ -398,7 +407,14 @@ class TestSampleFilterColumn:
         html = _render(
             tmp_path,
             engagement,
-            [_sample(1, filter_field="Kostenstelle", filter_value="<b>Vertrieb</b> & Co")],
+            [
+                _sample(
+                    1,
+                    filters=(
+                        FilterCondition("Kostenstelle", FilterOperator.EQ, "<b>Vertrieb</b> & Co"),
+                    ),
+                )
+            ],
         )
         cell = _sample_table_cells(html)["#1"]["Filter"]
         assert cell == "Kostenstelle = &lt;b&gt;Vertrieb&lt;/b&gt; &amp; Co"
@@ -407,7 +423,11 @@ class TestSampleFilterColumn:
     def test_filterwert_none_bei_gesetztem_feld(
         self, tmp_path: Path, engagement: Engagement
     ) -> None:
-        html = _render(tmp_path, engagement, [_sample(1, filter_field="Kostenstelle")])
+        html = _render(
+            tmp_path,
+            engagement,
+            [_sample(1, filters=(FilterCondition("Kostenstelle", FilterOperator.EQ, None),))],
+        )
         assert _sample_table_cells(html)["#1"]["Filter"] == "Kostenstelle = —"
 
     def test_filter_kommt_aus_der_provenienz(
@@ -423,16 +443,14 @@ class TestSampleFilterColumn:
         def _fake(result: SampleResult, **kwargs: Any) -> SamplingProvenance:
             return replace(
                 real(result, **kwargs),
-                filter_field="AusProvenienz",
-                filter_value="P",
-                filter_operator="ne",
+                filters=(FilterCondition("AusProvenienz", FilterOperator.NE, "P"),),
             )
 
         monkeypatch.setattr(SamplingProvenance, "from_sample_result", staticmethod(_fake))
         html = _render(
             tmp_path,
             engagement,
-            [_sample(1, filter_field="Kostenstelle", filter_value="Vertrieb")],
+            [_sample(1, filters=(FilterCondition("Kostenstelle", FilterOperator.EQ, "Vertrieb"),))],
         )
         assert _sample_table_cells(html)["#1"]["Filter"] == "AusProvenienz ≠ P"
 
@@ -684,3 +702,28 @@ class TestReportSpeaksGerman:
         assert "Geschichtet" in rows["#2"]["Methode"]
         assert rows["#2"]["Übergeordnete Stichprobe"] == "#1 (eingeschränkt)"
         assert rows["#3"]["Übergeordnete Stichprobe"] == "#1 (Nachstichprobe)"
+
+
+class TestLongNamesBreakInHtml:
+    """Sprint 92 / C: Namen ohne Leerzeichen (Datei, User, Details) dürfen die
+    Tabelle nicht über den Container hinaus verbreitern."""
+
+    _LONG = "Kundenstammdaten_" + "Q" * 100 + "_ID_20261002_BDO_sampling.xlsx"
+
+    def test_name_cells_carry_breaking_class(self, tmp_path: Path, engagement: Engagement) -> None:
+        event = AuditEvent(
+            event_type="export",
+            engagement_id=1,
+            user_name="maximiliane.mustermann-oberhuber@bdo-pruefung.at",
+            export_file=str(Path("ablage") / self._LONG),
+            details={"report": "exportiert nach " + self._LONG},
+            timestamp=INSIDE_WINDOW,
+            id=1,
+        )
+        out = tmp_path / "lang.html"
+        _generator().render(engagement, [], [], [event], out)
+        html = out.read_text(encoding="utf-8")
+        assert re.search(r"\.breakable\s*\{[^}]*overflow-wrap:\s*anywhere", html)
+        assert f'<td class="breakable">{self._LONG}</td>' in html
+        assert '<td class="breakable">maximiliane.mustermann-oberhuber@bdo-pruefung.at</td>' in html
+        assert re.search(r'<td class="breakable">[^<]*exportiert nach ' + self._LONG, html)

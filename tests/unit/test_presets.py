@@ -16,6 +16,7 @@ import pytest
 
 from sampling_tool.core.models import (
     DatasetRow,
+    FilterCondition,
     FilterOperator,
     SampleConfig,
     SamplingMethod,
@@ -39,8 +40,7 @@ def _full_config(seed: int = 99) -> SampleConfig:
         seed=seed,
         stratum_field="Land",
         stratify_mode=StratifyMode.EQUAL,
-        filter_field="Status",
-        filter_value="offen",
+        filters=(FilterCondition("Status", FilterOperator.EQ, "offen"),),
     )
 
 
@@ -57,8 +57,8 @@ class TestSamplingPresetModel:
         assert preset.size == 7
         assert preset.stratum_field == "Land"
         assert preset.stratify_mode == StratifyMode.EQUAL
-        assert preset.filter_field == "Status"
-        assert preset.filter_value == "offen"
+        assert preset.filters[0].field == "Status"
+        assert preset.filters[0].value == "offen"
 
     def test_to_config_injects_seed_and_reconstructs(self) -> None:
         original = _full_config(seed=4242)
@@ -85,12 +85,15 @@ class TestPresetSerialization:
 
     def test_json_roundtrip_preserves_int_filter_value(self) -> None:
         cfg = SampleConfig(
-            method=SamplingMethod.SIMPLE, size=3, seed=1, filter_field="Betrag", filter_value=500
+            method=SamplingMethod.SIMPLE,
+            size=3,
+            seed=1,
+            filters=(FilterCondition("Betrag", FilterOperator.EQ, 500),),
         )
         preset = SamplingPreset.from_config("Beträge", cfg)
         restored = deserialize_presets(serialize_presets([preset]))[0]
-        assert restored.filter_value == 500
-        assert isinstance(restored.filter_value, int)
+        assert restored.filters[0].value == 500
+        assert isinstance(restored.filters[0].value, int)
 
     def test_json_roundtrip_preserves_datetime_filter_value(self) -> None:
         # Filter-Werte stammen aus distinct_values – auf Datums-Spalten sind
@@ -100,12 +103,11 @@ class TestPresetSerialization:
             method=SamplingMethod.SIMPLE,
             size=3,
             seed=1,
-            filter_field="Buchungsdatum",
-            filter_value=when,
+            filters=(FilterCondition("Buchungsdatum", FilterOperator.EQ, when),),
         )
         preset = SamplingPreset.from_config("Stichtag", cfg)
         restored = deserialize_presets(serialize_presets([preset]))[0]
-        assert restored.filter_value == when
+        assert restored.filters[0].value == when
 
     def test_json_roundtrip_preserves_date_filter_value(self) -> None:
         day = date(2026, 3, 1)
@@ -113,12 +115,11 @@ class TestPresetSerialization:
             method=SamplingMethod.SIMPLE,
             size=3,
             seed=1,
-            filter_field="Tag",
-            filter_value=day,
+            filters=(FilterCondition("Tag", FilterOperator.EQ, day),),
         )
         preset = SamplingPreset.from_config("Tag", cfg)
         restored = deserialize_presets(serialize_presets([preset]))[0]
-        assert restored.filter_value == day
+        assert restored.filters[0].value == day
 
     def test_json_roundtrip_preserves_time_filter_value(self) -> None:
         moment = time(9, 30, 0)
@@ -126,12 +127,11 @@ class TestPresetSerialization:
             method=SamplingMethod.SIMPLE,
             size=3,
             seed=1,
-            filter_field="Uhrzeit",
-            filter_value=moment,
+            filters=(FilterCondition("Uhrzeit", FilterOperator.EQ, moment),),
         )
         preset = SamplingPreset.from_config("Uhrzeit", cfg)
         restored = deserialize_presets(serialize_presets([preset]))[0]
-        assert restored.filter_value == moment
+        assert restored.filters[0].value == moment
 
     def test_deserialize_empty_string_yields_empty_list(self) -> None:
         assert deserialize_presets("") == []
@@ -181,8 +181,7 @@ class TestPresetSamplingNeutrality:
             method=SamplingMethod.SIMPLE,
             size=4,
             seed=777,
-            filter_field="Land",
-            filter_value="AUT",
+            filters=(FilterCondition("Land", FilterOperator.EQ, "AUT"),),
         )
         preset = SamplingPreset.from_config("AUT-Stichprobe", manual)
         from_preset = preset.to_config(seed=777)
@@ -203,17 +202,15 @@ class TestFilterOperatorPresetRoundtrip:
             method=SamplingMethod.SIMPLE,
             size=3,
             seed=1,
-            filter_field="Betrag",
-            filter_value=500,
-            filter_operator=FilterOperator.GT,
+            filters=(FilterCondition("Betrag", FilterOperator.GT, 500),),
         )
 
     def test_serialization_roundtrip_preserves_operator(self) -> None:
         preset = SamplingPreset.from_config("Beträge > 500", self._config_with_gt())
         restored = deserialize_presets(serialize_presets([preset]))[0]
-        assert restored.filter_operator == FilterOperator.GT
-        assert restored.filter_field == "Betrag"
-        assert restored.filter_value == 500
+        assert restored.filters[0].operator == FilterOperator.GT
+        assert restored.filters[0].field == "Betrag"
+        assert restored.filters[0].value == 500
         assert restored == preset
 
     def test_old_json_without_operator_key_loads_as_eq(self) -> None:
@@ -235,14 +232,67 @@ class TestFilterOperatorPresetRoundtrip:
         )
         restored = deserialize_presets(raw)
         assert len(restored) == 1
-        assert restored[0].filter_operator == FilterOperator.EQ
-        assert restored[0].filter_field == "Status"
-        assert restored[0].filter_value == "offen"
+        assert restored[0].filters[0].operator == FilterOperator.EQ
+        assert restored[0].filters[0].field == "Status"
+        assert restored[0].filters[0].value == "offen"
 
     def test_from_config_carries_operator(self) -> None:
         preset = SamplingPreset.from_config("x", self._config_with_gt())
-        assert preset.filter_operator == FilterOperator.GT
+        assert preset.filters[0].operator == FilterOperator.GT
 
     def test_to_config_passthrough_operator(self) -> None:
         preset = SamplingPreset.from_config("x", self._config_with_gt())
-        assert preset.to_config(seed=7).filter_operator == preset.filter_operator
+        assert preset.to_config(seed=7).filters[0].operator == preset.filters[0].operator
+
+
+class TestPresetFilters:
+    """Sprint 92 / A6: Vorlagen tragen alle Filter; alte Vorlagen laden weiter."""
+
+    _TWO = (
+        FilterCondition("Kostenstelle", FilterOperator.EQ, "Vertrieb"),
+        FilterCondition("Stichtag", FilterOperator.GTE, datetime(2026, 1, 1)),
+    )
+
+    def _preset(self) -> SamplingPreset:
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=1, filters=self._TWO)
+        return SamplingPreset.from_config("Zwei", cfg)
+
+    def test_new_preset_saves_filter_list_only(self) -> None:
+        data = json.loads(serialize_presets([self._preset()]))[0]
+        assert data["filters"] == [
+            {"field": "Kostenstelle", "operator": "eq", "value": "Vertrieb"},
+            {
+                "field": "Stichtag",
+                "operator": "gte",
+                "value": {"__type__": "datetime", "v": "2026-01-01T00:00:00"},
+            },
+        ]
+        assert "filter_field" not in data
+        assert "filter_value" not in data
+        assert "filter_operator" not in data
+
+    def test_roundtrip_keeps_all_conditions(self) -> None:
+        restored = deserialize_presets(serialize_presets([self._preset()]))[0]
+        assert restored.filters == self._TWO
+        assert restored.to_config(seed=5).filters == self._TWO
+
+    def test_old_preset_with_single_filter_loads(self) -> None:
+        raw = json.dumps(
+            [
+                {
+                    "name": "alt",
+                    "method": "simple",
+                    "size": 5,
+                    "filter_field": "Betrag",
+                    "filter_value": 500,
+                    "filter_operator": "gt",
+                }
+            ]
+        )
+        (restored,) = deserialize_presets(raw)
+        assert restored.filters == (FilterCondition("Betrag", FilterOperator.GT, 500),)
+
+    def test_old_preset_without_filter_loads_empty(self) -> None:
+        raw = json.dumps([{"name": "alt", "method": "simple", "size": 5, "filter_field": None}])
+        (restored,) = deserialize_presets(raw)
+        assert restored.filters == ()

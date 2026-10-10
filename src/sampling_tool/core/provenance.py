@@ -20,7 +20,6 @@ from datetime import datetime
 from typing import Any, Final
 
 from sampling_tool.config import (
-    FILTER_OPERATOR_LABELS,
     LEGACY_DERIVED_FILTER_POPULATION_NOTES,
     LEGACY_FILTER_POPULATION_NOTE,
     METHOD_LABELS,
@@ -28,8 +27,13 @@ from sampling_tool.config import (
     PARENT_RELATION_TEXTS,
     STRATIFY_MODE_LABELS,
 )
-from sampling_tool.core.formatting import format_audit_details, format_optional_timestamp
-from sampling_tool.core.models import AuditEvent, SampleResult, SamplingMethod
+from sampling_tool.core.formatting import (
+    detail_filter_conditions,
+    format_audit_details,
+    format_filters,
+    format_optional_timestamp,
+)
+from sampling_tool.core.models import AuditEvent, FilterCondition, SampleResult, SamplingMethod
 
 _MISSING: Final[str] = "—"
 
@@ -40,7 +44,7 @@ class SamplingProvenance:
 
     Deckt die Mindest-Feldliste aus REVIEW_CODEBASE_2026-07.md (A-001) ab:
     Dataset, Methode, angeforderte/tatsächliche Größe, Population, Seed,
-    Filter (Feld/Operator/Wert), Cluster-/Stratum-Feld, Stratify-Modus,
+    Filter (je Bedingung Feld/Operator/Wert, UND-verknüpft), Cluster-/Stratum-Feld, Stratify-Modus,
     übergeordnete Stichprobe, Algorithmus-/App-Version, Ersteller/Zeitpunkt.
     """
 
@@ -50,9 +54,7 @@ class SamplingProvenance:
     size_actual: int
     population_size: int
     seed: int
-    filter_field: str | None
-    filter_operator: str
-    filter_value: Any
+    filters: tuple[FilterCondition, ...]
     cluster_field: str | None
     stratum_field: str | None
     stratify_mode: str
@@ -95,9 +97,7 @@ class SamplingProvenance:
             size_actual=result.actual_size,
             population_size=result.population_size,
             seed=cfg.seed,
-            filter_field=cfg.filter_field,
-            filter_operator=cfg.filter_operator.value,
-            filter_value=cfg.filter_value,
+            filters=cfg.filters,
             cluster_field=cfg.cluster_field,
             stratum_field=cfg.stratum_field,
             stratify_mode=cfg.stratify_mode.value,
@@ -134,12 +134,9 @@ class SamplingProvenance:
         return STRATIFY_MODE_LABELS.get(self.stratify_mode, self.stratify_mode)
 
     @property
-    def filter_operator_symbol(self) -> str:
-        """Menschenlesbares Operator-Symbol (`=`/`≠`/`>`/`≥`/`<`/`≤`).
-
-        Fällt auf den rohen Wert zurück, falls ein zukünftiger Operator noch
-        keine Symbol-Zuordnung hat (nie stillschweigend verschlucken)."""
-        return FILTER_OPERATOR_LABELS.get(self.filter_operator, self.filter_operator)
+    def filter_text(self) -> str:
+        """„Kostenstelle = Vertrieb UND Betrag ≥ 1.000", ohne Filter `"—"` (Sprint 92)."""
+        return format_filters(self.filters)
 
     @property
     def parent_relation_label(self) -> str | None:
@@ -171,9 +168,7 @@ class SamplingProvenance:
             ("Population (Zeilen)", self.population_text),
             ("Datensatz gesamt", _or_dash(self.dataset_rows)),
             ("Seed", str(self.seed)),
-            ("Filter-Feld", _or_dash(self.filter_field)),
-            ("Filter-Operator", self.filter_operator_symbol),
-            ("Filter-Wert", _or_dash(self.filter_value)),
+            ("Filter", self.filter_text),
             ("Cluster-Feld", _or_dash(self.cluster_field)),
             ("Schicht-Feld", _or_dash(self.stratum_field)),
             ("Schichtungsmodus", self.stratify_mode_label),
@@ -186,19 +181,14 @@ class SamplingProvenance:
         ]
         # Sprint 85 / E1: nur zeigen, was für diese Ziehung gilt.
         omitted = {
-            label
-            for label, applies in (
-                ("Filter-Operator", self.has_filter),
-                ("Schichtungsmodus", self.is_stratified),
-            )
-            if not applies
+            label for label, applies in (("Schichtungsmodus", self.is_stratified),) if not applies
         }
         return [(label, value) for label, value in fields if label not in omitted]
 
     @property
     def has_filter(self) -> bool:
-        """Wurde vorgefiltert? Nur dann sagt der Operator etwas aus."""
-        return self.filter_field is not None
+        """Wurde vorgefiltert (mindestens eine Bedingung)?"""
+        return bool(self.filters)
 
     @property
     def is_stratified(self) -> bool:
@@ -207,17 +197,34 @@ class SamplingProvenance:
 
     def to_audit_details(self) -> dict[str, Any]:
         """Dict für `AuditEvent.details` (→ `details_json`). Ergänzt die
-        bisherigen Schlüssel (`method`/`filter_field`/`filter_value`/
-        `cluster_field`/`stratum_field`/`stratify_mode`) um die zuvor
-        fehlenden Reproduktionsparameter (A-001). Native Typen (kein
-        String-Formatting) – im Unterschied zu `to_ordered_fields`."""
+        bisherigen Schlüssel (`method`/`cluster_field`/`stratum_field`/
+        `stratify_mode`) um die zuvor fehlenden Reproduktionsparameter (A-001).
+        Native Typen (kein String-Formatting) – im Unterschied zu
+        `to_ordered_fields`.
+
+        Sprint 92: `filters` ist die Liste aller Bedingungen. Bei genau einer
+        stehen zusätzlich die Einzelschlüssel von früher (`filter_field`/
+        `filter_value`/`filter_operator`), damit ältere Leser weiter
+        funktionieren; bei mehreren fehlen sie bewusst – ein alter Leser sähe
+        sonst nur einen Teil des Filters."""
+        filter_keys: dict[str, Any] = {
+            "filters": [
+                {"field": c.field, "operator": c.operator.value, "value": c.value}
+                for c in self.filters
+            ]
+        }
+        if len(self.filters) == 1:
+            (only,) = self.filters
+            filter_keys |= {
+                "filter_field": only.field,
+                "filter_value": only.value,
+                "filter_operator": only.operator.value,
+            }
         return {
             "dataset_id": self.dataset_id,
             "method": self.method,
             "size_requested": self.size_requested,
-            "filter_field": self.filter_field,
-            "filter_value": self.filter_value,
-            "filter_operator": self.filter_operator,
+            **filter_keys,
             "cluster_field": self.cluster_field,
             "stratum_field": self.stratum_field,
             "stratify_mode": self.stratify_mode,
@@ -275,8 +282,8 @@ def format_event_details(event: AuditEvent) -> str:
     details = format_audit_details(event.details)
     if event.event_type != "sampling" or event.total_count is None:
         return details
-    legacy = population_predates_basis(event.details) and (
-        event.details.get("filter_field") is not None
+    legacy = population_predates_basis(event.details) and bool(
+        detail_filter_conditions(event.details)
     )
     population = "Population: " + population_text(
         event.total_count,

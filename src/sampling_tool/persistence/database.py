@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION_TABLE: Final = "schema_version"
 APPLICATION_ID: Final = 0x42444F53  # "BDOS" – BDO Sampling; SQLite PRAGMA application_id
 CURRENT_SCHEMA_VERSION: Final = (
-    6  # muss mit jeder neuen migrations/NNN_*.sql-Datei mit hochgezogen werden
+    7  # muss mit jeder neuen migrations/NNN_*.sql-Datei mit hochgezogen werden
 )
 
 # ---------------------------------------------------------------------------

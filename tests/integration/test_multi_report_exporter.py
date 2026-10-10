@@ -13,6 +13,7 @@ from sampling_tool.core.models import (
     AuditEvent,
     Dataset,
     Engagement,
+    FilterCondition,
     FilterOperator,
     ParentRelation,
     SampleConfig,
@@ -281,8 +282,7 @@ class TestMultiSheetReportExporter:
             method=SamplingMethod.SIMPLE,
             size=1,
             seed=1,
-            filter_field="Konto",
-            filter_value=formula_payload,
+            filters=(FilterCondition("Konto", FilterOperator.EQ, formula_payload),),
             cluster_field=plus_payload,
             stratum_field=formula_payload,
         )
@@ -361,9 +361,7 @@ class TestMultiSheetReportExporter:
             size=5,
             seed=99,
             cluster_field="Land",
-            filter_field="Betrag",
-            filter_value=100,
-            filter_operator=FilterOperator.GTE,
+            filters=(FilterCondition("Betrag", FilterOperator.GTE, 100),),
         )
         samples = [
             SampleResult(
@@ -393,7 +391,9 @@ class TestMultiSheetReportExporter:
         assert row["Methode"] == "Cluster"
         assert row["Angeforderte Größe"] == 5
         assert row["Tatsächliche Größe"] == 7
-        assert row["Filter-Operator"] == "≥"
+        # Sprint 92: eine Spalte „Filter" statt Feld/Operator/Wert.
+        assert row["Filter"] == "Betrag ≥ 100"
+        assert "Filter-Operator" not in row
         assert row["Übergeordnete Stichprobe"] == 17
         assert row["Algorithmus-Version"] == "bdo-v1"
         assert row["Dataset-ID"] == 1
@@ -407,7 +407,7 @@ class TestMultiSheetReportExporter:
         datasets: list[Dataset],
         audit_events: list[AuditEvent],
     ) -> None:
-        """Sprint 85 / E1: ohne Filter-Feld kein „=" in der Operator-Spalte."""
+        """Sprint 85 / E1: ohne Filter kein „=" in der Filter-Spalte."""
         cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=2, seed=1)
         samples = [SampleResult(config=cfg, selected_row_ids=(1, 2), population_size=10, id=4)]
         out = tmp_path / "bericht.xlsx"
@@ -416,7 +416,7 @@ class TestMultiSheetReportExporter:
         )
         rows = list(load_workbook(out)["3. Samples"].iter_rows(values_only=True))
         row = dict(zip(rows[0], rows[1], strict=True))
-        assert row["Filter-Operator"] == "—"
+        assert row["Filter"] == "—"
         assert row["Schichtungsmodus"] == "—"
 
     def test_audit_trail_details_spalte_zeigt_details_json(
@@ -565,3 +565,32 @@ class TestExcelReportSpeaksGerman:
         assert by_id[2]["Schichtungsmodus"] == "Proportional"
         assert by_id[2]["Ableitung"] == "Eingeschränkt auf Stichprobe #1"
         assert by_id[3]["Ableitung"] == "Nachstichprobe zu #1 (ohne Dubletten)"
+
+
+class TestSamplesSheetMultiFilter:
+    """Sprint 92: mehrere Filter in einer Zelle, UND-verknüpft."""
+
+    def test_two_filters_in_one_cell(
+        self,
+        tmp_path: Path,
+        engagement: Engagement,
+        datasets: list[Dataset],
+        audit_events: list[AuditEvent],
+    ) -> None:
+        cfg = SampleConfig(
+            method=SamplingMethod.SIMPLE,
+            size=2,
+            seed=1,
+            filters=(
+                FilterCondition("Kostenstelle", FilterOperator.EQ, "Vertrieb"),
+                FilterCondition("Betrag", FilterOperator.GTE, 1000),
+            ),
+        )
+        samples = [SampleResult(config=cfg, selected_row_ids=(1, 2), population_size=10, id=4)]
+        out = tmp_path / "bericht.xlsx"
+        MultiSheetReportExporter().export(
+            engagement, datasets, samples, audit_events, out, dataset_ids_by_sample={4: 1}
+        )
+        rows = list(load_workbook(out)["3. Samples"].iter_rows(values_only=True))
+        row = dict(zip(rows[0], rows[1], strict=True))
+        assert row["Filter"] == "Kostenstelle = Vertrieb UND Betrag ≥ 1.000"

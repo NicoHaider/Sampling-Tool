@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from sampling_tool.core.models import Dataset, Engagement, FilterOperator, SampleResult
+from sampling_tool.core.models import Dataset, Engagement, FilterCondition, SampleResult
 from sampling_tool.io.importer import ExcelImporter
 from sampling_tool.ui.dialogs.duplicate_engagement_dialog import DuplicateEngagementDialog
 from sampling_tool.ui.dialogs.existing_export_dialog import ExistingExportDialog
@@ -49,7 +49,7 @@ SamplingDialogFactory = Callable[
         Callable[[str], Sequence[Any]] | None,
         SampleResult | None,
         SamplingFeatures,
-        Callable[[str, FilterOperator, Any, bool], int] | None,
+        Callable[[tuple[FilterCondition, ...], bool], int] | None,
         float,
     ],
     SamplingDialog,
@@ -161,7 +161,7 @@ def default_sampling_factory(
     distinct_values_provider: Callable[[str], Sequence[Any]] | None,
     current_sample: SampleResult | None,
     features: SamplingFeatures,
-    filter_match_count_provider: Callable[[str, FilterOperator, Any, bool], int] | None = None,
+    filter_match_count_provider: Callable[[tuple[FilterCondition, ...], bool], int] | None = None,
     ui_scale_factor: float = 1.0,
 ) -> SamplingDialog:
     return SamplingDialog(

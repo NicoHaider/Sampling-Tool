@@ -9,13 +9,15 @@ from datetime import UTC, datetime
 import pytest
 
 from sampling_tool.core.models import (
+    AuditEvent,
+    FilterCondition,
     FilterOperator,
     ParentRelation,
     SampleConfig,
     SampleResult,
     SamplingMethod,
 )
-from sampling_tool.core.provenance import SamplingProvenance
+from sampling_tool.core.provenance import SamplingProvenance, format_event_details
 
 
 def _cluster_sample() -> SampleResult:
@@ -25,9 +27,7 @@ def _cluster_sample() -> SampleResult:
         size=5,
         seed=99,
         cluster_field="Land",
-        filter_field="Betrag",
-        filter_value=100,
-        filter_operator=FilterOperator.GTE,
+        filters=(FilterCondition("Betrag", FilterOperator.GTE, 100),),
     )
     return SampleResult(
         config=cfg,
@@ -67,7 +67,10 @@ class TestFilterOperatorSymbol:
         ):
             result = SampleResult(
                 config=SampleConfig(
-                    method=SamplingMethod.SIMPLE, size=1, seed=1, filter_operator=operator
+                    method=SamplingMethod.SIMPLE,
+                    size=1,
+                    seed=1,
+                    filters=(FilterCondition("A", operator, 5),),
                 ),
                 selected_row_ids=(1,),
                 population_size=1,
@@ -75,7 +78,7 @@ class TestFilterOperatorSymbol:
             provenance = SamplingProvenance.from_sample_result(
                 result, dataset_id=None, app_version="0.8.0"
             )
-            assert provenance.filter_operator_symbol == symbol
+            assert provenance.filter_text == f"A {symbol} 5"
 
 
 class TestToOrderedFields:
@@ -90,9 +93,8 @@ class TestToOrderedFields:
         assert fields["Tatsächliche Größe"] == "7"
         assert fields["Population (Zeilen)"] == "10"
         assert fields["Seed"] == "99"
-        assert fields["Filter-Feld"] == "Betrag"
-        assert fields["Filter-Operator"] == "≥"
-        assert fields["Filter-Wert"] == "100"
+        assert fields["Filter"] == "Betrag ≥ 100"
+        assert "Filter-Feld" not in fields
         assert fields["Cluster-Feld"] == "Land"
         assert fields["Schicht-Feld"] == "—"
         # Sprint 85 / E1: Cluster ist nicht geschichtet – kein Schichtungsmodus.
@@ -112,15 +114,14 @@ class TestToOrderedFields:
         fields = dict(provenance.to_ordered_fields())
         assert fields["Dataset-ID"] == "—"
         assert fields["Übergeordnete Stichprobe"] == "—"
-        assert fields["Filter-Feld"] == "—"
-        assert fields["Filter-Wert"] == "—"
+        assert fields["Filter"] == "—"
         assert fields["Cluster-Feld"] == "—"
         assert fields["Schicht-Feld"] == "—"
 
 
 class TestOrderedFieldsOmitIrrelevant:
-    """Sprint 85 / E1: kein „Filter-Operator: =" ohne Filter, kein
-    Schichtungsmodus außerhalb von „Geschichtet"."""
+    """Sprint 85 / E1: kein Schichtungsmodus außerhalb von „Geschichtet";
+    seit Sprint 92 trägt die eine Zeile „Filter" den Operator mit."""
 
     def _labels(self, cfg: SampleConfig) -> list[str]:
         result = SampleResult(config=cfg, selected_row_ids=(1,), population_size=3)
@@ -131,7 +132,7 @@ class TestOrderedFieldsOmitIrrelevant:
         labels = self._labels(SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=1))
         assert "Filter-Operator" not in labels
         assert "Schichtungsmodus" not in labels
-        assert "Filter-Feld" in labels
+        assert "Filter" in labels
 
     def test_stratified_with_filter_has_both(self) -> None:
         cfg = SampleConfig(
@@ -139,11 +140,10 @@ class TestOrderedFieldsOmitIrrelevant:
             size=1,
             seed=1,
             stratum_field="Land",
-            filter_field="Betrag",
-            filter_value=1,
+            filters=(FilterCondition("Betrag", FilterOperator.EQ, 1),),
         )
         labels = self._labels(cfg)
-        assert "Filter-Operator" in labels
+        assert "Filter" in labels
         assert "Schichtungsmodus" in labels
 
 
@@ -156,6 +156,7 @@ class TestToAuditDetails:
         assert details["dataset_id"] == 1
         assert details["method"] == "cluster"
         assert details["size_requested"] == 5
+        assert details["filters"] == [{"field": "Betrag", "operator": "gte", "value": 100}]
         assert details["filter_field"] == "Betrag"
         assert details["filter_value"] == 100
         assert details["filter_operator"] == "gte"
@@ -227,3 +228,77 @@ class TestParentRelation:
         ).to_audit_details()
         assert "parent_relation" in details
         assert details["parent_relation"] is None
+
+
+def _provenance(*filters: FilterCondition) -> SamplingProvenance:
+    cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=1, filters=filters)
+    result = SampleResult(config=cfg, selected_row_ids=(1,), population_size=5)
+    return SamplingProvenance.from_sample_result(result, dataset_id=1, app_version="x")
+
+
+class TestProvenanceFilters:
+    """Sprint 92 / A5: mehrere Filter in Event, Metadaten und Anzeige."""
+
+    _A = FilterCondition("Kostenstelle", FilterOperator.EQ, "Vertrieb")
+    _B = FilterCondition("Betrag", FilterOperator.GTE, 1000)
+
+    def test_new_event_carries_filter_list(self) -> None:
+        details = _provenance(self._A, self._B).to_audit_details()
+        assert details["filters"] == [
+            {"field": "Kostenstelle", "operator": "eq", "value": "Vertrieb"},
+            {"field": "Betrag", "operator": "gte", "value": 1000},
+        ]
+        # Mehrere Filter: keine Einzelschlüssel – ein alter Leser sähe sonst nur einen.
+        assert "filter_field" not in details
+
+    def test_without_filter_empty_list_and_no_legacy_keys(self) -> None:
+        details = _provenance().to_audit_details()
+        assert details["filters"] == []
+        assert "filter_field" not in details
+
+    def test_display_joins_with_und(self) -> None:
+        provenance = _provenance(self._A, self._B)
+        assert provenance.filter_text == "Kostenstelle = Vertrieb UND Betrag ≥ 1.000"
+        assert dict(provenance.to_ordered_fields())["Filter"] == provenance.filter_text
+
+    def test_new_event_details_line(self) -> None:
+        details = _provenance(self._A, self._B).to_audit_details()
+        event = AuditEvent(event_type="sampling", total_count=5, details=details)
+        text = format_event_details(event)
+        assert "Filter: Kostenstelle = Vertrieb UND Betrag ≥ 1.000" in text
+        assert "Filter-Feld" not in text
+
+    def test_single_filter_event_shows_one_filter_entry(self) -> None:
+        details = _provenance(self._B).to_audit_details()
+        event = AuditEvent(event_type="sampling", total_count=5, details=details)
+        text = format_event_details(event)
+        assert text.count("Filter:") == 1
+        assert "Filter-" not in text
+        assert "Filter: Betrag ≥ 1.000" in text
+
+    def test_legacy_event_with_single_keys(self) -> None:
+        """Bestandsevents (vor Sprint 92, append-only) tragen nur die Einzelschlüssel."""
+        details = {
+            "method": "simple",
+            "filter_field": "Kostenstelle",
+            "filter_value": "Vertrieb",
+            "filter_operator": "eq",
+            "population_basis": "filtered",
+        }
+        event = AuditEvent(event_type="sampling", total_count=5, details=details)
+        assert format_event_details(event) == (
+            "Population: 5 · Methode: Einfach · Filter: Kostenstelle = Vertrieb"
+        )
+
+    def test_legacy_event_before_sprint_89_keeps_population_note(self) -> None:
+        details = {"filter_field": "Kostenstelle", "filter_value": "V", "filter_operator": "eq"}
+        event = AuditEvent(event_type="sampling", total_count=5, details=details)
+        assert "Filter nicht eingerechnet" in format_event_details(event)
+
+    def test_legacy_population_note_for_old_sample_metadata(self) -> None:
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=1, filters=(self._A,))
+        result = SampleResult(config=cfg, selected_row_ids=(1,), population_size=500)
+        provenance = SamplingProvenance.from_sample_result(
+            result, dataset_id=1, app_version="x", population_predates_basis=True
+        )
+        assert "Filter nicht eingerechnet" in provenance.population_text

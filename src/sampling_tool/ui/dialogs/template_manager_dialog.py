@@ -12,9 +12,10 @@ davor ergänzt werden kann (Sprint 28 implementiert noch keins).
 **Bearbeiten ohne geladene Population.** Das Fenster ist app-weit erreichbar,
 auch ohne offenes Projekt – es kennt also keine Population. Editierbar sind
 daher die populations-unabhängigen Felder (Methode, Größe, Cluster-/Schicht-
-Feldname als Text, Schicht-Verteilung). Der konkrete **Filter-Wert** lässt
-sich ohne Population nicht typ-sicher wählen (er kann ein Datum sein); er wird
-deshalb hier nur angezeigt und beim Speichern unverändert mitgereicht.
+Feldname als Text, Schicht-Verteilung). Die **Filter** lassen sich ohne
+Population nicht typ-sicher wählen (ein Wert kann ein Datum sein); sie werden
+deshalb hier nur angezeigt und beim Speichern unverändert mitgereicht (seit
+Sprint 92 alle Bedingungen samt Operator).
 
 Seit Sprint 32 ist dieses Fenster die einzige Stelle, an der Vorlagen angelegt
 werden (Button „Neue Vorlage…"); das „+" im Stichproben-Dialog ist entfallen.
@@ -49,7 +50,8 @@ from sampling_tool.config import (
     METHOD_LABELS,
     MIN_SAMPLE_SIZE,
 )
-from sampling_tool.core.models import SamplingMethod, StratifyMode
+from sampling_tool.core.formatting import format_filters
+from sampling_tool.core.models import FilterCondition, SamplingMethod, StratifyMode
 from sampling_tool.core.presets import SamplingPreset
 from sampling_tool.ui._dialog_buttons import mark_secondary_buttons
 from sampling_tool.ui._scaling import scaled_px
@@ -90,10 +92,9 @@ class TemplateManagerDialog(QDialog):
 
         self._store = preset_store
         self._factor = ui_scale_factor
-        # Populations-abhängige Filter-Definition der gewählten Vorlage – wird
-        # nur angezeigt und beim Speichern unverändert durchgereicht.
-        self._current_filter_field: str | None = None
-        self._current_filter_value: object = None
+        # Populations-abhängige Filter der gewählten Vorlage – werden nur
+        # angezeigt und beim Speichern unverändert durchgereicht.
+        self._current_filters: tuple[FilterCondition, ...] = ()
 
         self._build_ui()
         self._wire_signals()
@@ -261,12 +262,10 @@ class TemplateManagerDialog(QDialog):
         self._edit_cluster_field.setText(preset.cluster_field or "")
         self._edit_stratum_field.setText(preset.stratum_field or "")
         self._set_edit_stratify_mode(preset.stratify_mode)
-        self._current_filter_field = preset.filter_field
-        self._current_filter_value = preset.filter_value
-        if preset.filter_field:
-            self._lbl_filter.setText(f"{preset.filter_field} = {preset.filter_value}")
-        else:
-            self._lbl_filter.setText("(kein Filter)")
+        self._current_filters = preset.filters
+        self._lbl_filter.setText(
+            format_filters(preset.filters) if preset.filters else "(kein Filter)"
+        )
         self._on_edit_method_changed()
 
     def _on_edit_method_changed(self) -> None:
@@ -317,8 +316,7 @@ class TemplateManagerDialog(QDialog):
             cluster_field=cluster_field if method == SamplingMethod.CLUSTER else None,
             stratum_field=stratum_field if method == SamplingMethod.STRATIFIED else None,
             stratify_mode=self._edit_stratify_mode_value(),
-            filter_field=self._current_filter_field,
-            filter_value=self._current_filter_value,
+            filters=self._current_filters,
         )
         self._store.save(preset)
         self._reload(select=name)

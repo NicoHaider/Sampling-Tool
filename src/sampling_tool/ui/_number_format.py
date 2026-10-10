@@ -7,7 +7,8 @@ Formatierung. Ein Ort für beide Aufrufer.
 
 from __future__ import annotations
 
+# Sprint 92: die Funktion lebt in `core.formatting`, weil auch die Filteranzeige
+# in Berichten (Core/IO, Qt-frei) Tausenderpunkte braucht.
+from sampling_tool.core.formatting import format_int
 
-def format_int(value: int) -> str:
-    """Tausenderpunkte für deutsche Locale (12345 → '12.345')."""
-    return f"{value:,}".replace(",", ".")
+__all__ = ["format_int"]

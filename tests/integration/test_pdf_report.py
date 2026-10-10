@@ -619,13 +619,27 @@ class TestLongFilenameWraps:
 
         assert cell == "—"
 
-    def test_andere_spalten_behalten_schnellpfad(self) -> None:
+    def test_zeitstempel_behaelt_schnellpfad_user_bricht_um(self) -> None:
+        """Sprint 92 / C: die User-Spalte wird wie die Datei-Spalte umgebrochen;
+        Zellen mit kurzem, festem Inhalt bleiben beim String-Schnellpfad."""
         evt = _with_file("export_file", _NAME_SMOKE)
-        user_cell, _, _ = _first_row_cell(evt, _EVENT_TABLE_HEADER.index("User"))
+        user_cell, available, widths = _first_row_cell(evt, _EVENT_TABLE_HEADER.index("User"))
         timestamp_cell, _, _ = _first_row_cell(evt, 0)
 
+        # Passt der Name gemessen in die Spalte, bleibt er ein roher String.
         assert user_cell == "anna"
+        assert max(widths) <= available
         assert isinstance(timestamp_cell, str)
+
+    def test_langer_user_name_bricht_um(self) -> None:
+        name = "maximiliane.mustermann-oberhuber@bdo-pruefung.at"
+        evt = replace(_with_file("export_file", _NAME_SMOKE), user_name=name)
+        user_cell, available, widths = _first_row_cell(evt, _EVENT_TABLE_HEADER.index("User"))
+
+        assert len(name) <= _CELL_STRING_THRESHOLD
+        assert isinstance(user_cell, Paragraph)
+        assert user_cell.getPlainText() == name
+        assert max(widths) <= available
 
 
 class TestPdfPerformanceSmoke:

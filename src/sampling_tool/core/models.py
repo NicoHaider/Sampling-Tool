@@ -152,6 +152,15 @@ class Dataset:
 
 
 @dataclass(frozen=True, slots=True)
+class FilterCondition:
+    """Eine Filterbedingung `Spalte <Operator> Wert` (Sprint 92)."""
+
+    field: str
+    operator: FilterOperator
+    value: Any
+
+
+@dataclass(frozen=True, slots=True)
 class SampleConfig:
     """Konfiguration einer Stichprobenziehung – persistierter Audit-Input."""
 
@@ -164,10 +173,13 @@ class SampleConfig:
     stratum_field: str | None = None
     stratify_mode: StratifyMode = StratifyMode.PROPORTIONAL
 
-    # Optionaler Vorfilter (z. B. Country == "AUT")
-    filter_field: str | None = None
-    filter_value: Any = None
-    filter_operator: FilterOperator = FilterOperator.EQ
+    # Optionale Vorfilter, alle UND-verknüpft (Sprint 92; z. B. Country == "AUT").
+    filters: tuple[FilterCondition, ...] = ()
+
+    @property
+    def has_filter(self) -> bool:
+        """Ist mindestens eine Filterbedingung gesetzt?"""
+        return bool(self.filters)
 
 
 @dataclass(frozen=True, slots=True)
