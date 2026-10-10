@@ -438,14 +438,14 @@ def run_probe_for_size(
         # Spiegelt den Controller-Pfad (`handle_new_sampling`) – sonst würde
         # der Probe-Lauf die RAM-Fixes nicht messen.
         with measured(label) as m:
-            if isinstance(sampler, SimpleSampler) and cfg.filter_field is None:
+            if isinstance(sampler, SimpleSampler) and not cfg.has_filter:
                 sampled = sampler.sample_ids(
                     sampling_repo.iter_row_ids(dataset.id),
                     population_size=dataset.row_count,
                 )
             elif (
                 isinstance(sampler, ClusterSampler)
-                and cfg.filter_field is None
+                and not cfg.has_filter
                 and cfg.cluster_field is not None
                 and DatasetRepo.supports_field_pairs(cfg.cluster_field)
             ):
@@ -455,7 +455,7 @@ def run_probe_for_size(
                 )
             elif (
                 isinstance(sampler, StratifiedSampler)
-                and cfg.filter_field is None
+                and not cfg.has_filter
                 and cfg.stratum_field is not None
                 and DatasetRepo.supports_field_pairs(cfg.stratum_field)
             ):

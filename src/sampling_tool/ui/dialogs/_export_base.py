@@ -29,17 +29,12 @@ from PyQt6.QtWidgets import (
 
 from sampling_tool.config import (
     BDO_DARK_GREY,
-    EXPORT_FILENAME_PATTERN,
     WARNING_COLOR,
+    build_export_filename,
     export_date_token,
+    export_id_token,
     local_export_now,
-    sanitize_export_filename_token,
 )
-
-# Sprint 74 / §2.3: das Pattern lebt in `config.py`. Der Name hier bleibt als
-# Default-Argument von `ExportTargetWidget` erhalten, ist aber kein zweites
-# Literal mehr, sondern dieselbe Konstante.
-DEFAULT_FILENAME_PATTERN: str = EXPORT_FILENAME_PATTERN
 
 # Sprint 71 / Befund 1: Hinweistexte als Konstanten, damit Tests sie
 # importieren statt die Literale zu wiederholen.
@@ -108,7 +103,6 @@ class ExportTargetWidget(QWidget):
         default_name: str = "",
         default_id: str = "",
         file_extension: str = "",
-        filename_pattern: str = DEFAULT_FILENAME_PATTERN,
         type_token: str = "export",
         default_output_dir: Path | None = None,
         parent: QWidget | None = None,
@@ -117,7 +111,6 @@ class ExportTargetWidget(QWidget):
     ) -> None:
         super().__init__(parent)
         self._file_extension = file_extension
-        self._filename_pattern = filename_pattern
         self._type_token = type_token
         self._output_dir: Path | None = default_output_dir
         # Die EINE Uhr-Lesung dieses Export-Vorgangs.
@@ -223,16 +216,10 @@ class ExportTargetWidget(QWidget):
 
         Liest die Uhr NICHT – der Zeitpunkt steht seit der Konstruktion fest
         (Sprint 74). Zwei Aufrufe liefern denselben Namen, auch über
-        Mitternacht hinweg.
+        Mitternacht hinweg. Gebaut wird über `config.build_export_filename`,
+        dieselbe Funktion wie im Writer (Sprint 92).
         """
-        name = sanitize_export_filename_token(self.get_name() or "export")
-        sid = sanitize_export_filename_token(self.get_id() or "0")
-        body = self._filename_pattern.format(
-            name=name,
-            id=sid,
-            type=self._type_token,
-            date=self.date_token(),
-        )
+        body = build_export_filename(self.get_name(), self.get_id(), self._type_token, self._now)
         return f"{body}{self._file_extension}"
 
     def validation_hint(self) -> str:
@@ -243,7 +230,8 @@ class ExportTargetWidget(QWidget):
         """
         if not self.get_name():
             return HINT_MISSING_NAME
-        if not self.get_id():
+        # Sprint 92: „ID" allein ist keine ID – das Pattern schreibt „ID_" selbst.
+        if not export_id_token(self.get_id()):
             return HINT_MISSING_ID
         if self._output_dir is None:
             return HINT_NO_DIR

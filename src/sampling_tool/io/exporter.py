@@ -27,13 +27,11 @@ from openpyxl.utils import get_column_letter
 from sampling_tool import __version__
 from sampling_tool.config import (
     BDO_RED,
-    EXPORT_FILENAME_PATTERN,
     EXPORT_SUFFIX_SAMPLING,
     EXPORT_TYPE_SAMPLING,
+    build_export_filename,
     excel_argb,
-    export_date_token,
     local_export_now,
-    sanitize_export_filename_token,
 )
 from sampling_tool.core.formatting import format_header_row
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement, SampleResult
@@ -152,21 +150,16 @@ class ExcelExporter:
         Öffentlich seit Sprint 84 / C: der Export-Controller prüft damit VOR
         dem Worker, ob die Zieldatei schon existiert.
 
-        `now=None` liest die Uhr selbst – für Aufrufer ohne Dialog. Der
-        `or "sample"`-Fallback greift NACH dem Sanitizer und weicht damit vom
-        `or "export"`-Fallback der Vorschau ab (`_export_base.py`). Diese
-        Asymmetrie ist Bestandsverhalten und bleibt in Sprint 74 bewusst
-        unangetastet: sie ist nur bei leerem/whitespace-only Namen sichtbar,
-        und den blockiert der Dialog über `HINT_MISSING_NAME`, bevor der
-        Writer ihn je zu sehen bekommt.
+        `now=None` liest die Uhr selbst – für Aufrufer ohne Dialog. Sanitizing,
+        ID-Präfix und Fallbacks liegen seit Sprint 92 in `build_export_filename`
+        – derselben Funktion, die die Vorschau des Dialogs ruft (vorher fiel ein
+        leerer Name hier auf „sample", in der Vorschau auf „export").
         """
-        safe_name = sanitize_export_filename_token(custom_name) or "sample"
-        safe_id = sanitize_export_filename_token(custom_id) or "0"
-        body = EXPORT_FILENAME_PATTERN.format(
-            name=safe_name,
-            id=safe_id,
-            type=EXPORT_TYPE_SAMPLING,
-            date=export_date_token(now if now is not None else local_export_now()),
+        body = build_export_filename(
+            custom_name,
+            custom_id,
+            EXPORT_TYPE_SAMPLING,
+            now if now is not None else local_export_now(),
         )
         return f"{body}{EXPORT_SUFFIX_SAMPLING}"
 

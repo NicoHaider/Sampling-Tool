@@ -21,6 +21,9 @@
   table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
   th { background: #E81A3B; color: white; text-align: left; padding: 6px 8px; }
   td { border-bottom: 1px solid #ECECEC; padding: 5px 8px; vertical-align: top; }
+  /* Sprint 92: Datei-/User-Namen ohne Leerzeichen umbrechen, statt die Tabelle
+     über den Container zu verbreitern. Bricht nur Wörter, die sonst nicht passen. */
+  .breakable { overflow-wrap: anywhere; }
   tr:nth-child(even) td { background: #FAFAFA; }
   .chart { margin: 12px 0; text-align: center; }
   .chart img { max-width: 100%; }
@@ -112,13 +115,13 @@
         <tr>
           <td>{{ e.timestamp_str }}</td>
           <td>{{ e.action_label }}{% if e.corrects_event_id %} → #{{ e.corrects_event_id }}{% endif %}</td>
-          <td>{{ e.user_name }}</td>
+          <td class="breakable">{{ e.user_name }}</td>
           <td>{{ '#' ~ e.sample_id if e.sample_id else '—' }}</td>
           <td>{{ e.sample_size if e.sample_size is not none else '—' }}</td>
           <td>{{ e.percent_str }}</td>
           <td>{{ e.seed if e.seed is not none else '—' }}</td>
-          <td>{{ e.filename }}</td>
-          <td>{{ e.details_str }}</td>
+          <td class="breakable">{{ e.filename }}</td>
+          <td class="breakable">{{ e.details_str }}</td>
         </tr>
         {% endfor %}
       </tbody>

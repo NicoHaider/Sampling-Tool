@@ -46,7 +46,7 @@ class TestExportTargetWidget:
         qtbot.addWidget(w)
         preview = w.preview_filename()
         today = datetime.now().strftime("%Y%m%d")
-        assert preview == f"ACME_ID42_BDO_audit_trail_{today}.pdf"
+        assert preview == f"ACME_ID_42_BDO_audit_trail_{today}.pdf"
 
     def test_preview_updates_when_fields_change(self, qtbot: QtBot) -> None:
         w = ExportTargetWidget(default_name="A", default_id="1", file_extension=".xlsx")
@@ -54,7 +54,7 @@ class TestExportTargetWidget:
         w._name_field.setText("Mandant_Neu")
         assert "Mandant_Neu" in w.preview_filename()
         w._id_field.setText("99")
-        assert "ID99" in w.preview_filename()
+        assert "_ID_99_" in w.preview_filename()
 
     def test_is_valid_false_without_directory(self, qtbot: QtBot) -> None:
         w = ExportTargetWidget(default_name="ACME", default_id="1", file_extension=".pdf")
@@ -87,7 +87,7 @@ class TestExportTargetWidget:
         assert path.parent == tmp_path
         assert path.suffix == ".html"
         assert "ACME" in path.name
-        assert "ID42" in path.name
+        assert "_ID_42_" in path.name
 
     def test_changed_signal_fires_on_text_edit(self, qtbot: QtBot) -> None:
         w = ExportTargetWidget(default_name="A", default_id="1", file_extension=".pdf")
@@ -373,10 +373,18 @@ class TestDateTokenSemantics:
 class TestFilenamePatternIsSingleSource:
     """Sprint 74 / §2.3 – das Pattern lebt in `config.py`, sonst nirgends."""
 
-    def test_export_base_has_no_own_pattern_literal(self) -> None:
+    def test_export_base_does_not_format_the_pattern_itself(self) -> None:
+        """Sprint 92: Vorschau und Writer formatieren das Pattern nicht selbst,
+        sondern rufen `config.build_export_filename`."""
+        import inspect
+
+        import sampling_tool.io.exporter as exporter_module
         import sampling_tool.ui.dialogs._export_base as export_base
 
-        assert export_base.DEFAULT_FILENAME_PATTERN is EXPORT_FILENAME_PATTERN
+        for module in (export_base, exporter_module):
+            source = inspect.getsource(module)
+            assert ".format(" not in source
+            assert "build_export_filename(" in source
 
     def test_exporter_has_no_own_template_literal(self) -> None:
         import sampling_tool.io.exporter as exporter_module
@@ -389,4 +397,62 @@ class TestFilenamePatternIsSingleSource:
         body = EXPORT_FILENAME_PATTERN.format(
             name="ACME", id="42", type=EXPORT_TYPE_SAMPLING, date="20260513"
         )
-        assert f"{body}{EXPORT_SUFFIX_SAMPLING}" == "ACME_ID42_BDO_sampling_20260513.xlsx"
+        assert f"{body}{EXPORT_SUFFIX_SAMPLING}" == "ACME_ID_42_BDO_sampling_20260513.xlsx"
+
+
+_EXPORT_KINDS: Final = (
+    (EXPORT_TYPE_SAMPLING, EXPORT_SUFFIX_SAMPLING),  # Sample-Excel
+    ("report", ".xlsx"),  # Excel-Bericht
+    ("report", ".html"),  # HTML-Bericht
+    ("audit_trail", ".pdf"),  # AuditTrail-PDF
+)
+
+
+class TestExportFilenameIdPrefixPreview:
+    """Sprint 92 / B: „…_ID_<id>_…" in Vorschau UND geschriebener Datei, für jeden
+    Exporttyp; ein getipptes „ID" erscheint nicht doppelt."""
+
+    @pytest.mark.parametrize(("type_token", "suffix"), _EXPORT_KINDS)
+    @pytest.mark.parametrize(
+        ("raw_id", "middle"),
+        [("20261002", "_ID_20261002_"), ("ID4711", "_ID_4711_"), ("id_4711", "_ID_4711_")],
+    )
+    def test_preview_equals_written_name(
+        self,
+        qtbot: QtBot,
+        tmp_path: Path,
+        type_token: str,
+        suffix: str,
+        raw_id: str,
+        middle: str,
+    ) -> None:
+        from sampling_tool.io.exporter import ExcelExporter
+
+        w = ExportTargetWidget(
+            default_name="Mandant",
+            default_id=raw_id,
+            file_extension=suffix,
+            type_token=type_token,
+            default_output_dir=tmp_path,
+            now_provider=lambda: FROZEN_NOW,
+        )
+        qtbot.addWidget(w)
+        label = w.findChild(QLabel, "exportTargetPreview")
+        assert label is not None
+        shown = label.text()
+        assert shown == f"Mandant{middle}BDO_{type_token}_{export_date_token(FROZEN_NOW)}{suffix}"
+        # Berichte/PDF schreiben genau auf `get_path()`; der Sample-Export baut
+        # den Namen im Writer neu – beide müssen der Vorschau entsprechen.
+        path = w.get_path()
+        assert path is not None
+        assert path.name == shown
+        if type_token == EXPORT_TYPE_SAMPLING:
+            assert ExcelExporter.build_filename("Mandant", raw_id, w.now()) == shown
+
+    @pytest.mark.parametrize("raw_id", ["ID", "id", " ID_ "])
+    def test_only_id_counts_as_missing(self, qtbot: QtBot, tmp_path: Path, raw_id: str) -> None:
+        w = ExportTargetWidget(default_name="ACME", default_id=raw_id, file_extension=".pdf")
+        qtbot.addWidget(w)
+        w.set_output_dir(tmp_path)
+        assert w.validation_hint() == HINT_MISSING_ID
+        assert not w.is_valid()

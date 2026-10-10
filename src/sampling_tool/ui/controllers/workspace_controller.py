@@ -33,7 +33,7 @@ from sampling_tool.core.models import (
     AuditEvent,
     Dataset,
     DatasetRow,
-    FilterOperator,
+    FilterCondition,
     ParentRelation,
     SampleConfig,
     SampleResult,
@@ -45,6 +45,7 @@ from sampling_tool.core.sampling import (
     SimpleSampler,
     StratifiedSampler,
     create_sampler,
+    matches_all,
     matches_filter,
 )
 from sampling_tool.io.import_preflight import preflight_import
@@ -78,28 +79,28 @@ _DIALOG_SEED_MAX: Final[int] = min(SEED_MAX, 2_147_483_647)
 def _count_filter_matches(
     repo: DatasetRepo,
     dataset_id: int,
-    column: str,
-    operator: FilterOperator,
-    value: Any,
+    filters: Sequence[FilterCondition],
     restrict_to_ids: Sequence[int] | None,
 ) -> int:
-    """Zählt Rows, die den Filter erfüllen – dieselbe `matches_filter`-Logik wie die
+    """Zählt Rows, die alle Filter erfüllen – dieselbe `matches_all`-Prüfung wie die
     Ziehung, damit Vorschau-Zahl und tatsächlicher Pool nie auseinanderlaufen.
 
     `restrict_to_ids` (gesetzt bei „nur aus aktueller Auswahl"): zählt innerhalb der
     bestehenden Stichprobe (kleine, beschränkte Menge → get_rows_by_ids ist ok).
-    Sonst Streaming über die volle Tabelle: bevorzugt (row_id, wert)-Pairs
-    (json_extract, RAM ~ ein 2-Tupel/Row); Spalten mit `"`/`\\` im Namen können das
-    nicht → Fallback auf iter_rows.
+    Sonst Streaming über die volle Tabelle: bei genau einer Bedingung bevorzugt
+    (row_id, wert)-Pairs (json_extract, RAM ~ ein 2-Tupel/Row) – `matches_all` mit
+    einer Bedingung ist genau dieses `matches_filter`. Mehrere Bedingungen und
+    Spalten mit `"`/`\\` im Namen → iter_rows.
     """
     if restrict_to_ids is not None:
         rows = repo.get_rows_by_ids(dataset_id, restrict_to_ids)
-        return sum(1 for r in rows if matches_filter(r.get(column), operator, value))
-    if DatasetRepo.supports_field_pairs(column):
-        pairs = repo.iter_row_field_pairs(dataset_id, column)
-        return sum(1 for _, v in pairs if matches_filter(v, operator, value))
+        return sum(1 for r in rows if matches_all(r, filters))
+    if len(filters) == 1 and DatasetRepo.supports_field_pairs(filters[0].field):
+        (only,) = filters
+        pairs = repo.iter_row_field_pairs(dataset_id, only.field)
+        return sum(1 for _, v in pairs if matches_filter(v, only.operator, only.value))
     rows_iter = repo.iter_rows(dataset_id)
-    return sum(1 for r in rows_iter if matches_filter(r.get(column), operator, value))
+    return sum(1 for r in rows_iter if matches_all(r, filters))
 
 
 def _count_groups(repo: DatasetRepo, dataset_id: int, column: str) -> int:
@@ -119,7 +120,7 @@ def _count_groups(repo: DatasetRepo, dataset_id: int, column: str) -> int:
 class _PoolCounter:
     """Zählt beim Durchreichen die Zeilen, aus denen der Sampler zieht (Sprint 89 / B2).
 
-    Dieselbe `matches_filter`-Prüfung wie `BaseSampler._collect_pool`; die
+    Dieselbe `matches_all`-Prüfung wie `BaseSampler._collect_pool`; die
     Zeilen selbst laufen unverändert und in derselben Reihenfolge durch – die
     Ziehung bleibt bit-identisch, nur die dokumentierte Population ändert sich.
     """
@@ -129,11 +130,9 @@ class _PoolCounter:
         self.count = 0
 
     def wrap(self, rows: Iterable[DatasetRow]) -> Iterator[DatasetRow]:
-        field = self._config.filter_field
+        filters = self._config.filters
         for row in rows:
-            if field is None or matches_filter(
-                row.get(field), self._config.filter_operator, self._config.filter_value
-            ):
+            if matches_all(row, filters):
                 self.count += 1
             yield row
 
@@ -656,7 +655,7 @@ class WorkspaceController:
 
     def _make_match_count_provider(
         self, repo: DatasetRepo, dataset_id: int
-    ) -> Callable[[str, FilterOperator, Any, bool], int]:
+    ) -> Callable[[tuple[FilterCondition, ...], bool], int]:
         """Baut den Trefferzahl-Provider für die Größen-/Filter-Vorschau des Dialogs.
 
         Liest `session.sample` bewusst *bei Aufruf* (nicht beim Dialog-Bau): der
@@ -665,10 +664,10 @@ class WorkspaceController:
         """
         s = self.session
 
-        def _provider(field: str, operator: FilterOperator, value: Any, restrict: bool) -> int:
+        def _provider(filters: tuple[FilterCondition, ...], restrict: bool) -> int:
             parent = s.active_sample_for_current_dataset() if restrict else None
             restrict_ids = list(parent.selected_row_ids) if parent is not None else None
-            return _count_filter_matches(repo, dataset_id, field, operator, value, restrict_ids)
+            return _count_filter_matches(repo, dataset_id, filters, restrict_ids)
 
         return _provider
 
@@ -699,7 +698,7 @@ class WorkspaceController:
         assert dataset.id is not None
         sampler = create_sampler(result.config)
         unfiltered_full_population = (
-            result.config.filter_field is None
+            not result.config.has_filter
             and not result.from_sample_only
             and not result.exclude_sample_ids
         )

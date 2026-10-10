@@ -125,7 +125,8 @@ class TestDetailsOmitIrrelevant:
             "filter_operator": "gte",
         }
         text = format_audit_details(details)
-        assert "Filter-Operator: ≥" in text
+        # Sprint 92: Feld/Operator/Wert erscheinen als ein Eintrag „Filter".
+        assert "Filter: Betrag ≥ —" in text
         assert "Schichtungsmodus: Proportional" in text
 
     def test_db_dict_is_not_mutated(self) -> None:

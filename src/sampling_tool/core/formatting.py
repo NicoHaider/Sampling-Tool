@@ -18,7 +18,7 @@ DB-Speicherung bleibt unverändert (UTC-aware ISO-8601, siehe
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime, time
 from decimal import ROUND_HALF_UP, Context, Decimal
 from typing import Any, Final
@@ -31,7 +31,7 @@ from sampling_tool.config import (
     RESTORED_STATE_LABELS,
     STRATIFY_MODE_LABELS,
 )
-from sampling_tool.core.models import SamplingMethod
+from sampling_tool.core.models import FilterCondition, SamplingMethod
 
 # 19-Zeichen-Format: konsistent zwischen UI, PDF, Excel-Report, HTML-Report.
 _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -41,6 +41,13 @@ _MAX_SIGNIFICANT_DIGITS: Final = 15
 # Genug Stellen für jede Quantisierung eines float (max. 17 Stellen im repr);
 # unabhängig vom globalen Decimal-Kontext des Prozesses.
 _ROUNDING_CONTEXT: Final = Context(prec=40)
+
+# Sprint 92: Verbindung mehrerer Filterbedingungen in jeder Anzeige.
+FILTER_JOINER: Final = " UND "
+
+# Detail-Schlüssel der Einzelfilter-Events vor Sprint 92; ab Sprint 92 nur noch
+# bei genau einem Filter zusätzlich zu `filters` geschrieben.
+_LEGACY_FILTER_KEYS: Final = ("filter_field", "filter_value", "filter_operator")
 
 # Detail-Schlüssel, deren WERT ein Enum-Rohwert ist und übersetzt angezeigt wird.
 _DETAIL_VALUE_LABELS: Final[dict[str, Mapping[Any, str]]] = {
@@ -111,12 +118,82 @@ def format_audit_details(details: dict[str, Any]) -> str:
     die des Dicts. Ohne anzeigbaren Eintrag (leeres Dict, Alt-Events vor
     Sprint 43, nur `None`-Werte) kommt `"—"`.
     """
-    parts = [
-        f"{AUDIT_DETAIL_LABELS.get(key, key)}: {_format_detail_value(key, value)}"
-        for key, value in details.items()
-        if value is not None and not _irrelevant_detail(key, details)
-    ]
+    parts: list[str] = []
+    filter_text = _details_filter_text(details)
+    for key, value in details.items():
+        if filter_text is not None and key in ("filters", *_LEGACY_FILTER_KEYS):
+            # Sprint 92: ein Eintrag „Filter: A = x UND B ≥ 1.000" an der Stelle
+            # des ersten Filter-Schlüssels statt Feld/Wert/Operator einzeln.
+            if filter_text:
+                parts.append(f"{AUDIT_DETAIL_LABELS['filters']}: {filter_text}")
+                filter_text = ""
+            continue
+        if value is not None and not _irrelevant_detail(key, details):
+            parts.append(f"{AUDIT_DETAIL_LABELS.get(key, key)}: {_format_detail_value(key, value)}")
     return " · ".join(parts) if parts else "—"
+
+
+def format_filters(filters: Sequence[FilterCondition]) -> str:
+    """Anzeige der Filter einer Ziehung: „Kostenstelle = Vertrieb UND Betrag ≥ 1.000".
+
+    Die eine Formatierung für Metadaten, Berichte, AuditTrail-Details und die
+    Vorlagenverwaltung (Sprint 92). Ohne Filter `"—"`.
+    """
+    return _join_conditions((c.field, c.operator.value, c.value) for c in filters)
+
+
+def detail_filter_conditions(details: Mapping[str, Any]) -> list[tuple[str, str, Any]]:
+    """Filter eines Stichproben-Events als (Feld, Operator-Rohwert, Wert).
+
+    Liest `filters` (ab Sprint 92); Bestandsevents tragen nur die Einzelschlüssel
+    `filter_field`/`filter_value`/`filter_operator` und werden nie umgeschrieben
+    (append-only) – dann daraus eine Ein-Element-Liste, ohne Filter-Feld leer.
+    """
+    raw = details.get("filters")
+    if isinstance(raw, list):
+        return [
+            (str(item.get("field")), str(item.get("operator", "eq")), item.get("value"))
+            for item in raw
+            if isinstance(item, dict)
+        ]
+    field = details.get("filter_field")
+    if field is None:
+        return []
+    return [(str(field), str(details.get("filter_operator", "eq")), details.get("filter_value"))]
+
+
+def _details_filter_text(details: Mapping[str, Any]) -> str | None:
+    """Filter-Text für `format_audit_details`; `None` = Schlüssel roh anzeigen.
+
+    Roh bleibt ein Dict, das weder `filters` noch ein `filter_field` hat (z. B.
+    nur ein Operator) – nie etwas verschlucken, was sich nicht zuordnen lässt.
+    """
+    if "filters" not in details and details.get("filter_field") is None:
+        return None
+    conditions = detail_filter_conditions(details)
+    return _join_conditions(conditions) if conditions else ""
+
+
+def _join_conditions(conditions: Iterable[tuple[str, str, Any]]) -> str:
+    texts = [
+        f"{field} {FILTER_OPERATOR_LABELS.get(operator, operator)} {_format_filter_value(value)}"
+        for field, operator, value in conditions
+    ]
+    return FILTER_JOINER.join(texts) if texts else "—"
+
+
+def _format_filter_value(value: Any) -> str:
+    """Ganze Zahlen mit Tausenderpunkt, sonst wie eine Datensatz-Zelle; leer → „—"."""
+    if value is None:
+        return "—"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return format_int(value)
+    return format_cell_value(value) or "—"
+
+
+def format_int(value: int) -> str:
+    """Tausenderpunkte für deutsche Locale (12345 → '12.345')."""
+    return f"{value:,}".replace(",", ".")
 
 
 def _irrelevant_detail(key: str, details: dict[str, Any]) -> bool:

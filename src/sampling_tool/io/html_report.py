@@ -241,24 +241,11 @@ def _to_sample_view(
         percent_str=f"{percent:.2f} %",
         drawn_at_str=format_optional_timestamp(sample.drawn_at),
         size_requested=provenance.size_requested,
-        filter_str=_filter_str(provenance),
+        filter_str=provenance.filter_text,
         parent_str=_parent_str(provenance),
         algorithm_version=provenance.algorithm_version,
         dataset_id=provenance.dataset_id,
     )
-
-
-def _filter_str(provenance: SamplingProvenance) -> str:
-    """„Feld Operator Wert" des Vorfilters – Feld, Symbol und Wert aus EINER Provenienz.
-
-    Kein Filter heißt `filter_field is None` (wie `BaseSampler._collect_pool`), nicht
-    „Operator ≠ EQ": der Sampling-Dialog übernimmt den Operator auch bei „(kein Filter)".
-    Wert wie in Sample-XLSX/Excel-Report als `str`, `None` → „—".
-    """
-    if provenance.filter_field is None:
-        return "—"
-    value = "—" if provenance.filter_value is None else str(provenance.filter_value)
-    return f"{provenance.filter_field} {provenance.filter_operator_symbol} {value}"
 
 
 def _parent_str(provenance: SamplingProvenance) -> str:

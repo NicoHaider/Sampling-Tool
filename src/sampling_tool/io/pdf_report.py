@@ -28,6 +28,7 @@ from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import (
     Paragraph,
@@ -100,6 +101,14 @@ _EVENT_TABLE_HEADER: Final[list[str]] = [
     "Seed",
     "Datei",
 ]
+
+# Sprint 92 / C: Zellabstand (links/rechts) und die Schrift, in der die Table rohe
+# Strings zeichnet – daraus die Innenbreite der User-Spalte für `_format_user_cell`.
+_CELL_PADDING: Final[float] = 4
+_CELL_FONT_NAME: Final[str] = "Helvetica"
+_USER_CELL_INNER_WIDTH: Final[float] = (
+    _EVENT_TABLE_COL_WIDTHS[_EVENT_TABLE_HEADER.index("User")] - 2 * _CELL_PADDING
+)
 
 
 class AuditTrailPDF:
@@ -399,8 +408,9 @@ def _build_chunk_table(
     # Sprint 82 / G: Dateinamen haben keine Leerzeichen, also muss der Stil
     # innerhalb eines Wortes umbrechen dürfen. Bewusst `splitLongWords` statt
     # `wordWrap="CJK"`: CJK lässt ein Satzzeichen am Zeilenende über die
-    # Innenbreite hängen (z. B. den Punkt vor „xlsx").
-    file_style = ParagraphStyle("BDOTableCellFile", parent=cell_style, splitLongWords=True)
+    # Innenbreite hängen (z. B. den Punkt vor „xlsx"). Sprint 92 / C: derselbe
+    # Stil für die User-Spalte (Anmeldenamen wie E-Mail-Adressen).
+    name_style = ParagraphStyle("BDOTableCellName", parent=cell_style, splitLongWords=True)
     # Sprint 81: `BDO_GREY` statt des früheren #7F7F7F-Literals (5,33:1) – bei
     # 7 pt auf Papier ist das die Stelle, an der ein zu heller Grauton am
     # ehesten unlesbar wird.
@@ -434,11 +444,11 @@ def _build_chunk_table(
                 _format_cell(format_event_timestamp(evt.timestamp), cell_style),
                 _format_cell(action_text, cell_style),
                 sample,
-                _format_cell(evt.user_name, cell_style),
+                _format_user_cell(evt.user_name, name_style),
                 size,
                 percent,
                 seed,
-                _format_file_cell(filename, file_style),
+                _format_name_cell(filename, name_style),
             ]
         )
         detail_line = format_event_details(evt)
@@ -487,8 +497,8 @@ def _build_chunk_style(
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("BOX", (0, 0), (-1, -1), 0.25, _GREY_LIGHT),
             ("LINEBELOW", (0, 0), (-1, 0), 0.25, _GREY_LIGHT),
-            ("LEFTPADDING", (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), _CELL_PADDING),
+            ("RIGHTPADDING", (0, 0), (-1, -1), _CELL_PADDING),
             ("TOPPADDING", (0, 0), (-1, -1), 3),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
         ]
@@ -517,17 +527,36 @@ def _format_cell(text: str, cell_style: ParagraphStyle) -> str | Paragraph:
     return text
 
 
-def _format_file_cell(name: str, file_style: ParagraphStyle) -> str | Paragraph:
-    """Datei-Zelle: jeder Dateiname als umbrechender Paragraph, nur „—" bleibt roh.
+def _format_name_cell(name: str, name_style: ParagraphStyle) -> str | Paragraph:
+    """Datei- und User-Zelle: jeder Name als umbrechender Paragraph, nur „—" bleibt roh.
 
     Der String-Schnellpfad aus `_format_cell` taugt hier nicht: einen rohen
-    String bricht die Table nie um und rendert ihn in ihrer Default-Schrift
-    (Helvetica 10) – schon ein 48-Zeichen-Dateiname lief so rechts aus der
-    Tabelle und von der Seite.
+    String bricht die Table nie um – schon ein 48-Zeichen-Dateiname lief so
+    rechts aus der Tabelle und von der Seite (Sprint 82 / G), ein Anmeldename
+    wie `vorname.nachname@…` über die Spalten „Größe" und „%" (Sprint 92 / C).
+    Der Schnellpfad bleibt Zellen mit kurzem, festem Inhalt vorbehalten
+    (Zeitstempel, Aktion, Stichprobe, Größe, %, Seed).
     """
     if name == "—":
         return name
-    return Paragraph(_escape(name), file_style)
+    return Paragraph(_escape(name), name_style)
+
+
+def _format_user_cell(name: str, name_style: ParagraphStyle) -> str | Paragraph:
+    """User-Zelle: roher String nur, wenn der Name gemessen in die Spalte passt.
+
+    Sprint 92 / C: Anmeldenamen bis 60 Zeichen liefen über den Schnellpfad von
+    `_format_cell` und damit über „Größe" und „%". Gemessen wird in der Schrift,
+    in der die Table rohe Strings zeichnet (Helvetica, Zellgröße 8 pt) – passt
+    der Name, bricht nichts um, und der Schnellpfad spart bei großen AuditTrails
+    das Paragraph-Layout je Zeile (5 000 Events: ~1 s). Sonst umbrechend wie die
+    Datei-Spalte.
+    """
+    if "&" in name or "<" in name or ">" in name:
+        return _format_name_cell(name, name_style)
+    if stringWidth(name, _CELL_FONT_NAME, name_style.fontSize) <= _USER_CELL_INNER_WIDTH:
+        return name
+    return _format_name_cell(name, name_style)
 
 
 def _build_statistics(events: list[AuditEvent]) -> list[Any]:

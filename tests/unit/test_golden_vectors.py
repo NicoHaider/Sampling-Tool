@@ -18,6 +18,7 @@ import pytest
 
 from sampling_tool.core.models import (
     DatasetRow,
+    FilterCondition,
     FilterOperator,
     SampleConfig,
     SamplingMethod,
@@ -205,9 +206,7 @@ class TestGoldenFilterOperators:
             method=SamplingMethod.SIMPLE,
             size=5,
             seed=seed,
-            filter_field="Bucket",
-            filter_value=30,
-            filter_operator=operator,
+            filters=(FilterCondition("Bucket", operator, 30),),
         )
         result = SimpleSampler(cfg).sample(_population())
         assert result.selected_row_ids == GOLDEN_FILTER[operator][seed]

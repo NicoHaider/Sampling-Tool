@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
 
@@ -13,6 +14,7 @@ from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
     Engagement,
+    FilterCondition,
     FilterOperator,
     ParentRelation,
     SampleConfig,
@@ -265,8 +267,7 @@ def _make_result(created_by: str = "anna") -> SampleResult:
         seed=42,
         stratum_field="Country",
         stratify_mode=StratifyMode.PROPORTIONAL,
-        filter_field="Country",
-        filter_value="AUT",
+        filters=(FilterCondition("Country", FilterOperator.EQ, "AUT"),),
     )
     return SampleResult(
         config=cfg,
@@ -294,7 +295,7 @@ class TestSampleRepo:
         assert loaded.population_size == 10
         assert loaded.config.method == SamplingMethod.STRATIFIED
         assert loaded.config.stratum_field == "Country"
-        assert loaded.config.filter_value == "AUT"
+        assert loaded.config.filters[0].value == "AUT"
         assert loaded.created_by == "anna"
 
     def test_list_for_dataset(self, db: Database, engagement_id: int) -> None:
@@ -318,9 +319,7 @@ class TestSampleRepo:
             method=SamplingMethod.SIMPLE,
             size=3,
             seed=7,
-            filter_field="Col1",
-            filter_value="V5",
-            filter_operator=FilterOperator.GT,
+            filters=(FilterCondition("Col1", FilterOperator.GT, "V5"),),
         )
         result = SampleResult(
             config=cfg,
@@ -333,19 +332,19 @@ class TestSampleRepo:
         loaded = repo.get_by_id(sid)
         assert loaded is not None
         # Nicht-Default-Operator überlebt Save/Reload.
-        assert loaded.config.filter_operator == FilterOperator.GT
+        assert loaded.config.filters[0].operator == FilterOperator.GT
         # Restliche Config roundtrippt unverändert.
         assert loaded.config.method == SamplingMethod.SIMPLE
         assert loaded.config.size == 3
         assert loaded.config.seed == 7
-        assert loaded.config.filter_field == "Col1"
-        assert loaded.config.filter_value == "V5"
+        assert loaded.config.filters[0].field == "Col1"
+        assert loaded.config.filters[0].value == "V5"
         assert loaded.selected_row_ids == (6, 7, 8)
 
-    def test_legacy_row_without_operator_reads_as_equality(
+    def test_row_without_filter_columns_reads_unfiltered(
         self, db: Database, engagement_id: int
     ) -> None:
-        # Alt-Zeile ohne filter_operator (Spalten-DEFAULT greift) → EQ.
+        # Zeile ohne Filter-Angaben (Spalten-DEFAULTs greifen) → ungefiltert.
         dataset_id = _persist_dataset(db, engagement_id)
         conn = db.connect()
         cur = conn.execute(
@@ -359,7 +358,7 @@ class TestSampleRepo:
 
         loaded = SampleRepo(conn).get_by_id(sample_id)
         assert loaded is not None
-        assert loaded.config.filter_operator == FilterOperator.EQ
+        assert loaded.config.filters == ()
 
     def test_sample_persists_algorithm_version(self, db: Database, engagement_id: int) -> None:
         """Sprint 39 / R-001: Ziehen → Speichern → Laden erhält `algorithm_version`."""
@@ -584,3 +583,74 @@ class TestSampleDatasetIdOf:
 
     def test_unknown_sample_returns_none(self, db: Database) -> None:
         assert SampleRepo(db.connect()).dataset_id_of(99999) is None
+
+
+class TestSampleRepoFilters:
+    """Sprint 92 / A4: `samples.filters` ist die Quelle; die Altspalten werden nur
+    bei genau einem Filter wie früher mitbefüllt."""
+
+    _CONDS = (
+        FilterCondition("Country", FilterOperator.EQ, "AUT"),
+        FilterCondition("Col1", FilterOperator.GTE, "V3"),
+        FilterCondition("Col1", FilterOperator.LT, "V8"),
+    )
+
+    def _store(self, db: Database, engagement_id: int, n: int) -> tuple[int, sqlite3.Row]:
+        dataset_id = _persist_dataset(db, engagement_id)
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=3, filters=self._CONDS[:n])
+        repo = SampleRepo(db.connect())
+        sid = repo.create_from_result(
+            SampleResult(config=cfg, selected_row_ids=(3,), population_size=10), dataset_id
+        )
+        raw = (
+            db.connect()
+            .execute(
+                "SELECT filters, filter_field, filter_value, filter_operator FROM samples "
+                "WHERE id = ?",
+                (sid,),
+            )
+            .fetchone()
+        )
+        return sid, raw
+
+    @pytest.mark.parametrize("n", [0, 1, 3])
+    def test_roundtrip(self, db: Database, engagement_id: int, n: int) -> None:
+        sid, _ = self._store(db, engagement_id, n)
+        loaded = SampleRepo(db.connect()).get_by_id(sid)
+        assert loaded is not None
+        assert loaded.config.filters == self._CONDS[:n]
+
+    def test_single_filter_fills_legacy_columns(self, db: Database, engagement_id: int) -> None:
+        _, raw = self._store(db, engagement_id, 1)
+        assert raw["filter_field"] == "Country"
+        assert raw["filter_value"] == '"AUT"'
+        assert raw["filter_operator"] == "eq"
+
+    @pytest.mark.parametrize("n", [0, 3])
+    def test_zero_or_many_leave_legacy_columns_empty(
+        self, db: Database, engagement_id: int, n: int
+    ) -> None:
+        _, raw = self._store(db, engagement_id, n)
+        assert raw["filter_field"] is None
+        assert raw["filter_value"] is None
+        assert raw["filter_operator"] == "eq"
+
+    def test_filters_column_is_json_list(self, db: Database, engagement_id: int) -> None:
+        _, raw = self._store(db, engagement_id, 3)
+        assert json.loads(raw["filters"]) == [
+            {"field": "Country", "operator": "eq", "value": "AUT"},
+            {"field": "Col1", "operator": "gte", "value": "V3"},
+            {"field": "Col1", "operator": "lt", "value": "V8"},
+        ]
+
+    def test_read_ignores_legacy_columns(self, db: Database, engagement_id: int) -> None:
+        """Gelesen wird ausschließlich `filters`."""
+        sid, _ = self._store(db, engagement_id, 0)
+        conn = db.connect()
+        conn.execute(
+            "UPDATE samples SET filter_field = 'Country', filter_value = '\"GER\"' WHERE id = ?",
+            (sid,),
+        )
+        loaded = SampleRepo(conn).get_by_id(sid)
+        assert loaded is not None
+        assert loaded.config.filters == ()

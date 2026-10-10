@@ -19,11 +19,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any, assert_never
 
 from sampling_tool.core.models import (
     DatasetRow,
+    FilterCondition,
     FilterOperator,
     SampleConfig,
     SampleResult,
@@ -48,7 +49,7 @@ class BaseSampler(ABC):
     Jeder konkrete Sampler implementiert `_select(...)` und liefert die
     gezogenen `row_id`s zurück. Die Basisklasse kümmert sich um:
     - Validierung der Konfiguration
-    - Optionalen Vorfilter (`filter_field`/`filter_value`)
+    - Optionale Vorfilter (`filters`, UND-verknüpft)
     - Deterministische Sortierung nach `row_id` vor der Ziehung
     - Verpacken in ein `SampleResult`
 
@@ -109,16 +110,15 @@ class BaseSampler(ABC):
         explizit setzen können, Tests aber weiter ohne diesen Parameter
         die Pre-Filter-Population vorfinden.
         """
-        if self.config.filter_field is None:
+        filters = self.config.filters
+        if not filters:
             unfiltered = list(rows)
             return unfiltered, len(unfiltered)
-        field = self.config.filter_field
-        value = self.config.filter_value
         pool: list[DatasetRow] = []
         total = 0
         for r in rows:
             total += 1
-            if matches_filter(r.get(field), self.config.filter_operator, value):
+            if matches_all(r, filters):
                 pool.append(r)
         return pool, total
 
@@ -168,7 +168,7 @@ class SimpleSampler(BaseSampler):
         in `_select` nur `row.row_id` aus den shuffled DatasetRows liest,
         liefert ein Shuffle direkt über die row_ids dasselbe Ergebnis.
 
-        Voraussetzung: `config.filter_field is None`. Mit Filter wirft
+        Voraussetzung: `not config.has_filter`. Mit Filter wirft
         die Methode `SamplingError`, weil ein Filter auf das Value-Dict
         zugreifen muss – dann ist der reguläre `sample(rows)`-Pfad nötig.
 
@@ -177,7 +177,7 @@ class SimpleSampler(BaseSampler):
         `test_sampling.py::TestSimpleSamplerIdsPath` weisen Bit-Gleichheit
         nach.
         """
-        if self.config.filter_field is not None:
+        if self.config.has_filter:
             raise SamplingError(
                 "sample_ids ist nur für ungefiltertes Sampling – mit Filter "
                 "bitte sample(rows) verwenden, da die Filter-Bedingung auf "
@@ -264,13 +264,13 @@ class ClusterSampler(BaseSampler):
         wird wie in `sample()` sortiert. Oracle-Tests:
         `tests/unit/test_sampling.py::TestClusterSamplerPairsPath`.
 
-        Voraussetzung: `config.filter_field is None` – ein Filter greift auf
+        Voraussetzung: `not config.has_filter` – ein Filter greift auf
         die Row-Values zu, dann ist der reguläre `sample(rows)`-Pfad nötig.
 
         RAM-Wirkung bei 1M-Datasets: ~1.1 GB (DatasetRow-Pool) → ein
         (int, wert)-Tupel pro Row (siehe PERFORMANCE.md Sprint 35).
         """
-        if self.config.filter_field is not None:
+        if self.config.has_filter:
             raise SamplingError(
                 "sample_pairs ist nur für ungefiltertes Sampling – mit Filter "
                 "bitte sample(rows) verwenden, da die Filter-Bedingung auf "
@@ -382,10 +382,10 @@ class StratifiedSampler(BaseSampler):
         identisch. Oracle-Tests:
         `tests/unit/test_sampling.py::TestStratifiedSamplerPairsPath`.
 
-        Voraussetzung: `config.filter_field is None` – ein Filter greift auf
+        Voraussetzung: `not config.has_filter` – ein Filter greift auf
         die Row-Values zu, dann ist der reguläre `sample(rows)`-Pfad nötig.
         """
-        if self.config.filter_field is not None:
+        if self.config.has_filter:
             raise SamplingError(
                 "sample_pairs ist nur für ungefiltertes Sampling – mit Filter "
                 "bitte sample(rows) verwenden, da die Filter-Bedingung auf "
@@ -475,6 +475,17 @@ def create_sampler(config: SampleConfig) -> BaseSampler:
 # ---------------------------------------------------------------------------
 # Filter-Matching (modul-öffentlich)
 # ---------------------------------------------------------------------------
+
+
+def matches_all(row: DatasetRow, filters: Sequence[FilterCondition]) -> bool:
+    """Erfüllt `row` alle Bedingungen (UND)? Leere Liste → immer True.
+
+    Die eine Pool-Prüfung für Ziehung, Trefferzahl im Dialog und dokumentierte
+    Population (Sprint 92) – kein zweiter Prüfpfad, sonst laufen Vorschau und
+    Ziehung auseinander. Bei genau einer Bedingung identisch zum früheren
+    Einzelfilter (bit-identische Ziehung, `test_filter_reproducibility.py`).
+    """
+    return all(matches_filter(row.get(c.field), c.operator, c.value) for c in filters)
 
 
 def matches_filter(row_value: Any, operator: FilterOperator, filter_value: Any) -> bool:

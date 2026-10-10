@@ -1,4 +1,4 @@
-"""_count_filter_matches – Vorschau-Zähler teilt matches_filter mit dem Sampler (Sprint 36 / T5)."""
+"""_count_filter_matches – Vorschau-Zähler teilt die Pool-Prüfung mit dem Sampler (Sprint 36/92)."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
     Engagement,
+    FilterCondition,
     FilterOperator,
     SampleConfig,
     SamplingMethod,
@@ -73,7 +74,7 @@ class TestFilterMatchCount:
             FilterOperator.LTE: 4,  # 10,20,30,30
         }
         for op, want in expected.items():
-            got = _count_filter_matches(repo, ds_id, _NUM_COLUMN, op, 30, None)
+            got = _count_filter_matches(repo, ds_id, (FilterCondition(_NUM_COLUMN, op, 30),), None)
             assert got == want, op
 
     def test_restrict_to_ids_counts_only_within_subset(self, db: Database) -> None:
@@ -81,10 +82,14 @@ class TestFilterMatchCount:
         ds_id = _persist(db, eng, _mixed_rows(), (_NUM_COLUMN, _STR_COLUMN))
         repo = DatasetRepo(db.connect())
         # Teilmenge row_ids 1,2,3 → betrag 10,20,30. GT 15 → 20,30 = 2.
-        within = _count_filter_matches(repo, ds_id, _NUM_COLUMN, FilterOperator.GT, 15, [1, 2, 3])
+        within = _count_filter_matches(
+            repo, ds_id, (FilterCondition(_NUM_COLUMN, FilterOperator.GT, 15),), [1, 2, 3]
+        )
         assert within == 2
         # Volle Tabelle GT 15 → 20,30,30,40,50 = 5.
-        whole = _count_filter_matches(repo, ds_id, _NUM_COLUMN, FilterOperator.GT, 15, None)
+        whole = _count_filter_matches(
+            repo, ds_id, (FilterCondition(_NUM_COLUMN, FilterOperator.GT, 15),), None
+        )
         assert whole == 5
 
     def test_empty_restrict_to_ids_counts_zero(self, db: Database) -> None:
@@ -92,7 +97,12 @@ class TestFilterMatchCount:
         ds_id = _persist(db, eng, _mixed_rows(), (_NUM_COLUMN, _STR_COLUMN))
         repo = DatasetRepo(db.connect())
         # Leere Auswahl (nicht None) → Zählung innerhalb der leeren Menge = 0.
-        assert _count_filter_matches(repo, ds_id, _NUM_COLUMN, FilterOperator.GT, 0, []) == 0
+        assert (
+            _count_filter_matches(
+                repo, ds_id, (FilterCondition(_NUM_COLUMN, FilterOperator.GT, 0),), []
+            )
+            == 0
+        )
 
     def test_pathological_column_name_uses_iter_rows_fallback(self, db: Database) -> None:
         """Spalten mit `"`/`\\` können den json_extract-Pfad nicht → Fallback iter_rows.
@@ -113,8 +123,18 @@ class TestFilterMatchCount:
         assert DatasetRepo.supports_field_pairs(col_quote) is False
         assert DatasetRepo.supports_field_pairs(col_backslash) is False
         # Darf NICHT raisen und muss korrekt über iter_rows zählen.
-        assert _count_filter_matches(repo, ds_id, col_quote, FilterOperator.GTE, 20, None) == 2
-        assert _count_filter_matches(repo, ds_id, col_backslash, FilterOperator.LT, 300, None) == 2
+        assert (
+            _count_filter_matches(
+                repo, ds_id, (FilterCondition(col_quote, FilterOperator.GTE, 20),), None
+            )
+            == 2
+        )
+        assert (
+            _count_filter_matches(
+                repo, ds_id, (FilterCondition(col_backslash, FilterOperator.LT, 300),), None
+            )
+            == 2
+        )
 
     def test_consistency_oracle_count_equals_collect_pool(self, db: Database) -> None:
         """Zähler == Größe des Pools, den `_collect_pool` für dieselbe Filter-Config sammelt.
@@ -140,10 +160,44 @@ class TestFilterMatchCount:
                 method=SamplingMethod.SIMPLE,
                 size=1,
                 seed=1,
-                filter_field=column,
-                filter_value=value,
-                filter_operator=op,
+                filters=(FilterCondition(column, op, value),),
             )
             pool, _total = SimpleSampler(cfg)._collect_pool(repo.iter_rows(ds_id))
-            count = _count_filter_matches(repo, ds_id, column, op, value, None)
+            count = _count_filter_matches(repo, ds_id, (FilterCondition(column, op, value),), None)
             assert count == len(pool), (column, op, value)
+
+
+class TestMultiFilterMatchCount:
+    """Sprint 92: mehrere Bedingungen zählen über dieselbe `matches_all`-Prüfung."""
+
+    _AUT_AB_20 = (
+        FilterCondition(_STR_COLUMN, FilterOperator.EQ, "AUT"),
+        FilterCondition(_NUM_COLUMN, FilterOperator.GTE, 20),
+    )
+
+    def test_two_conditions_and(self, db: Database) -> None:
+        eng = _engagement_id(db)
+        ds_id = _persist(db, eng, _mixed_rows(), (_NUM_COLUMN, _STR_COLUMN))
+        repo = DatasetRepo(db.connect())
+        # AUT: 10, 30, 50 → davon ≥ 20: 30, 50.
+        assert _count_filter_matches(repo, ds_id, self._AUT_AB_20, None) == 2
+        # Teilmenge 1..3 → AUT 10, 30 → ≥ 20: nur 30.
+        assert _count_filter_matches(repo, ds_id, self._AUT_AB_20, [1, 2, 3]) == 1
+
+    def test_range_on_same_column(self, db: Database) -> None:
+        eng = _engagement_id(db)
+        ds_id = _persist(db, eng, _mixed_rows(), (_NUM_COLUMN, _STR_COLUMN))
+        repo = DatasetRepo(db.connect())
+        conds = (
+            FilterCondition(_NUM_COLUMN, FilterOperator.GTE, 20),
+            FilterCondition(_NUM_COLUMN, FilterOperator.LT, 40),
+        )
+        assert _count_filter_matches(repo, ds_id, conds, None) == 3
+
+    def test_oracle_equals_collect_pool(self, db: Database) -> None:
+        eng = _engagement_id(db)
+        ds_id = _persist(db, eng, _mixed_rows(), (_NUM_COLUMN, _STR_COLUMN))
+        repo = DatasetRepo(db.connect())
+        cfg = SampleConfig(method=SamplingMethod.SIMPLE, size=1, seed=1, filters=self._AUT_AB_20)
+        pool, _total = SimpleSampler(cfg)._collect_pool(repo.iter_rows(ds_id))
+        assert _count_filter_matches(repo, ds_id, self._AUT_AB_20, None) == len(pool)

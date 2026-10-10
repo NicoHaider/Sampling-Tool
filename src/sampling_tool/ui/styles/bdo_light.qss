@@ -94,6 +94,27 @@ QToolBar QToolButton:disabled {
     color: #B0B0B0;
 }
 
+/* Sprint 92: „+"/„×" am Ende der Filterzeilen im Stichproben-Dialog.
+ * Gleiche Hover-Hervorhebung wie die Toolbar-Knöpfe. */
+QToolButton#filterRowButton {
+    background: transparent;
+    border: 1px solid #D9D9D9;
+    border-radius: 4px;
+    color: #333333;
+    padding: 0px;
+}
+
+QToolButton#filterRowButton:hover {
+    background: #FFE6E6;
+    border-color: #E81A3B;
+    color: #A41229;
+}
+
+QToolButton#filterRowButton:pressed {
+    background: #A41229;
+    color: #FFFFFF;
+}
+
 /* Sprint 69/6: Expanding-Spacer sonst durch generische QWidget-Regel weiß. */
 QWidget#toolbarSpacer {
     background: transparent;

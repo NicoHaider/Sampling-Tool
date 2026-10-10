@@ -300,9 +300,13 @@ class TestPreflightSchema6:
             conn.close()
 
     def _v6_db(self, db_path: Path) -> None:
-        db = Database(db_path)
-        db.migrate()
-        db.close()
+        # Sprint 92: Migration 007 zieht frische DBs auf v7 – v6 explizit bauen.
+        self._v5_db(db_path)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.executescript(_migration_sql("006_provenance_import_and_derivation.sql"))
+        finally:
+            conn.close()
 
     def test_v5_db_accepted(self, tmp_path: Path) -> None:
         db_path = tmp_path / "v5.db"

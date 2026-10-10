@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 from sampling_tool import config
+from sampling_tool.config import EXPORT_FILENAME_PATTERN, build_export_filename, export_id_token
 
 pytestmark = pytest.mark.unit
 
@@ -148,3 +151,49 @@ class TestReportLabelTables:
         ).to_audit_details()
         missing = [k for k in keys if k not in config.AUDIT_DETAIL_LABELS]
         assert not missing, f"Ohne Anzeige-Namen in config.AUDIT_DETAIL_LABELS: {missing}"
+
+
+class TestExportFilenameIdPrefix:
+    """Sprint 92 / B: `…_ID_<id>_…`; ein vom Anwender getipptes „ID" erscheint nicht doppelt."""
+
+    _NOW = datetime(2026, 10, 2, 9, 30)
+
+    @pytest.mark.parametrize(
+        ("raw_id", "expected"),
+        [
+            ("20261002", "20261002"),
+            ("ID20261002", "20261002"),
+            ("id_4711", "4711"),
+            ("ID-A7", "A7"),
+            ("Id 12", "12"),
+            ("IDX5", "IDX5"),
+            ("Identität", "Identität"),
+            ("ID", ""),
+            ("  ID_  ", ""),
+            ("A/B", "A_B"),
+        ],
+    )
+    def test_id_token(self, raw_id: str, expected: str) -> None:
+        assert export_id_token(raw_id) == expected
+
+    @pytest.mark.parametrize(
+        ("raw_id", "middle"),
+        [
+            ("20261002", "_ID_20261002_"),
+            ("ID20261002", "_ID_20261002_"),
+            ("id_4711", "_ID_4711_"),
+            ("ID-A7", "_ID_A7_"),
+            ("IDX5", "_ID_IDX5_"),
+            ("ID", "_ID_0_"),
+        ],
+    )
+    def test_filename(self, raw_id: str, middle: str) -> None:
+        name = build_export_filename("Mandant", raw_id, "report", self._NOW)
+        assert name == f"Mandant{middle}BDO_report_20261002"
+
+    def test_pattern(self) -> None:
+        assert EXPORT_FILENAME_PATTERN == "{name}_ID_{id}_BDO_{type}_{date}"
+
+    def test_name_is_sanitized_with_fallback(self) -> None:
+        assert build_export_filename("a/b", "1", "x", self._NOW) == "a_b_ID_1_BDO_x_20261002"
+        assert build_export_filename("  ", "1", "x", self._NOW) == "export_ID_1_BDO_x_20261002"

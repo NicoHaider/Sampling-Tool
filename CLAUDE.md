@@ -84,6 +84,10 @@ ui ──▶ controllers ──▶ core ◀── io
   - `models.py` – frozen Dataclasses (Engagement, Dataset, SampleConfig, …).
     `Dataset` ist seit Sprint 11.1 nur Metadaten (`columns`, `row_count`,
     `source_file`, Engagement-FK) – Rows leben im Repo (siehe „Streaming-Architektur" in CHANGELOG.md).
+    `SampleConfig.filters` ist seit Sprint 92 ein Tupel `FilterCondition(field,
+    operator, value)` (max. `config.MAX_FILTERS` = 5, UND-verknüpft); die
+    Pool-Prüfung ist `core.sampling.matches_all` – auch für Trefferzahl und
+    dokumentierte Population. Persistiert in `samples.filters` (Migration 007).
   - `rng.py` – `make_rng(seed)` + `fisher_yates_shuffle`; seit Sprint 39 (R-001)
     expliziter `Generator(PCG64(seed))`-BitGenerator (output-identisch zum
     vorherigen `numpy.random.default_rng`-Default), siehe Abschnitt
@@ -148,7 +152,9 @@ ui ──▶ controllers ──▶ core ◀── io
   - `exporter.py` – `ExcelExporter`. Atomare Writes (`.tmp` → `os.replace`),
     Sheet "Sample" (BDO-rote Header) + Sheet "Metadaten" (Engagement, Seed,
     Methode). Dateiname-Schema:
-    `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
+    `{name}_ID_{id}_BDO_sampling_{YYYYMMDD}.xlsx` (seit Sprint 92 mit
+    Unterstrich; ein getipptes „ID"-Präfix der ID entfällt). Gebaut nur über
+    `config.build_export_filename` – Vorschau und Writer rufen dieselbe Funktion.
     `export_sample(sample, dataset, dataset_repo, ...)` nimmt das
     `DatasetRepo` und holt nur `sample.selected_row_ids` via
     `get_rows_by_ids` – siehe „Streaming-Architektur" in CHANGELOG.md.
@@ -458,7 +464,9 @@ ui ──▶ controllers ──▶ core ◀── io
     `MainController.handle_new_sampling` orchestriert das.
   - `dialogs/export_sample_dialog.py` – Spaltenauswahl (Checkboxen) +
     Filename/ID + Zielordner. Vorschau-Label live mit
-    `{name}_ID{id}_BDO_sampling_{YYYYMMDD}.xlsx`.
+    `{name}_ID_{id}_BDO_sampling_{YYYYMMDD}.xlsx` (seit Sprint 92 mit
+    Unterstrich; ein getipptes „ID"-Präfix der ID entfällt). Gebaut nur über
+    `config.build_export_filename` – Vorschau und Writer rufen dieselbe Funktion.
   - `dialogs/_export_base.py` – `ExportTargetWidget` als wiederverwendbare
     rechte Spalte für alle Export-Dialoge (Dateiname, ID, Zielordner,
     Vorschau-Label). Pattern-basiert über `{name}/{id}/{type}/{date}`-Tokens

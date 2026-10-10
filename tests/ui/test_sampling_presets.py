@@ -22,6 +22,8 @@ from sampling_tool.config import APP_NAME, APP_ORG
 from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
+    FilterCondition,
+    FilterOperator,
     SamplingMethod,
     StratifyMode,
 )
@@ -131,8 +133,8 @@ class TestSamplingPresets:
         cfg = dialog._build_config()
         assert cfg.method == SamplingMethod.SIMPLE
         assert cfg.size == 8
-        assert cfg.filter_field == "Land"
-        assert cfg.filter_value == preset.filter_value == "AUT"
+        assert cfg.filters[0].field == "Land"
+        assert cfg.filters[0].value == preset.filters[0].value == "AUT"
 
     def test_preset_excludes_seed(self, qtbot: QtBot) -> None:
         dialog = SamplingDialog(*_make_dataset(), features=_ALL)
@@ -169,8 +171,7 @@ class TestSamplingPresets:
             name="p",
             method=SamplingMethod.SIMPLE,
             size=4,
-            filter_field="Land",
-            filter_value="AUT",
+            filters=(FilterCondition("Land", FilterOperator.EQ, "AUT"),),
         )
         result = dialog.apply_preset(preset)
         # Der Filter auf die fehlende Spalte wird gemeldet …
@@ -179,7 +180,7 @@ class TestSamplingPresets:
         assert dialog._size_spin.value() == 4
         # … und der Filter selbst ist neutralisiert.
         assert dialog._filter_field.currentText() == NO_FILTER_LABEL
-        assert dialog._build_config().filter_field is None
+        assert dialog._build_config().filters == ()
 
     def test_apply_skips_missing_filter_value(self, qtbot: QtBot) -> None:
         # Spalte „Land" existiert, aber der Preset-Wert „AUT" kommt in dieser
@@ -196,13 +197,12 @@ class TestSamplingPresets:
             name="p",
             method=SamplingMethod.SIMPLE,
             size=2,
-            filter_field="Land",
-            filter_value="AUT",
+            filters=(FilterCondition("Land", FilterOperator.EQ, "AUT"),),
         )
         result = dialog.apply_preset(preset)
         assert "Land" in result.skipped_filters
         assert dialog._filter_field.currentText() == NO_FILTER_LABEL
-        assert dialog._build_config().filter_field is None
+        assert dialog._build_config().filters == ()
 
 
 # ---------------------------------------------------------------------------

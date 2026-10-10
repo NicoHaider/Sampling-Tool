@@ -19,6 +19,8 @@ from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
     Engagement,
+    FilterCondition,
+    FilterOperator,
     ParentRelation,
     SampleConfig,
     SampleResult,
@@ -2097,7 +2099,7 @@ class TestSamplingFlow:
             )
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.export.handle_export_sample()
-            files = list(tmp_path.glob("testname_ID42_BDO_sampling_*.xlsx"))
+            files = list(tmp_path.glob("testname_ID_42_BDO_sampling_*.xlsx"))
             assert len(files) == 1
         finally:
             controller.engagement.handle_close_engagement()
@@ -4042,7 +4044,9 @@ class TestRestrictAndSupplementUseOwnDatasetOnly:
             captured["current_sample"] = current
             assert callable(match_count)
             # restrict=True, solange der Dialog offen ist: Betrag > 0 trifft alle Zeilen.
-            captured["restricted_count"] = match_count("Betrag", FilterOperator.GT, 0, True)
+            captured["restricted_count"] = match_count(
+                (FilterCondition("Betrag", FilterOperator.GT, 0),), True
+            )
             return _StubSamplingDialog(result)
 
         controller = MainController(
@@ -5297,7 +5301,7 @@ class TestFilterMatchCountProvider:
             assert provider is not None
             assert callable(provider)
             # Betrag-Werte: 10, 20, 30, 40, 50 (Row 1..5). GT 20 ⇒ {30, 40, 50}.
-            assert provider("Betrag", FilterOperator.GT, 20, False) == 3
+            assert provider((FilterCondition("Betrag", FilterOperator.GT, 20),), False) == 3
         finally:
             controller.engagement.handle_close_engagement()
 
@@ -5344,10 +5348,10 @@ class TestFilterMatchCountProvider:
 
             # restrict=True zählt NUR innerhalb der aktiven Stichprobe: von
             # {20, 40} ist nur 40 > 20 ⇒ genau 1 Treffer ...
-            restricted = provider("Betrag", FilterOperator.GT, 20, True)
+            restricted = provider((FilterCondition("Betrag", FilterOperator.GT, 20),), True)
             assert restricted == 1
             # ... während die unbeschränkte Zählung {30, 40, 50} liefert.
-            unrestricted = provider("Betrag", FilterOperator.GT, 20, False)
+            unrestricted = provider((FilterCondition("Betrag", FilterOperator.GT, 20),), False)
             assert unrestricted == 3
             assert restricted != unrestricted
         finally:
@@ -5765,8 +5769,7 @@ class TestSamplingPathDispatch:
                 method=SamplingMethod.SIMPLE,
                 size=1,
                 seed=42,
-                filter_field="Konto",
-                filter_value="K1",
+                filters=(FilterCondition("Konto", FilterOperator.EQ, "K1"),),
             ),
             from_sample_only=False,
         )
@@ -5864,8 +5867,7 @@ class TestSamplingPathDispatch:
                 size=1,
                 seed=42,
                 cluster_field="Konto",
-                filter_field="Konto",
-                filter_value="K1",
+                filters=(FilterCondition("Konto", FilterOperator.EQ, "K1"),),
             ),
             from_sample_only=False,
         )
@@ -6267,9 +6269,7 @@ class TestSupplementarySampling:
                 method=SamplingMethod.SIMPLE,
                 size=2,
                 seed=7,
-                filter_field="Betrag",
-                filter_operator=FilterOperator.GT,
-                filter_value=20,
+                filters=(FilterCondition("Betrag", FilterOperator.GT, 20),),
             ),
             exclude_sample_ids=True,
         )
@@ -6650,7 +6650,7 @@ class TestAuditTrailRobustness:
             ):
                 controller.export.handle_export_sample()  # darf NICHT werfen
             mock_warning.assert_called_once()
-            files = list(tmp_path.glob("testname_ID42_BDO_sampling_*.xlsx"))
+            files = list(tmp_path.glob("testname_ID_42_BDO_sampling_*.xlsx"))
             assert len(files) == 1, "Exportdatei muss trotz Audit-Log-Fehler erhalten bleiben"
         finally:
             controller.engagement.handle_close_engagement()
@@ -7835,7 +7835,7 @@ class TestCreatedByIsUser:
 
             with patch("sampling_tool.ui.controllers.export_controller.QMessageBox.information"):
                 controller.export.handle_export_sample()
-            [exported] = list(tmp_path.glob("wer_ID1_BDO_sampling_*.xlsx"))
+            [exported] = list(tmp_path.glob("wer_ID_1_BDO_sampling_*.xlsx"))
             meta = {
                 r[0].value: r[1].value
                 for r in load_workbook(exported)["Metadaten"].iter_rows(min_row=2)
@@ -7970,9 +7970,7 @@ class TestPopulationIsSelectionBasis:
                 method=SamplingMethod.SIMPLE,
                 size=1,
                 seed=11,
-                filter_field="Betrag",
-                filter_operator=FilterOperator.GT,
-                filter_value=20,
+                filters=(FilterCondition("Betrag", FilterOperator.GT, 20),),
             ),
             from_sample_only=restrict,
             exclude_sample_ids=supplement,
@@ -8101,9 +8099,7 @@ class TestSampleExportShowsPopulationBasis:
                         method=SamplingMethod.SIMPLE,
                         size=1,
                         seed=5,
-                        filter_field="Betrag",
-                        filter_operator=FilterOperator.GT,
-                        filter_value=20,
+                        filters=(FilterCondition("Betrag", FilterOperator.GT, 20),),
                     ),
                     selected_row_ids=(4,),
                     population_size=5,
@@ -8292,3 +8288,65 @@ class TestSyncFolderHint:
             assert window.sidebar().sync_hint_text() is None
         finally:
             controller.engagement.handle_close_engagement()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 92 / A4: Migration 007 beim Öffnen eines Bestandsprojekts
+# ---------------------------------------------------------------------------
+
+
+def _db_at_schema_v6_with_filtered_sample(tmp_path: Path) -> Path:
+    """Projektdatei auf Schema 6 (Sprint 91) mit gefilterter und ungefilterter Stichprobe."""
+    from sampling_tool.resources import package_resource
+
+    migrations = tmp_path / "migrations_v6"
+    migrations.mkdir()
+    for script in sorted(package_resource("persistence/migrations").glob("00[1-6]_*.sql")):
+        (migrations / script.name).write_bytes(script.read_bytes())
+    db_path = tmp_path / "v6.db"
+    db = Database(db_path)
+    db.migrate(migrations_root=migrations)
+    assert db.schema_version() == 6
+    eng = EngagementRepo(db.connect()).get_or_create(
+        Engagement(auditor_name="Anna", client_name="ACME", audit_type="ISAE 3402")
+    )
+    conn = db.connect()
+    conn.execute(
+        "INSERT INTO datasets (engagement_id, name, row_count, columns_json) "
+        "VALUES (?, 'Buchungen', 0, '[\"Kostenstelle\"]')",
+        (eng.id,),
+    )
+    insert = (
+        "INSERT INTO samples (dataset_id, method, sample_size, population_size, seed, "
+        "filter_field, filter_value, filter_operator, created_by) "
+        "VALUES (1, 'simple', 1, 3, 1, ?, ?, 'eq', 'anna')"
+    )
+    conn.execute(insert, ("Kostenstelle", '"Vertrieb"'))
+    conn.execute(insert, (None, None))
+    db.close()
+    return db_path
+
+
+class TestMigration007:
+    def test_open_v6_project_migrates_backs_up_and_keeps_filters(
+        self, window: MainWindow, recent_store: RecentEngagementsStore, tmp_path: Path
+    ) -> None:
+        db_path = _db_at_schema_v6_with_filtered_sample(tmp_path)
+        controller = MainController(window, recent_store=recent_store)
+        try:
+            controller.engagement.handle_open_engagement(db_path)
+            db = controller.session.db
+            assert db is not None
+            assert db.schema_version() == 7
+            repo = SampleRepo(db.connect())
+            filtered, unfiltered = repo.get_by_id(1), repo.get_by_id(2)
+        finally:
+            controller.engagement.handle_close_engagement()
+        assert filtered is not None
+        assert unfiltered is not None
+        assert filtered.config.filters == (
+            FilterCondition("Kostenstelle", FilterOperator.EQ, "Vertrieb"),
+        )
+        assert unfiltered.config.filters == ()
+        names = _archive_names(db_path)
+        assert sum(n.endswith("+vor-migration.db") for n in names) == 1

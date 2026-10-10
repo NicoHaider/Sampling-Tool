@@ -17,6 +17,7 @@ from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
     Engagement,
+    FilterCondition,
     FilterOperator,
     SampleConfig,
     SampleResult,
@@ -140,7 +141,7 @@ class TestExportSample:
             custom_id="001",
         )
         assert out.exists()
-        assert out.name.startswith("NewHires_Q2_2026_ID001_BDO_sampling_")
+        assert out.name.startswith("NewHires_Q2_2026_ID_001_BDO_sampling_")
         assert out.name.endswith(".xlsx")
         # Datum im Namen plausibel (8 Ziffern)
         date_token = out.name.split("_BDO_sampling_")[1].replace(".xlsx", "")
@@ -218,9 +219,7 @@ class TestExportSample:
             size=5,
             seed=99,
             cluster_field="Land",
-            filter_field="Betrag",
-            filter_value=100,
-            filter_operator=FilterOperator.GTE,
+            filters=(FilterCondition("Betrag", FilterOperator.GTE, 100),),
         )
         sample = SampleResult(
             config=cfg,
@@ -243,7 +242,7 @@ class TestExportSample:
         meta = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2)}
         assert meta["Angeforderte Größe"] == "5"
         assert meta["Tatsächliche Größe"] == "7"
-        assert meta["Filter-Operator"] == "≥"
+        assert meta["Filter"] == "Betrag ≥ 100"
         assert meta["Übergeordnete Stichprobe"] == "17"
         assert meta["Algorithmus-Version"] == "bdo-v1"
         assert meta["App-Version"] == __version__
@@ -593,11 +592,11 @@ class TestExportFilenameByteIdentity:
     @pytest.mark.parametrize(
         ("custom_name", "custom_id", "expected_name_id"),
         [
-            ("Müller & Co", "1", "Müller & Co_ID1"),
-            ("a/b:c*d", "2", "a_b_c_d_ID2"),
-            ("  Rand  ", "3", "Rand_ID3"),
-            ("X" * 150, "4", f"{'X' * 150}_ID4"),
-            ("Ü_2026", "5", "Ü_2026_ID5"),
+            ("Müller & Co", "1", "Müller & Co_ID_1"),
+            ("a/b:c*d", "2", "a_b_c_d_ID_2"),
+            ("  Rand  ", "3", "Rand_ID_3"),
+            ("X" * 150, "4", f"{'X' * 150}_ID_4"),
+            ("Ü_2026", "5", "Ü_2026_ID_5"),
         ],
     )
     def test_sample_export_filename_byte_identity(
@@ -720,7 +719,7 @@ class TestWrittenFileMatchesDialogPreview:
             custom_id="1",
             now=EXPORT_FROZEN_NOW,
         )
-        assert written.name == "X_ID1_BDO_sampling_20260513.xlsx"
+        assert written.name == "X_ID_1_BDO_sampling_20260513.xlsx"
 
 
 class TestMetadataImportProvenance:

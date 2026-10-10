@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QStackedWidget,
     QStyle,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -44,6 +45,7 @@ from PyQt6.QtWidgets import (
 from sampling_tool.config import (
     BDO_GREY,
     DEFAULT_SAMPLE_SIZE,
+    MAX_FILTERS,
     METHOD_LABELS,
     MIN_SAMPLE_SIZE,
     SEED_MAX,
@@ -52,6 +54,7 @@ from sampling_tool.config import (
 )
 from sampling_tool.core.models import (
     Dataset,
+    FilterCondition,
     FilterOperator,
     SampleConfig,
     SampleResult,
@@ -74,6 +77,14 @@ from sampling_tool.ui.settings_store import SamplingFeatures
 logger = logging.getLogger(__name__)
 
 NO_FILTER_LABEL: str = "(kein Filter)"
+
+# Sprint 92: Formular-Beschriftung der ersten bzw. jeder weiteren Filterzeile.
+FIRST_FILTER_LABEL: Final[str] = "Filter (optional)"
+NEXT_FILTER_LABEL: Final[str] = "und"
+ADD_FILTER_TOOLTIP: Final[str] = "Weiteren Filter hinzufügen"
+REMOVE_FILTER_TOOLTIP: Final[str] = "Filter entfernen"
+#: Objektname der „+"/„×"-Knöpfe – `bdo_light.qss` hebt sie beim Hover hervor.
+FILTER_ROW_BUTTON_NAME: Final[str] = "filterRowButton"
 
 # Sprint 85 / B: Cluster- und Schicht-Feld starten ohne Auswahl. Vorher stand
 # dort die erste Spalte (oft eine ID) – damit war jede Zeile ein eigener Cluster.
@@ -142,6 +153,27 @@ class SamplingDialogResult:
     exclude_sample_ids: bool = False
 
 
+@dataclass(eq=False, slots=True)
+class _FilterRow:
+    """Widgets einer Filterzeile (Spalte, Operator, Wert) samt Knöpfen (Sprint 92).
+
+    `value_stack` zeigt je Operator das distinct-Dropdown (`value`, EQ/NE) oder
+    das Schwellenwert-Feld (`value_text`, >, ≥, <, ≤). Die erste Zeile hat
+    keinen Entfernen-Knopf; `error_key` ist ihr Schlüssel in `_inline_errors`.
+    """
+
+    widget: QWidget
+    field: QComboBox
+    operator: QComboBox
+    value: QComboBox
+    value_text: QLineEdit
+    value_stack: QStackedWidget
+    add_button: QToolButton
+    remove_button: QToolButton | None
+    error_label: QLabel
+    error_key: str
+
+
 @dataclass(frozen=True, slots=True)
 class AppliedPresetResult:
     """Ergebnis von `SamplingDialog.apply_preset` (Sprint 23).
@@ -166,7 +198,9 @@ class SamplingDialog(QDialog):
         *,
         features: SamplingFeatures | None = None,
         preset_store: PresetStore | None = None,
-        filter_match_count_provider: Callable[[str, FilterOperator, Any, bool], int] | None = None,
+        filter_match_count_provider: (
+            Callable[[tuple[FilterCondition, ...], bool], int] | None
+        ) = None,
         ui_scale_factor: float = 1.0,
     ) -> None:
         super().__init__(parent)
@@ -185,13 +219,18 @@ class SamplingDialog(QDialog):
         # Lebensdauer unveränderlich, also wird jede Spalte genau einmal
         # geladen (Memo pro Dialog-Instanz, keine Invalidierung nötig).
         self._distinct_cache: dict[str, tuple[Any, ...]] = {}
-        # Sprint 36: liefert die Trefferzahl eines aktiven Filters (Feld,
-        # Operator, Wert, restrict-auf-aktuelle-Auswahl) für den Size-Hint.
-        # Ein Aufruf ist ein Full-Table-Scan; deshalb wird das Ergebnis pro
-        # (Feld, Operator, repr(Wert), restrict) memoisiert (Dataset ist modal
-        # unveränderlich, keine Invalidierung nötig – wie `_distinct_cache`).
+        # Sprint 36/92: liefert die Trefferzahl aller aktiven Filter (UND) samt
+        # restrict-auf-aktuelle-Auswahl für den Size-Hint. Ein Aufruf ist ein
+        # Full-Table-Scan; deshalb wird das Ergebnis pro (Bedingungen mit
+        # repr(Wert), restrict) memoisiert (Dataset ist modal unveränderlich,
+        # keine Invalidierung nötig – wie `_distinct_cache`).
         self._filter_match_count_provider = filter_match_count_provider
-        self._match_count_cache: dict[tuple[str, FilterOperator, str, bool], int] = {}
+        self._match_count_cache: dict[
+            tuple[tuple[tuple[str, FilterOperator, str], ...], bool], int
+        ] = {}
+        # Sprint 92: bis zu `MAX_FILTERS` Filterzeilen; die erste bleibt immer.
+        self._filter_rows: list[_FilterRow] = []
+        self._filter_row_serial = 0
         self._current_sample = current_sample
         self._result: SamplingDialogResult | None = None
         self._columns = list(dataset.columns)
@@ -227,6 +266,7 @@ class SamplingDialog(QDialog):
         self._reload_preset_combo()
         if self._show_filter:
             self._refresh_filter_values()
+            self._update_filter_buttons()
         if self._show_methods:
             self._on_method_changed()
         self._validate()
@@ -403,30 +443,16 @@ class SamplingDialog(QDialog):
         # Sprint 22: Filter, Cluster und Geschichtet werden je eigenem Toggle
         # einzeln gerendert – nicht mehr gebündelt unter einem Advanced-Flag.
         if self._show_filter:
-            self._filter_field = QComboBox()
-            self._filter_field.addItem(NO_FILTER_LABEL)
-            self._filter_field.addItems(self._columns)
-            self._filter_operator = QComboBox()
-            for label, operator in _FILTER_OPERATOR_ITEMS:
-                self._filter_operator.addItem(label, userData=operator)
-            # Sprint 36: der Wert-Eingabe-Bereich schaltet je Operator um –
-            # distinct-Dropdown (EQ/NE) vs. freies Schwellenwert-Feld
-            # (>, ≥, <, ≤). Ein QStackedWidget hält beide Seiten; Seite 0 ist
-            # das Dropdown (Default EQ), Seite 1 das Textfeld.
-            self._filter_value = QComboBox()
-            self._filter_value.setEnabled(False)
-            self._filter_value_text = QLineEdit()
-            self._filter_value_text.setPlaceholderText("Schwellenwert…")
-            self._filter_value_stack = QStackedWidget()
-            self._filter_value_stack.addWidget(self._filter_value)
-            self._filter_value_stack.addWidget(self._filter_value_text)
-            filter_row = QHBoxLayout()
-            filter_row.setSpacing(8)
-            filter_row.addWidget(self._filter_field, stretch=2)
-            filter_row.addWidget(self._filter_operator, stretch=0)
-            filter_row.addWidget(self._filter_value_stack, stretch=3)
-            form.addRow("Filter (optional)", filter_row)
-            form.addRow(self._new_inline_error("filter"))
+            first = self._new_filter_row()
+            form.addRow(FIRST_FILTER_LABEL, first.widget)
+            form.addRow(first.error_label)
+            # Die erste Zeile wird nie entfernt – die bisherigen Attribute
+            # (vor Sprint 92 gab es nur sie) zeigen weiter auf ihre Widgets.
+            self._filter_field = first.field
+            self._filter_operator = first.operator
+            self._filter_value = first.value
+            self._filter_value_text = first.value_text
+            self._filter_value_stack = first.value_stack
 
         # Sprint 85 / B: Methodenfelder erscheinen nur bei ihrer Methode
         # (`_on_method_changed` schaltet die Formularzeilen um).
@@ -543,6 +569,103 @@ class SamplingDialog(QDialog):
         dialog_layout.addWidget(scroll, stretch=1)
         dialog_layout.addLayout(footer)
 
+    def _new_filter_row(self) -> _FilterRow:
+        """Baut eine Filterzeile; die erste (`_filter_rows` leer) ohne Entfernen-Knopf."""
+        is_first = not self._filter_rows
+        field = QComboBox()
+        field.addItem(NO_FILTER_LABEL)
+        field.addItems(self._columns)
+        operator = QComboBox()
+        for label, op in _FILTER_OPERATOR_ITEMS:
+            operator.addItem(label, userData=op)
+        # Sprint 36: der Wert-Eingabe-Bereich schaltet je Operator um –
+        # distinct-Dropdown (EQ/NE) vs. freies Schwellenwert-Feld
+        # (>, ≥, <, ≤). Ein QStackedWidget hält beide Seiten; Seite 0 ist
+        # das Dropdown (Default EQ), Seite 1 das Textfeld.
+        value = QComboBox()
+        value.setEnabled(False)
+        value_text = QLineEdit()
+        value_text.setPlaceholderText("Schwellenwert…")
+        value_stack = QStackedWidget()
+        value_stack.addWidget(value)
+        value_stack.addWidget(value_text)
+
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        layout.addWidget(field, stretch=2)
+        layout.addWidget(operator, stretch=0)
+        layout.addWidget(value_stack, stretch=3)
+        side = field.sizeHint().height()
+        remove_button = None
+        if not is_first:
+            remove_button = _filter_row_button("×", REMOVE_FILTER_TOOLTIP, side)
+            layout.addWidget(remove_button)
+        add_button = _filter_row_button("+", ADD_FILTER_TOOLTIP, side)
+        layout.addWidget(add_button)
+
+        error_key = "filter" if is_first else f"filter_{self._filter_row_serial}"
+        self._filter_row_serial += 1
+        row = _FilterRow(
+            widget=widget,
+            field=field,
+            operator=operator,
+            value=value,
+            value_text=value_text,
+            value_stack=value_stack,
+            add_button=add_button,
+            remove_button=remove_button,
+            error_label=self._new_inline_error(error_key),
+            error_key=error_key,
+        )
+        self._filter_rows.append(row)
+        return row
+
+    def _add_filter_row(self) -> _FilterRow:
+        """Hängt unter der letzten Filterzeile eine neue an („und")."""
+        position, _role = self._form.getWidgetPosition(self._filter_rows[-1].error_label)
+        row = self._new_filter_row()
+        self._form.insertRow(position + 1, NEXT_FILTER_LABEL, row.widget)
+        self._form.insertRow(position + 2, row.error_label)
+        self._wire_filter_row(row)
+        self._refresh_filter_values(row)
+        self._update_filter_buttons()
+        return row
+
+    def _remove_filter_row(self, row: _FilterRow) -> None:
+        """Entfernt eine Zusatzzeile (nie die erste) samt Beschriftung und Meldung."""
+        self._filter_rows.remove(row)
+        self._inline_errors.pop(row.error_key, None)
+        for anchor in (row.error_label, row.widget):
+            taken = self._form.takeRow(anchor)
+            for item in (taken.labelItem, taken.fieldItem):
+                widget = item.widget() if item is not None else None
+                if widget is not None:
+                    # deleteLater: der Entfernen-Knopf sendet gerade noch sein Signal.
+                    widget.hide()
+                    widget.deleteLater()
+        self._update_filter_buttons()
+        self._reset_combo_selection()
+        self._update_size_hint()
+        self._validate()
+
+    def _reset_filter_rows(self) -> None:
+        """Nur noch die erste Zeile, auf „(kein Filter)" und Operator „=" (Vorlagen)."""
+        for row in self._filter_rows[1:]:
+            self._remove_filter_row(row)
+        first = self._filter_rows[0]
+        self._apply_preset_operator(FilterOperator.EQ, first)
+        first.value_text.clear()
+        first.field.setCurrentText(NO_FILTER_LABEL)
+
+    def _update_filter_buttons(self) -> None:
+        """„+" nur an der letzten Zeile, solange Platz ist und Zeile 1 einen Filter hat."""
+        can_add = self._row_is_set(self._filter_rows[0]) and len(self._filter_rows) < MAX_FILTERS
+        last = self._filter_rows[-1]
+        for row in self._filter_rows:
+            row.add_button.setVisible(can_add and row is last)
+
     def _column_combo(self) -> QComboBox:
         """Spaltenauswahl mit neutralem Platzhalter; die Spalte steht als `userData`."""
         combo = QComboBox()
@@ -634,20 +757,7 @@ class SamplingDialog(QDialog):
                 rb.toggled.connect(self._on_method_changed)
                 rb.toggled.connect(self._reset_combo_selection)
         if self._show_filter:
-            self._filter_field.currentTextChanged.connect(self._refresh_filter_values)
-            self._filter_field.currentTextChanged.connect(self._reset_combo_selection)
-            self._filter_field.currentTextChanged.connect(self._update_size_hint)
-            self._filter_value.currentTextChanged.connect(self._validate)
-            self._filter_value.currentIndexChanged.connect(self._update_size_hint)
-            self._filter_operator.currentIndexChanged.connect(self._on_filter_operator_changed)
-            self._filter_operator.activated.connect(self._reset_combo_selection)
-            # Preview/Size-Hint darf NICHT pro Tastendruck den Provider (Full-
-            # Table-Scan) triggern → nur `editingFinished` (Enter/Fokusverlust),
-            # nicht `textChanged`. Die reine Leer-Validierung ist billig und
-            # läuft pro Tastendruck weiter (kein Provider-Aufruf).
-            self._filter_value_text.editingFinished.connect(self._update_size_hint)
-            self._filter_value_text.editingFinished.connect(self._reset_combo_selection)
-            self._filter_value_text.textChanged.connect(self._validate)
+            self._wire_filter_row(self._filter_rows[0])
         if self._show_cluster:
             self._cluster_field.currentIndexChanged.connect(self._validate)
             self._cluster_field.currentIndexChanged.connect(self._update_size_hint)
@@ -656,6 +766,27 @@ class SamplingDialog(QDialog):
             self._stratify_group.buttonToggled.connect(self._validate)
         self._buttons.accepted.connect(self.accept)
         self._buttons.rejected.connect(self.reject)
+
+    def _wire_filter_row(self, row: _FilterRow) -> None:
+        row.field.currentTextChanged.connect(lambda _text, r=row: self._on_filter_field_changed(r))
+        row.value.currentTextChanged.connect(self._validate)
+        row.value.currentIndexChanged.connect(self._update_size_hint)
+        row.operator.currentIndexChanged.connect(
+            lambda _index, r=row: self._on_filter_operator_changed(r)
+        )
+        row.operator.activated.connect(self._reset_combo_selection)
+        # Preview/Size-Hint darf NICHT pro Tastendruck den Provider (Full-
+        # Table-Scan) triggern → nur `editingFinished` (Enter/Fokusverlust),
+        # nicht `textChanged`. Die reine Leer-Validierung ist billig und
+        # läuft pro Tastendruck weiter (kein Provider-Aufruf).
+        row.value_text.editingFinished.connect(self._update_size_hint)
+        row.value_text.editingFinished.connect(self._reset_combo_selection)
+        row.value_text.textChanged.connect(self._validate)
+        row.add_button.clicked.connect(self._add_filter_row)
+        if row.remove_button is not None:
+            row.remove_button.clicked.connect(
+                lambda _checked=False, r=row: self._remove_filter_row(r)
+            )
 
     def _method_radios(self) -> list[QRadioButton]:
         """Die tatsächlich gebauten Methoden-Radios (abhängig von den Toggles)."""
@@ -681,14 +812,22 @@ class SamplingDialog(QDialog):
         self._update_size_hint()
         self._validate()
 
-    def _refresh_filter_values(self) -> None:
-        field = self._filter_field.currentText()
-        self._filter_value.blockSignals(True)
-        self._filter_value.clear()
+    def _on_filter_field_changed(self, row: _FilterRow) -> None:
+        self._refresh_filter_values(row)
+        self._reset_combo_selection()
+        self._update_filter_buttons()
+        self._update_size_hint()
+
+    def _refresh_filter_values(self, row: _FilterRow | None = None) -> None:
+        """Füllt das Werte-Dropdown einer Filterzeile (Default: die erste)."""
+        row = row if row is not None else self._filter_rows[0]
+        field = row.field.currentText()
+        row.value.blockSignals(True)
+        row.value.clear()
         if field == NO_FILTER_LABEL or not field or self._distinct_values_provider is None:
-            self._filter_value.setEnabled(False)
+            row.value.setEnabled(False)
         else:
-            self._filter_value.setEnabled(True)
+            row.value.setEnabled(True)
             values = self._distinct_cache.get(field)
             if values is None:
                 try:
@@ -705,21 +844,20 @@ class SamplingDialog(QDialog):
                 else:
                     self._distinct_cache[field] = values
             for value in values:
-                self._filter_value.addItem(_display(value), userData=value)
-        self._filter_value.blockSignals(False)
+                row.value.addItem(_display(value), userData=value)
+        row.value.blockSignals(False)
         self._validate()
 
-    def _on_filter_operator_changed(self) -> None:
+    def _on_filter_operator_changed(self, row: _FilterRow | None = None) -> None:
         """Schaltet die Wert-Eingabe zwischen distinct-Dropdown (EQ/NE) und Textfeld.
 
         Ordering-Operatoren (>, ≥, <, ≤) brauchen einen freien Schwellenwert;
         EQ/NE bleiben beim distinct-Werte-Dropdown. Danach Validierung + Size-
         Hint (bei aktivem Filter ein Provider-Scan, hier zulässig).
         """
-        is_ordering = self._filter_operator.currentData() in _ORDERING_OPERATORS
-        self._filter_value_stack.setCurrentWidget(
-            self._filter_value_text if is_ordering else self._filter_value
-        )
+        row = row if row is not None else self._filter_rows[0]
+        is_ordering = row.operator.currentData() in _ORDERING_OPERATORS
+        row.value_stack.setCurrentWidget(row.value_text if is_ordering else row.value)
         self._validate()
         self._update_size_hint()
 
@@ -744,67 +882,79 @@ class SamplingDialog(QDialog):
         self._validate()
 
     def _filter_is_active(self) -> bool:
-        """Ist ein Spaltenfilter mit brauchbarem Wert gesetzt?
+        """Ist mindestens ein Spaltenfilter mit brauchbarem Wert gesetzt?"""
+        return bool(self._active_filters())
 
-        Brauchbar heißt: Feld ≠ `NO_FILTER_LABEL` UND (für EQ/NE ein
-        auswählbarer distinct-Wert, für Ordering-Ops ein nicht-leerer
-        Schwellenwert-Text). Der Provider-`None`-Fall wird vom Aufrufer
-        (`_effective_max_sample_size`) abgefangen.
+    @staticmethod
+    def _row_is_set(row: _FilterRow) -> bool:
+        """Hat die Zeile eine Spalte (nicht „(kein Filter)")?"""
+        field = row.field.currentText()
+        return bool(field) and field != NO_FILTER_LABEL
+
+    def _row_is_complete(self, row: _FilterRow) -> bool:
+        """Spalte gewählt UND brauchbarer Wert: für EQ/NE ein auswählbarer
+        distinct-Wert, für Ordering-Ops ein nicht-leerer Schwellenwert-Text."""
+        if not self._row_is_set(row):
+            return False
+        if row.operator.currentData() in _ORDERING_OPERATORS:
+            return bool(row.value_text.text().strip())
+        return row.value.count() > 0
+
+    def _row_condition(self, row: _FilterRow) -> FilterCondition:
+        operator: FilterOperator = row.operator.currentData()
+        return FilterCondition(
+            row.field.currentText(), operator, self._current_filter_value(operator, row)
+        )
+
+    def _active_filters(self) -> tuple[FilterCondition, ...]:
+        """Vollständige Filterzeilen in Formular-Reihenfolge – Grundlage der Vorschau.
+
+        Der Provider-`None`-Fall wird vom Aufrufer (`_available_rows`) abgefangen.
         """
         if not self._show_filter:
-            return False
-        field = self._filter_field.currentText()
-        if field == NO_FILTER_LABEL or not field:
-            return False
-        if self._filter_operator.currentData() in _ORDERING_OPERATORS:
-            return bool(self._filter_value_text.text().strip())
-        return self._filter_value.count() > 0
+            return ()
+        return tuple(
+            self._row_condition(row) for row in self._filter_rows if self._row_is_complete(row)
+        )
 
-    def _current_filter_value(self, operator: FilterOperator) -> Any:
+    def _current_filter_value(self, operator: FilterOperator, row: _FilterRow | None = None) -> Any:
         """Leitet den Filter-Wert je Modus ab (Ordering-Text vs. EQ/NE-Dropdown).
 
-        Single Source of Truth für Preview (`_active_filter_query`) UND Ziehung
+        Single Source of Truth für Preview (`_active_filters`) UND Ziehung
         (`_build_config`): so zählt der Preview strukturell garantiert dieselbe
         Population, die auch gezogen wird – kein Auseinanderlaufen bei künftigen
         Edits (genau das, was dieses Feature verhindern soll).
         """
+        row = row if row is not None else self._filter_rows[0]
         if operator in _ORDERING_OPERATORS:
-            return _parse_filter_threshold(self._filter_value_text.text())
-        value = self._filter_value.currentData(int(Qt.ItemDataRole.UserRole))
+            return _parse_filter_threshold(row.value_text.text())
+        value = row.value.currentData(int(Qt.ItemDataRole.UserRole))
         if value is None:
-            value = self._filter_value.currentText()
+            value = row.value.currentText()
         return value
-
-    def _active_filter_query(self) -> tuple[str, FilterOperator, Any]:
-        """(Feld, Operator, Wert) des aktiven Filters – Wert je Modus aufgelöst."""
-        field = self._filter_field.currentText()
-        operator: FilterOperator = self._filter_operator.currentData()
-        return field, operator, self._current_filter_value(operator)
 
     def _match_count(
         self,
-        provider: Callable[[str, FilterOperator, Any, bool], int],
-        field: str,
-        operator: FilterOperator,
-        value: Any,
+        provider: Callable[[tuple[FilterCondition, ...], bool], int],
+        filters: tuple[FilterCondition, ...],
         restrict: bool,
     ) -> int:
-        """Trefferzahl des Filters via Provider, memoisiert pro (Feld, Op, Wert, restrict)."""
+        """Trefferzahl aller Filter (UND) via Provider, memoisiert pro (Bedingungen, restrict)."""
         # `repr`, nicht `str`: der Key MUSS Typen unterscheiden – `matches_filter`
         # vergleicht per `==`, und int 5 ≠ str "5". `str(5) == str("5")` würde
         # kollidieren und einen veralteten Count für gemischt-typige Spalten zeigen.
-        key = (field, operator, repr(value), restrict)
+        key = (tuple((c.field, c.operator, repr(c.value)) for c in filters), restrict)
         cached = self._match_count_cache.get(key)
         if cached is not None:
             return cached
-        count = provider(field, operator, value, restrict)
+        count = provider(filters, restrict)
         self._match_count_cache[key] = count
         return count
 
     def _available_rows(self) -> int:
         """Datensätze, aus denen die Ziehung tatsächlich wählen kann (kann 0 sein).
 
-        F = aktiver Filter mit Provider, R = Einschränken, E = Ergänzen:
+        F = aktive Filter (UND) mit Provider, R = Einschränken, E = Ergänzen:
         ohne F → Datasetgröße, Größe der aktiven Stichprobe (R) bzw. Datasetgröße
         minus aktive Stichprobe (E); mit F → Treffer gesamt, Treffer in der
         Stichprobe (R) bzw. Differenz der beiden (E). Der Provider (Full-Table-
@@ -814,12 +964,12 @@ class SamplingDialog(QDialog):
         supplement = self._supplement_checkbox.isChecked()
         drawn = len(self._current_sample.selected_row_ids) if self._current_sample else 0
         provider = self._filter_match_count_provider
-        if provider is not None and self._filter_is_active():
-            field, operator, value = self._active_filter_query()
-            hits = self._match_count(provider, field, operator, value, False)
+        filters = self._active_filters()
+        if provider is not None and filters:
+            hits = self._match_count(provider, filters, False)
             if not (restrict or supplement) or self._current_sample is None:
                 return hits
-            hits_in_sample = self._match_count(provider, field, operator, value, True)
+            hits_in_sample = self._match_count(provider, filters, True)
             return hits_in_sample if restrict else hits - hits_in_sample
         if restrict and self._current_sample is not None:
             return drawn
@@ -907,18 +1057,16 @@ class SamplingDialog(QDialog):
     def _build_config(self) -> SampleConfig:
         # Einheitlicher Pfad für alle Sichtbarkeits-Kombinationen. Nicht
         # freigeschaltete Funktionen tragen ihre SampleConfig-Defaults bei
-        # (filter_field/value=None, cluster/stratum_field=None,
+        # (filters=(), cluster/stratum_field=None,
         # stratify_mode=PROPORTIONAL) – damit ist die pure Simple-Stichprobe
         # bit-identisch zum bisherigen Simple-Mode-Pfad (ISAE-3402).
         method = self._selected_method()
-        filter_field: str | None = None
-        filter_value: Any = None
-        filter_operator: FilterOperator = FilterOperator.EQ
+        filters: tuple[FilterCondition, ...] = ()
         if self._show_filter:
-            filter_operator = self._filter_operator.currentData()
-            if self._filter_field.currentText() != NO_FILTER_LABEL:
-                filter_field = self._filter_field.currentText()
-                filter_value = self._current_filter_value(filter_operator)
+            # Zeilen mit „(kein Filter)" zählen nicht; unvollständige hält `accept` auf.
+            filters = tuple(
+                self._row_condition(row) for row in self._filter_rows if self._row_is_set(row)
+            )
         stratify_mode = StratifyMode.PROPORTIONAL
         if self._show_stratified and self._radio_equal.isChecked():
             stratify_mode = StratifyMode.EQUAL
@@ -933,16 +1081,15 @@ class SamplingDialog(QDialog):
             if method == SamplingMethod.STRATIFIED
             else None,
             stratify_mode=stratify_mode,
-            filter_field=filter_field,
-            filter_value=filter_value,
-            filter_operator=filter_operator,
+            filters=filters,
         )
 
     def _field_errors(self) -> dict[str, str]:
         """Alle Fehler, die der Dialog selbst erkennen kann – je Feld eine Meldung.
 
-        Schlüssel: `general`, `size`, `filter`, `cluster`, `stratum`. Die
-        Reihenfolge der Prüfungen folgt dem Formular von oben nach unten.
+        Schlüssel: `general`, `size`, `cluster`, `stratum` und je Filterzeile ihr
+        `error_key` (`filter` für die erste). Die Reihenfolge der Prüfungen folgt
+        dem Formular von oben nach unten.
         """
         if not self._columns:
             return {"general": "Das Dataset hat keine Spalten – Sampling nicht möglich."}
@@ -958,29 +1105,40 @@ class SamplingDialog(QDialog):
             errors["cluster"] = "Bitte ein Cluster-Feld wählen."
         if method == SamplingMethod.STRATIFIED and stratum_column is None:
             errors["stratum"] = "Bitte ein Schicht-Feld wählen."
-        filter_error = self._filter_error()
-        if filter_error is not None:
-            errors["filter"] = filter_error
+        filter_errors = self._filter_errors()
+        if filter_errors:
+            errors.update(filter_errors)
             return errors
         size_error = self._size_error(cluster_column, stratum_column)
         if size_error is not None:
             errors["size"] = size_error
         return errors
 
-    def _filter_error(self) -> str | None:
-        if not self._show_filter or self._filter_field.currentText() == NO_FILTER_LABEL:
-            return None
-        if self._filter_operator.currentData() in _ORDERING_OPERATORS:
-            if not self._filter_value_text.text().strip():
-                return "Bitte einen Schwellenwert für den Vergleich eingeben."
-        elif self._filter_value.count() == 0:
-            return "Das Filterfeld enthält keine Werte – Filter entfernen."
+    def _filter_errors(self) -> dict[str, str]:
+        """Je unvollständiger Filterzeile eine Meldung; danach „trifft nichts" an der
+        letzten gesetzten Zeile (alle Bedingungen zusammen, UND)."""
+        if not self._show_filter:
+            return {}
+        errors: dict[str, str] = {}
+        set_rows = [row for row in self._filter_rows if self._row_is_set(row)]
+        for row in set_rows:
+            if row.operator.currentData() in _ORDERING_OPERATORS:
+                if not row.value_text.text().strip():
+                    errors[row.error_key] = "Bitte einen Schwellenwert für den Vergleich eingeben."
+            elif row.value.count() == 0:
+                errors[row.error_key] = "Das Filterfeld enthält keine Werte – Filter entfernen."
+        if errors:
+            return errors
         provider = self._filter_match_count_provider
-        if provider is not None and self._filter_is_active():
-            field, operator, value = self._active_filter_query()
-            if self._match_count(provider, field, operator, value, False) == 0:
-                return "Der Filter trifft keinen Datensatz – bitte Wert oder Feld ändern."
-        return None
+        filters = self._active_filters()
+        if provider is not None and filters and self._match_count(provider, filters, False) == 0:
+            errors[set_rows[-1].error_key] = (
+                "Der Filter trifft keinen Datensatz – bitte Wert oder Feld ändern."
+                if len(filters) == 1
+                else "Die Filter treffen zusammen keinen Datensatz – bitte Werte oder Felder "
+                "ändern."
+            )
+        return errors
 
     def _size_error(self, cluster_column: str | None, stratum_column: str | None) -> str | None:
         size = self._size_spin.value()
@@ -1053,58 +1211,74 @@ class SamplingDialog(QDialog):
             self._radio_simple.setChecked(True)
 
     def _apply_preset_filter(self, preset: SamplingPreset, skipped: list[str]) -> None:
-        """Spielt die Filter-Definition ein – validiert gegen die Population.
+        """Spielt die Filter der Vorlage ein – je Bedingung eine Zeile, validiert
+        gegen die Population.
 
-        Übersprungen (und in `skipped` gemeldet) wird der Filter, wenn seine
-        **Spalte** in der aktuellen Population fehlt ODER wenn der gespeicherte
-        **Wert** (nur EQ/NE-Dropdown) dort nicht (mehr) vorkommt. So fällt der
-        Dialog nie still auf einen anderen Wert zurück – „kein stiller
-        Fehlschlag" (ISAE-3402). Der Operator wird immer gespiegelt.
+        Übersprungen (und in `skipped` mit ihrer Spalte gemeldet) wird eine
+        Bedingung, wenn ihre **Spalte** in der aktuellen Population fehlt ODER
+        wenn der gespeicherte **Wert** (nur EQ/NE-Dropdown) dort nicht (mehr)
+        vorkommt. So fällt der Dialog nie still auf einen anderen Wert zurück –
+        „kein stiller Fehlschlag" (ISAE-3402). Vorher vorhandene Zeilen räumt
+        die Vorlage weg.
         """
-        self._apply_preset_operator(preset.filter_operator)
-        if preset.filter_field is None:
-            self._filter_field.setCurrentText(NO_FILTER_LABEL)
-            return
-        if preset.filter_field not in self._columns:
-            # Spalte existiert in dieser Population nicht → Filter überspringen.
-            self._filter_field.setCurrentText(NO_FILTER_LABEL)
-            skipped.append(preset.filter_field)
-            return
+        self._reset_filter_rows()
+        applied = 0
+        for condition in preset.filters:
+            if condition.field not in self._columns or applied >= MAX_FILTERS:
+                skipped.append(condition.field)
+                continue
+            row = self._filter_rows[0] if applied == 0 else self._add_filter_row()
+            if self._apply_preset_condition(row, condition):
+                applied += 1
+                continue
+            # Spalte ja, aber der Wert kommt in dieser Population nicht vor.
+            skipped.append(condition.field)
+            if row is self._filter_rows[0]:
+                row.field.setCurrentText(NO_FILTER_LABEL)
+            else:
+                self._remove_filter_row(row)
+        self._update_filter_buttons()
+
+    def _apply_preset_condition(self, row: _FilterRow, condition: FilterCondition) -> bool:
+        """Setzt eine Bedingung in eine Zeile; `False`, wenn der Wert fehlt."""
+        self._apply_preset_operator(condition.operator, row)
         # blockSignals: der currentTextChanged-Slot würde sonst zusätzlich
         # `_refresh_filter_values` feuern – wir rufen es kontrolliert einmal.
-        self._filter_field.blockSignals(True)
-        self._filter_field.setCurrentText(preset.filter_field)
-        self._filter_field.blockSignals(False)
-        self._refresh_filter_values()
-        if preset.filter_operator in _ORDERING_OPERATORS:
+        row.field.blockSignals(True)
+        row.field.setCurrentText(condition.field)
+        row.field.blockSignals(False)
+        self._refresh_filter_values(row)
+        if condition.operator in _ORDERING_OPERATORS:
             # Ordering-Ops: Wert ins Schwellenwert-Textfeld (kein distinct-Match
             # gegen die Population – ein Vergleichswert muss dort nicht vorkommen).
-            self._filter_value_text.setText(_display(preset.filter_value))
-        elif not self._select_filter_value(preset.filter_value):
-            # Spalte ja, aber der Wert kommt in dieser Population nicht vor.
-            self._filter_field.setCurrentText(NO_FILTER_LABEL)
-            skipped.append(preset.filter_field)
+            row.value_text.setText(_display(condition.value))
+            return True
+        return self._select_filter_value(condition.value, row)
 
-    def _apply_preset_operator(self, operator: FilterOperator) -> None:
+    def _apply_preset_operator(
+        self, operator: FilterOperator, row: _FilterRow | None = None
+    ) -> None:
         """Wählt den Operator im Combo (schaltet über den Slot die Wert-Eingabe um)."""
-        for i in range(self._filter_operator.count()):
-            if self._filter_operator.itemData(i) == operator:
-                self._filter_operator.setCurrentIndex(i)
+        combo = (row if row is not None else self._filter_rows[0]).operator
+        for i in range(combo.count()):
+            if combo.itemData(i) == operator:
+                combo.setCurrentIndex(i)
                 return
 
-    def _select_filter_value(self, value: Any) -> bool:
+    def _select_filter_value(self, value: Any, row: _FilterRow | None = None) -> bool:
         """Wählt den Filter-Wert per typ-erhaltendem userData-Match (Fallback Text).
 
         Liefert True bei Treffer, sonst False (Wert nicht in der Population).
         """
+        combo = (row if row is not None else self._filter_rows[0]).value
         role = int(Qt.ItemDataRole.UserRole)
-        for i in range(self._filter_value.count()):
-            if self._filter_value.itemData(i, role) == value:
-                self._filter_value.setCurrentIndex(i)
+        for i in range(combo.count()):
+            if combo.itemData(i, role) == value:
+                combo.setCurrentIndex(i)
                 return True
-        text_idx = self._filter_value.findText(_display(value))
+        text_idx = combo.findText(_display(value))
         if text_idx >= 0:
-            self._filter_value.setCurrentIndex(text_idx)
+            combo.setCurrentIndex(text_idx)
             return True
         return False
 
@@ -1171,6 +1345,18 @@ class SamplingDialog(QDialog):
 # ---------------------------------------------------------------------------
 # Hilfen
 # ---------------------------------------------------------------------------
+
+
+def _filter_row_button(symbol: str, tooltip: str, side: int) -> QToolButton:
+    """Quadratischer Symbol-Knopf („+"/„×") am Ende einer Filterzeile (Sprint 92)."""
+    button = QToolButton()
+    button.setObjectName(FILTER_ROW_BUTTON_NAME)
+    button.setText(symbol)
+    button.setToolTip(tooltip)
+    button.setAccessibleName(tooltip)
+    button.setFixedSize(QSize(side, side))
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    return button
 
 
 def _selected_column(combo: QComboBox) -> str | None:

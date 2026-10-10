@@ -18,6 +18,7 @@ from sampling_tool.core import (
     BaseSampler,
     ClusterSampler,
     DatasetRow,
+    FilterCondition,
     FilterOperator,
     SampleConfig,
     SamplingError,
@@ -109,8 +110,7 @@ class TestSimpleSampler:
             method=SamplingMethod.SIMPLE,
             size=10,
             seed=42,
-            filter_field="Country",
-            filter_value="AUT",
+            filters=(FilterCondition("Country", FilterOperator.EQ, "AUT"),),
         )
         result = SimpleSampler(cfg).sample(rows_100)
         ids = set(result.selected_row_ids)
@@ -171,8 +171,7 @@ class TestSimpleSamplerIdsPath:
             method=SamplingMethod.SIMPLE,
             size=10,
             seed=42,
-            filter_field="Country",
-            filter_value="AUT",
+            filters=(FilterCondition("Country", FilterOperator.EQ, "AUT"),),
         )
         with pytest.raises(SamplingError, match="sample_ids ist nur für ungefiltertes"):
             SimpleSampler(cfg).sample_ids([r.row_id for r in rows_100], population_size=100)
@@ -393,8 +392,7 @@ class TestStreamingIteratorInput:
             method=SamplingMethod.SIMPLE,
             size=5,
             seed=1,
-            filter_field="Country",
-            filter_value="AUT",
+            filters=(FilterCondition("Country", FilterOperator.EQ, "AUT"),),
         )
         result = SimpleSampler(cfg).sample(iter(rows_100))
         # Population = 100 (alle Rows durchgereicht), nicht 34 (Filter-Pool)
@@ -481,8 +479,7 @@ class TestSimpleSamplerEdgeCases:
             method=SamplingMethod.SIMPLE,
             size=1,
             seed=42,
-            filter_field="X",
-            filter_value="b",
+            filters=(FilterCondition("X", FilterOperator.EQ, "b"),),
         )
         with pytest.raises(SamplingError, match="keine Datensätze"):
             SimpleSampler(cfg).sample(rows)
@@ -718,8 +715,7 @@ class TestClusterSamplerPairsPath:
             size=2,
             seed=42,
             cluster_field="Country",
-            filter_field="Country",
-            filter_value="AUT",
+            filters=(FilterCondition("Country", FilterOperator.EQ, "AUT"),),
         )
         with pytest.raises(SamplingError, match="sample_pairs ist nur für ungefiltertes"):
             ClusterSampler(cfg).sample_pairs(
@@ -816,8 +812,7 @@ class TestStratifiedSamplerPairsPath:
             size=10,
             seed=42,
             stratum_field="Country",
-            filter_field="Country",
-            filter_value="AUT",
+            filters=(FilterCondition("Country", FilterOperator.EQ, "AUT"),),
         )
         with pytest.raises(SamplingError, match="sample_pairs ist nur für ungefiltertes"):
             StratifiedSampler(cfg).sample_pairs(
@@ -982,9 +977,7 @@ class TestCollectPoolOperatorFilter:
             method=SamplingMethod.SIMPLE,
             size=1,
             seed=1,
-            filter_field="amount",
-            filter_value=30,
-            filter_operator=operator,
+            filters=(FilterCondition("amount", operator, 30),),
         )
         pool, total = SimpleSampler(cfg)._collect_pool(iter(rows_numeric))
 
@@ -997,8 +990,7 @@ class TestCollectPoolOperatorFilter:
             method=SamplingMethod.SIMPLE,
             size=1,
             seed=1,
-            filter_field="amount",
-            filter_value=30,
+            filters=(FilterCondition("amount", FilterOperator.EQ, 30),),
         )
         pool, total = SimpleSampler(cfg)._collect_pool(iter(rows_numeric))
         assert sorted(r.row_id for r in pool) == [3]
@@ -1019,16 +1011,13 @@ class TestFilterReproducibilityOracle:
             method=SamplingMethod.SIMPLE,
             size=10,
             seed=seed,
-            filter_field=field,
-            filter_value=value,
+            filters=(FilterCondition(field, FilterOperator.EQ, value),),
         )
         cfg_explicit = SampleConfig(
             method=SamplingMethod.SIMPLE,
             size=10,
             seed=seed,
-            filter_field=field,
-            filter_value=value,
-            filter_operator=FilterOperator.EQ,
+            filters=(FilterCondition(field, FilterOperator.EQ, value),),
         )
         # Deterministisches Oracle: manuell nach Gleichheit vorfiltern, dann
         # ungefiltert ziehen == exakt das alte `r.get(field) == value`-Verhalten.

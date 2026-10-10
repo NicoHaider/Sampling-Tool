@@ -12,6 +12,7 @@ from sampling_tool.core.models import (
     Dataset,
     DatasetRow,
     Engagement,
+    FilterCondition,
     FilterOperator,
     SampleConfig,
     SampleResult,
@@ -27,6 +28,7 @@ from sampling_tool.core.sampling import (
     SimpleSampler,
     StratifiedSampler,
     create_sampler,
+    matches_all,
     matches_filter,
 )
 
@@ -37,6 +39,7 @@ __all__ = [
     "Dataset",
     "DatasetRow",
     "Engagement",
+    "FilterCondition",
     "FilterOperator",
     "SampleConfig",
     "SampleResult",
@@ -49,5 +52,6 @@ __all__ = [
     "create_sampler",
     "fisher_yates_shuffle",
     "make_rng",
+    "matches_all",
     "matches_filter",
 ]

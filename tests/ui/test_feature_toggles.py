@@ -418,6 +418,6 @@ class TestToggleSamplingNeutrality:
             assert seed2 == seed1
             assert first == second
             # Nur die Sichtbarkeit wurde geändert – kein Filter ist gesetzt.
-            assert controller.session.sample.config.filter_field is None
+            assert controller.session.sample.config.filters == ()
         finally:
             controller.engagement.handle_close_engagement()
