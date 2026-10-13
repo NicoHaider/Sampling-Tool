@@ -31,7 +31,8 @@ from sampling_tool.config import (
     RESTORED_STATE_LABELS,
     STRATIFY_MODE_LABELS,
 )
-from sampling_tool.core.models import FilterCondition, SamplingMethod
+from sampling_tool.core.filter_values import decode_filter_value
+from sampling_tool.core.models import FilterCondition, FilterOperator, SamplingMethod
 
 # 19-Zeichen-Format: konsistent zwischen UI, PDF, Excel-Report, HTML-Report.
 _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -48,6 +49,12 @@ FILTER_JOINER: Final = " UND "
 # Detail-Schlüssel der Einzelfilter-Events vor Sprint 92; ab Sprint 92 nur noch
 # bei genau einem Filter zusätzlich zu `filters` geschrieben.
 _LEGACY_FILTER_KEYS: Final = ("filter_field", "filter_value", "filter_operator")
+
+# Sprint 93: Operatoren, deren Wert aus dem Schwellenwert-Feld des Dialogs stammt.
+_ORDERING_OPERATORS: Final = frozenset(
+    op.value
+    for op in (FilterOperator.GT, FilterOperator.GTE, FilterOperator.LT, FilterOperator.LTE)
+)
 
 # Detail-Schlüssel, deren WERT ein Enum-Rohwert ist und übersetzt angezeigt wird.
 _DETAIL_VALUE_LABELS: Final[dict[str, Mapping[Any, str]]] = {
@@ -122,7 +129,7 @@ def format_audit_details(details: dict[str, Any]) -> str:
     filter_text = _details_filter_text(details)
     for key, value in details.items():
         if filter_text is not None and key in ("filters", *_LEGACY_FILTER_KEYS):
-            # Sprint 92: ein Eintrag „Filter: A = x UND B ≥ 1.000" an der Stelle
+            # Sprint 92: ein Eintrag „Filter: A = „x“ UND B ≥ 1000" an der Stelle
             # des ersten Filter-Schlüssels statt Feld/Wert/Operator einzeln.
             if filter_text:
                 parts.append(f"{AUDIT_DETAIL_LABELS['filters']}: {filter_text}")
@@ -134,10 +141,10 @@ def format_audit_details(details: dict[str, Any]) -> str:
 
 
 def format_filters(filters: Sequence[FilterCondition]) -> str:
-    """Anzeige der Filter einer Ziehung: „Kostenstelle = Vertrieb UND Betrag ≥ 1.000".
+    """Anzeige der Filter einer Ziehung: „Kostenstelle = „Vertrieb“ UND Betrag ≥ 1000".
 
     Die eine Formatierung für Metadaten, Berichte, AuditTrail-Details und die
-    Vorlagenverwaltung (Sprint 92). Ohne Filter `"—"`.
+    Vorlagenverwaltung (Sprint 92). Ohne Filter `"—"` – und nur dann (Sprint 93).
     """
     return _join_conditions((c.field, c.operator.value, c.value) for c in filters)
 
@@ -148,11 +155,16 @@ def detail_filter_conditions(details: Mapping[str, Any]) -> list[tuple[str, str,
     Liest `filters` (ab Sprint 92); Bestandsevents tragen nur die Einzelschlüssel
     `filter_field`/`filter_value`/`filter_operator` und werden nie umgeschrieben
     (append-only) – dann daraus eine Ein-Element-Liste, ohne Filter-Feld leer.
+    Werte in `filters` tragen ab Sprint 93 einen Typ-Tag für Datum/Zeit.
     """
     raw = details.get("filters")
     if isinstance(raw, list):
         return [
-            (str(item.get("field")), str(item.get("operator", "eq")), item.get("value"))
+            (
+                str(item.get("field")),
+                str(item.get("operator", "eq")),
+                decode_filter_value(item.get("value")),
+            )
             for item in raw
             if isinstance(item, dict)
         ]
@@ -176,19 +188,47 @@ def _details_filter_text(details: Mapping[str, Any]) -> str | None:
 
 def _join_conditions(conditions: Iterable[tuple[str, str, Any]]) -> str:
     texts = [
-        f"{field} {FILTER_OPERATOR_LABELS.get(operator, operator)} {_format_filter_value(value)}"
+        f"{field} {FILTER_OPERATOR_LABELS.get(operator, operator)} "
+        f"{_format_filter_value(_legacy_temporal(operator, value))}"
         for field, operator, value in conditions
     ]
     return FILTER_JOINER.join(texts) if texts else "—"
 
 
+def _legacy_temporal(operator: str, value: Any) -> Any:
+    """ISO-Text bei `>`/`≥`/`<`/`≤` als `datetime` – Bestandsdaten vor Sprint 93.
+
+    Bis Sprint 92 landete ein Datums-Filterwert ohne Typ-Tag als ISO-Text in
+    Event und `samples`. Bei diesen Operatoren ist das eindeutig: das
+    Schwellenwert-Feld des Dialogs macht aus jedem ISO-lesbaren Text ein
+    `datetime`, ein gespeicherter ISO-Text war also immer ein Datum. Bei `=`/`≠`
+    kann er auch eine Textzelle gewesen sein – dort bleibt er Text. Nur Anzeige.
+    """
+    if operator not in _ORDERING_OPERATORS or not isinstance(value, str):
+        return value
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return value
+
+
 def _format_filter_value(value: Any) -> str:
-    """Ganze Zahlen mit Tausenderpunkt, sonst wie eine Datensatz-Zelle; leer → „—"."""
+    """Filterwert mit am Text erkennbarem Typ (Sprint 93).
+
+    Text in „…“ (Rand-Leerzeichen bleiben innen), Zahlen/Ja-Nein/Datum wie die
+    Zelle, die sie treffen – ohne Tausenderpunkt, sonst wären der Text „1.000"
+    und die Zahl 1000 gleich. Leerer Text, reine Leerzeichen und `None` haben je
+    einen eigenen Hinweis; `—` bleibt „kein Filter" vorbehalten.
+    """
     if value is None:
-        return "—"
-    if isinstance(value, int) and not isinstance(value, bool):
-        return format_int(value)
-    return format_cell_value(value) or "—"
+        return "(kein Wert)"
+    if isinstance(value, str):
+        if value == "":
+            return "(leer)"
+        if value.strip() == "":
+            return "(nur Leerzeichen)"
+        return f"„{value}“"
+    return format_cell_value(value)
 
 
 def format_int(value: int) -> str:

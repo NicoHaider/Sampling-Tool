@@ -22,9 +22,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, time
-from typing import Any, Final
+from typing import Any
 
+from sampling_tool.core.filter_values import decode_filter_value, encode_filter_value
 from sampling_tool.core.models import (
     FilterCondition,
     FilterOperator,
@@ -85,37 +85,8 @@ class SamplingPreset:
 #
 # Tagged-Encoding für die Filter-Werte: skalare JSON-Typen (str/int/float/
 # bool/None) gehen direkt durch, datetime/date/time werden mit `__type__`-
-# Marker ISO-codiert. Spiegelt das Muster aus `persistence/_json.py`.
+# Marker ISO-codiert (`core.filter_values`, Sprint 93 gemeinsam genutzt).
 # ---------------------------------------------------------------------------
-
-_TYPE_KEY: Final[str] = "__type__"
-_VAL_KEY: Final[str] = "v"
-
-
-def _encode_filter_value(value: Any) -> Any:
-    if isinstance(value, datetime):
-        return {_TYPE_KEY: "datetime", _VAL_KEY: value.isoformat()}
-    if isinstance(value, date):
-        return {_TYPE_KEY: "date", _VAL_KEY: value.isoformat()}
-    if isinstance(value, time):
-        return {_TYPE_KEY: "time", _VAL_KEY: value.isoformat()}
-    return value
-
-
-def _decode_filter_value(value: Any) -> Any:
-    if not (isinstance(value, dict) and _TYPE_KEY in value and _VAL_KEY in value):
-        return value
-    type_tag = value[_TYPE_KEY]
-    raw = value[_VAL_KEY]
-    if not isinstance(raw, str):
-        return value
-    if type_tag == "datetime":
-        return datetime.fromisoformat(raw)
-    if type_tag == "date":
-        return date.fromisoformat(raw)
-    if type_tag == "time":
-        return time.fromisoformat(raw)
-    return value
 
 
 def _preset_to_dict(preset: SamplingPreset) -> dict[str, Any]:
@@ -130,7 +101,7 @@ def _preset_to_dict(preset: SamplingPreset) -> dict[str, Any]:
             {
                 "field": c.field,
                 "operator": c.operator.value,
-                "value": _encode_filter_value(c.value),
+                "value": encode_filter_value(c.value),
             }
             for c in preset.filters
         ],
@@ -157,7 +128,7 @@ def _filters_from_dict(data: dict[str, Any]) -> tuple[FilterCondition, ...]:
             FilterCondition(
                 field=str(item["field"]),
                 operator=FilterOperator(item.get("operator", FilterOperator.EQ.value)),
-                value=_decode_filter_value(item.get("value")),
+                value=decode_filter_value(item.get("value")),
             )
             for item in data["filters"]
         )
@@ -168,7 +139,7 @@ def _filters_from_dict(data: dict[str, Any]) -> tuple[FilterCondition, ...]:
         FilterCondition(
             field=str(field),
             operator=FilterOperator(data.get("filter_operator", FilterOperator.EQ.value)),
-            value=_decode_filter_value(data.get("filter_value")),
+            value=decode_filter_value(data.get("filter_value")),
         ),
     )
 

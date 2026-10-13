@@ -593,4 +593,4 @@ class TestSamplesSheetMultiFilter:
         )
         rows = list(load_workbook(out)["3. Samples"].iter_rows(values_only=True))
         row = dict(zip(rows[0], rows[1], strict=True))
-        assert row["Filter"] == "Kostenstelle = Vertrieb UND Betrag ≥ 1.000"
+        assert row["Filter"] == "Kostenstelle = „Vertrieb“ UND Betrag ≥ 1000"

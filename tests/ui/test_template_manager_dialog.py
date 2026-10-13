@@ -7,6 +7,7 @@ Vorlagen – alles über die unveränderte `PresetStore`-Schicht (Sprint 23).
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -267,7 +268,8 @@ class TestTemplateManagerMultiFilter:
         dialog = TemplateManagerDialog(store)
         qtbot.addWidget(dialog)
         _select(dialog, "Zwei")
-        assert dialog._lbl_filter.text() == "Kostenstelle = Vertrieb UND Betrag ≥ 1.000"
+        # Sprint 93: Text in Anführungszeichen, Zahl ohne Tausenderpunkt.
+        assert dialog._lbl_filter.text() == "Kostenstelle = „Vertrieb“ UND Betrag ≥ 1000"
 
     def test_save_keeps_filters_and_operators(self, qtbot: QtBot) -> None:
         store = PresetStore()
@@ -283,3 +285,25 @@ class TestTemplateManagerMultiFilter:
         assert saved is not None
         assert saved.size == 9
         assert saved.filters == self._CONDS
+
+
+class TestFilterDisplayAllPaths:
+    """Sprint 93: die Vorlagenverwaltung zeigt Filter wie alle Berichte."""
+
+    def test_template_manager_label(self, qtbot: QtBot) -> None:
+        store = PresetStore()
+        conds = (
+            FilterCondition("Konto", FilterOperator.EQ, "1.000"),
+            FilterCondition("Konto", FilterOperator.NE, 1000),
+            FilterCondition("Notiz", FilterOperator.EQ, ""),
+            FilterCondition("Datum", FilterOperator.LT, datetime(2026, 6, 30)),
+        )
+        store.save(
+            SamplingPreset(name="Typen", method=SamplingMethod.SIMPLE, size=3, filters=conds)
+        )
+        dialog = TemplateManagerDialog(store)
+        qtbot.addWidget(dialog)
+        _select(dialog, "Typen")
+        assert dialog._lbl_filter.text() == (
+            "Konto = „1.000“ UND Konto ≠ 1000 UND Notiz = (leer) UND Datum < 2026-06-30"
+        )

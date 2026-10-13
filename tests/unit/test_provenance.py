@@ -258,14 +258,14 @@ class TestProvenanceFilters:
 
     def test_display_joins_with_und(self) -> None:
         provenance = _provenance(self._A, self._B)
-        assert provenance.filter_text == "Kostenstelle = Vertrieb UND Betrag ≥ 1.000"
+        assert provenance.filter_text == "Kostenstelle = „Vertrieb“ UND Betrag ≥ 1000"
         assert dict(provenance.to_ordered_fields())["Filter"] == provenance.filter_text
 
     def test_new_event_details_line(self) -> None:
         details = _provenance(self._A, self._B).to_audit_details()
         event = AuditEvent(event_type="sampling", total_count=5, details=details)
         text = format_event_details(event)
-        assert "Filter: Kostenstelle = Vertrieb UND Betrag ≥ 1.000" in text
+        assert "Filter: Kostenstelle = „Vertrieb“ UND Betrag ≥ 1000" in text
         assert "Filter-Feld" not in text
 
     def test_single_filter_event_shows_one_filter_entry(self) -> None:
@@ -274,7 +274,7 @@ class TestProvenanceFilters:
         text = format_event_details(event)
         assert text.count("Filter:") == 1
         assert "Filter-" not in text
-        assert "Filter: Betrag ≥ 1.000" in text
+        assert "Filter: Betrag ≥ 1000" in text
 
     def test_legacy_event_with_single_keys(self) -> None:
         """Bestandsevents (vor Sprint 92, append-only) tragen nur die Einzelschlüssel."""
@@ -287,7 +287,7 @@ class TestProvenanceFilters:
         }
         event = AuditEvent(event_type="sampling", total_count=5, details=details)
         assert format_event_details(event) == (
-            "Population: 5 · Methode: Einfach · Filter: Kostenstelle = Vertrieb"
+            "Population: 5 · Methode: Einfach · Filter: Kostenstelle = „Vertrieb“"
         )
 
     def test_legacy_event_before_sprint_89_keeps_population_note(self) -> None:
