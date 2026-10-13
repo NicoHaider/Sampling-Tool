@@ -373,7 +373,7 @@ class TestSampleFilterColumn:
             ],
         )
         rows = _sample_table_cells(html)
-        assert rows["#1"]["Filter"] == "Kostenstelle = Vertrieb"
+        assert rows["#1"]["Filter"] == "Kostenstelle = „Vertrieb“"
         assert rows["#2"]["Filter"] == "Betrag ≥ 100"
 
     def test_ungefilterte_stichprobe_zeigt_denselben_platzhalter(
@@ -399,7 +399,7 @@ class TestSampleFilterColumn:
             ],
         )
         cell = _sample_table_cells(html)["#1"]["Filter"]
-        assert cell == "Kostenstelle = Vertrieb UND Betrag ≥ 1.000"
+        assert cell == "Kostenstelle = „Vertrieb“ UND Betrag ≥ 1000"
 
     def test_filterwert_mit_spitzer_klammer_wird_escaped(
         self, tmp_path: Path, engagement: Engagement
@@ -417,7 +417,7 @@ class TestSampleFilterColumn:
             ],
         )
         cell = _sample_table_cells(html)["#1"]["Filter"]
-        assert cell == "Kostenstelle = &lt;b&gt;Vertrieb&lt;/b&gt; &amp; Co"
+        assert cell == "Kostenstelle = „&lt;b&gt;Vertrieb&lt;/b&gt; &amp; Co“"
         assert "<b>Vertrieb" not in html
 
     def test_filterwert_none_bei_gesetztem_feld(
@@ -428,7 +428,7 @@ class TestSampleFilterColumn:
             engagement,
             [_sample(1, filters=(FilterCondition("Kostenstelle", FilterOperator.EQ, None),))],
         )
-        assert _sample_table_cells(html)["#1"]["Filter"] == "Kostenstelle = —"
+        assert _sample_table_cells(html)["#1"]["Filter"] == "Kostenstelle = (kein Wert)"
 
     def test_filter_kommt_aus_der_provenienz(
         self,
@@ -452,7 +452,7 @@ class TestSampleFilterColumn:
             engagement,
             [_sample(1, filters=(FilterCondition("Kostenstelle", FilterOperator.EQ, "Vertrieb"),))],
         )
-        assert _sample_table_cells(html)["#1"]["Filter"] == "AusProvenienz ≠ P"
+        assert _sample_table_cells(html)["#1"]["Filter"] == "AusProvenienz ≠ „P“"
 
 
 # ---------------------------------------------------------------------------

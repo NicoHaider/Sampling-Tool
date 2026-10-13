@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from sampling_tool.core.filter_values import decode_filter_value, encode_filter_value
 from sampling_tool.core.models import (
     FilterCondition,
     FilterOperator,
@@ -153,9 +154,15 @@ class SampleRepo:
 
 
 def _filters_to_json(filters: tuple[FilterCondition, ...]) -> str:
-    """`samples.filters`: JSON-Liste; der Wert wie die Altspalte `filter_value`."""
+    """`samples.filters`: JSON-Liste; Datum/Zeit mit Typ-Tag (Sprint 93).
+
+    Die Altspalte `filter_value` bleibt ungetaggt wie vor Sprint 93.
+    """
     return _json_dumps(
-        [{"field": c.field, "operator": c.operator.value, "value": c.value} for c in filters]
+        [
+            {"field": c.field, "operator": c.operator.value, "value": encode_filter_value(c.value)}
+            for c in filters
+        ]
     )
 
 
@@ -165,7 +172,7 @@ def _filters_from_json(text: str | None) -> tuple[FilterCondition, ...]:
         FilterCondition(
             field=item["field"],
             operator=FilterOperator(item["operator"]),
-            value=item.get("value"),
+            value=decode_filter_value(item.get("value")),
         )
         for item in items
     )

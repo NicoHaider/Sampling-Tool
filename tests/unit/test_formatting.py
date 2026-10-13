@@ -126,7 +126,7 @@ class TestDetailsOmitIrrelevant:
         }
         text = format_audit_details(details)
         # Sprint 92: Feld/Operator/Wert erscheinen als ein Eintrag „Filter".
-        assert "Filter: Betrag ≥ —" in text
+        assert "Filter: Betrag ≥ (kein Wert)" in text
         assert "Schichtungsmodus: Proportional" in text
 
     def test_db_dict_is_not_mutated(self) -> None:

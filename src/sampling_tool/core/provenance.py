@@ -27,6 +27,7 @@ from sampling_tool.config import (
     PARENT_RELATION_TEXTS,
     STRATIFY_MODE_LABELS,
 )
+from sampling_tool.core.filter_values import encode_filter_value
 from sampling_tool.core.formatting import (
     detail_filter_conditions,
     format_audit_details,
@@ -135,7 +136,7 @@ class SamplingProvenance:
 
     @property
     def filter_text(self) -> str:
-        """„Kostenstelle = Vertrieb UND Betrag ≥ 1.000", ohne Filter `"—"` (Sprint 92)."""
+        """„Kostenstelle = „Vertrieb“ UND Betrag ≥ 1000", ohne Filter `"—"` (Sprint 92/93)."""
         return format_filters(self.filters)
 
     @property
@@ -206,10 +207,18 @@ class SamplingProvenance:
         stehen zusätzlich die Einzelschlüssel von früher (`filter_field`/
         `filter_value`/`filter_operator`), damit ältere Leser weiter
         funktionieren; bei mehreren fehlen sie bewusst – ein alter Leser sähe
-        sonst nur einen Teil des Filters."""
+        sonst nur einen Teil des Filters.
+
+        Sprint 93: Werte in `filters` tragen für Datum/Zeit einen Typ-Tag
+        (`core.filter_values`) – ohne ihn käme ein Datum als ISO-Text zurück.
+        Die Einzelschlüssel bleiben wie bisher, damit ältere Leser sie verstehen."""
         filter_keys: dict[str, Any] = {
             "filters": [
-                {"field": c.field, "operator": c.operator.value, "value": c.value}
+                {
+                    "field": c.field,
+                    "operator": c.operator.value,
+                    "value": encode_filter_value(c.value),
+                }
                 for c in self.filters
             ]
         }

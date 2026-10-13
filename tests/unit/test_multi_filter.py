@@ -134,7 +134,7 @@ class TestFormatFilters:
 
     def test_conditions_joined_with_und(self) -> None:
         text = format_filters((VERTRIEB, AB_1000))
-        assert text == "Kostenstelle = Vertrieb UND Betrag ≥ 1.000"
+        assert text == "Kostenstelle = „Vertrieb“ UND Betrag ≥ 1000"
 
     def test_dates_and_none(self) -> None:
         text = format_filters(
@@ -143,4 +143,4 @@ class TestFormatFilters:
                 FilterCondition("Notiz", FilterOperator.EQ, None),
             )
         )
-        assert text == "Datum < 2026-06-30 UND Notiz = —"
+        assert text == "Datum < 2026-06-30 UND Notiz = (kein Wert)"
