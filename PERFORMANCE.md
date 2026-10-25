@@ -411,12 +411,24 @@ Alle drei Phasen liegen weit unter ihren Soft-Targets (5 s / 2 s / 2 s). Übrige
 dieses Laufs zum Einordnen: Sampling Simple 4.86 s, Cluster 3.54 s, Stratified 7.43 s,
 Excel-Export (Sample) 0.17 s.
 
-**Offener Befund, nicht Sprint-94-bedingt: AuditTrail-PDF 39,4 s bei 5000 Events**
-(Sprint 34: 4,45 s; einzige Soft-Target-Verfehlung dieses Laufs, Target 30 s, PDF 3,9 MB
-statt 0,7 MB). Isolierte Kontrollläufe (`--sizes 100 --quick --audit-events 5000`):
-Sprint-94-Stand 39,1 s, `main` `57ab03f` 39,4 s, vor Sprint 92 (`e538836`) 39,8 s. Die
-Verlangsamung besteht also schon vor Sprint 92 und hängt nicht am Index oder an der
-Tabelle (`io/` 0 Diff). Ursache nicht untersucht – Kandidat für einen eigenen Sprint.
+**AuditTrail-PDF – kein Target-Verstoß, die 39 s sind ein `tracemalloc`-Artefakt.** Der
+`perf_probe`-Lauf meldet 39,4 s bei 5000 Events (Target 30 s), gemessen aber unter
+`tracemalloc`, das Python-Allokationen hier um Faktor ~8 verlangsamt. Gegenmessung auf dem Mac
+(gleiche synthetische Events wie `perf_probe`, Median aus 3, pypdf 6.21.2, Pillow 13.0.0):
+
+| AuditTrail-PDF, 5000 Events | ohne `tracemalloc` | mit `tracemalloc` | Faktor |
+|-----------------------------|-------------------:|------------------:|-------:|
+| mit Platzhalter-Briefpapier (`bdo_placeholder.pdf`) | **5,1 s** | 41,1 s | 8,0 |
+| ohne Briefpapier | **2,7 s** | 23,0 s | 8,4 |
+
+Gegenmessung in der Cloud (5000 Events): ohne `tracemalloc` 17,0 s mit bzw. 10,2 s ohne
+Briefpapier, mit `tracemalloc` 130 s bzw. 69 s (Faktor ~7,7). Die echte Zeit liegt in beiden
+Umgebungen deutlich unter dem Target. Der größte Einzelposten ist `_merge_briefpapier_pdf`
+(Mac 2,4 von 5,1 s = 47 %, Cloud ~40 %): pypdf parst beim Unterlegen den Content-Stream
+jeder Seite. Kandidat mit **niedriger Priorität** für einen eigenen Sprint, nicht
+Sprint-94-bedingt (`io/` 0 Diff). Die 4,45 s aus Sprint 34 taugen nicht als Vergleich: Der
+Renderpfad hat sich seitdem geändert, unter anderem wird das PDF-Briefpapier seit Sprint 53 per
+pypdf unter jede Seite gemerged. Welcher Anteil worauf entfällt, ist nicht untersucht.
 
 **Hinweis zur Mess-Tabelle unten:** Der 1M-Lauf stammt vom Sprint-11-Stand
 (Toolversion `19f18a1`) und liegt damit VOR den Sprint-12.1-Fixes für P-001

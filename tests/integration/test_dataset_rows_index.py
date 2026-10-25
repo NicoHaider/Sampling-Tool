@@ -36,6 +36,7 @@ from sampling_tool.core.sampling import (
     create_sampler,
 )
 from sampling_tool.persistence.database import CURRENT_SCHEMA_VERSION, Database
+from sampling_tool.persistence.db_preflight import PreflightAccepted, preflight_check
 from sampling_tool.persistence.repositories import DatasetRepo, EngagementRepo, SampleRepo
 from sampling_tool.resources import package_resource
 
@@ -191,6 +192,29 @@ class TestMigration008:
         assert [tuple(r) for r in samples_after] == [tuple(r) for r in samples_before]
         assert [tuple(r) for r in items_after] == [tuple(r) for r in items_before]
         assert len(items_after) == 25
+
+    def test_v7_without_old_index_migrates_and_opens(self, tmp_path: Path) -> None:
+        """Ein externer Editor hat den alten Index entfernt – die Migration scheitert nicht."""
+        db, dataset = _db(tmp_path, version=7)
+        db_path = db.db_path
+        try:
+            db.connect().execute(f"DROP INDEX {OLD_INDEX}")
+            assert _index_names(db.connect()) == set()
+        finally:
+            db.checkpoint_and_close()
+
+        upgraded = Database(db_path)
+        try:
+            upgraded.migrate()
+            assert upgraded.schema_version() == CURRENT_SCHEMA_VERSION
+            names = _index_names(upgraded.connect())
+            assert dataset.id is not None
+            row_ids = list(DatasetRepo(upgraded.connect()).iter_row_ids(dataset.id))
+        finally:
+            upgraded.close()
+        assert names == {NEW_INDEX}
+        assert row_ids == list(range(1, 401))
+        assert preflight_check(db_path) == PreflightAccepted(schema_version=CURRENT_SCHEMA_VERSION)
 
     def test_cascade_delete_still_works(self, tmp_path: Path) -> None:
         # Es gibt keinen Produktpfad zum Löschen eines Datensatzes – direkt per SQL.
