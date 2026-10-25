@@ -28,7 +28,7 @@ from sampling_tool.core.models import (
 )
 from sampling_tool.io.import_preflight import ImportPreflight
 from sampling_tool.io.importer import ImportStats
-from sampling_tool.persistence.database import Database
+from sampling_tool.persistence.database import CURRENT_SCHEMA_VERSION, Database
 from sampling_tool.persistence.repositories import (
     DatasetRepo,
     EngagementRepo,
@@ -8337,7 +8337,7 @@ class TestMigration007:
             controller.engagement.handle_open_engagement(db_path)
             db = controller.session.db
             assert db is not None
-            assert db.schema_version() == 7
+            assert db.schema_version() == CURRENT_SCHEMA_VERSION
             repo = SampleRepo(db.connect())
             filtered, unfiltered = repo.get_by_id(1), repo.get_by_id(2)
         finally:

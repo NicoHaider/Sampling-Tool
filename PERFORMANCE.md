@@ -338,6 +338,86 @@ Bleibender Ertrag des Passes:
   als Absolutwerte nicht mit Alltags-Performance zu verwechseln (siehe
   Mess-Methodik-Hinweis im Sprint-35-Sampling-Block).
 
+**Sprint 94 – Index auf `dataset_rows(dataset_id, row_index)` + gefilterte Tabelle (profiling-first):**
+
+Befund: `dataset_rows` hatte nur einen Index auf `dataset_id`. Jede Abfrage nach
+`row_index` las alle Zeilen des Datensatzes und sortierte sie in einem temporären
+B-Baum (`EXPLAIN QUERY PLAN`: `USE TEMP B-TREE FOR ORDER BY` bei
+`get_rows_in_range`, `iter_rows`, `iter_row_ids`, `iter_row_field_pairs`; Vollsuche
+über den Datensatz bei `get_row` und `get_rows_by_ids`). Zusätzlich lud die
+gefilterte Tabelle („nur Stichprobe") je Fehltreffer ein zusammenhängendes
+`row_id`-Fenster ± 125. Bei einer verstreuten Stichprobe enthielt es fast nie die
+Nachbarn in der Ansicht: 70 Range-Loads für einen Bildschirm.
+Fix: Migration `008_dataset_rows_row_index.sql` ersetzt den Einspalten-Index durch
+`idx_dataset_rows_dataset_row (dataset_id, row_index)`. Die gefilterte Tabelle lädt
+die sichtbaren Nachbar-IDs mit einem `get_rows_by_ids`. SQL und Ergebnisse sind
+unverändert (`dataset_repo.py` 0 Diff, `tests/integration/test_dataset_rows_index.py`).
+
+Messung mit `scripts/bench_table.py --rows 1000000 --runs 3` (neu, Median aus 3;
+Darwin 25.6.0 arm64, Python 3.13.13, offscreen; Basis `57ab03f`, Nachher = Sprint-94-Stand).
+Die Tabelle wird angezeigt (1200×800) und nach jeder Aktion gezeichnet.
+
+| Repo-Ebene | vorher | nachher | Faktor |
+|------------|-------:|--------:|-------:|
+| `get_rows_in_range` Anfang / Mitte / Ende (251 Zeilen) | 99 / 95 / 92 ms | 0,66 / 0,67 / 0,67 ms | ~140× |
+| `get_row` Mitte | 91 ms | 0,01 ms | – |
+| `get_rows_by_ids` 500 IDs | 127 ms | 7,2 ms | 18× |
+| `get_rows_by_ids` 5000 IDs | 736 ms | 25 ms | 29× |
+| `iter_row_ids` (1M) | 316 ms | 200 ms | 1,6× |
+| `iter_row_field_pairs` (1M) | 1,55 s | 1,76 s | s. u. |
+
+| UI-Ebene (gezeichnet) | vorher | Aufrufe | nachher | Aufrufe |
+|-----------------------|-------:|--------:|--------:|--------:|
+| Datensatz anzeigen | 287 ms | 2 Range | 76 ms | 2 Range |
+| Scrollbar-Sprung 25/50/75/100 % | 105–114 ms | je 1 Range | 13–14 ms | je 1 Range |
+| Scrollbar ziehen (20 Positionen) | 2,22 s | 20 Range | 285 ms | 20 Range |
+| `highlight_rows` (500 IDs) | 116 ms | 1 Range | 14 ms | 1 Range |
+| **Nur Stichprobe anzeigen (500 verstreute IDs)** | **6,71 s** | **70 Range** | **33 ms** | **1 `get_rows_by_ids`** |
+| darin ans Ende scrollen | 3,30 s | 35 Range | 13 ms | 0 |
+
+Gates (Faktoren): `get_rows_in_range` Mitte 142× (≥ 10×), `get_rows_by_ids` 500
+18× (≥ 10×), „Nur Stichprobe anzeigen" 203× (≥ 20×) mit 1 Repo-Aufruf (≤ 3).
+
+**`iter_row_field_pairs` +13 % im Einzellauf geprüft, kein Rückschritt:** Der Wert
+wurde im verschränkten A/B auf derselben 1M-Datei nachgemessen (Index alt/neu
+abwechselnd, 4 Runden × 2): alt 1558 ms, neu 1532 ms (−1,7 %). Die Phase wird von
+`json_extract` dominiert, nicht vom Index.
+
+Import-Kosten des Index (`scripts/bench_import.py --rows 1000000 --runs 3`, Phase Write):
+xlsx 2098 → 2298 ms (+9,5 %), csv 1609 → 1536 ms (−4,5 %). Im Nachher-Lauf waren auch
+Parse und Coercion (reiner Python-Code, unverändert) 40–70 % langsamer, die Maschine war
+also stärker belastet; die End-to-End-Werte dieses Laufs sind deshalb nicht vergleichbar.
+Verschränkter A/B (vorcodierte 1M Zeilen, `executemany` + Commit, Schema 7/8 abwechselnd,
+3 Runden): **v7 2166 ms, v8 2174 ms (+0,4 %)**. Ein Index ersetzt den anderen, der Import
+kostet praktisch gleich.
+
+Migration 7 → 8 auf einer Projektdatei mit 1M Zeilen (467 MB): **0,29 s** beim ersten
+Öffnen (plus die bestehende Sicherung „vor Migration").
+
+**Mess-Methodik `perf_probe.py` ab Sprint 94:** Die Phasen „Tabelle-Anzeige",
+„Filter-Toggle (an/aus)", „Highlight" und „Clear-Highlight" messen jetzt **mit Zeichnen**
+(Tabelle 1200×800 angezeigt, `viewport().repaint()` + `processEvents()`). Bis Sprint 93
+wurde die Tabelle nie angezeigt; ohne Zeichnen fragt Qt kein `data()` ab, es lief also kein
+SQL. „Filter-Toggle 0,3 ms" (Sprint 34) maß nur den Model-Reset. Die Zahlen sind mit den
+älteren Blöcken **nicht vergleichbar**. Lauf `--sizes 1000000` auf dem Sprint-94-Stand:
+
+| Phase | Sprint 94 (mit Zeichnen) | Peak (tracemalloc) | Sprint 34 (ohne Zeichnen) |
+|-------|-------------------------:|-------------------:|--------------------------:|
+| Tabelle-Anzeige | 0.42 s | 2.1 MB | 0.27 s |
+| Filter-Toggle (an / aus) | 0.05 / 0.04 s | 170 / 7 KB | 0.3 / 0.1 ms |
+| Highlight / Clear-Highlight | 0.03 / 0.02 s | 330 / 6 KB | 4.1 / 0.1 ms |
+
+Alle drei Phasen liegen weit unter ihren Soft-Targets (5 s / 2 s / 2 s). Übrige Phasen
+dieses Laufs zum Einordnen: Sampling Simple 4.86 s, Cluster 3.54 s, Stratified 7.43 s,
+Excel-Export (Sample) 0.17 s.
+
+**Offener Befund, nicht Sprint-94-bedingt: AuditTrail-PDF 39,4 s bei 5000 Events**
+(Sprint 34: 4,45 s; einzige Soft-Target-Verfehlung dieses Laufs, Target 30 s, PDF 3,9 MB
+statt 0,7 MB). Isolierte Kontrollläufe (`--sizes 100 --quick --audit-events 5000`):
+Sprint-94-Stand 39,1 s, `main` `57ab03f` 39,4 s, vor Sprint 92 (`e538836`) 39,8 s. Die
+Verlangsamung besteht also schon vor Sprint 92 und hängt nicht am Index oder an der
+Tabelle (`io/` 0 Diff). Ursache nicht untersucht – Kandidat für einen eigenen Sprint.
+
 **Hinweis zur Mess-Tabelle unten:** Der 1M-Lauf stammt vom Sprint-11-Stand
 (Toolversion `19f18a1`) und liegt damit VOR den Sprint-12.1-Fixes für P-001
 (`setResizeContentsPrecision(100)` → Tabelle-Anzeige) und P-002

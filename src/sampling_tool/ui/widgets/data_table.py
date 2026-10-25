@@ -19,6 +19,14 @@ oder Sprung-Zugriffe das mal ändern, kann auf `OrderedDict` mit
 Sample-Highlighting läuft über eine `frozenset` von `row_id`s, die im
 `data()`-Callback als `BackgroundRole` zurückgegeben wird. Filtering nutzt
 ein Mapping `view_index → dataset_index` (`_visible_indices`).
+
+**Sprint 94 – gefilterte Sicht**: Die Zeilen einer Stichprobe liegen über den
+Datensatz verstreut, ein `row_id`-Fenster um einen Fehltreffer enthielt fast
+nie die Nachbarn in der Ansicht (68 Range-Loads für einen Bildschirm). Im
+Filtermodus lädt ein Fehltreffer deshalb die sichtbaren Nachbar-IDs
+(`_visible_indices` ± `BULK_LOAD_HALF_WINDOW`) mit einem `get_rows_by_ids`.
+Nicht gelieferte (stale) IDs merkt sich `_missing_ids`, damit sie nicht bei
+jedem `data()` erneut angefragt werden.
 """
 
 from __future__ import annotations
@@ -95,6 +103,8 @@ class DatasetTableModel(QAbstractTableModel):
         self._cache_size: int = self.DEFAULT_CACHE_SIZE
         # Filter: None = alle Rows sichtbar, sonst Liste der row_ids
         self._visible_indices: list[int] | None = None
+        # Gefilterte Sicht: angefragte, aber nicht gelieferte row_ids.
+        self._missing_ids: set[int] = set()
         self._highlight: frozenset[int] = frozenset()
         color = QColor(HIGHLIGHT_COLOR)
         color.setAlpha(HIGHLIGHT_ALPHA)
@@ -119,6 +129,7 @@ class DatasetTableModel(QAbstractTableModel):
         self._row_cache.clear()
         self._cache_order.clear()
         self._visible_indices = None
+        self._missing_ids.clear()
         self._highlight = frozenset()
         self.endResetModel()
 
@@ -143,6 +154,7 @@ class DatasetTableModel(QAbstractTableModel):
         self._row_cache.clear()
         self._cache_order.clear()
         self._visible_indices = None
+        self._missing_ids.clear()
         self._highlight = frozenset()
         self.endResetModel()
 
@@ -171,6 +183,7 @@ class DatasetTableModel(QAbstractTableModel):
         # In stabiler Reihenfolge – Sampling liefert sortiert, andere Callers
         # bekommen die row_id-Reihenfolge die sie übergeben haben.
         self._visible_indices = list(row_ids)
+        self._missing_ids.clear()
         self.endResetModel()
 
     def clear_filter(self) -> None:
@@ -179,6 +192,7 @@ class DatasetTableModel(QAbstractTableModel):
             return
         self.beginResetModel()
         self._visible_indices = None
+        self._missing_ids.clear()
         self.endResetModel()
 
     def view_row_for_row_id(self, row_id: int) -> int | None:
@@ -240,7 +254,7 @@ class DatasetTableModel(QAbstractTableModel):
         ):
             return None
 
-        self._ensure_cached(row_id)
+        self._ensure_cached(row_id, index.row())
         row = self._row_cache.get(row_id)
         if row is None:
             return None
@@ -293,11 +307,14 @@ class DatasetTableModel(QAbstractTableModel):
             return view_row + 1
         return None
 
-    def _ensure_cached(self, row_id: int) -> None:
+    def _ensure_cached(self, row_id: int, view_row: int) -> None:
         """Stellt sicher, dass `row_id` im Cache liegt – lädt sonst einen Block."""
         if row_id in self._row_cache:
             return
         if self._repo is None or self._dataset_id is None:
+            return
+        if self._visible_indices is not None:
+            self._load_visible_window(row_id, view_row)
             return
 
         # Window um den Miss herum, half-open Range [start, end) – passt zu
@@ -311,6 +328,29 @@ class DatasetTableModel(QAbstractTableModel):
             if row.row_id not in self._row_cache:
                 self._row_cache[row.row_id] = row
                 self._cache_order.append(row.row_id)
+
+        self._evict_if_full()
+
+    def _load_visible_window(self, row_id: int, view_row: int) -> None:
+        """Gefilterte Sicht: lädt die sichtbaren Nachbar-IDs um `view_row` in einem Aufruf."""
+        if row_id in self._missing_ids:
+            return
+        assert self._visible_indices is not None
+        assert self._repo is not None
+        assert self._dataset_id is not None
+        start = max(0, view_row - self.BULK_LOAD_HALF_WINDOW)
+        window = self._visible_indices[start : view_row + self.BULK_LOAD_HALF_WINDOW + 1]
+        wanted = [
+            rid
+            for rid in dict.fromkeys(window)
+            if rid not in self._row_cache and rid not in self._missing_ids
+        ]
+        rows = self._repo.get_rows_by_ids(self._dataset_id, wanted)
+        for row in rows:
+            if row.row_id not in self._row_cache:
+                self._row_cache[row.row_id] = row
+                self._cache_order.append(row.row_id)
+        self._missing_ids.update(set(wanted).difference(row.row_id for row in rows))
 
         self._evict_if_full()
 

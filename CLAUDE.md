@@ -221,7 +221,11 @@ ui ──▶ controllers ──▶ core ◀── io
   - `migrations/NNN_*.sql` – nummerierte SQL-Files; `001_initial.sql` ist das
     komplette Sprint-2-Schema. Migrations-Runner liest `schema_version` und führt
     nur ausstehende Versionen aus (atomar). Details als ADR:
-    `docs/adr/0003-db-migrationen.md`.
+    `docs/adr/0003-db-migrationen.md`. `008_dataset_rows_row_index.sql`
+    (Sprint 94) ersetzt den Einspalten-Index auf `dataset_rows(dataset_id)`
+    durch `idx_dataset_rows_dataset_row (dataset_id, row_index)` – ohne ihn
+    las jede `row_index`-Abfrage alle Zeilen des Datensatzes und sortierte
+    in einem temporären B-Baum. Bewusst nicht `UNIQUE`.
   - `version_manager.py` – `EngagementVersionManager` legt beim
     `handle_open_engagement` einen Snapshot der `.db` unter `<mandant>/archiv/`
     ab (Dateiname `{stem}_{YYYY-MM-DD}_{HH-MM-SS-ffffff}_{Auditor}[+{grund}][~n].db`).
@@ -372,7 +376,11 @@ ui ──▶ controllers ──▶ core ◀── io
     konstant ~3 MB, unabhängig von Dataset-Größe. `set_dataset(dataset,
     repo)` (statt `dataset, rows`) – Caller (MainController) übergibt
     ein frisches `DatasetRepo`. FIFO statt echtes LRU: bei sequentiellem
-    Qt-Scroll reicht das aus.
+    Qt-Scroll reicht das aus. **Sprint 94:** Im Filtermodus
+    (`_visible_indices` gesetzt) lädt ein Cache-Miss stattdessen die
+    sichtbaren Nachbar-IDs (`_visible_indices` ± 125) mit einem
+    `get_rows_by_ids`; nicht gelieferte (stale) IDs merkt sich
+    `_missing_ids`. Der ungefilterte Pfad ist unverändert.
   - `widgets/audit_trail_view.py` – `AuditTrailModel` +
     `AuditTrailFilterProxy` + `AuditTrailView`. Filter-Zeile mit
     Volltextsuche und ComboBoxen (Aktion / User / Zeitraum), sortierbar.
@@ -856,6 +864,12 @@ DB-Speicherung, Tabelle-Anzeige, Sampling (Simple/Cluster/
 Stratified), Filter-Toggle, Highlight, Excel-/HTML-Reports,
 AuditTrail-PDF. Pro Phase: `time.perf_counter` + tracemalloc
 Peak-RAM + optional `psutil.Process().rss`-Delta als Cross-Check.
+Seit Sprint 94 wird die Tabelle in den Phasen Tabelle-Anzeige,
+Filter-Toggle und Highlight angezeigt und gezeichnet (vorher maßen sie
+nur den Model-Reset, ohne Zeichnen läuft kein SQL). Die Zeilenzugriffe
+und Tabellenaktionen im Detail misst `scripts/bench_table.py`
+(Repo-Lesepfade, gezeichnete Tabelle, Repo-Aufrufe je Aktion; Ausgabe nur
+auf stdout).
 
 Output: `PERFORMANCE.md` im Repo-Root mit Mess-Tabellen je Größe
 und automatisch detektierten Soft-Target-Verfehlungen (linear auf

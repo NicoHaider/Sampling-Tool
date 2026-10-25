@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from datetime import date, datetime, time
 from pathlib import Path
 
+import numpy as np
 import pytest
 from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QLabel
 from pytestqt.qtbot import QtBot
 
+from sampling_tool.core.formatting import format_cell_value
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import DatasetRepo, EngagementRepo
@@ -833,3 +835,155 @@ class TestNumericColumnsFitLongestValue:
         view.setColumnWidth(0, 4)
         assert view.columnWidth(0) == 4
         assert view._tooltip_for(index) == "t1"
+
+
+def _random_ids(n_rows: int, count: int) -> list[int]:
+    """Seeded, über den ganzen Datensatz verteilte row_ids (1-basiert)."""
+    picked = np.random.default_rng(94).choice(n_rows, size=count, replace=False)
+    return [int(i) + 1 for i in picked]
+
+
+def _count_repo_calls(
+    repo: DatasetRepo, monkeypatch: pytest.MonkeyPatch
+) -> list[tuple[str, tuple[int, ...]]]:
+    """Protokolliert `get_rows_in_range` (start, end) und `get_rows_by_ids` (IDs)."""
+    calls: list[tuple[str, tuple[int, ...]]] = []
+    original_range = repo.get_rows_in_range
+    original_ids = repo.get_rows_by_ids
+
+    def by_range(dataset_id: int, start: int, end: int) -> list[DatasetRow]:
+        calls.append(("range", (start, end)))
+        return original_range(dataset_id, start, end)
+
+    def by_ids(dataset_id: int, row_ids: Sequence[int]) -> list[DatasetRow]:
+        calls.append(("ids", tuple(row_ids)))
+        return original_ids(dataset_id, row_ids)
+
+    monkeypatch.setattr(repo, "get_rows_in_range", by_range)
+    monkeypatch.setattr(repo, "get_rows_by_ids", by_ids)
+    return calls
+
+
+def _paint(view: DataTableView) -> None:
+    viewport = view.viewport()
+    assert viewport is not None
+    viewport.repaint()
+    QApplication.processEvents()
+
+
+class TestFilteredWindowLoad:
+    """Sprint 94: die gefilterte Sicht lädt die sichtbaren IDs, nicht row_id-Fenster."""
+
+    _N_ROWS = 20_000
+
+    def _scattered_view(
+        self,
+        qtbot: QtBot,
+        db_with_engagement: tuple[Database, int],
+    ) -> tuple[DataTableView, DatasetRepo, Dataset, list[int]]:
+        db, eng_id = db_with_engagement
+        rows = tuple(
+            DatasetRow(row_id=i, values={"a": f"Wert {i}", "b": i * 3})
+            for i in range(1, self._N_ROWS + 1)
+        )
+        ds, repo = _persist_dataset(db, eng_id, rows, columns=("a", "b"))
+        ids = sorted(_random_ids(self._N_ROWS, 300))
+        view = DataTableView()
+        qtbot.addWidget(view)
+        view.setFixedSize(800, 600)
+        view.set_dataset(ds, repo)
+        view.show()
+        _paint(view)
+        return view, repo, ds, ids
+
+    def test_one_screen_of_scattered_sample_needs_few_queries(
+        self,
+        qtbot: QtBot,
+        db_with_engagement: tuple[Database, int],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        view, repo, _ds, ids = self._scattered_view(qtbot, db_with_engagement)
+        calls = _count_repo_calls(repo, monkeypatch)
+
+        view.filter_to_rows(ids)
+        _paint(view)
+
+        assert view.table_model().rowCount() == 300
+        assert 1 <= len(calls) <= 3, calls
+        assert [kind for kind, _ in calls if kind == "range"] == []
+
+    def test_filtered_cells_show_correct_rows(
+        self,
+        qtbot: QtBot,
+        db_with_engagement: tuple[Database, int],
+    ) -> None:
+        view, repo, ds, ids = self._scattered_view(qtbot, db_with_engagement)
+        assert ds.id is not None
+        view.filter_to_rows(ids)
+        _paint(view)
+        model = view.table_model()
+
+        for view_row, row_id in enumerate(ids):
+            expected = repo.get_row(ds.id, row_id)
+            assert expected is not None
+            for col, column in enumerate(ds.columns):
+                assert model.data(model.index(view_row, col)) == format_cell_value(
+                    expected.values[column]
+                ), (view_row, row_id, column)
+            assert model.headerData(view_row, Qt.Orientation.Vertical) == str(row_id)
+
+    def test_stale_ids_not_requeried(
+        self,
+        qtbot: QtBot,
+        db_with_engagement: tuple[Database, int],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        view, repo, _ds, _ids = self._scattered_view(qtbot, db_with_engagement)
+        stale = [999_999, 888_888]
+        # Weit hinten, damit nichts vom ersten Bildschirm im Cache liegt.
+        view.filter_to_rows([15_000, stale[0], 15_002, stale[1]])
+        calls = _count_repo_calls(repo, monkeypatch)
+
+        for _ in range(3):
+            _paint(view)
+            model = view.table_model()
+            assert [model.data(model.index(r, 0)) for r in range(4)] == [
+                "Wert 15000",
+                None,
+                "Wert 15002",
+                None,
+            ]
+
+        assert calls == [("ids", (15_000, stale[0], 15_002, stale[1]))]
+
+        # Ein neuer Filter vergisst die Fehlliste: dieselbe ID wird wieder angefragt.
+        view.filter_to_rows([stale[0]])
+        _paint(view)
+        assert calls[-1] == ("ids", (stale[0],))
+
+    def test_unfiltered_path_unchanged(
+        self,
+        db_with_engagement: tuple[Database, int],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        db, eng_id = db_with_engagement
+        rows = tuple(DatasetRow(row_id=i, values={"a": i}) for i in range(1, 2001))
+        ds, repo = _persist_dataset(db, eng_id, rows, columns=("a",))
+        calls = _count_repo_calls(repo, monkeypatch)
+        model = DatasetTableModel(ds, repo)
+
+        model.data(model.index(0, 0))
+        model.data(model.index(1499, 0))
+        model.data(model.index(1999, 0))
+        model.filter_to_row_ids([3, 1800])
+        model.clear_filter()
+        model._row_cache.clear()
+        model._cache_order.clear()
+        model.data(model.index(0, 0))
+
+        assert calls == [
+            ("range", (1, 127)),
+            ("range", (1375, 1626)),
+            ("range", (1875, 2001)),
+            ("range", (1, 127)),
+        ]
