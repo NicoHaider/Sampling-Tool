@@ -697,7 +697,7 @@ class TestMigration007:
         upgraded = Database(db_path)
         try:
             upgraded.migrate()
-            assert upgraded.schema_version() == 7
+            assert upgraded.schema_version() == CURRENT_SCHEMA_VERSION
             rows = (
                 upgraded.connect()
                 .execute("SELECT filters, filter_field, filter_value FROM samples ORDER BY id")

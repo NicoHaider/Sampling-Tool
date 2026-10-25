@@ -9,7 +9,7 @@ optimiert werden kann (statt blind „überall ein bisschen"):
 2. **Encode/Transform** – Coercion (``_coerce_value``) + Tagged-JSON-Encoding
    der Werte (``_values_to_json``, inkl. datetime/date/time-Tagging).
 3. **Write**        – SQLite-``executemany`` der vorcodierten JSON-Strings
-   + Commit (Index ``idx_dataset_rows_dataset`` ist via Migration aktiv).
+   + Commit (Index ``idx_dataset_rows_dataset_row`` ist via Migration aktiv).
 
 Pro Phase wird der Median aus ``--runs`` Läufen (Default 3) gemessen; dazu
 ein End-to-End-Lauf über die echten Produktions-Eintrittspunkte
@@ -232,7 +232,7 @@ def _write(columns: list[str], json_strings: list[str], db_path: Path) -> None:
     """Phase Write: executemany der vorcodierten JSON-Strings + Commit.
 
     Spiegelt den INSERT aus ``DatasetRepo.create`` exakt (gleiche Tabelle,
-    gleiche Spalten, eine Transaktion). Index ``idx_dataset_rows_dataset``
+    gleiche Spalten, eine Transaktion). Index ``idx_dataset_rows_dataset_row``
     ist via Migration aktiv – wie in Produktion.
     """
     db = Database(db_path)

@@ -310,6 +310,22 @@ def _process_qt_events(times: int = 3) -> None:
         app.processEvents()
 
 
+# Sprint 94: feste Größe der angezeigten Tabelle für die UI-Phasen.
+_TABLE_SIZE: tuple[int, int] = (1200, 800)
+
+
+def _paint_table(table: DataTableView) -> None:
+    """Zeichnet die Tabelle sofort und arbeitet die Events ab.
+
+    Sprint 94: Ohne Zeichnen fragt Qt kein `data()` ab, das Modell lädt also
+    keine Zeile – die UI-Phasen maßen bis dahin nur den Model-Reset.
+    """
+    viewport = table.viewport()
+    assert viewport is not None
+    viewport.repaint()
+    _process_qt_events()
+
+
 def run_probe_for_size(
     size: int,
     work_dir: Path,
@@ -375,11 +391,14 @@ def run_probe_for_size(
     # ---- Phase 3: Tabelle-Anzeige (UI) --------------------------------
     with measured("Tabelle-Anzeige") as m:
         table = DataTableView()
+        # Sprint 94: angezeigt und gezeichnet wie beim Anwender.
+        table.setFixedSize(*_TABLE_SIZE)
+        table.show()
         # Sprint 11.2: View liest on-demand via Repo (FIFO-Cache im
         # Model). `rows` werden nicht mehr ans Model übergeben – wir
         # nutzen das frisch befüllte DatasetRepo der Test-DB.
         table.set_dataset(dataset, DatasetRepo(db.connect()))
-        _process_qt_events()
+        _paint_table(table)
     result.measurements.append(m)
 
     # ---- Phase 4: Sampling --------------------------------------------
@@ -483,24 +502,25 @@ def run_probe_for_size(
     # ---- Phase 5: Filter-Toggle (UI) ----------------------------------
     with measured("Filter-Toggle (an)") as m:
         table.filter_to_rows(simple_result.selected_row_ids)
-        _process_qt_events()
+        _paint_table(table)
     result.measurements.append(m)
 
     with measured("Filter-Toggle (aus)") as m:
         table.clear_filter()
-        _process_qt_events()
+        _paint_table(table)
     result.measurements.append(m)
 
     # ---- Phase 6: Highlight (UI) --------------------------------------
     with measured("Highlight") as m:
         table.highlight_rows(simple_result.selected_row_ids)
-        _process_qt_events()
+        _paint_table(table)
     result.measurements.append(m)
 
     with measured("Clear-Highlight") as m:
         table.clear_highlight()
-        _process_qt_events()
+        _paint_table(table)
     result.measurements.append(m)
+    table.close()
 
     # ---- Phase 7: Export ----------------------------------------------
     # Sprint 11.4: ExcelExporter holt sich die Sample-Rows on-demand
