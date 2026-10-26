@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
+from sampling_tool import self_check
 from sampling_tool.config import APP_NAME, APP_ORG, APP_ORG_DOMAIN
 from sampling_tool.logging_setup import configure_logging, install_excepthook
 from sampling_tool.ui._info_icon import install_info_icon
@@ -20,6 +21,13 @@ logger = logging.getLogger(__name__)
 
 def main() -> int:
     """Startet die Qt-Anwendung (MainWindow + Controller)."""
+    # Sprint 95: Selbsttest des Pakets – vor `QApplication`, ohne Fenster,
+    # ohne Einstellungen. Nur genau `--self-check <pfad>`; jeder andere Aufruf
+    # (auch macOS-Finder-Argumente wie `-psn_…`) startet die normale App.
+    args = sys.argv[1:]
+    if len(args) == 2 and args[0] == self_check.SELF_CHECK_FLAG:
+        return self_check.run_entry(Path(args[1]))
+
     from PyQt6.QtCore import Qt
     from PyQt6.QtGui import QGuiApplication
     from PyQt6.QtWidgets import QApplication

@@ -16,6 +16,7 @@ werden – beides ohne Code-Änderung.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -27,6 +28,8 @@ from sampling_tool.config import (
     BRIEFPAPIER_MAX_IMAGE_PIXELS,
     DEFAULT_BRIEFPAPIER,
 )
+
+logger = logging.getLogger(__name__)
 
 _SUFFIX_PRIORITY: Final[tuple[str, ...]] = (".png", ".jpg", ".jpeg", ".pdf")
 
@@ -90,8 +93,9 @@ def validate_briefpapier(path: Path) -> None:
     Bild: vollständig decodierbar via Pillow + Pixel-Obergrenze). Rein
     lesend, keine Seiteneffekte. Wirft `FileNotFoundError`/`ValueError` für
     Existenz/Format (wie bisher) oder `BriefpapierError` für Größe/Parsefehler.
-    Fehlt `pypdf`/Pillow, wird die jeweilige Parseprüfung übersprungen
-    (Q-001-Pfad).
+    Fehlt `pypdf`/Pillow im Paket, ist das ebenfalls ein `BriefpapierError`
+    (Sprint 95) – beide Pakete decodieren vom Anwender beschaffte Dateien, die
+    Prüfung darf deshalb nie still entfallen.
     """
     briefpapier_from_path(path)
 
@@ -111,11 +115,20 @@ def validate_briefpapier(path: Path) -> None:
         _validate_image_parseable(path)
 
 
+def _missing_decoder(component: str) -> BriefpapierError:
+    logger.error("Briefpapier validation impossible: %s is missing", component, exc_info=True)
+    return BriefpapierError(
+        "Das Briefpapier kann nicht geprüft werden, weil eine Programmkomponente fehlt "
+        f"({component}). Bitte die Installation prüfen."
+    )
+
+
 def _validate_pdf_parseable(path: Path) -> None:
+    # Lazy, damit pypdf/Pillow nicht schon beim App-Start geladen werden.
     try:
         from pypdf import PdfReader
-    except ImportError:
-        return
+    except ImportError as exc:
+        raise _missing_decoder("pypdf") from exc
     try:
         pages = PdfReader(str(path)).pages
     except Exception as exc:
@@ -127,8 +140,8 @@ def _validate_pdf_parseable(path: Path) -> None:
 def _validate_image_parseable(path: Path) -> None:
     try:
         from PIL import Image
-    except ImportError:
-        return
+    except ImportError as exc:
+        raise _missing_decoder("Pillow") from exc
     try:
         with Image.open(path) as img:
             # Größe zuerst aus dem Header lesen (kein Decode nötig) und

@@ -5,6 +5,11 @@ Verwendung:
     python scripts/build_app.py --dmg      # Mac: zusätzlich .dmg
     python scripts/build_app.py --no-clean # bestehendes dist/ nicht löschen
 
+Nach dem PyInstaller-Lauf startet das Script das gebaute Programm mit
+`--self-check build/self_check.json` (Sprint 95) und bricht mit Exit 1 ab, wenn
+der Selbsttest rot ist oder keinen Bericht schreibt. `--skip-self-check` nur für
+Notfälle.
+
 Voraussetzungen:
     pip install -e ".[build]"
     Optional auf Mac für DMG: brew install create-dmg
@@ -23,6 +28,9 @@ from _script_io import force_utf8_stdout
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_NAME = "Audit Sampling Tool"
+SELF_CHECK_REPORT = ROOT / "build" / "self_check.json"
+# Der erste Lauf eines frischen Pakets baut den matplotlib-Font-Cache.
+SELF_CHECK_TIMEOUT_S = 300
 
 
 def clean() -> None:
@@ -56,6 +64,39 @@ def run_pyinstaller() -> Path:
         cwd=ROOT,
     )
     return ROOT / "dist"
+
+
+def built_executable(dist: Path) -> Path:
+    """Pfad des gebauten Programms – das, was der Anwender startet."""
+    if platform.system() == "Darwin":
+        return dist / f"{APP_NAME}.app" / "Contents" / "MacOS" / "AuditSamplingTool"
+    if platform.system() == "Windows":
+        return dist / "AuditSamplingTool" / "AuditSamplingTool.exe"
+    return dist / "AuditSamplingTool" / "AuditSamplingTool"
+
+
+def run_self_check(executable: Path, report: Path) -> bool:
+    """Startet `executable --self-check report`; True nur bei Exit 0 UND Bericht."""
+    print(f"Running self-check on {executable} …")
+    report.unlink(missing_ok=True)
+    try:
+        result = subprocess.run(
+            [str(executable), "--self-check", str(report)],
+            cwd=ROOT,
+            timeout=SELF_CHECK_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"✗ Selbsttest konnte nicht ausgeführt werden: {exc}")
+        return False
+    if not report.exists():
+        print(f"✗ Selbsttest hat keinen Bericht geschrieben ({report}), Exit {result.returncode}.")
+        return False
+    print(report.read_text(encoding="utf-8"))
+    if result.returncode != 0:
+        print(f"✗ Selbsttest fehlgeschlagen (Exit {result.returncode}).")
+        return False
+    return True
 
 
 def make_dmg() -> Path | None:
@@ -117,6 +158,11 @@ def main() -> int:
         action="store_true",
         help="dist/ und build/ NICHT vor dem Build löschen",
     )
+    parser.add_argument(
+        "--skip-self-check",
+        action="store_true",
+        help="Selbsttest des gebauten Programms überspringen (nur für Notfälle)",
+    )
     args = parser.parse_args()
 
     if not args.no_clean:
@@ -125,6 +171,12 @@ def main() -> int:
     generate_icons_if_missing()
 
     dist = run_pyinstaller()
+
+    if args.skip_self_check:
+        print("\n! Selbsttest übersprungen (--skip-self-check).")
+    elif not run_self_check(built_executable(dist), SELF_CHECK_REPORT):
+        print("\n✗ Build abgebrochen: das gebaute Programm besteht den Selbsttest nicht.")
+        return 1
 
     print("\n✓ Build erfolgreich.")
     print(f"  Output: {dist}")
