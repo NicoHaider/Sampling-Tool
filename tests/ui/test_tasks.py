@@ -7,7 +7,11 @@ TaskWorker. Das deckt die Task-Logik selbst ab und prüft die Reproducibility
 
 from __future__ import annotations
 
+import inspect
+import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from openpyxl import Workbook
@@ -247,6 +251,38 @@ class TestExcelImportTask:
 
         assert stored.columns == ("Konto", "Betrag")
         assert stored.row_count == 2
+
+
+class TestImportTaskClosesRows:
+    """Sprint 97 / B: scheitert das Persistieren, wird der Zeilen-Generator geschlossen."""
+
+    def test_rows_closed_when_persist_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        csv_path = tmp_path / "buchungen.csv"
+        csv_path.write_bytes(b"Konto;Betrag\nK1;100\nK2;200\nK3;300\n")
+        db_path, eng_id = _make_engagement_db(tmp_path)
+        seen: list[Iterator[Any]] = []
+
+        def _failing_create(_self: DatasetRepo, _dataset: object, rows: Any, **_k: Any) -> None:
+            seen.append(rows)
+            next(rows)  # Generator gestartet ⇒ die CSV ist jetzt geöffnet.
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(DatasetRepo, "create", _failing_create)
+        reporter, _ = _make_progress_reporter()
+        task = ExcelImportTask(
+            path=csv_path, db_path=db_path, engagement_id=eng_id, user_name="tester"
+        )
+
+        with pytest.raises(sqlite3.OperationalError):
+            task.run(reporter, CancellationToken())
+
+        assert len(seen) == 1
+        assert inspect.getgeneratorstate(seen[0]) == inspect.GEN_CLOSED  # type: ignore[arg-type]
+        # Unter Windows schlüge das bei offener Datei fehl.
+        renamed = csv_path.rename(tmp_path / "umbenannt.csv")
+        assert renamed.exists()
 
 
 class TestReproducibility:

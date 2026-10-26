@@ -15,7 +15,8 @@ im Schreiben kein halbes File zurück.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -37,7 +38,7 @@ from sampling_tool.core.formatting import format_header_row
 from sampling_tool.core.models import Dataset, DatasetRow, Engagement, SampleResult
 from sampling_tool.core.provenance import SamplingProvenance
 from sampling_tool.io._atomic import AtomicReplaceError, atomic_output
-from sampling_tool.io._xlsx_safe import safe_row
+from sampling_tool.io._xlsx_safe import CONTROL_CHAR_PICTURES, control_chars_in, safe_row
 from sampling_tool.io._xlsx_util import (
     autosize_columns as autosize_columns,
 )
@@ -124,9 +125,12 @@ class ExcelExporter:
         target = output_dir / filename
 
         wb = Workbook()
+        tally = _ControlCharTally()
         try:
-            self._write_sample_sheet(wb, sample_rows, columns)
-            self._write_metadata_sheet(wb, sample, dataset, engagement, population_predates_basis)
+            self._write_sample_sheet(wb, sample_rows, columns, tally)
+            self._write_metadata_sheet(
+                wb, sample, dataset, engagement, population_predates_basis, tally
+            )
             try:
                 with atomic_output(target) as tmp:
                     wb.save(tmp)
@@ -179,6 +183,7 @@ class ExcelExporter:
         wb: Workbook,
         rows: list[DatasetRow],
         columns: list[str],
+        tally: _ControlCharTally,
     ) -> None:
         ws = wb.active
         assert ws is not None
@@ -192,6 +197,7 @@ class ExcelExporter:
         header_font = Font(bold=True, color="FFFFFFFF")
         header_align = Alignment(vertical="center", horizontal="left")
 
+        tally.add(columns)
         safe_row(ws, columns)
         for cell in ws[1]:
             cell.fill = header_fill
@@ -205,6 +211,7 @@ class ExcelExporter:
         max_widths: list[int] = [len(c) for c in columns]
         for idx, row in enumerate(rows_to_write, start=1):
             raw_values = [row.values.get(col) for col in columns]
+            tally.add(raw_values)
             values = safe_row(ws, raw_values)
             for i, val in enumerate(values):
                 length = len(display_string(val))
@@ -225,7 +232,8 @@ class ExcelExporter:
         sample: SampleResult,
         dataset: Dataset,
         engagement: Engagement | None,
-        population_predates_basis: bool = False,
+        population_predates_basis: bool,
+        tally: _ControlCharTally,
     ) -> None:
         ws = wb.create_sheet(_SHEET_META)
 
@@ -261,7 +269,13 @@ class ExcelExporter:
             cell.font = bold
 
         for label, value in rows:
+            tally.add((label, value))
             safe_row(ws, [label, value])
+
+        # Sprint 97 / C: nur wenn ersetzt wurde – sonst bleibt das Blatt wie vorher.
+        note = tally.note()
+        if note is not None:
+            safe_row(ws, ["Hinweis", note])
 
         autosize_columns(ws, columns=2, min_width=12)
 
@@ -273,3 +287,26 @@ class ExcelExporter:
 # ---------------------------------------------------------------------------
 # Hilfen
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class _ControlCharTally:
+    """Zählt die Steuerzeichen, die beim Export als Symbol erscheinen (Sprint 97 / C)."""
+
+    count: int = 0
+    example: str | None = None
+
+    def add(self, values: Iterable[Any]) -> None:
+        for value in values:
+            found = control_chars_in(value)
+            if not found:
+                continue
+            self.count += len(found)
+            if self.example is None:
+                self.example = CONTROL_CHAR_PICTURES[ord(found[0])]
+
+    def note(self) -> str | None:
+        """Hinweiszeile fürs Metadaten-Blatt, ``None`` ohne Ersetzung."""
+        if self.example is None:
+            return None
+        return f"{self.count} Steuerzeichen wurden als Symbol dargestellt (z. B. {self.example})."

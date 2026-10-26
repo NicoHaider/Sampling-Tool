@@ -107,7 +107,7 @@ class TestImportOptionsDialog:
     def test_dialog_lists_all_sheets_in_dropdown(
         self, qtbot: QtBot, multi_sheet_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(multi_sheet_path, importer)
+        dialog = ImportOptionsDialog(multi_sheet_path, importer.probe(multi_sheet_path))
         qtbot.addWidget(dialog)
         # UserData = Sheet-Name; Display-Text enthält zusätzlich Dimensionen.
         combo = dialog._sheet_combo
@@ -118,7 +118,7 @@ class TestImportOptionsDialog:
     def test_dialog_loads_preview_on_sheet_change(
         self, qtbot: QtBot, multi_sheet_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(multi_sheet_path, importer)
+        dialog = ImportOptionsDialog(multi_sheet_path, importer.probe(multi_sheet_path))
         qtbot.addWidget(dialog)
         # Initial: erstes Sheet → 2 Spalten
         assert dialog._preview_table.columnCount() == 2
@@ -130,7 +130,7 @@ class TestImportOptionsDialog:
     def test_dialog_preselects_detected_header_row_high(
         self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(simple_path, importer)
+        dialog = ImportOptionsDialog(simple_path, importer.probe(simple_path))
         qtbot.addWidget(dialog)
         # High Confidence: Header in Zeile 1 (UI: 1-basiert, intern 0)
         assert dialog._header_spin.value() == 1
@@ -139,7 +139,7 @@ class TestImportOptionsDialog:
     def test_dialog_preselects_detected_header_row_low(
         self, qtbot: QtBot, leading_blank_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(leading_blank_path, importer)
+        dialog = ImportOptionsDialog(leading_blank_path, importer.probe(leading_blank_path))
         qtbot.addWidget(dialog)
         # Low Confidence: Header in Zeile 3 (UI: 1-basiert)
         assert dialog._header_spin.value() == 3
@@ -148,7 +148,7 @@ class TestImportOptionsDialog:
     def test_dialog_shows_red_warning_when_ambiguous(
         self, qtbot: QtBot, ambiguous_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(ambiguous_path, importer)
+        dialog = ImportOptionsDialog(ambiguous_path, importer.probe(ambiguous_path))
         qtbot.addWidget(dialog)
         # Confidence-Label muss BDO-Rot enthalten oder einen klaren Hinweis-Text.
         text = dialog._confidence_label.text().lower()
@@ -157,7 +157,7 @@ class TestImportOptionsDialog:
     def test_dialog_disables_import_button_when_header_row_invalid(
         self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(simple_path, importer)
+        dialog = ImportOptionsDialog(simple_path, importer.probe(simple_path))
         qtbot.addWidget(dialog)
         # simple_path hat 3 Zeilen. Header in Zeile 3 → keine Daten dahinter.
         dialog._header_spin.setValue(3)
@@ -169,7 +169,7 @@ class TestImportOptionsDialog:
     def test_dialog_result_returns_sheet_and_header(
         self, qtbot: QtBot, multi_sheet_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(multi_sheet_path, importer)
+        dialog = ImportOptionsDialog(multi_sheet_path, importer.probe(multi_sheet_path))
         qtbot.addWidget(dialog)
         combo = dialog._sheet_combo
         assert combo is not None
@@ -184,7 +184,7 @@ class TestImportOptionsDialog:
     def test_dialog_cancel_returns_rejected(
         self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(simple_path, importer)
+        dialog = ImportOptionsDialog(simple_path, importer.probe(simple_path))
         qtbot.addWidget(dialog)
         dialog.reject()
         assert dialog.result() == int(QDialog.DialogCode.Rejected)
@@ -211,7 +211,7 @@ class TestNoHeaderOption:
     def test_no_header_checkbox_disables_header_spin(
         self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(simple_path, importer)
+        dialog = ImportOptionsDialog(simple_path, importer.probe(simple_path))
         qtbot.addWidget(dialog)
         assert dialog._header_spin.isEnabled() is True
         dialog._no_header_check.setChecked(True)
@@ -220,7 +220,7 @@ class TestNoHeaderOption:
     def test_no_header_result_header_row_is_none(
         self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(simple_path, importer)
+        dialog = ImportOptionsDialog(simple_path, importer.probe(simple_path))
         qtbot.addWidget(dialog)
         dialog._no_header_check.setChecked(True)
         dialog._on_accept()
@@ -234,7 +234,7 @@ class TestNoHeaderOption:
     ) -> None:
         # Header-Spin auf letzte Zeile = ungültig für „mit Kopfzeile", aber
         # „keine Kopfzeile" ist trotzdem gültig (alle Zeilen sind Daten).
-        dialog = ImportOptionsDialog(simple_path, importer)
+        dialog = ImportOptionsDialog(simple_path, importer.probe(simple_path))
         qtbot.addWidget(dialog)
         dialog._header_spin.setValue(3)
         assert _ok_enabled(dialog) is False
@@ -253,7 +253,7 @@ class TestHeaderRowClick:
     def test_click_row_sets_header_spin(
         self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(simple_path, importer)
+        dialog = ImportOptionsDialog(simple_path, importer.probe(simple_path))
         qtbot.addWidget(dialog)
         # simple_path: 3 Vorschau-Zeilen. Klick auf Zeile k=1 → Spin = k+1 = 2.
         dialog._preview_table.cellClicked.emit(1, 0)
@@ -268,7 +268,7 @@ class TestHeaderRowClick:
     def test_click_vertical_header_sets_header_spin(
         self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(simple_path, importer)
+        dialog = ImportOptionsDialog(simple_path, importer.probe(simple_path))
         qtbot.addWidget(dialog)
         v_header = dialog._preview_table.verticalHeader()
         assert v_header is not None
@@ -279,7 +279,7 @@ class TestHeaderRowClick:
     def test_click_is_noop_when_no_header_checked(
         self, qtbot: QtBot, simple_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(simple_path, importer)
+        dialog = ImportOptionsDialog(simple_path, importer.probe(simple_path))
         qtbot.addWidget(dialog)
         dialog._no_header_check.setChecked(True)
         assert dialog._header_spin.isEnabled() is False
@@ -294,14 +294,14 @@ class TestCsvImportOptions:
     def test_csv_has_no_sheet_combo(
         self, qtbot: QtBot, header_csv_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(header_csv_path, importer)
+        dialog = ImportOptionsDialog(header_csv_path, importer.probe(header_csv_path))
         qtbot.addWidget(dialog)
         assert dialog._sheet_combo is None
 
     def test_csv_preview_renders_and_preselects_header(
         self, qtbot: QtBot, header_csv_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(header_csv_path, importer)
+        dialog = ImportOptionsDialog(header_csv_path, importer.probe(header_csv_path))
         qtbot.addWidget(dialog)
         assert dialog._preview_table.rowCount() == 5
         # Kopfzeile in raw row 3 (1-basiert) erkannt → Spin-Default 3.
@@ -310,7 +310,7 @@ class TestCsvImportOptions:
     def test_csv_result_sheet_name_none(
         self, qtbot: QtBot, header_csv_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(header_csv_path, importer)
+        dialog = ImportOptionsDialog(header_csv_path, importer.probe(header_csv_path))
         qtbot.addWidget(dialog)
         dialog._header_spin.setValue(3)
         dialog._on_accept()
@@ -322,7 +322,7 @@ class TestCsvImportOptions:
     def test_csv_no_header_result(
         self, qtbot: QtBot, header_csv_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(header_csv_path, importer)
+        dialog = ImportOptionsDialog(header_csv_path, importer.probe(header_csv_path))
         qtbot.addWidget(dialog)
         dialog._no_header_check.setChecked(True)
         dialog._on_accept()
@@ -350,7 +350,7 @@ class TestPreviewUsesCellFormatter:
     def test_date_only_cell_shows_without_midnight(
         self, qtbot: QtBot, typed_cells_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(typed_cells_path, importer)
+        dialog = ImportOptionsDialog(typed_cells_path, importer.probe(typed_cells_path))
         qtbot.addWidget(dialog)
         item = dialog._preview_table.item(1, 0)
         assert item is not None
@@ -360,7 +360,7 @@ class TestPreviewUsesCellFormatter:
     def test_preview_cells_match_table_formatter(
         self, qtbot: QtBot, typed_cells_path: Path, importer: ExcelImporter
     ) -> None:
-        dialog = ImportOptionsDialog(typed_cells_path, importer)
+        dialog = ImportOptionsDialog(typed_cells_path, importer.probe(typed_cells_path))
         qtbot.addWidget(dialog)
         texts: list[str] = []
         for c in range(3):
@@ -376,7 +376,7 @@ class TestMinimumSize:
     def test_minimum_height_fits_target_device(
         self, qtbot: QtBot, importer: ExcelImporter, simple_path: Path
     ) -> None:
-        dialog = ImportOptionsDialog(simple_path, importer)
+        dialog = ImportOptionsDialog(simple_path, importer.probe(simple_path))
         qtbot.addWidget(dialog)
         assert dialog.minimumHeight() <= 720
 
@@ -405,7 +405,9 @@ class TestFirstNonEmptySheetPreselected:
     def test_empty_first_sheet_is_skipped(
         self, qtbot: QtBot, importer: ExcelImporter, leading_empty_sheet_path: Path
     ) -> None:
-        dialog = ImportOptionsDialog(leading_empty_sheet_path, importer)
+        dialog = ImportOptionsDialog(
+            leading_empty_sheet_path, importer.probe(leading_empty_sheet_path)
+        )
         qtbot.addWidget(dialog)
         assert dialog._sheet_combo is not None
         assert dialog._sheet_combo.currentData() == "Daten"
@@ -414,7 +416,7 @@ class TestFirstNonEmptySheetPreselected:
     def test_first_sheet_stays_when_it_has_data(
         self, qtbot: QtBot, importer: ExcelImporter, multi_sheet_path: Path
     ) -> None:
-        dialog = ImportOptionsDialog(multi_sheet_path, importer)
+        dialog = ImportOptionsDialog(multi_sheet_path, importer.probe(multi_sheet_path))
         qtbot.addWidget(dialog)
         assert dialog._sheet_combo is not None
         assert dialog._sheet_combo.currentIndex() == 0
@@ -424,7 +426,9 @@ class TestEmptySheetMessage:
     def test_empty_sheet_says_no_data(
         self, qtbot: QtBot, importer: ExcelImporter, leading_empty_sheet_path: Path
     ) -> None:
-        dialog = ImportOptionsDialog(leading_empty_sheet_path, importer)
+        dialog = ImportOptionsDialog(
+            leading_empty_sheet_path, importer.probe(leading_empty_sheet_path)
+        )
         qtbot.addWidget(dialog)
         assert dialog._sheet_combo is not None
         dialog._sheet_combo.setCurrentIndex(0)
@@ -459,7 +463,9 @@ class TestHeaderOnlySheetNotPreselected:
     def test_first_sheet_with_a_data_row_is_preselected(
         self, qtbot: QtBot, importer: ExcelImporter, header_only_first_sheet_path: Path
     ) -> None:
-        dialog = ImportOptionsDialog(header_only_first_sheet_path, importer)
+        dialog = ImportOptionsDialog(
+            header_only_first_sheet_path, importer.probe(header_only_first_sheet_path)
+        )
         qtbot.addWidget(dialog)
         assert dialog._sheet_combo is not None
         assert dialog._sheet_combo.currentData() == "Buchungen"
@@ -476,7 +482,7 @@ class TestHeaderOnlySheetNotPreselected:
         ws.title = "NurKopf"
         ws.append(["Konto", "Saldo"])
         wb.save(path)
-        dialog = ImportOptionsDialog(path, importer)
+        dialog = ImportOptionsDialog(path, importer.probe(path))
         qtbot.addWidget(dialog)
         assert dialog._sheet_combo is not None
         assert dialog._sheet_combo.currentData() == "NurKopf"
@@ -486,7 +492,9 @@ class TestBlockedImportExplainsWhy:
     def test_header_only_sheet_names_the_reason(
         self, qtbot: QtBot, importer: ExcelImporter, header_only_first_sheet_path: Path
     ) -> None:
-        dialog = ImportOptionsDialog(header_only_first_sheet_path, importer)
+        dialog = ImportOptionsDialog(
+            header_only_first_sheet_path, importer.probe(header_only_first_sheet_path)
+        )
         qtbot.addWidget(dialog)
         assert dialog._sheet_combo is not None
         dialog._sheet_combo.setCurrentIndex(0)
@@ -499,7 +507,7 @@ class TestBlockedImportExplainsWhy:
     def test_header_on_the_last_row_names_the_reason(
         self, qtbot: QtBot, importer: ExcelImporter, simple_path: Path
     ) -> None:
-        dialog = ImportOptionsDialog(simple_path, importer)
+        dialog = ImportOptionsDialog(simple_path, importer.probe(simple_path))
         qtbot.addWidget(dialog)
         dialog._header_spin.setValue(3)
 
@@ -511,7 +519,9 @@ class TestBlockedImportExplainsWhy:
     def test_empty_sheet_names_the_reason(
         self, qtbot: QtBot, importer: ExcelImporter, leading_empty_sheet_path: Path
     ) -> None:
-        dialog = ImportOptionsDialog(leading_empty_sheet_path, importer)
+        dialog = ImportOptionsDialog(
+            leading_empty_sheet_path, importer.probe(leading_empty_sheet_path)
+        )
         qtbot.addWidget(dialog)
         assert dialog._sheet_combo is not None
         dialog._sheet_combo.setCurrentIndex(0)
@@ -522,7 +532,7 @@ class TestBlockedImportExplainsWhy:
     def test_reason_disappears_when_import_is_possible(
         self, qtbot: QtBot, importer: ExcelImporter, simple_path: Path
     ) -> None:
-        dialog = ImportOptionsDialog(simple_path, importer)
+        dialog = ImportOptionsDialog(simple_path, importer.probe(simple_path))
         qtbot.addWidget(dialog)
         dialog._header_spin.setValue(3)
         dialog._header_spin.setValue(1)
