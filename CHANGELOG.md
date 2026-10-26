@@ -79,6 +79,27 @@ nacherzählt. Bedeutende, langlebige Entscheidungen sind zusätzlich als ADRs un
 
 ---
 
+## CSV-Import: Zeilenumbrüche und Sonderzeichen in Feldern (Sprint 96)
+
+Zwei gewollte Änderungen am Importergebnis für CSV-Dateien (`io/importer.py`):
+
+1. **Zeilenumbrüche in Anführungszeichen bleiben erhalten**, so wie sie in der
+   Datei stehen (`\n` bleibt `\n`, `\r\n` bleibt `\r\n`). Vorher wurde aus
+   `"Zeile eins` + Umbruch + `Zeile zwei"` still `Zeile einsZeile zwei` – mehrzeilige
+   Buchungstexte und Bemerkungen aus Buchhaltungsexporten kamen verändert an.
+2. **`\v`, `\f`, `\x1c`, `\x1d`, `\x1e`, `\x85`, ` `, ` ` beenden keinen
+   Datensatz mehr**, sie bleiben Teil des Zellwerts. Vorher wurde ein Datensatz mit
+   einem dieser Zeichen still in zwei zerlegt.
+
+Ursache war `str.splitlines()` vor `csv.reader`; der Importer liest die Datei jetzt
+gestreamt mit `csv.reader` direkt auf dem Dateiobjekt (`newline=""`). Für CSV-Dateien
+ohne diese beiden Fälle ist das Ergebnis unverändert (Oracle-Test
+`tests/integration/test_csv_streaming.py`). Excel-Import und Werte-Umwandlung sind nicht
+betroffen. Keine Migration: bereits importierte Datensätze bleiben, wie sie sind; wer
+eine betroffene CSV neu importiert, bekommt die korrekten Werte.
+
+---
+
 ## Detaillierte Sprint-Notizen (Sprints 11–33)
 
 Diese Abschnitte wurden aus `CLAUDE.md` hierher überführt (Sprint 62). Sie

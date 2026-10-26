@@ -32,11 +32,14 @@ Zahl korrigiert.
 
 from __future__ import annotations
 
+import codecs
 import csv
+import itertools
 import math
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
+from io import TextIOWrapper
 from pathlib import Path
 from typing import Any, Final, Literal
 
@@ -60,6 +63,15 @@ ProgressCallback = Callable[[int, int], None]
 # als Sonderzeichen wie „€" definiert), wäre also sonst immer gewählt und
 # cp1252 nie erreichbar.
 _CSV_ENCODINGS: Final[tuple[str, ...]] = ("utf-8", "utf-8-sig", "cp1252", "latin-1")
+
+# Sprint 96: Blockgröße des Encoding-Vorlaufs. Klein, damit der Vorlauf den
+# Speicher-Peak nicht mit der Dateigröße wachsen lässt.
+_CSV_SCAN_BLOCK_SIZE: Final[int] = 64 * 1024
+
+# Zeichen, die `csv.Sniffer` sieht – unverändert seit vor dem Streaming-Umbau.
+_CSV_SNIFF_CHARS: Final[int] = 8192
+
+_UTF8_BOM: Final[bytes] = b"\xef\xbb\xbf"
 
 # Sprint 85 / E3: Meldung nur bei einem Rückfall – UTF-8 mit BOM ist UTF-8 und
 # kein Grund für ein Modal. Klartext statt Codec-Namen (Zielgruppe ohne
@@ -201,16 +213,11 @@ def _enforce_row_limit(row_count: int) -> None:
     Leerzeilen würde den `continue`-Zweig endlos durchlaufen, ohne je diese
     Prüfung zu erreichen.
 
-    Für Excel (`_excel_row_generator`/`_configured_row_generator`) ist das
-    ein echter Streaming-Backstop – calamine liest Zeile für Zeile, der Abbruch
-    verhindert also tatsächlich weiteres Lesen. Für CSV (`_csv_row_generator`)
-    ist `data_rows` zu diesem Zeitpunkt bereits vollständig im RAM (siehe
-    `_read_csv_text`/`_parse_csv`) – der Cap greift dort erst NACH der vollen
-    Materialisierung und schützt nur noch vor der (billigeren) Coercion/DB-
-    Persist-Phase. Der primäre CSV-Schutz gegen eine sehr große Datei ist die
-    Dateigrößenprüfung in `io/import_preflight.py`, VOR `read_bytes()`
-    (bewusste Sprint-48-Scope-Entscheidung, siehe SPRINT_48_PROMPT.md
-    §2 – echtes CSV-Streaming ist ein separates Vorhaben).
+    Für Excel (`_excel_row_generator`/`_configured_row_generator`) und seit
+    Sprint 96 auch für CSV (`_csv_row_generator`, `_csv_width_pass`) ist das ein
+    echter Streaming-Backstop: Zeilen werden einzeln gelesen, der Abbruch
+    verhindert also tatsächlich weiteres Lesen. Bei CSV zählen auch Leerzeilen,
+    die erst am Dateiende als „abschließend" (nicht übersprungen) feststehen.
     """
     if row_count > MAX_IMPORT_ROWS:
         raise DataImportError(
@@ -357,9 +364,10 @@ class ExcelImporter:
         if max_rows < 0:
             raise DataImportError("preview_csv(): max_rows muss >= 0 sein.")
 
-        text, _enc = _read_csv_text(path)
-        rows, _delim_warning = _csv_reader_rows(text, suffix=suffix)
-        raw_rows = [tuple(_coerce_value(c) for c in row) for row in rows[:max_rows]]
+        source = _open_csv_source(path, suffix)
+        with source.open() as fh:
+            rows = list(itertools.islice(source.reader(fh), max_rows))
+        raw_rows = [tuple(_coerce_value(c) for c in row) for row in rows]
         detected, confidence = _detect_header_with_confidence(raw_rows)
         return SheetPreview(
             sheet_name=path.name,
@@ -493,63 +501,59 @@ class ExcelImporter:
         die explizite Wahl. Nutzt denselben `_csv_row_generator` (gleiche
         Coercion) – nur die Auswahl der Rohzeilen unterscheidet sich.
         """
-        text, encoding = _read_csv_text(path)
-        raw_rows, delimiter_warning = _csv_reader_rows(text, suffix=path.suffix.lower())
+        source = _open_csv_source(path, path.suffix.lower())
 
         warnings: list[str] = []
         if header_row is None:
-            # Breite nur aus nicht-leeren Zeilen ableiten – eine Leerzeile mit
-            # Trennern (',,' → drei leere Felder) darf die Spaltenzahl nicht
-            # aufblähen.
-            width = max((len(r) for r in raw_rows if not _is_blank(r)), default=0)
-            columns = _generic_columns(width)
-            body = raw_rows
+            columns = _generic_columns(self._csv_width_pass(source))
+            skip_rows = 0
             leading_skipped = 0
         else:
-            if header_row >= len(raw_rows):
+            header_raw, rows_seen = _csv_row_at(source, header_row)
+            if header_raw is None:
                 raise DataImportError(
                     f"Header-Zeile {header_row + 1} liegt jenseits der Daten in "
-                    f"'{path.name}' (max. {len(raw_rows)} Zeilen)."
+                    f"'{path.name}' (max. {rows_seen} Zeilen)."
                 )
-            columns, warnings = _normalize_columns(list(raw_rows[header_row]))
-            body = raw_rows[header_row + 1 :]
+            columns, warnings = _normalize_columns(header_raw)
+            skip_rows = header_row + 1
             leading_skipped = header_row
 
         if not columns:
             raise DataImportError(f"CSV-Datei '{path.name}' enthält keine Daten.")
 
-        # Trailing-Leerzeilen abschneiden, ohne sie als „übersprungen" zu zählen –
-        # konsistent mit dem Auto-Pfad (`_parse_csv`).
-        while body and _is_blank(body[-1]):
-            body = body[:-1]
-
-        data_rows: list[list[Any]] = []
-        skipped = leading_skipped
-        for raw in body:
-            if _is_blank(raw):
-                skipped += 1
-                continue
-            data_rows.append(list(raw))
-
-        if delimiter_warning is not None:
-            warnings = [*warnings, delimiter_warning]
-        encoding_warning = _encoding_warning(encoding)
-        if encoding_warning is not None:
-            warnings = [*warnings, encoding_warning]
-
         stats = ImportStats(
-            skipped_rows=skipped, rows_above_header=leading_skipped, warnings=list(warnings)
+            skipped_rows=leading_skipped,
+            rows_above_header=leading_skipped,
+            warnings=[*warnings, *_csv_source_warnings(source)],
         )
-        total = len(data_rows)
+        total_estimate = max(0, source.line_estimate - skip_rows)
         dataset = Dataset(
             name=path.stem,
             columns=tuple(columns),
-            row_count=total,
+            row_count=total_estimate,
             source_file=str(path),
             header_row=_header_row_number(header_row),
         )
-        rows_iter = self._csv_row_generator(columns, data_rows, stats, total)
+        rows_iter = self._csv_row_generator(source, columns, stats, total_estimate, skip_rows)
         return ImportResult(dataset=dataset, rows=rows_iter, stats=stats)
+
+    def _csv_width_pass(self, source: _CsvSource) -> int:
+        """Eigener Parse-Durchlauf für „keine Kopfzeile": breiteste nicht-leere Zeile.
+
+        Die Breite muss vor dem ersten Datensatz feststehen; gespeichert wird
+        nichts. Leerzeilen mit Trennern (',,' → drei leere Felder) blähen die
+        Spaltenzahl nicht auf.
+        """
+        width = 0
+        with source.open() as fh:
+            for count, raw in enumerate(source.reader(fh), start=1):
+                _enforce_row_limit(count)
+                if count % _PROGRESS_INTERVAL == 0:
+                    self._check_cancel()
+                if not _is_blank(raw):
+                    width = max(width, len(raw))
+        return width
 
     def _configured_row_generator(
         self,
@@ -689,61 +693,81 @@ class ExcelImporter:
     # ---- CSV ------------------------------------------------------------
 
     def _import_csv(self, path: Path) -> ImportResult:
-        text, encoding = _read_csv_text(path)
-        columns, data_rows, skipped, warnings, leading = _parse_csv(
-            text, suffix=path.suffix.lower()
-        )
-
-        if not columns:
+        source = _open_csv_source(path, path.suffix.lower())
+        header_raw, leading = _csv_first_non_blank(source)
+        if header_raw is None:
             raise DataImportError(f"CSV-Datei '{path.name}' enthält keine Daten.")
 
-        encoding_warning = _encoding_warning(encoding)
-        if encoding_warning is not None:
-            warnings = [*warnings, encoding_warning]
-
+        columns, header_warnings = _normalize_columns(header_raw)
         stats = ImportStats(
-            skipped_rows=skipped, rows_above_header=leading, warnings=list(warnings)
+            skipped_rows=leading,
+            rows_above_header=leading,
+            warnings=[*header_warnings, *_csv_source_warnings(source)],
         )
-        total = len(data_rows)
+        # Wie bei Excel nur eine Schätzung (Zeilenumbrüche der Datei);
+        # `DatasetRepo.create` korrigiert `row_count` nach dem Durchlauf.
+        total_estimate = max(0, source.line_estimate - leading - 1)
         dataset = Dataset(
             name=path.stem,
             columns=tuple(columns),
-            row_count=total,
+            row_count=total_estimate,
             source_file=str(path),
             header_row=_header_row_number(leading),
         )
-        rows_iter = self._csv_row_generator(columns, data_rows, stats, total)
+        rows_iter = self._csv_row_generator(
+            source, columns, stats, total_estimate, skip_rows=leading + 1
+        )
         return ImportResult(dataset=dataset, rows=rows_iter, stats=stats)
 
     def _csv_row_generator(
         self,
+        source: _CsvSource,
         columns: list[str],
-        data_rows: list[list[Any]],
         stats: ImportStats,
-        total: int,
+        total_estimate: int,
+        skip_rows: int,
     ) -> Iterator[DatasetRow]:
-        """CSV-Pfad als Generator. `data_rows` ist bereits vollständig im RAM
-        (siehe `_enforce_row_limit`-Docstring) – die Hard-Caps hier sind ein
-        Backstop vor Coercion/DB-Persist, kein Streaming-Schutz vor dem Parse
-        selbst. Primärschutz für CSV ist die Dateigrößenprüfung im Preflight."""
+        """Generator: liest die CSV ab Zeile ``skip_rows`` und yieldet Daten-Rows.
+
+        Die Datei ist nur offen, solange iteriert wird – auch bei Abbruch,
+        Cancel oder `close()` wird sie geschlossen (unter Windows sonst gesperrt).
+        """
         # Sprint 17: Cancel-Check vor dem ersten Read.
         self._check_cancel()
-        for idx, raw in enumerate(data_rows, start=1):
-            _enforce_cell_length_limit(raw)
-            values = {
-                col: _coerce_value(raw[i] if i < len(raw) else None)
-                for i, col in enumerate(columns)
-            }
-            stats.processed_count += 1
-            _enforce_row_limit(stats.processed_count)
-            if stats.processed_count % _PROGRESS_INTERVAL == 0:
-                self._check_cancel()
-                if self.progress is not None:
-                    self.progress(stats.processed_count, total)
-            yield DatasetRow(row_id=idx, values=values)
+        # Leerzeilen zählen erst als übersprungen, wenn danach noch Daten kommen;
+        # abschließende Leerzeilen fallen weg, ohne gezählt zu werden.
+        pending_blanks = 0
+        next_row_id = 1
+        with source.open() as fh:
+            reader = source.reader(fh)
+            for _ in itertools.islice(reader, skip_rows):
+                pass
+            for raw in reader:
+                if _is_blank(raw):
+                    pending_blanks += 1
+                    _enforce_row_limit(stats.processed_count + stats.skipped_rows + pending_blanks)
+                    continue
+                stats.skipped_rows += pending_blanks
+                pending_blanks = 0
+                _enforce_cell_length_limit(raw)
+                values = {
+                    col: _coerce_value(raw[i] if i < len(raw) else None)
+                    for i, col in enumerate(columns)
+                }
+                row = DatasetRow(row_id=next_row_id, values=values)
+                next_row_id += 1
+                stats.processed_count += 1
+                _enforce_row_limit(stats.processed_count + stats.skipped_rows)
+                if stats.processed_count % _PROGRESS_INTERVAL == 0:
+                    self._check_cancel()
+                    if self.progress is not None:
+                        self.progress(
+                            stats.processed_count, max(total_estimate, stats.processed_count)
+                        )
+                yield row
 
         if self.progress is not None:
-            self.progress(stats.processed_count, max(total, stats.processed_count))
+            self.progress(stats.processed_count, stats.processed_count)
 
 
 # ---------------------------------------------------------------------------
@@ -977,23 +1001,82 @@ def _encoding_warning(encoding: str) -> str | None:
     )
 
 
-def _read_csv_text(path: Path) -> tuple[str, str]:
-    """Probiert die Encoding-Liste durch und gibt (Text, gewähltes Encoding) zurück.
+@dataclass(frozen=True, slots=True)
+class _CsvSource:
+    """Lesbare CSV: Encoding und Dialekt stehen fest, die Datei ist (noch) zu.
 
-    UTF-8-BOM wird vorab erkannt, weil sonst der utf-8-Decode zwar erfolgreich
-    durchläuft, aber das BOM-Zeichen `﻿` als unsichtbares Präfix in der
-    ersten Spalte hängenbleibt.
+    Jeder Durchlauf öffnet die Datei selbst (`open`) und schließt sie wieder –
+    zwischen den Durchläufen hält niemand ein Dateihandle.
     """
-    raw = path.read_bytes()
-    if raw.startswith(b"\xef\xbb\xbf"):
-        return raw.decode("utf-8-sig"), "utf-8-sig"
 
-    last_error: Exception | None = None
-    for encoding in _CSV_ENCODINGS:
-        try:
-            return raw.decode(encoding), encoding
-        except UnicodeDecodeError as e:
-            last_error = e
+    path: Path
+    encoding: str
+    dialect: type[csv.Dialect]
+    delimiter_warning: str | None
+    line_estimate: int
+
+    def open(self) -> TextIOWrapper:
+        # `newline=""`: Zeilenenden gehen unverändert an `csv.reader`, damit
+        # Umbrüche in Anführungszeichen erhalten bleiben (Sprint 96).
+        return open(self.path, encoding=self.encoding, newline="")
+
+    def reader(self, fh: TextIOWrapper) -> Iterator[list[str]]:
+        return csv.reader(fh, dialect=self.dialect)
+
+
+def _open_csv_source(path: Path, suffix: str) -> _CsvSource:
+    """Encoding-Vorlauf + Dialekt-Erkennung, ohne die Datei im Speicher zu halten."""
+    encoding, line_estimate = _scan_csv_encoding(path)
+    dialect, delimiter_warning = _sniff_csv_dialect(path, encoding, suffix)
+    return _CsvSource(
+        path=path,
+        encoding=encoding,
+        dialect=dialect,
+        delimiter_warning=delimiter_warning,
+        line_estimate=line_estimate,
+    )
+
+
+def _csv_source_warnings(source: _CsvSource) -> list[str]:
+    """Delimiter- und Encoding-Hinweis in der Reihenfolge, die der Import meldet."""
+    warnings: list[str] = []
+    if source.delimiter_warning is not None:
+        warnings.append(source.delimiter_warning)
+    encoding_warning = _encoding_warning(source.encoding)
+    if encoding_warning is not None:
+        warnings.append(encoding_warning)
+    return warnings
+
+
+def _scan_csv_encoding(path: Path) -> tuple[str, int]:
+    """Wählt das Encoding und zählt die Zeilenumbrüche (``\\n``-Bytes).
+
+    Entscheidung wie vor Sprint 96: UTF-8-BOM ⇒ ``utf-8-sig`` (sonst hinge das
+    BOM-Zeichen als unsichtbares Präfix in der ersten Spalte); andernfalls das
+    erste Encoding aus `_CSV_ENCODINGS`, das die GANZE Datei fehlerfrei
+    dekodiert. Geprüft wird blockweise mit einem inkrementellen Decoder – die
+    Datei wird dabei weder als Bytes noch als Text gehalten. Das Byte ``0x0A``
+    ist in allen Kandidaten-Encodings genau ``\\n`` und taugt deshalb als
+    Zeilenschätzung für Fortschritt und `Dataset.row_count`.
+    """
+    with open(path, "rb") as fh:
+        candidates = ("utf-8-sig",) if fh.read(len(_UTF8_BOM)) == _UTF8_BOM else _CSV_ENCODINGS
+        last_error: UnicodeDecodeError | None = None
+        for encoding in candidates:
+            fh.seek(0)
+            decoder = codecs.getincrementaldecoder(encoding)()
+            newlines = 0
+            try:
+                while block := fh.read(_CSV_SCAN_BLOCK_SIZE):
+                    decoder.decode(block)
+                    newlines += block.count(b"\n")
+                decoder.decode(b"", final=True)
+            except UnicodeDecodeError as e:
+                if len(candidates) == 1:
+                    raise
+                last_error = e
+                continue
+            return encoding, newlines
     # Sehr unwahrscheinlich – latin-1 nimmt jedes Byte. Aber defensiv:
     raise DataImportError(
         f"CSV '{path.name}' konnte mit keinem unterstützten Encoding gelesen werden "
@@ -1001,12 +1084,10 @@ def _read_csv_text(path: Path) -> tuple[str, str]:
     )
 
 
-def _csv_reader_rows(text: str, *, suffix: str = "") -> tuple[list[list[Any]], str | None]:
-    """Liest CSV-Text in rohe Zeilen-Listen. Delimiter wird geschnüffelt.
-
-    Gemeinsame Basis für `_parse_csv` (Auto-Pfad) und `_import_csv_configured`
-    / `preview_csv` (Sprint-29-Override-Pfad) – damit beide Pfade denselben
-    Dialekt und dieselbe Zeilenaufteilung sehen.
+def _sniff_csv_dialect(
+    path: Path, encoding: str, suffix: str
+) -> tuple[type[csv.Dialect], str | None]:
+    """Dialekt aus den ersten `_CSV_SNIFF_CHARS` Zeichen, Fallback per Dateiendung.
 
     Sprint 49 / A-005: `suffix` (z. B. ``.tsv``) ist nur für den Fallback
     relevant, wenn `csv.Sniffer` scheitert – eine erfolgreich geschnüffelte
@@ -1014,59 +1095,37 @@ def _csv_reader_rows(text: str, *, suffix: str = "") -> tuple[list[list[Any]], s
     ``None``), wenn der Fallback gegriffen hat – analog zur Encoding-Warnung
     nur bei Abweichung vom stillen Default.
     """
-    sample = text[:8192] or text
+    with open(path, encoding=encoding, newline="") as fh:
+        sample = fh.read(_CSV_SNIFF_CHARS)
     try:
-        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-        fallback_warning: str | None = None
+        return csv.Sniffer().sniff(sample, delimiters=",;\t|"), None
     except csv.Error:
         if suffix == ".tsv":
-            dialect = csv.excel_tab
-            fallback_warning = "Trennzeichen: Tab (aus Dateiendung '.tsv')."
-        else:
-            dialect = csv.excel  # Default: Komma
-            fallback_warning = "Trennzeichen: Komma (Standard, Erkennung nicht eindeutig)."
-    rows = [list(row) for row in csv.reader(text.splitlines(), dialect=dialect)]
-    return rows, fallback_warning
+            return csv.excel_tab, "Trennzeichen: Tab (aus Dateiendung '.tsv')."
+        return csv.excel, "Trennzeichen: Komma (Standard, Erkennung nicht eindeutig)."
 
 
-def _parse_csv(
-    text: str, *, suffix: str = ""
-) -> tuple[list[str], list[list[Any]], int, list[str], int]:
-    """Splittet CSV-Text in Header + Datenzeilen. Delimiter wird geschnüffelt.
-
-    Liefert ``(columns, data_rows, skipped, warnings, leading)``; ``leading``
-    (Leerzeilen vor der Kopfzeile) ist in ``skipped`` enthalten.
-    """
-    all_rows, delimiter_warning = _csv_reader_rows(text, suffix=suffix)
-
-    # Leere Zeilen am Anfang strippen, davon zählen wir die ersten als
-    # "leading blanks" für die skipped-Bilanz.
+def _csv_first_non_blank(source: _CsvSource) -> tuple[list[str] | None, int]:
+    """Kopfzeile des Auto-Pfads: erste nicht-leere Zeile + Zahl der Leerzeilen davor."""
     leading = 0
-    while all_rows and _is_blank(all_rows[0]):
-        all_rows.pop(0)
-        leading += 1
+    with source.open() as fh:
+        for raw in source.reader(fh):
+            if not _is_blank(raw):
+                return raw, leading
+            leading += 1
+            _enforce_row_limit(leading)
+    return None, leading
 
-    # Trailing-Blanks ebenfalls strippen (zählen aber nicht als skipped).
-    while all_rows and _is_blank(all_rows[-1]):
-        all_rows.pop()
 
-    if not all_rows:
-        return [], [], leading, [], leading
-
-    header_row = list(all_rows[0])
-    columns, warnings = _normalize_columns(header_row)
-    if delimiter_warning is not None:
-        warnings = [*warnings, delimiter_warning]
-
-    data_rows: list[list[Any]] = []
-    skipped = leading
-    for raw in all_rows[1:]:
-        if _is_blank(raw):
-            skipped += 1
-            continue
-        data_rows.append(list(raw))
-
-    return columns, data_rows, skipped, warnings, leading
+def _csv_row_at(source: _CsvSource, index: int) -> tuple[list[str] | None, int]:
+    """Zeile ``index`` (0-basiert) bzw. ``None`` + Zeilenzahl, wenn die Datei vorher endet."""
+    seen = 0
+    with source.open() as fh:
+        for raw in source.reader(fh):
+            if seen == index:
+                return raw, seen
+            seen += 1
+    return None, seen
 
 
 # ---------------------------------------------------------------------------

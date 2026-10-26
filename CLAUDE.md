@@ -118,7 +118,12 @@ ui ──▶ controllers ──▶ core ◀── io
     basierte `python-calamine`-Library für Excel-Reads (10–30× schneller
     als openpyxl, deutlich niedrigerer RAM-Footprint, Streaming via
     `CalamineSheet.iter_rows`). CSV-Pfad bleibt stdlib-`csv` mit
-    Encoding-Fallback. Header-Detection (≥50 % String-Anteil) +
+    Encoding-Fallback und streamt seit Sprint 96: blockweiser
+    Encoding-Vorlauf (`_scan_csv_encoding`), danach `csv.reader` direkt
+    auf dem Dateiobjekt (`newline=""`, kein `splitlines()` – Umbrüche in
+    Anführungszeichen bleiben erhalten); jeder Durchlauf öffnet und
+    schließt die Datei selbst. CSV-`row_count` ist wie bei Excel vor dem
+    Verbrauch nur eine Schätzung. Header-Detection (≥50 % String-Anteil) +
     Progress-Callback unverändert. Native Python-Typen (kein
     numpy/pandas-Output). openpyxl wird im Import-Pfad NICHT mehr
     verwendet – bleibt nur für die Exporter.

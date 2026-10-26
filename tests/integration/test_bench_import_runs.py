@@ -53,3 +53,4 @@ def test_bench_import_quick_laeuft_durch(tmp_path: Path) -> None:
     assert "Encode" in out
     assert "Write" in out
     assert "Dominant" in out
+    assert "Speicher-Spitze" in out

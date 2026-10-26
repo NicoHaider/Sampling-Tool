@@ -430,6 +430,47 @@ Sprint-94-bedingt (`io/` 0 Diff). Die 4,45 s aus Sprint 34 taugen nicht als Verg
 Renderpfad hat sich seitdem geändert, unter anderem wird das PDF-Briefpapier seit Sprint 53 per
 pypdf unter jede Seite gemerged. Welcher Anteil worauf entfällt, ist nicht untersucht.
 
+**Sprint 96 – CSV-Import streamt (profiling-first):**
+
+Befund: Der CSV-Pfad las die ganze Datei als Bytes und als `str`, zerlegte sie mit
+`splitlines()` in eine Zeilenliste und hielt alle Rohzeilen im RAM, bevor die erste Zeile
+in die Datenbank ging. Seit Sprint 96 wählt ein blockweiser Vorlauf das Encoding (64-KiB-
+Blöcke, inkrementeller Decoder, zählt nebenbei die Zeilenumbrüche für die Fortschritts-
+schätzung), danach läuft `csv.reader` direkt auf dem Dateiobjekt. Die Vorschau liest nur
+noch die ersten 20 Zeilen statt der ganzen Datei.
+
+`scripts/bench_import.py` misst dafür neu die **Speicher-Spitze des Imports ohne DB**
+(`import_file` + vollständiger Verbrauch der Zeilen) in einem eigenen `tracemalloc`-Lauf,
+getrennt von den Zeitmessungen. Mac (Apple Silicon, Python 3.13.13), 2026-10-26,
+`--format csv --rows 1000000 --runs 3`, Baseline `728c9ad`:
+
+| CSV, 1M Zeilen (119,6 MB) | Baseline `728c9ad` | Sprint 96 |
+|---------------------------|-------------------:|----------:|
+| Speicher-Spitze ohne DB, 200 000 Zeilen | 223,7 MB | 0,3 MB |
+| Speicher-Spitze ohne DB, 1 000 000 Zeilen | 1 126,4 MB | 0,3 MB |
+| Verhältnis 1 000 000 / 200 000 Zeilen | 5,03 | 1,00 |
+| Parse (Median aus 3) | 2 577 ms | 1 706 ms |
+| End-to-End inkl. Write (Median aus 3) | 12 073 ms | 10 565 ms |
+
+Die Parse-Phase ist nicht ganz vergleichbar: Baseline `_read_csv_text` + `_parse_csv`,
+Sprint 96 Encoding-Vorlauf + gestreamter `csv.reader` (die Phase materialisiert die Zeilen
+weiterhin, weil Encode/Write sie als Liste brauchen). Encode und Write sind unverändert
+(Coercion 5 993 / 5 998 ms, Write 1 572 / 1 556 ms).
+
+Gegenprobe ohne `tracemalloc`, verschränkt (gleiche 1M-Datei, `main` und Branch
+abwechselnd in eigenen Prozessen, 2 Runden × beide Reihenfolgen, Median):
+
+| CSV, 1M Zeilen | `728c9ad` | Sprint 96 |
+|----------------|----------:|----------:|
+| End-to-End inkl. DB | 11,90 s | 10,57 s (−11 %) |
+| Import ohne DB | 9,36 s | 7,99 s |
+| Max. RSS des Prozesses, End-to-End | 1 332 MB | 65 MB |
+
+Alle Zahlen oben sind der Auto-Pfad, der Encoding-Vorlauf ist darin enthalten. Der
+konfigurierte Import mit „keine Kopfzeile" liest die Datei einmal mehr, weil die
+Spaltenzahl vor dem ersten Datensatz feststehen muss: Import ohne DB 8,85 s statt 7,83 s
+(Median aus 3, gleiche 1M-Datei), ohne zusätzlichen Speicher.
+
 **Hinweis zur Mess-Tabelle unten:** Der 1M-Lauf stammt vom Sprint-11-Stand
 (Toolversion `19f18a1`) und liegt damit VOR den Sprint-12.1-Fixes für P-001
 (`setResizeContentsPrecision(100)` → Tabelle-Anzeige) und P-002
