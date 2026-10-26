@@ -37,7 +37,10 @@ from sampling_tool.io.importer import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-TESTDATEN_CSV = sorted((REPO_ROOT / "testdaten" / "csv").glob("*.csv"))
+# `testdaten/` ist gitignored (nur lokal vorhanden, nicht in CI) – dort laufen die
+# Fälle mit; den Inhalt deckt zusätzlich der erzeugte Korpus unten ab.
+TESTDATEN_DIR = REPO_ROOT / "testdaten" / "csv"
+TESTDATEN_CSV = sorted(TESTDATEN_DIR.glob("*.csv"))
 
 # Zeichen, an denen `str.splitlines()` trennt, die aber kein CSV-Zeilenende sind.
 SPLITLINES_ONLY_CHARS = ("\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
@@ -428,6 +431,8 @@ class TestCsvEquivalenceOracle:
         assert _strip_line_breaks(new) == ref
 
     def test_testdaten_korpus_vorhanden(self) -> None:
+        if not TESTDATEN_DIR.is_dir():
+            pytest.skip("testdaten/ ist gitignored und hier nicht vorhanden")
         assert len(TESTDATEN_CSV) >= 5
         assert sum(_is_clean(p) for p in TESTDATEN_CSV) >= 4
 
@@ -492,9 +497,9 @@ class TestQuotedNewlinePreserved:
 
     def test_record_count_with_multiline_fields(self, tmp_path: Path) -> None:
         path = tmp_path / "drei.csv"
-        path.write_text(
-            'Nr;Buchungstext;Betrag\n1;Miete;100\n2;"Teil 1\nTeil 2\nTeil 3";200\n3;Reise;300\n',
-            encoding="utf-8",
+        # Bytes statt `write_text`: unter Windows würde `\n` sonst zu `\r\n`.
+        path.write_bytes(
+            b'Nr;Buchungstext;Betrag\n1;Miete;100\n2;"Teil 1\nTeil 2\nTeil 3";200\n3;Reise;300\n'
         )
         result = ExcelImporter().import_file(path)
         rows = list(result.rows)
