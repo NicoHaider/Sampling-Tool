@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+import sys
 from pathlib import Path
 
 import pytest
+from pytestqt.qtbot import QtBot
 
 from sampling_tool.io import briefpapier as bp
 from sampling_tool.io.briefpapier import (
@@ -169,5 +172,161 @@ class TestValidateBriefpapier:
 
         monkeypatch.setattr(ImageFile.ImageFile, "load", _boom)
 
+        with pytest.raises(BriefpapierError, match="zu groß"):
+            validate_briefpapier(big)
+
+
+def _make_corrupt_png(path: Path) -> Path:
+    path.write_bytes(b"this is not a real png file at all")
+    return path
+
+
+def _make_corrupt_pdf(path: Path) -> Path:
+    path.write_bytes(b"%PDF-1.4\nnot a real xref table, just garbage\n")
+    return path
+
+
+def _make_valid_pdf(path: Path) -> Path:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen.canvas import Canvas
+
+    canvas = Canvas(str(path), pagesize=A4)
+    canvas.drawString(100, 700, "Briefpapier")
+    canvas.save()
+    return path
+
+
+class TestMissingDecoderFailsLoud:
+    """Sprint 95: fehlt Pillow oder pypdf, schlägt die Prüfung fehl statt still zu passen.
+
+    `sys.modules[name] = None` lässt den lazy Import im Validator mit
+    `ImportError` scheitern – genau der Zustand eines Pakets, dem das Modul fehlt.
+    """
+
+    def test_image_validation_raises_without_pillow(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        corrupt = _make_corrupt_png(tmp_path / "corrupt.png")
+        monkeypatch.setitem(sys.modules, "PIL", None)
+        with pytest.raises(BriefpapierError, match="Pillow"):
+            validate_briefpapier(corrupt)
+
+    def test_pdf_validation_raises_without_pypdf(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        corrupt = _make_corrupt_pdf(tmp_path / "corrupt.pdf")
+        monkeypatch.setitem(sys.modules, "pypdf", None)
+        with pytest.raises(BriefpapierError, match="pypdf"):
+            validate_briefpapier(corrupt)
+
+    def test_error_is_logged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        png = _make_png(tmp_path / "letter.png")
+        monkeypatch.setitem(sys.modules, "PIL", None)
+        with (
+            caplog.at_level(logging.ERROR, logger="sampling_tool.io.briefpapier"),
+            pytest.raises(BriefpapierError),
+        ):
+            validate_briefpapier(png)
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert any("Pillow" in r.getMessage() for r in errors), [r.getMessage() for r in errors]
+        assert all(r.exc_info is not None for r in errors)
+
+    @pytest.mark.ui
+    def test_settings_dialog_rejects_when_decoder_missing(
+        self, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+
+        from sampling_tool.ui.dialogs.settings_dialog import SettingsDialog
+        from sampling_tool.ui.settings_store import AppSettings
+
+        dialog = SettingsDialog(AppSettings.defaults())
+        qtbot.addWidget(dialog)
+        png = _make_png(tmp_path / "letter.png")
+        monkeypatch.setattr(
+            "sampling_tool.ui.dialogs.settings_dialog.QFileDialog.getOpenFileName",
+            lambda *a, **k: (str(png), ""),
+        )
+        warnings: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            QMessageBox,
+            "warning",
+            lambda _self, title, text, *a, **k: warnings.append((title, text)),
+        )
+        monkeypatch.setitem(sys.modules, "PIL", None)
+
+        dialog._on_browse_briefpapier()
+
+        assert dialog._custom_briefpapier.text() == ""
+        assert dialog._radio_custom.isChecked() is False
+        assert len(warnings) == 1
+        title, text = warnings[0]
+        assert title == "Ungültiges Briefpapier"
+        assert "Pillow" in text
+
+    @pytest.mark.ui
+    def test_resolve_falls_back_to_default_when_decoder_missing(
+        self,
+        qtbot: QtBot,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from dataclasses import replace
+
+        from sampling_tool.ui.controllers.workspace_session import WorkspaceSession
+        from sampling_tool.ui.main_window import MainWindow
+        from sampling_tool.ui.recent import RecentEngagementsStore
+        from sampling_tool.ui.settings_store import AppSettings
+
+        window = MainWindow()
+        qtbot.addWidget(window)
+        png = _make_png(tmp_path / "letter.png")
+        settings = replace(AppSettings.defaults(), custom_briefpapier_path=png)
+        session = WorkspaceSession(
+            window, settings, RecentEngagementsStore(path=tmp_path / "recent.json")
+        )
+        default = bp.BriefpapierConfig(background_image=tmp_path / "default.pdf")
+        monkeypatch.setattr(
+            "sampling_tool.ui.controllers.workspace_session.get_default_briefpapier",
+            lambda: default,
+        )
+        monkeypatch.setitem(sys.modules, "PIL", None)
+
+        with caplog.at_level(
+            logging.WARNING, logger="sampling_tool.ui.controllers.workspace_session"
+        ):
+            cfg = session.resolve_briefpapier()
+
+        assert cfg is default
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("ungültig" in r.getMessage() for r in warnings), [
+            r.getMessage() for r in warnings
+        ]
+
+
+class TestValidBriefpapierUnchanged:
+    """Sprint 95, rote Linie: ein gültiges Briefpapier verhält sich wie vorher."""
+
+    def test_valid_png_jpg_pdf_still_accepted(self, tmp_path: Path) -> None:
+        from PIL import Image
+
+        png = _make_png(tmp_path / "letter.png")
+        jpg = tmp_path / "letter.jpg"
+        Image.new("RGB", (4, 4), color=(200, 0, 0)).save(jpg, format="JPEG")
+        pdf = _make_valid_pdf(tmp_path / "letter.pdf")
+        for path in (png, jpg, pdf):
+            validate_briefpapier(path)  # darf nicht werfen
+
+    def test_pixel_cap_still_enforced(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from PIL import Image
+
+        big = tmp_path / "huge.png"
+        Image.new("RGB", (10, 10)).save(big, format="PNG")
+        monkeypatch.setattr(bp, "BRIEFPAPIER_MAX_IMAGE_PIXELS", 50)
         with pytest.raises(BriefpapierError, match="zu groß"):
             validate_briefpapier(big)

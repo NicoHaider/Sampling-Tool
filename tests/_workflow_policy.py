@@ -28,8 +28,12 @@ from __future__ import annotations
 
 import re
 import shlex
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+# Das Flag gehört dem Programm (`sampling_tool.self_check`), nicht dem Test.
+from sampling_tool.self_check import SELF_CHECK_FLAG
 
 # Der Name der Variablen wird NICHT zweimal getippt: der Wächter besitzt ihn,
 # diese Datei prüft nur, dass die Workflows ihn setzen (§5.3 – keine
@@ -604,6 +608,64 @@ def check_smoke_runs_on_the_packaged_artefact(workflow: Workflow, *, name: str) 
     return violations
 
 
+_WAITS = ("sleep", "Start-Sleep")
+
+
+def _first_line(lines: list[list[str]], predicate: Callable[[list[str]], bool]) -> int | None:
+    return next((i for i, tokens in enumerate(lines) if predicate(tokens)), None)
+
+
+def check_self_check_runs_before_gui_smoke(workflow: Workflow, *, name: str) -> list[str]:
+    """Sprint 95: jeder Round-Trip-Smoke startet zuerst den Selbsttest des Entpackten.
+
+    Der 10-s-Lauf belegt nur, dass der Prozess startet. Ein Modul, das erst bei
+    Bedarf importiert wird (Pillow bei der Briefpapier-Prüfung, pypdf, …), fällt
+    dort nie auf – im Paket fehlte es, und keiner merkte es.
+
+    Geprüft je Smoke-Step (dieselbe Erkennung wie
+    `check_smoke_runs_on_the_packaged_artefact`: der Step entpackt das Archiv):
+    eine Zeile ruft `--self-check` auf, sie steht NACH dem Entpacken und VOR dem
+    ersten Warten (`sleep` / `Start-Sleep`), also auf dem Entpackten und vor dem
+    GUI-Lauf. Dass der Step vor dem Upload liegt, sichert die Sprint-76-Prüfung.
+
+    GRENZE, ehrlich benannt: dass Exit-Code und Berichtsdatei ausgewertet werden,
+    steht im Shell-Text und ist hier nicht strukturell geprüft. Belegt ist das
+    durch die Positiv-Kontrolle aus dem PR (lokaler Build ohne Pillow).
+    """
+    violations = []
+    for job_id, job in jobs(workflow).items():
+        if job_id != "build":
+            continue
+        smoke = [(i, s) for i, s in enumerate(steps(job)) if _is_smoke(s)]
+        if not smoke:
+            violations.append(f"{name}: Job 'build' hat keinen Smoke-Step für den Selbsttest.")
+        for index, step in smoke:
+            label = step_label(job_id, index, step)
+            lines = [
+                _tokenize_line(line) for line in strip_shell_comments(step["run"]).splitlines()
+            ]
+            unpack = _first_line(lines, lambda t: any(x in t for x in _EXTRACTORS))
+            check = _first_line(lines, lambda t: any(SELF_CHECK_FLAG in x for x in t))
+            wait = _first_line(lines, lambda t: any(x in t for x in _WAITS))
+            if check is None:
+                violations.append(
+                    f"{name}: {label} startet den Selbsttest ({SELF_CHECK_FLAG}) nicht – "
+                    f"ein erst bei Bedarf importiertes Modul fiele nie auf (Sprint 95)."
+                )
+                continue
+            if unpack is not None and check < unpack:
+                violations.append(
+                    f"{name}: {label} startet den Selbsttest VOR dem Entpacken – geprüft "
+                    f"würde nicht das Ausgelieferte (Sprint 95)."
+                )
+            if wait is not None and check > wait:
+                violations.append(
+                    f"{name}: {label} startet den Selbsttest erst NACH dem GUI-Lauf "
+                    f"(erstes Warten in Zeile {wait}) (Sprint 95)."
+                )
+    return violations
+
+
 def check_release_publishes_after_checksums(workflow: Workflow, *, name: str) -> list[str]:
     """Sprint 75: im Job `release` liegt die Prüfsummen-Erzeugung zwischen Download und Upload.
 
@@ -761,6 +823,7 @@ SHARED_CHECKS = (
 #: Zusagen, die nur `release.yml` betreffen.
 RELEASE_CHECKS = (
     check_smoke_runs_on_the_packaged_artefact,
+    check_self_check_runs_before_gui_smoke,
     check_release_publishes_after_checksums,
     check_release_files_name_every_build_artefact,
 )

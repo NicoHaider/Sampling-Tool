@@ -29,6 +29,7 @@ from typing import Any, ClassVar
 import pytest
 import yaml
 
+from sampling_tool.self_check import SELF_CHECK_FLAG
 from tests._test_floor import ENFORCE_TEST_FLOOR_ENV
 from tests._workflow_policy import (
     CI_CHECKS,
@@ -45,6 +46,7 @@ from tests._workflow_policy import (
     check_release_files_name_every_build_artefact,
     check_release_publishes_after_checksums,
     check_required_check_identity,
+    check_self_check_runs_before_gui_smoke,
     check_smoke_runs_on_the_packaged_artefact,
     check_test_floor_is_armed,
     check_upload_artifact_fails_on_empty,
@@ -90,6 +92,11 @@ def find_step(
         if predicate(step):
             return step
     raise AssertionError(f"Kein passender Step in Job '{job_id}' gefunden")
+
+
+def _unpacks(step: dict[str, Any]) -> bool:
+    body = step.get("run")
+    return isinstance(body, str) and ("unzip" in body or "Expand-Archive" in body)
 
 
 def runs(fragment: str) -> Callable[[dict[str, Any]], bool]:
@@ -169,6 +176,11 @@ class TestWorkflowGuarantees:
         """Sprint 76 – vorher lief der Smoke gegen `dist/`: geprüft wurde X,
         ausgeliefert wurde Y."""
         assert check_smoke_runs_on_the_packaged_artefact(workflows[RELEASE], name=RELEASE) == []
+
+    def test_self_check_runs_before_gui_smoke(self, workflows: dict[str, Workflow]) -> None:
+        """Sprint 95 – der 10-s-Lauf belegt nur den Start; ein Modul, das erst bei
+        Bedarf importiert wird, fällt nur im Selbsttest auf."""
+        assert check_self_check_runs_before_gui_smoke(workflows[RELEASE], name=RELEASE) == []
 
     def test_uv_sync_is_locked(self, workflows: dict[str, Workflow]) -> None:
         """Sprint 61 – `--frozen` installiert den Lock, ohne ihn gegen
@@ -263,7 +275,7 @@ class TestPolicyChecksDetectViolations:
         source = inspect.getsource(TestPolicyChecksDetectViolations)
         unproven = sorted(check.__name__ for check in registered if check.__name__ not in source)
         assert unproven == [], f"Zusagen ohne Positiv-Kontrolle: {unproven}"
-        assert len(registered) == 15, sorted(check.__name__ for check in registered)
+        assert len(registered) == 16, sorted(check.__name__ for check in registered)
 
     def test_tag_instead_of_sha_is_rejected(self, workflows: dict[str, Workflow]) -> None:
         broken = mutated(workflows, CI)
@@ -350,6 +362,38 @@ class TestPolicyChecksDetectViolations:
         build_steps.insert(5, upload)
         job["steps"] = build_steps
         assert check_smoke_runs_on_the_packaged_artefact(broken, name=RELEASE)
+
+    @pytest.mark.parametrize("shell", ["bash", "pwsh"])
+    def test_smoke_without_self_check_is_rejected(
+        self, workflows: dict[str, Workflow], shell: str
+    ) -> None:
+        broken = mutated(workflows, RELEASE)
+        step = find_step(broken, "build", lambda s: s.get("shell") == shell and _unpacks(s))
+        step["run"] = "\n".join(
+            line for line in step["run"].splitlines() if SELF_CHECK_FLAG not in line
+        )
+        violations = check_self_check_runs_before_gui_smoke(broken, name=RELEASE)
+        assert violations
+        assert "nicht" in violations[0]
+
+    def test_self_check_after_gui_smoke_is_rejected(self, workflows: dict[str, Workflow]) -> None:
+        broken = mutated(workflows, RELEASE)
+        step = find_step(broken, "build", lambda s: s.get("shell") == "bash" and _unpacks(s))
+        lines = step["run"].splitlines()
+        moved = [line for line in lines if SELF_CHECK_FLAG in line]
+        assert moved
+        step["run"] = "\n".join([line for line in lines if line not in moved] + moved)
+        violations = check_self_check_runs_before_gui_smoke(broken, name=RELEASE)
+        assert violations
+        assert "NACH dem GUI-Lauf" in violations[0]
+
+    def test_self_check_before_unpacking_is_rejected(self, workflows: dict[str, Workflow]) -> None:
+        broken = mutated(workflows, RELEASE)
+        step = find_step(broken, "build", lambda s: s.get("shell") == "pwsh" and _unpacks(s))
+        step["run"] = f'& "dist\\AuditSamplingTool.exe" {SELF_CHECK_FLAG} x.json\n' + step["run"]
+        violations = check_self_check_runs_before_gui_smoke(broken, name=RELEASE)
+        assert violations
+        assert "VOR dem Entpacken" in violations[0]
 
     def test_uv_sync_frozen_instead_of_locked_is_rejected(
         self, workflows: dict[str, Workflow]

@@ -632,16 +632,29 @@ Workaround).
   `pip install -e ".[build]"`). Output unter `dist/`:
   - Mac: `Audit Sampling Tool.app` (+ optional `.dmg` via `create-dmg`)
   - Windows: Ordner `AuditSamplingTool/` mit `AuditSamplingTool.exe`
+  Danach startet das Script das gebaute Programm mit `--self-check
+  build/self_check.json` und bricht bei rotem Selbsttest oder fehlendem
+  Bericht mit Exit 1 ab (`--skip-self-check` nur für Notfälle).
+- **Selbsttest (`--self-check <pfad>`):** `sampling_tool/self_check.py`,
+  Abzweig ganz am Anfang von `__main__.main()` – ohne `QApplication`, Fenster,
+  QSettings. Benutzt Pillow, Briefpapier-Prüfung, pypdf, reportlab,
+  matplotlib, openpyxl+calamine, den RNG-Vertrag (Golden-Vektor) und PyQt6
+  je einmal funktional; JSON-Bericht in die Datei (Windows-Paket hat
+  `console=False`), Exit 0/1. Fängt Module, die erst bei Bedarf importiert
+  werden und dem Paket fehlen – der 10-s-Start-Smoke sieht die nie.
 - **Build via CI:** `git tag v0.X.Y && git push --tags` triggert
   `.github/workflows/release.yml`. Baut auf `macos-latest` +
   `windows-latest` parallel, lädt beide Bundles als ZIPs in einen
-  Draft-Release.
+  Draft-Release. Der Round-Trip-Smoke führt auf dem entpackten Artefakt
+  zuerst den Selbsttest aus, dann den 10-s-Start (gepinnt in
+  `tests/_workflow_policy.py::check_self_check_runs_before_gui_smoke`).
 - **Spec-File:** `sampling_tool.spec` (PyInstaller-Konfiguration). One-folder
   Mode, `noarchive=False`. Resources werden unter `sampling_tool/...`
   gebundelt, damit `Path(__file__).parent / ...`-Lookups (Briefpapier,
   QSS, HTML-Templates) im Frozen-Bundle weiterhin funktionieren.
 - **Hidden Imports:** matplotlib-Backends, openpyxl-Writer, reportlab-Font-
   Tabellen, `pypdf` (seit Sprint 53 Runtime-Dependency, ersetzt `pdfrw`),
+  Pillow mit PNG-/JPEG-Plugin (seit Sprint 95 explizit, vorher nur transitiv),
   `platformdirs`. PyInstaller findet diese nicht automatisch – im Spec
   explizit aufgeführt.
 - **Icons:** `resources/icons/app.icns` (Mac) + `app.ico` (Windows). Werden

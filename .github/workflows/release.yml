@@ -224,6 +224,27 @@ jobs:
             exit 1
           fi
 
+          # --- Selbsttest auf dem Entpackten (Sprint 95) ------------------
+          # Der 10-s-Lauf unten belegt nur den Start. Ein Modul, das erst bei
+          # Bedarf importiert wird (Pillow beim Briefpapier, pypdf, …), fällt
+          # dort nie auf – der Selbsttest benutzt jede Komponente einmal.
+          SELF_CHECK_JSON="$PWD/_self_check.json"
+          rm -f "$SELF_CHECK_JSON"
+          set +e
+          "$BIN" --self-check "$SELF_CHECK_JSON"
+          SELF_CHECK_STATUS=$?
+          set -e
+          if [ ! -f "$SELF_CHECK_JSON" ]; then
+            echo "::error::Selbsttest aus dem entpackten Artefakt hat keinen Bericht geschrieben (exit $SELF_CHECK_STATUS)." >&2
+            exit 1
+          fi
+          cat "$SELF_CHECK_JSON"
+          if [ "$SELF_CHECK_STATUS" -ne 0 ]; then
+            echo "::error::Selbsttest aus dem entpackten Artefakt FAILED (exit $SELF_CHECK_STATUS) – Bericht oben." >&2
+            exit 1
+          fi
+          echo "Selbsttest OK: das entpackte Artefakt besteht alle Checks."
+
           # --- Smoke auf dem Entpackten ----------------------------------
           "$BIN" &
           PID=$!
@@ -327,6 +348,25 @@ jobs:
             Write-Host "::error::'$exe' fehlt im entpackten Artefakt."
             exit 1
           }
+
+          # --- Selbsttest auf dem Entpackten (Sprint 95) ---
+          # Der 10-s-Lauf unten belegt nur den Start. Ein Modul, das erst bei
+          # Bedarf importiert wird (Pillow beim Briefpapier, pypdf, ...), faellt
+          # dort nie auf. Bericht als Datei, weil die .exe `console=False` hat.
+          # Ein fehlender Exit-Code ($null) zaehlt als rot.
+          $selfCheckJson = Join-Path (Get-Location) "_self_check.json"
+          if (Test-Path $selfCheckJson) { Remove-Item -Force $selfCheckJson }
+          $check = Start-Process -FilePath $exe -ArgumentList "--self-check `"$selfCheckJson`"" -Wait -PassThru
+          if (-not (Test-Path $selfCheckJson)) {
+            Write-Host "::error::Selbsttest aus dem entpackten Artefakt hat keinen Bericht geschrieben (exit $($check.ExitCode))."
+            exit 1
+          }
+          Get-Content -Raw -Encoding utf8 $selfCheckJson | Write-Host
+          if ($check.ExitCode -ne 0) {
+            Write-Host "::error::Selbsttest aus dem entpackten Artefakt FAILED (exit $($check.ExitCode)) - Bericht oben."
+            exit 1
+          }
+          Write-Host "Selbsttest OK: das entpackte Artefakt besteht alle Checks."
 
           $proc = Start-Process -FilePath $exe -PassThru
           Start-Sleep -Seconds 10

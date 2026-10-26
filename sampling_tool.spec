@@ -84,6 +84,14 @@ hiddenimports = [
     # + Probeparse (briefpapier.validate_briefpapier). Seit Sprint 53
     # Runtime-Dependency (die vorherige PDF-Library ist komplett entfernt).
     "pypdf",
+    # Pillow: Briefpapier-Prüfung (briefpapier._validate_image_parseable) und
+    # PNG/JPG-Briefpapier im PDF-Report. Seit Sprint 95 explizit – vorher kam
+    # Pillow nur transitiv über matplotlib/reportlab ins Paket. Die beiden
+    # Plugins für die erlaubten Bildformate (Briefpapier: PNG, JPG) mit dazu.
+    "PIL",
+    "PIL.Image",
+    "PIL.PngImagePlugin",
+    "PIL.JpegImagePlugin",
     # platformdirs (Recent-Engagements-Store + Sprint-44-Logging)
     "platformdirs",
     # Sprint 44: RotatingFileHandler-Submodul defensiv explizit (stdlib,
