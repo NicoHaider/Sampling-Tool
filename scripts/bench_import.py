@@ -5,7 +5,8 @@ aufgeschlüsselt in drei Phasen, damit der dominante Kostenposten gezielt
 optimiert werden kann (statt blind „überall ein bisschen"):
 
 1. **Parse/Read**   – Datei → rohe Zeilen/Zellen
-   (xlsx: ``CalamineSheet.iter_rows``; csv: ``_read_csv_text`` + ``_parse_csv``).
+   (xlsx: ``CalamineSheet.iter_rows``; csv seit Sprint 96: Encoding-Vorlauf +
+   Sniff + ``csv.reader`` direkt auf der Datei, ``_open_csv_source``).
 2. **Encode/Transform** – Coercion (``_coerce_value``) + Tagged-JSON-Encoding
    der Werte (``_values_to_json``, inkl. datetime/date/time-Tagging).
 3. **Write**        – SQLite-``executemany`` der vorcodierten JSON-Strings
@@ -15,6 +16,12 @@ Pro Phase wird der Median aus ``--runs`` Läufen (Default 3) gemessen; dazu
 ein End-to-End-Lauf über die echten Produktions-Eintrittspunkte
 (``ExcelImporter.import_file`` + ``DatasetRepo.create``) als ehrlicher
 Total-Wert und ein optionaler ``cProfile``-Lauf zur Gegenprobe der Hotspots.
+
+Sprint 96: für CSV zusätzlich die **Speicher-Spitze des Imports ohne DB**
+(``import_file`` + vollständiger Verbrauch der Zeilen) je Dateigröße aus
+``--mem-rows``. Eigener Lauf unter ``tracemalloc``, getrennt von den
+Zeitmessungen – ``tracemalloc`` verlangsamt Python-Allokationen stark und
+würde die Zeiten verfälschen.
 
 Das Skript ruft bewusst die **echten** Importer-/Persistenz-Funktionen auf –
 es misst Produktionscode, keine Nachbildung. Die ~1-Mio-Zeilen-Fixtures
@@ -27,6 +34,7 @@ Aufruf:
     python scripts/bench_import.py --rows 1000000 --runs 5
     python scripts/bench_import.py --format csv --profile
     python scripts/bench_import.py --quick               # 1000 Zeilen, 1 Lauf (Smoke)
+    python scripts/bench_import.py --format csv --work-dir tmp/perf/bench_import
 
 # ---------------------------------------------------------------------------
 # MESSERGEBNIS / ENTSCHEIDUNGS-GATE (Sprint 26, Apple Silicon, Python 3.13.13,
@@ -56,6 +64,7 @@ import argparse
 import cProfile
 import csv
 import io
+import itertools
 import pstats
 import shutil
 import statistics
@@ -63,6 +72,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tracemalloc
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -86,13 +96,14 @@ from sampling_tool.core.models import Dataset, Engagement  # noqa: E402
 from sampling_tool.io.importer import (  # noqa: E402
     ExcelImporter,
     _coerce_value,
+    _csv_first_non_blank,
     _detect_header,
     _excel_header_pass,
     _is_blank,
-    _read_csv_text,
+    _normalize_columns,
+    _open_csv_source,
     _select_sheet,
 )
-from sampling_tool.io.importer import _parse_csv as _parse_csv_rows  # noqa: E402
 from sampling_tool.persistence._json import _json_dumps, _values_to_json  # noqa: E402
 from sampling_tool.persistence.database import Database  # noqa: E402
 from sampling_tool.persistence.dataset_repo import DatasetRepo  # noqa: E402
@@ -204,9 +215,21 @@ def _parse_xlsx(path: Path) -> tuple[list[str], list[list[Any]]]:
 
 
 def _parse_csv_phase(path: Path) -> tuple[list[str], list[list[Any]]]:
-    """Phase Parse (csv): read_bytes + decode + Sniff + csv.reader-Materialize."""
-    text, _enc = _read_csv_text(path)
-    columns, data_rows, _skipped, _warnings, _leading = _parse_csv_rows(text)
+    """Phase Parse (csv): Encoding-Vorlauf + Sniff + gestreamter csv.reader.
+
+    Materialisiert die Datenzeilen nur, weil die Encode-/Write-Phasen sie als
+    Liste brauchen – der Import selbst streamt (Speicher: ``_bench_csv_memory``).
+    """
+    source = _open_csv_source(path, path.suffix.lower())
+    header_raw, leading = _csv_first_non_blank(source)
+    if header_raw is None:
+        return [], []
+    columns, _warnings = _normalize_columns(header_raw)
+    with source.open() as fh:
+        reader = source.reader(fh)
+        for _ in itertools.islice(reader, leading + 1):
+            pass
+        data_rows = [raw for raw in reader if not _is_blank(raw)]
     return columns, data_rows
 
 
@@ -357,6 +380,36 @@ def _bench_format(
     }
 
 
+def _csv_import_peak_bytes(path: Path) -> int:
+    """Speicher-Spitze (tracemalloc) eines CSV-Imports ohne DB, Zeilen voll verbraucht."""
+    tracemalloc.start()
+    try:
+        result = ExcelImporter().import_file(path)
+        for _row in result.rows:
+            pass
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    return peak
+
+
+def _bench_csv_memory(sizes: list[int], seed: int, work_dir: Path) -> None:
+    """Misst und druckt die Import-Speicher-Spitze je Zeilenzahl (eigene Fixtures)."""
+    print("\n=== CSV Speicher-Spitze Import ohne DB (tracemalloc, eigener Lauf) ===")
+    peaks: dict[int, int] = {}
+    for n_rows in sizes:
+        path = work_dir / f"mem_{n_rows}.csv"
+        _write_csv(path, n_rows, seed)
+        size_mb = path.stat().st_size / 1e6
+        peaks[n_rows] = _csv_import_peak_bytes(path)
+        path.unlink(missing_ok=True)
+        print(f"  {n_rows:>10,} Zeilen ({size_mb:7.1f} MB Datei): {peaks[n_rows] / 1e6:9.1f} MB")
+    if len(sizes) >= 2:
+        small, large = min(sizes), max(sizes)
+        ratio = peaks[large] / peaks[small] if peaks[small] else float("nan")
+        print(f"  Verhältnis {large:,} / {small:,} Zeilen: {ratio:.2f}")
+
+
 def _print_format_report(fmt: str, n_rows: int, runs: int, result: dict[str, float]) -> None:
     parse, encode, write = result["parse"], result["encode"], result["write"]
     phases_total = parse + encode + write
@@ -432,6 +485,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Temp-Dateien nach dem Lauf nicht löschen (Debug).",
     )
+    parser.add_argument(
+        "--mem-rows",
+        type=int,
+        nargs="+",
+        default=[200_000, 1_000_000],
+        help="Zeilenzahlen für die CSV-Speicher-Spitze (Import ohne DB).",
+    )
+    parser.add_argument(
+        "--work-dir",
+        type=Path,
+        default=None,
+        help="Arbeitsordner für Fixtures/DBs (Default: System-Temp; wird angelegt).",
+    )
     return parser.parse_args(argv)
 
 
@@ -443,12 +509,17 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     rows = 1000 if args.quick else args.rows
     runs = 1 if args.quick else args.runs
+    mem_rows = [500, 1000] if args.quick else args.mem_rows
     formats = ("xlsx", "csv") if args.format == "both" else (args.format,)
 
     print("# Import-Performance-Benchmark (Sprint 26)")
     print(f"Git-Rev: {_git_short_rev()} | Zeilen: {rows:,} | Läufe: {runs} | Seed: {args.seed}")
 
-    work_dir = Path(tempfile.mkdtemp(prefix="bench_import_"))
+    if args.work_dir is None:
+        work_dir = Path(tempfile.mkdtemp(prefix="bench_import_"))
+    else:
+        args.work_dir.mkdir(parents=True, exist_ok=True)
+        work_dir = Path(tempfile.mkdtemp(prefix="bench_import_", dir=args.work_dir))
     try:
         if "xlsx" in formats:
             xlsx_path = work_dir / "bench.xlsx"
@@ -467,6 +538,7 @@ def main(argv: list[str] | None = None) -> int:
             _print_format_report("csv", rows, runs, result)
             if args.profile:
                 _profile_format("csv", csv_path, work_dir)
+            _bench_csv_memory(mem_rows, args.seed, work_dir)
     finally:
         if not args.keep:
             shutil.rmtree(work_dir, ignore_errors=True)
