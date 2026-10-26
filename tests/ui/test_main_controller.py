@@ -695,7 +695,7 @@ class TestMainController:
                     return_value=(str(import_xlsx), ""),
                 ),
                 patch(
-                    "sampling_tool.ui.controllers.workspace_controller.preflight_import",
+                    "sampling_tool.ui.controllers.workspace_controller.preflight_file",
                     return_value=ImportPreflight(reject_reason="Datei ist zu groß (999 MB)."),
                 ) as mock_preflight,
                 patch(
@@ -726,7 +726,7 @@ class TestMainController:
                     return_value=(str(import_xlsx), ""),
                 ),
                 patch(
-                    "sampling_tool.ui.controllers.workspace_controller.preflight_import",
+                    "sampling_tool.ui.controllers.workspace_controller.preflight_file",
                     return_value=ImportPreflight(warnings=("Datei ist groß (250 MB).",)),
                 ),
                 patch(
@@ -759,7 +759,7 @@ class TestMainController:
                     return_value=(str(import_xlsx), ""),
                 ),
                 patch(
-                    "sampling_tool.ui.controllers.workspace_controller.preflight_import",
+                    "sampling_tool.ui.controllers.workspace_controller.preflight_file",
                     return_value=ImportPreflight(warnings=("Datei ist groß (250 MB).",)),
                 ),
                 patch(

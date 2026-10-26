@@ -37,10 +37,19 @@ from sampling_tool.io.importer import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-# `testdaten/` ist gitignored (nur lokal vorhanden, nicht in CI) – dort laufen die
-# Fälle mit; den Inhalt deckt zusätzlich der erzeugte Korpus unten ab.
-TESTDATEN_DIR = REPO_ROOT / "testdaten" / "csv"
-TESTDATEN_CSV = sorted(TESTDATEN_DIR.glob("*.csv"))
+# Sprint 97 / D: byte-genaue Kopie der CSVs aus dem gitignorten `testdaten/csv/`,
+# damit der Oracle-Teil auch in CI läuft. Fehlt eine Datei, schlägt der Test fehl.
+TESTDATEN_DIR = REPO_ROOT / "tests" / "fixtures" / "csv"
+TESTDATEN_CSV = [
+    TESTDATEN_DIR / name
+    for name in (
+        "01_basis_gequotet.csv",
+        "01_basis_komma.csv",
+        "01_basis_semikolon_dezimalkomma.csv",
+        "01_basis_utf8.csv",
+        "01_basis_utf8_bom.csv",
+    )
+]
 
 # Zeichen, an denen `str.splitlines()` trennt, die aber kein CSV-Zeilenende sind.
 SPLITLINES_ONLY_CHARS = ("\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
@@ -431,9 +440,8 @@ class TestCsvEquivalenceOracle:
         assert _strip_line_breaks(new) == ref
 
     def test_testdaten_korpus_vorhanden(self) -> None:
-        if not TESTDATEN_DIR.is_dir():
-            pytest.skip("testdaten/ ist gitignored und hier nicht vorhanden")
-        assert len(TESTDATEN_CSV) >= 5
+        assert [p.name for p in TESTDATEN_CSV if not p.is_file()] == []
+        assert sorted(TESTDATEN_DIR.glob("*.csv")) == sorted(TESTDATEN_CSV)
         assert sum(_is_clean(p) for p in TESTDATEN_CSV) >= 4
 
     @pytest.mark.parametrize("name", sorted(_corpus()))

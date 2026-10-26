@@ -9,6 +9,9 @@ dann werden generische Spaltennamen vergeben. Das Ergebnis
 
 Sprint 16 – aus dem VBA-Backlog portiert (Excel-Multi-Sheet + Header).
 Sprint 29 – additiv erweitert um „keine Kopfzeile" und CSV-Unterstützung.
+Sprint 97 – bekommt Blattliste und alle Vorschauen als `ImportProbe` aus dem
+Worker; der Dialog liest nichts mehr von der Platte, ein Blattwechsel kostet
+keinen Parse auf dem UI-Thread.
 """
 
 from __future__ import annotations
@@ -40,7 +43,7 @@ from sampling_tool.config import (
     WARNING_COLOR,
 )
 from sampling_tool.core.formatting import format_cell_value
-from sampling_tool.io.importer import ExcelImporter, SheetInfo, SheetPreview
+from sampling_tool.io.importer import ImportProbe, SheetInfo, SheetPreview
 from sampling_tool.ui._dialog_buttons import mark_secondary_buttons, set_accept_text
 
 # Die erkannte Kopfzeile ist eine AUSWAHL, keine Fläche – Sprint 81. Bis dahin
@@ -73,7 +76,7 @@ class ImportOptionsDialog(QDialog):
     def __init__(
         self,
         path: Path,
-        importer: ExcelImporter,
+        probe: ImportProbe,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -85,11 +88,11 @@ class ImportOptionsDialog(QDialog):
         self.setMinimumSize(720, 420)
 
         self._path = path
-        self._importer = importer
+        self._probe = probe
         self._result: ImportOptionsResult | None = None
         self._is_csv = path.suffix.lower() in SUPPORTED_CSV_SUFFIXES
         # CSV hat keine Tabellenblätter; Excel listet die echten Sheets.
-        self._sheets: list[SheetInfo] = [] if self._is_csv else importer.list_sheets(path)
+        self._sheets: list[SheetInfo] = [] if self._is_csv else list(probe.sheets)
         self._sheet_combo: QComboBox | None = None
         self._current_preview: SheetPreview | None = None
         # Sperrt das Preview-Reload, wenn wir programmatisch den Sheet/Spin setzen.
@@ -207,28 +210,22 @@ class ImportOptionsDialog(QDialog):
     def _on_sheet_changed(self, index: int) -> None:
         if index < 0 or index >= len(self._sheets):
             return
-        sheet_name = self._sheets[index].name
-        try:
-            preview = self._importer.preview_sheet(self._path, sheet_name)
-        except Exception:  # pragma: no cover – defensiv
-            preview = SheetPreview(
-                sheet_name=sheet_name,
-                rows=(),
-                detected_header_row=None,
-                confidence="ambiguous",
-            )
-        self._load_preview(preview)
+        self._load_preview(self._preview_for(self._sheets[index].name))
 
     def _csv_preview(self) -> SheetPreview:
-        try:
-            return self._importer.preview_csv(self._path)
-        except Exception:  # pragma: no cover – defensiv
-            return SheetPreview(
-                sheet_name=self._path.name,
-                rows=(),
-                detected_header_row=None,
-                confidence="ambiguous",
-            )
+        return self._preview_for(self._path.name)
+
+    def _preview_for(self, name: str) -> SheetPreview:
+        """Vorberechnete Vorschau aus der Probe; leer, falls sie fehlt (defensiv)."""
+        preview = self._probe.previews.get(name)
+        if preview is not None:
+            return preview
+        return SheetPreview(
+            sheet_name=name,
+            rows=(),
+            detected_header_row=None,
+            confidence="ambiguous",
+        )
 
     def _load_preview(self, preview: SheetPreview) -> None:
         """Rendert eine Vorschau + setzt den Header-Spin (gemeinsam Excel/CSV)."""

@@ -471,6 +471,43 @@ konfigurierte Import mit „keine Kopfzeile" liest die Datei einmal mehr, weil d
 Spaltenzahl vor dem ersten Datensatz feststehen muss: Import ohne DB 8,85 s statt 7,83 s
 (Median aus 3, gleiche 1M-Datei), ohne zusätzlichen Speicher.
 
+**Sprint 97 – Import ohne Einfrieren (Vorprüfung und Vorschau im Hintergrund):**
+
+Befund: `python-calamine` liest bei `CalamineWorkbook.get_sheet_by_name` das ganze Blatt ein
+(`from_path` und `sheet_names` lesen keine Zellen; `height`/`width` sind nach dem Laden gratis).
+Ein Excel-Import lud dasselbe Blatt bis zu viermal, dreimal davon auf dem UI-Thread, bevor
+der Fortschrittsdialog erschien (Preflight-Dimensionsprüfung, `list_sheets` und `preview_sheet`
+in `requires_options_dialog`, dann der Import im Worker). Seit Sprint 97 prüft der UI-Thread nur
+noch die Datei selbst (`preflight_file`), die Blätter lädt `ExcelImporter.probe` einmal im Worker.
+
+Blatt-Ladevorgänge je Ablauf (gezählt über `get_sheet_by_name`, `tests/ui/test_import_background.py`):
+
+| Ablauf | `e4c6fdd` UI-Thread / gesamt | Sprint 97 UI-Thread / gesamt |
+|--------|-----------------------------:|-----------------------------:|
+| Saubere xlsx, 1 Blatt | 3 / 4 | 0 / 2 |
+| xlsx mit N Blättern, Optionsdialog, k Blattwechsel | 3N + 1 + k / 3N + 2 + k | 0 / N + 1 |
+
+`scripts/bench_import.py` misst dafür neu den **Import-Ablauf** (Mac, Apple Silicon,
+Python 3.13.13, 2026-10-26, `--rows 1000000 --runs 3`, Median aus 3):
+
+| 1M Zeilen | UI-Thread bis Start der Probe | Probe im Worker |
+|-----------|------------------------------:|----------------:|
+| xlsx | 0,1 ms | 2 874 ms |
+| CSV | 0,0 ms | 139 ms |
+
+Rücken-an-Rücken auf denselben 1M-Dateien (`main` und Branch abwechselnd in eigenen Prozessen,
+2 Runden, je Median aus 3; Ablauf = UI-Thread-Teil + Probe + Import + DB, ohne Dialoge):
+
+| 1M Zeilen | `e4c6fdd` UI-Thread | Sprint 97 UI-Thread | `e4c6fdd` Ablauf | Sprint 97 Ablauf |
+|-----------|--------------------:|--------------------:|-----------------:|-----------------:|
+| xlsx | 8 721 / 8 632 ms | 0,3 / 0,2 ms | 20,36 / 19,96 s | 14,57 / 14,31 s (−29 %) |
+| CSV | 139 / 145 ms | 0,1 / 0,0 ms | 10,53 / 10,52 s | 10,62 / 10,53 s |
+
+Die eingefrorene Zeit auf dem UI-Thread wird zur abbrechbaren Probe im Worker. Bei der xlsx
+fallen zusätzlich zwei Blatt-Ladevorgänge weg, deshalb wird der Ablauf kürzer. Bei der CSV
+bleibt die Arbeit gleich (Encoding-Vorlauf der Vorschau), sie läuft nur nicht mehr auf dem
+UI-Thread.
+
 **Hinweis zur Mess-Tabelle unten:** Der 1M-Lauf stammt vom Sprint-11-Stand
 (Toolversion `19f18a1`) und liegt damit VOR den Sprint-12.1-Fixes für P-001
 (`setResizeContentsPrecision(100)` → Tabelle-Anzeige) und P-002

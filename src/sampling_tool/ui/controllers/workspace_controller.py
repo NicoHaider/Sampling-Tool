@@ -48,10 +48,10 @@ from sampling_tool.core.sampling import (
     matches_all,
     matches_filter,
 )
-from sampling_tool.io.import_preflight import preflight_import
+from sampling_tool.io.import_preflight import preflight_file
 from sampling_tool.io.importer import (
     DataImportError,
-    ExcelImporter,
+    ImportProbe,
     ImportStats,
 )
 from sampling_tool.persistence.repositories import (
@@ -67,7 +67,11 @@ from sampling_tool.ui.dialogs.import_options_dialog import ImportOptionsResult
 from sampling_tool.ui.dialogs.progress_dialog import TaskProgressDialog
 from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialog, SamplingDialogResult
 from sampling_tool.ui.settings_store import SamplingFeatures
-from sampling_tool.ui.workers.tasks import ExcelImportTask, ExcelImportTaskResult
+from sampling_tool.ui.workers.tasks import (
+    ExcelImportTask,
+    ExcelImportTaskResult,
+    ImportProbeTask,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -156,24 +160,18 @@ class WorkspaceController:
         if path is None:
             return
 
-        if not self._run_import_preflight(path):
+        probe = self._check_import_file(path)
+        if probe is None:
             return
 
-        # Sprint 16/29: prüfen, ob ein Sheet-/Header-Auswahl-Dialog erscheinen
-        # muss. Excel: Multi-Sheet ODER Header-Auto-Detection unsicher. CSV
-        # (Sprint 29): Header-Auto-Detection unsicher. Sonst lautloser
-        # One-shot-Import (unverändertes Verhalten für saubere Dateien).
+        # Sprint 16/29: Sheet-/Header-Auswahl-Dialog, wenn Excel mehrere Blätter
+        # hat ODER die Kopfzeile unsicher erkannt ist (CSV: nur Letzteres). Sonst
+        # lautloser One-shot-Import (unverändertes Verhalten für saubere Dateien).
         configured: ImportOptionsResult | None = None
-        if path.suffix.lower() in SUPPORTED_EXCEL_SUFFIXES + SUPPORTED_CSV_SUFFIXES:
-            try:
-                needs_dialog = ExcelImporter().requires_options_dialog(path)
-            except DataImportError as exc:
-                s.error(f"Import fehlgeschlagen: {exc}")
-                return
-            if needs_dialog:
-                configured = self._run_import_options_dialog(path)
-                if configured is None:
-                    return  # User-Cancel → kein Import.
+        if probe.needs_dialog:
+            configured = self._run_import_options_dialog(path, probe)
+            if configured is None:
+                return  # User-Cancel → kein Import.
 
         task_result = self._do_import_with_progress(path, configured)
         if task_result is None:
@@ -191,27 +189,64 @@ class WorkspaceController:
         s.refresh_views()
         self._show_import_summary(task_result.stats)
 
-    def _run_import_preflight(self, path: Path) -> bool:
-        """Sprint 48 / S2.3b: billiger Preflight-Check auf dem Main-Thread,
-        BEVOR der Import-Worker startet.
+    def _check_import_file(self, path: Path) -> ImportProbe | None:
+        """Vorprüfung vor dem Import; ``None`` = abgelehnt, abgebrochen oder verneint.
 
-        Reject (Hard-Cap überschritten) → Error-Dialog, Import bricht ab
-        (`False`). Warnings (Soft-Cap überschritten) → Confirm-Dialog, „Nein"
-        bricht ab. Ohne Warnungen (Default für saubere Dateien) → `True`,
-        lautloser Import wie vor Sprint 48.
+        Sprint 97: auf dem UI-Thread nur die billige Datei-Prüfung
+        (`preflight_file`); Blätter bzw. CSV-Vorschau lädt die Probe im Worker –
+        genau einmal. Danach Rejects als Fehler, Warnungen in EINEM Dialog.
         """
         s = self.session
-        preflight = preflight_import(path)
+        preflight = preflight_file(path)
         if preflight.rejected:
             s.error(f"Import abgelehnt: {preflight.reject_reason}")
-            return False
-        if not preflight.warnings:
+            return None
+
+        probe = self._run_import_probe(path)
+        if probe is None:
+            return None
+        if probe.dimension_reject is not None:
+            s.error(f"Import abgelehnt: {probe.dimension_reject}")
+            return None
+        if not self._confirm_import_warnings(preflight.warnings + probe.dimension_warnings):
+            return None
+        return probe
+
+    def _run_import_probe(self, path: Path) -> ImportProbe | None:
+        """Sprint 97: Blätter/Vorschau im Worker laden (`ImportProbeTask`).
+
+        ``None`` bei Abbruch (still, wie beim Import) oder Fehler (Error-Dialog).
+        Der Fortschrittsdialog läuft unbestimmt – die Probe meldet keine Werte.
+        """
+        s = self.session
+        progress_dialog = TaskProgressDialog("Datei wird geprüft…", s.window)
+        try:
+            return progress_dialog.run_task(ImportProbeTask(path=path))
+        except DataImportError as exc:
+            s.error(f"Import fehlgeschlagen: {exc}")
+            return None
+        except Exception as exc:
+            # Lief vor Sprint 97 ungefangen aus dem Slot (z. B. calamine-Fehler
+            # in einem einzelnen Blatt); jetzt wie im Import-Worker gemeldet.
+            logger.exception("Import-Vorprüfung fehlgeschlagen")
+            s.error(f"Import fehlgeschlagen: {exc}")
+            return None
+
+    def _confirm_import_warnings(self, warnings: tuple[str, ...]) -> bool:
+        """Sprint 48 / S2.3b: Soft-Cap-Warnungen (Dateigröße, Zeilen) bestätigen.
+
+        Seit Sprint 97 kommen die Dateigrößen-Warnung aus `preflight_file` und die
+        Zeilen-Warnungen aus der Probe zusammen in EINEN Dialog. „Nein" bricht ab
+        (`False`). Ohne Warnungen (Default für saubere Dateien) → `True`,
+        lautloser Import wie vor Sprint 48.
+        """
+        if not warnings:
             return True
         answer = QMessageBox.question(
-            s.window,
+            self.session.window,
             "Große Datei",
             "Die gewählte Datei ist ungewöhnlich groß oder umfangreich:\n\n"
-            + "\n".join(preflight.warnings)
+            + "\n".join(warnings)
             + "\n\nImport trotzdem fortsetzen?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -306,16 +341,17 @@ class WorkspaceController:
             return  # Cancel → keine Änderung (Schritt ist optional).
         store.set(db_stem, dataset.id, dialog.selected_column())
 
-    def _run_import_options_dialog(self, path: Path) -> ImportOptionsResult | None:
+    def _run_import_options_dialog(
+        self, path: Path, probe: ImportProbe
+    ) -> ImportOptionsResult | None:
         """Öffnet den `ImportOptionsDialog` und liefert das `ImportOptionsResult` oder None.
 
         Die Dialog-/Header-Logik (welche Datei welchen Dialog braucht) lebt in
-        `ExcelImporter.requires_options_dialog`; hier wird nur das Ergebnis der
-        User-Interaktion durchgereicht.
+        `ExcelImporter.probe` (``needs_dialog``); der Dialog bekommt die Probe
+        und liest selbst nichts von der Platte (Sprint 97).
         """
         s = self.session
-        importer_probe = ExcelImporter()
-        dialog = self._factories.import_options(path, importer_probe, s.window)
+        dialog = self._factories.import_options(path, probe, s.window)
         if dialog.exec() != int(QDialog.DialogCode.Accepted):
             return None
         return dialog.get_result()

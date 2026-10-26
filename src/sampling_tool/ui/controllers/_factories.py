@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sampling_tool.core.models import Dataset, Engagement, FilterCondition, SampleResult
-from sampling_tool.io.importer import ExcelImporter
+from sampling_tool.io.importer import ImportProbe
 from sampling_tool.ui.dialogs.duplicate_engagement_dialog import DuplicateEngagementDialog
 from sampling_tool.ui.dialogs.existing_export_dialog import ExistingExportDialog
 from sampling_tool.ui.dialogs.export_audit_pdf_dialog import ExportAuditPdfDialog
@@ -75,7 +75,7 @@ ExcelReportDialogFactory = Callable[
 ]
 HtmlReportDialogFactory = Callable[["MainWindow", Engagement, Path | None], ExportHtmlReportDialog]
 SettingsDialogFactory = Callable[["MainWindow", AppSettings], SettingsDialog]
-ImportOptionsDialogFactory = Callable[[Path, ExcelImporter, "MainWindow"], ImportOptionsDialog]
+ImportOptionsDialogFactory = Callable[[Path, ImportProbe, "MainWindow"], ImportOptionsDialog]
 # Sprint 31: optionaler Post-Import-Schritt – ID-Spalte für die Sidebar wählen.
 IdColumnDialogFactory = Callable[[list[str], str | None, "MainWindow"], IdColumnDialog]
 # Sprint 84 / C: Rückfrage bei existierender Export-Zieldatei
@@ -238,9 +238,9 @@ def default_settings_factory(parent: MainWindow, current: AppSettings) -> Settin
 
 
 def default_import_options_factory(
-    path: Path, importer: ExcelImporter, parent: MainWindow
+    path: Path, probe: ImportProbe, parent: MainWindow
 ) -> ImportOptionsDialog:
-    return ImportOptionsDialog(path=path, importer=importer, parent=parent)
+    return ImportOptionsDialog(path=path, probe=probe, parent=parent)
 
 
 def default_id_column_factory(

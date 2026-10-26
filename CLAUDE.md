@@ -144,7 +144,8 @@ ui ──▶ controllers ──▶ core ◀── io
     **Sprint 16 – Sheet-/Header-Dialog-API**: zusätzlich zu `import_file`
     drei neue Methoden für den `ImportOptionsDialog`-Flow:
     - `list_sheets(path) → list[SheetInfo]` – Sheet-Namen + Zeile-/Spalten-
-      anzahl ohne die Daten zu laden.
+      anzahl (calamine `height`/`width`). Lädt dafür jedes Blatt komplett –
+      `get_sheet_by_name` liest das ganze Blatt ein.
     - `preview_sheet(path, sheet, max_rows=20) → SheetPreview` – rohe 2D-
       Zellen + heuristisch erkannte Header-Zeile + `confidence`
       (`high`/`low`/`ambiguous`). Header-Zeile ist NICHT interpretiert,
@@ -154,6 +155,16 @@ ui ──▶ controllers ──▶ core ◀── io
       Skipt die Auto-Detection, ist der Override-Pfad für den Dialog.
     Bestehender `import_file()`-Pfad UNVERÄNDERT – lautloser Auto-Import
     funktioniert weiter wie zuvor.
+    **Vorprüfung in zwei Stufen (Sprint 97):** auf dem UI-Thread nur
+    `import_preflight.preflight_file` (reguläre Datei, ZIP-Signatur, Größe,
+    ZIP-Zentralverzeichnis – kein calamine, kein CSV-Parse). Danach im Worker
+    `ImportProbeTask` → `ExcelImporter.probe(path) → ImportProbe`: jedes Blatt
+    genau einmal geladen, daraus `SheetInfo`, Vorschau, `needs_dialog` (Regel
+    wie `requires_options_dialog`) und `import_preflight.check_sheet_dimensions`.
+    Dateigrößen- und Zeilenwarnungen erscheinen in EINEM Bestätigungsdialog.
+    Saubere Datei mit einem Blatt: 2 Blatt-Ladevorgänge gesamt (Probe + Import),
+    0 auf dem UI-Thread. `list_sheets`/`preview_sheet`/`preview_csv`/
+    `requires_options_dialog` bleiben als API, der Import-Ablauf nutzt sie nicht.
   - `exporter.py` – `ExcelExporter`. Atomare Writes (`.tmp` → `os.replace`),
     Sheet "Sample" (BDO-rote Header) + Sheet "Metadaten" (Engagement, Seed,
     Methode). Dateiname-Schema:
@@ -163,6 +174,12 @@ ui ──▶ controllers ──▶ core ◀── io
     `export_sample(sample, dataset, dataset_repo, ...)` nimmt das
     `DatasetRepo` und holt nur `sample.selected_row_ids` via
     `get_rows_by_ids` – siehe „Streaming-Architektur" in CHANGELOG.md.
+    Steuerzeichen, die openpyxl ablehnt (`\x00`–`\x08`, `\x0b`, `\x0c`,
+    `\x0e`–`\x1f`), ersetzt `io/_xlsx_safe.safe_cell_value` für alle
+    openpyxl-Exporter durch ihr Control-Pictures-Symbol (`\x0b` → `␋`,
+    Abbildung `CONTROL_CHAR_PICTURES`) – nur im Export, DB-Werte bleiben. Der
+    Stichproben-Export schreibt dann eine Zeile `Hinweis` ins Blatt
+    „Metadaten" (ohne Ersetzung keine Zeile).
   - `pdf_report.py` – `AuditTrailPDF` via `reportlab.platypus`.
     A4-Querformat (`landscape(A4)`, seit Sprint 33), Engagement-Block oben, Event-Tabelle mit
     Korrektur-Highlight, Footer mit Seitenzahl + Zeitstempel. Optionales
@@ -514,7 +531,9 @@ ui ──▶ controllers ──▶ core ◀── io
     Confidence nicht `high` ist (Multi-Sheet → immer Dialog; Single-Sheet
     + high → lautloser Auto-Import). Liefert `ImportOptionsResult`
     (`sheet_name`, `header_row` 0-basiert), der Controller reicht das
-    an `ExcelImporter.import_file_configured` durch. Confidence-Label
+    an `ExcelImporter.import_file_configured` durch. Bekommt seit Sprint 97
+    die `ImportProbe` (Blattliste + alle Vorschauen) statt des Importers und
+    liest nichts von der Platte – Blattwechsel kosten keinen Parse. Confidence-Label
     unter dem SpinBox: grau bei `high`/`low`, BDO-Rot bei `ambiguous`.
     Importieren-Button ist disabled, wenn die gewählte Header-Zeile
     ≥ Sheet-Höhe − 1 ist (sonst gäbe es keine Datenzeilen).

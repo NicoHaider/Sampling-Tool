@@ -54,3 +54,6 @@ def test_bench_import_quick_laeuft_durch(tmp_path: Path) -> None:
     assert "Write" in out
     assert "Dominant" in out
     assert "Speicher-Spitze" in out
+    assert "Import-Ablauf" in out
+    # Sprint 97: saubere Datei mit einem Blatt – 0 auf dem UI-Thread, 2 insgesamt.
+    assert "Blatt-Ladevorgänge: UI-Thread 0, gesamt 2" in out

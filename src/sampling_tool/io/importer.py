@@ -36,14 +36,14 @@ import codecs
 import csv
 import itertools
 import math
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from io import TextIOWrapper
 from pathlib import Path
 from typing import Any, Final, Literal
 
-from python_calamine import CalamineSheet, CalamineWorkbook
+from python_calamine import CalamineError, CalamineSheet, CalamineWorkbook
 
 from sampling_tool.config import (
     MAX_IMPORT_CELL_LENGTH,
@@ -53,6 +53,7 @@ from sampling_tool.config import (
 )
 from sampling_tool.core.cancellation import CancellationToken
 from sampling_tool.core.models import Dataset, DatasetRow
+from sampling_tool.io.import_preflight import check_sheet_dimensions, unreadable_excel_reason
 
 HeaderConfidence = Literal["high", "low", "ambiguous"]
 
@@ -131,8 +132,9 @@ class SheetInfo:
     """Metadaten eines Excel-Sheets für die UI-Multi-Sheet-Auswahl.
 
     `row_count` / `column_count` kommen direkt aus Calamine
-    (`total_height` / `total_width`) und enthalten potentielle Leerzeilen
-    / Leerspalten. Reine Anzeige-Daten – kein Daten-Lesepfad.
+    (`height` / `width`) und enthalten potentielle Leerzeilen / Leerspalten.
+    Dieselben Werte prüft `import_preflight.check_sheet_dimensions` gegen die
+    Zeilen-/Spaltengrenzen. Kein Daten-Lesepfad.
     """
 
     name: str
@@ -163,6 +165,30 @@ class SheetPreview:
     rows: tuple[tuple[Any, ...], ...]
     detected_header_row: int | None
     confidence: HeaderConfidence
+
+
+@dataclass(frozen=True, slots=True)
+class ImportProbe:
+    """Alles, was vor dem Import über die Datei bekannt sein muss (Sprint 97).
+
+    Ergebnis von `ExcelImporter.probe` – ein reines Daten-Objekt, das der Worker
+    an den UI-Thread zurückgibt. Der `ImportOptionsDialog` liest Blattliste und
+    Vorschauen nur noch hier heraus, nicht mehr von der Platte.
+
+    - ``sheets``: Blätter in Arbeitsmappen-Reihenfolge (leer bei CSV).
+    - ``previews``: Vorschau je Blattname; bei CSV ein Eintrag unter dem
+      Dateinamen (wie `preview_csv`).
+    - ``needs_dialog``: dieselbe Regel wie `requires_options_dialog`.
+    - ``dimension_reject`` / ``dimension_warnings``: Ergebnis von
+      `check_sheet_dimensions` (nur Excel). Bei einem Reject endet die Probe am
+      betroffenen Blatt – ``sheets``/``previews`` sind dann unvollständig.
+    """
+
+    sheets: tuple[SheetInfo, ...] = ()
+    previews: Mapping[str, SheetPreview] = field(default_factory=dict)
+    needs_dialog: bool = False
+    dimension_reject: str | None = None
+    dimension_warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,8 +317,9 @@ class ExcelImporter:
     def list_sheets(self, path: Path) -> list[SheetInfo]:
         """Liefert Metadaten aller Sheets als `SheetInfo`-Liste.
 
-        Lädt die Sheets nicht – nur Namen + Dimensionen aus Calamine.
-        Wird vom `ImportOptionsDialog` für das Sheet-Dropdown genutzt.
+        Lädt dafür jedes Blatt komplett (calamine kennt die Dimensionen erst
+        nach `get_sheet_by_name`). Der Import-Ablauf nutzt seit Sprint 97
+        `probe`, das jedes Blatt nur einmal lädt.
         """
         suffix = path.suffix.lower()
         if suffix not in SUPPORTED_EXCEL_SUFFIXES:
@@ -302,17 +329,7 @@ class ExcelImporter:
         wb = CalamineWorkbook.from_path(str(path))
         infos: list[SheetInfo] = []
         for name in wb.sheet_names:
-            sheet = wb.get_sheet_by_name(name)
-            # Calamine: `total_height` ist `end_row - start_row` (Range-Größe),
-            # `height` ist die echte Anzahl Zeilen. Für die UI-Anzeige wollen
-            # wir die echte Zeilenanzahl inkl. Header.
-            infos.append(
-                SheetInfo(
-                    name=name,
-                    row_count=int(sheet.height),
-                    column_count=int(sheet.width),
-                )
-            )
+            infos.append(_sheet_info(name, wb.get_sheet_by_name(name)))
         return infos
 
     def preview_sheet(self, path: Path, sheet_name: str, max_rows: int = 20) -> SheetPreview:
@@ -331,22 +348,7 @@ class ExcelImporter:
             raise DataImportError("preview_sheet(): max_rows muss >= 0 sein.")
 
         wb = CalamineWorkbook.from_path(str(path))
-        sheet = _select_sheet(wb, sheet_name)
-
-        raw_rows: list[tuple[Any, ...]] = []
-        if sheet.start is not None:
-            for raw in sheet.iter_rows():
-                raw_rows.append(tuple(_coerce_value(c) for c in raw))
-                if len(raw_rows) >= max_rows:
-                    break
-
-        detected, confidence = _detect_header_with_confidence(raw_rows)
-        return SheetPreview(
-            sheet_name=sheet_name,
-            rows=tuple(raw_rows),
-            detected_header_row=detected,
-            confidence=confidence,
-        )
+        return _sheet_preview(_select_sheet(wb, sheet_name), sheet_name, max_rows)
 
     def preview_csv(self, path: Path, max_rows: int = 20) -> SheetPreview:
         """Liefert die ersten ``max_rows`` Roh-Zeilen einer CSV + Header-Heuristik.
@@ -389,15 +391,63 @@ class ExcelImporter:
         """
         suffix = path.suffix.lower()
         if suffix in SUPPORTED_CSV_SUFFIXES:
-            return self.preview_csv(path).confidence != "high"
+            return _needs_dialog_csv(self.preview_csv(path))
         if suffix in SUPPORTED_EXCEL_SUFFIXES:
             sheets = self.list_sheets(path)
-            if not sheets:
-                return False
-            if len(sheets) > 1:
-                return True
-            return self.preview_sheet(path, sheets[0].name).confidence != "high"
+            return _needs_dialog_excel(sheets, lambda: self.preview_sheet(path, sheets[0].name))
         return False
+
+    def probe(self, path: Path, max_rows: int = 20) -> ImportProbe:
+        """Vorprüfung + Vorschau in EINEM Durchgang, für den Worker (Sprint 97).
+
+        Excel: die Arbeitsmappe wird einmal geöffnet, jedes Blatt genau einmal
+        geladen; daraus entstehen `SheetInfo`, Vorschau und Dimensionsprüfung.
+        Ergebnisse wie `list_sheets`/`preview_sheet`/`requires_options_dialog`
+        und wie die Dimensionsprüfung des Preflights vor Sprint 97.
+        CSV: `preview_csv`, keine Dimensionsprüfung. Andere Dateitypen: leere
+        Probe ohne Dialog (der Import meldet den Dateityp).
+
+        Abbruch wird vor jedem Blatt geprüft; ein einzelnes Blatt lässt sich in
+        calamine nicht unterbrechen.
+        """
+        suffix = path.suffix.lower()
+        if suffix in SUPPORTED_CSV_SUFFIXES:
+            preview = self.preview_csv(path, max_rows)
+            return ImportProbe(
+                previews={preview.sheet_name: preview},
+                needs_dialog=_needs_dialog_csv(preview),
+            )
+        if suffix not in SUPPORTED_EXCEL_SUFFIXES:
+            return ImportProbe()
+
+        try:
+            wb = CalamineWorkbook.from_path(str(path))
+        except (CalamineError, OSError) as exc:
+            return ImportProbe(dimension_reject=unreadable_excel_reason(path, exc))
+
+        sheets: list[SheetInfo] = []
+        previews: dict[str, SheetPreview] = {}
+        warnings: list[str] = []
+        for name in wb.sheet_names:
+            self._check_cancel()
+            sheet = wb.get_sheet_by_name(name)
+            info = _sheet_info(name, sheet)
+            sheets.append(info)
+            reject = check_sheet_dimensions([info], warnings)
+            if reject is not None:
+                return ImportProbe(
+                    sheets=tuple(sheets),
+                    previews=previews,
+                    dimension_reject=reject,
+                    dimension_warnings=tuple(warnings),
+                )
+            previews[name] = _sheet_preview(sheet, name, max_rows)
+        return ImportProbe(
+            sheets=tuple(sheets),
+            previews=previews,
+            needs_dialog=_needs_dialog_excel(sheets, lambda: previews[sheets[0].name]),
+            dimension_warnings=tuple(warnings),
+        )
 
     def import_file_configured(
         self,
@@ -773,6 +823,50 @@ class ExcelImporter:
 # ---------------------------------------------------------------------------
 # Hilfen – Excel
 # ---------------------------------------------------------------------------
+
+
+def _sheet_info(name: str, sheet: CalamineSheet) -> SheetInfo:
+    """`SheetInfo` eines geladenen Blatts.
+
+    Calamine: `total_height` ist `end_row - start_row` (Range-Größe), `height`
+    ist die echte Anzahl Zeilen. Für die UI-Anzeige wollen wir die echte
+    Zeilenanzahl inkl. Header.
+    """
+    return SheetInfo(name=name, row_count=int(sheet.height), column_count=int(sheet.width))
+
+
+def _sheet_preview(sheet: CalamineSheet, sheet_name: str, max_rows: int) -> SheetPreview:
+    """Vorschau der ersten ``max_rows`` Rohzeilen eines geladenen Blatts."""
+    raw_rows: list[tuple[Any, ...]] = []
+    if sheet.start is not None:
+        for raw in sheet.iter_rows():
+            raw_rows.append(tuple(_coerce_value(c) for c in raw))
+            if len(raw_rows) >= max_rows:
+                break
+
+    detected, confidence = _detect_header_with_confidence(raw_rows)
+    return SheetPreview(
+        sheet_name=sheet_name,
+        rows=tuple(raw_rows),
+        detected_header_row=detected,
+        confidence=confidence,
+    )
+
+
+def _needs_dialog_excel(
+    sheets: Sequence[SheetInfo], first_preview: Callable[[], SheetPreview]
+) -> bool:
+    """Optionsdialog nötig: mehr als ein Blatt oder unsichere Kopfzeile im einzigen."""
+    if not sheets:
+        return False
+    if len(sheets) > 1:
+        return True
+    return first_preview().confidence != "high"
+
+
+def _needs_dialog_csv(preview: SheetPreview) -> bool:
+    """Optionsdialog nötig: Kopfzeile der CSV nicht sicher erkannt."""
+    return preview.confidence != "high"
 
 
 def _select_sheet(wb: CalamineWorkbook, sheet_name: str | None) -> CalamineSheet:

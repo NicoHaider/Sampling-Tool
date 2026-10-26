@@ -1,4 +1,8 @@
-"""Tests für `import_preflight`: billiger Main-Thread-Preflight (Sprint 48 / S2.3b, S-003)."""
+"""Tests für `import_preflight` (Sprint 48 / S2.3b, S-003; Sprint 97 aufgeteilt).
+
+`preflight_file` ist die billige Stufe auf dem UI-Thread, `check_sheet_dimensions`
+die Dimensionsprüfung, die seit Sprint 97 im Worker aus `ExcelImporter.probe` läuft.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +10,24 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from python_calamine import CalamineWorkbook
 
 from sampling_tool.io import import_preflight
-from sampling_tool.io.import_preflight import ImportPreflight, preflight_import
+from sampling_tool.io.import_preflight import (
+    ImportPreflight,
+    check_sheet_dimensions,
+    preflight_file,
+)
+from sampling_tool.io.importer import ExcelImporter
 
 pytestmark = pytest.mark.integration
+
+
+def _dimensions(path: Path) -> ImportPreflight:
+    """Dimensionsprüfung über die echten Blätter, im Ergebnisformat von vorher."""
+    warnings: list[str] = []
+    reject = check_sheet_dimensions(ExcelImporter().list_sheets(path), warnings)
+    return ImportPreflight(reject_reason=reject, warnings=tuple(warnings))
 
 
 class TestPreflightImport:
@@ -18,10 +35,11 @@ class TestPreflightImport:
         """Reale Defaults dürfen die bestehenden Fixtures nie flaggen –
         sonst würde ein legitimer Import unerwartet einen Confirm-Dialog
         auslösen (Regression ggü. Vor-Sprint-48-Verhalten)."""
-        xlsx_result = preflight_import(simple_xlsx)
-        csv_result = preflight_import(utf8_csv)
+        xlsx_result = preflight_file(simple_xlsx)
+        csv_result = preflight_file(utf8_csv)
 
         assert xlsx_result == ImportPreflight()
+        assert _dimensions(simple_xlsx) == ImportPreflight()
         assert csv_result == ImportPreflight()
 
     def test_import_rejects_non_regular_file(self, tmp_path: Path) -> None:
@@ -30,7 +48,7 @@ class TestPreflightImport:
         alias = tmp_path / "not_a_file.xlsx"
         alias.symlink_to(target_dir)
 
-        result = preflight_import(alias)
+        result = preflight_file(alias)
 
         assert result.rejected
         assert result.reject_reason is not None
@@ -39,7 +57,7 @@ class TestPreflightImport:
     def test_import_rejects_missing_file(self, tmp_path: Path) -> None:
         missing = tmp_path / "does_not_exist.xlsx"
 
-        result = preflight_import(missing)
+        result = preflight_file(missing)
 
         assert result.rejected
         assert result.reject_reason is not None
@@ -48,7 +66,7 @@ class TestPreflightImport:
         fake = tmp_path / "fake.xlsx"
         fake.write_text("this is not an excel file", encoding="utf-8")
 
-        result = preflight_import(fake)
+        result = preflight_file(fake)
 
         assert result.rejected
         assert result.reject_reason is not None
@@ -64,9 +82,9 @@ class TestPreflightImport:
         def _boom(*_a: object, **_k: object) -> None:
             raise AssertionError("calamine darf ohne gültige ZIP-Signatur nicht aufgerufen werden")
 
-        monkeypatch.setattr(import_preflight.CalamineWorkbook, "from_path", staticmethod(_boom))
+        monkeypatch.setattr(CalamineWorkbook, "from_path", staticmethod(_boom))
 
-        result = preflight_import(fake)
+        result = preflight_file(fake)
 
         assert result.rejected
 
@@ -74,7 +92,7 @@ class TestPreflightImport:
         corrupt = tmp_path / "corrupt.xlsx"
         corrupt.write_bytes(b"PK\x03\x04" + b"not a real central directory, just garbage bytes")
 
-        result = preflight_import(corrupt)
+        result = preflight_file(corrupt)
 
         assert result.rejected
         assert result.reject_reason is not None
@@ -85,7 +103,7 @@ class TestPreflightImport:
     ) -> None:
         monkeypatch.setattr(import_preflight, "MAX_IMPORT_FILE_SIZE_BYTES", 10)
 
-        result = preflight_import(simple_xlsx)
+        result = preflight_file(simple_xlsx)
 
         assert result.rejected
         assert result.reject_reason is not None
@@ -96,7 +114,7 @@ class TestPreflightImport:
     ) -> None:
         monkeypatch.setattr(import_preflight, "WARN_IMPORT_FILE_SIZE_BYTES", 10)
 
-        result = preflight_import(simple_xlsx)
+        result = preflight_file(simple_xlsx)
 
         assert not result.rejected
         assert result.warnings
@@ -107,7 +125,7 @@ class TestPreflightImport:
     ) -> None:
         monkeypatch.setattr(import_preflight, "MAX_ZIP_MEMBERS", 1)
 
-        result = preflight_import(simple_xlsx)
+        result = preflight_file(simple_xlsx)
 
         assert result.rejected
         assert result.reject_reason is not None
@@ -121,7 +139,7 @@ class TestPreflightImport:
         with zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("xl/worksheets/sheet1.xml", b"\x00" * 5_000_000)
 
-        result = preflight_import(bomb)
+        result = preflight_file(bomb)
 
         assert result.rejected
         assert result.reject_reason is not None
@@ -132,7 +150,7 @@ class TestPreflightImport:
     ) -> None:
         monkeypatch.setattr(import_preflight, "MAX_IMPORT_COLUMNS", 1)
 
-        result = preflight_import(simple_xlsx)
+        result = _dimensions(simple_xlsx)
 
         assert result.rejected
         assert result.reject_reason is not None
@@ -143,7 +161,7 @@ class TestPreflightImport:
     ) -> None:
         monkeypatch.setattr(import_preflight, "WARN_IMPORT_ROWS", 1)
 
-        result = preflight_import(simple_xlsx)
+        result = _dimensions(simple_xlsx)
 
         assert not result.rejected
         assert any("Zeilen" in w for w in result.warnings)
@@ -153,6 +171,6 @@ class TestPreflightImport:
         eine CSV-Datei nicht treffen."""
         monkeypatch.setattr(import_preflight, "MAX_ZIP_MEMBERS", 0)
 
-        result = preflight_import(utf8_csv)
+        result = preflight_file(utf8_csv)
 
         assert not result.rejected

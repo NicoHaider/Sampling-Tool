@@ -23,6 +23,12 @@ Sprint 96: für CSV zusätzlich die **Speicher-Spitze des Imports ohne DB**
 Zeitmessungen – ``tracemalloc`` verlangsamt Python-Allokationen stark und
 würde die Zeiten verfälschen.
 
+Sprint 97: zusätzlich der **Import-Ablauf** je Format – Zeit auf dem UI-Thread
+bis zum Start der Probe (``preflight_file``), Dauer der Probe im Worker
+(``ExcelImporter.probe``) und die Zahl der Blatt-Ladevorgänge
+(``CalamineWorkbook.get_sheet_by_name``) auf dem UI-Thread bzw. insgesamt
+(Prüfung + Probe + Import) für eine saubere Datei mit einem Blatt.
+
 Das Skript ruft bewusst die **echten** Importer-/Persistenz-Funktionen auf –
 es misst Produktionscode, keine Nachbildung. Die ~1-Mio-Zeilen-Fixtures
 werden seeded zur Laufzeit erzeugt (gemischte Spalten: Text inkl. Nicht-ASCII,
@@ -93,6 +99,7 @@ from _script_io import force_utf8_stdout  # noqa: E402
 from python_calamine import CalamineWorkbook  # noqa: E402
 
 from sampling_tool.core.models import Dataset, Engagement  # noqa: E402
+from sampling_tool.io.import_preflight import preflight_file  # noqa: E402
 from sampling_tool.io.importer import (  # noqa: E402
     ExcelImporter,
     _coerce_value,
@@ -380,6 +387,56 @@ def _bench_format(
     }
 
 
+class _SheetLoadCounter:
+    """Zählt `CalamineWorkbook.get_sheet_by_name` – die Funktion, die ein Blatt komplett lädt."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def __enter__(self) -> _SheetLoadCounter:
+        original = CalamineWorkbook.get_sheet_by_name
+        counter = self
+
+        def _counting(wb: CalamineWorkbook, name: str) -> Any:
+            counter.count += 1
+            return original(wb, name)
+
+        self._original = original
+        CalamineWorkbook.get_sheet_by_name = _counting  # type: ignore[method-assign]
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        CalamineWorkbook.get_sheet_by_name = self._original  # type: ignore[method-assign]
+
+
+def _bench_flow(path: Path, runs: int) -> dict[str, float]:
+    """Sprint 97: UI-Thread-Zeit bis zur Probe, Probe-Dauer, Blatt-Ladevorgänge."""
+    ui_ms = _median_ms(lambda: preflight_file(path), runs)
+    probe_ms = _median_ms(lambda: ExcelImporter().probe(path), runs)
+    with _SheetLoadCounter() as ui_loads:
+        preflight_file(path)
+    with _SheetLoadCounter() as all_loads:
+        preflight_file(path)
+        ExcelImporter().probe(path)
+        ExcelImporter().import_file(path)
+    return {
+        "ui": ui_ms,
+        "probe": probe_ms,
+        "ui_loads": float(ui_loads.count),
+        "all_loads": float(all_loads.count),
+    }
+
+
+def _print_flow_report(fmt: str, runs: int, result: dict[str, float]) -> None:
+    print(f"\n=== {fmt.upper()} Import-Ablauf (Sprint 97, Median aus {runs} Läufen) ===")
+    print(f"  UI-Thread bis Start der Probe (preflight_file) : {result['ui']:10.1f} ms")
+    print(f"  Probe im Worker (ExcelImporter.probe)          : {result['probe']:10.1f} ms")
+    print(
+        f"  Blatt-Ladevorgänge: UI-Thread {int(result['ui_loads'])}, "
+        f"gesamt {int(result['all_loads'])} (Prüfung + Probe + Import)"
+    )
+
+
 def _csv_import_peak_bytes(path: Path) -> int:
     """Speicher-Spitze (tracemalloc) eines CSV-Imports ohne DB, Zeilen voll verbraucht."""
     tracemalloc.start()
@@ -527,6 +584,7 @@ def main(argv: list[str] | None = None) -> int:
             _write_xlsx(xlsx_path, rows, args.seed)
             result = _bench_format("xlsx", xlsx_path, _parse_xlsx, runs, work_dir)
             _print_format_report("xlsx", rows, runs, result)
+            _print_flow_report("xlsx", runs, _bench_flow(xlsx_path, runs))
             if args.profile:
                 _profile_format("xlsx", xlsx_path, work_dir)
 
@@ -536,6 +594,7 @@ def main(argv: list[str] | None = None) -> int:
             _write_csv(csv_path, rows, args.seed)
             result = _bench_format("csv", csv_path, _parse_csv_phase, runs, work_dir)
             _print_format_report("csv", rows, runs, result)
+            _print_flow_report("csv", runs, _bench_flow(csv_path, runs))
             if args.profile:
                 _profile_format("csv", csv_path, work_dir)
             _bench_csv_memory(mem_rows, args.seed, work_dir)

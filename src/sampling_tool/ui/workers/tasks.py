@@ -22,7 +22,7 @@ from sampling_tool.audit.logger import AuditLogger
 from sampling_tool.core.cancellation import CancellationToken
 from sampling_tool.io.exporter import ExcelExporter, ExportError
 from sampling_tool.io.html_report import HtmlReportGenerator
-from sampling_tool.io.importer import ExcelImporter, ImportStats
+from sampling_tool.io.importer import ExcelImporter, ImportProbe, ImportStats
 from sampling_tool.io.multi_report_exporter import MultiSheetReportExporter
 from sampling_tool.io.pdf_report import AuditTrailPDF
 from sampling_tool.persistence.database import Database
@@ -45,6 +45,21 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Import
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ImportProbeTask:
+    """Vorprüfung + Vorschau einer Importdatei als Worker-Task (Sprint 97).
+
+    Lädt die Blätter genau einmal (`ExcelImporter.probe`) – vorher passierte das
+    bis zu dreimal auf dem UI-Thread. Kein DB-Zugriff. Das Ergebnis ist ein
+    reines Daten-Objekt; calamine-Objekte verlassen den Worker-Thread nicht.
+    """
+
+    path: Path
+
+    def run(self, progress: ProgressReporter, cancellation: CancellationToken) -> ImportProbe:
+        return ExcelImporter(cancellation=cancellation).probe(self.path)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,35 +126,43 @@ class ExcelImportTask:
         else:
             result = importer.import_file(self.path)
 
-        # Eigene Database-Connection im Worker-Thread – kein Shared-State
-        # mit dem Main-Thread. WAL erlaubt parallele Reader, BEGIN IMMEDIATE
-        # serialisiert den Writer.
-        db = Database(self.db_path)
         try:
-            with db.session() as conn:
-                # Sprint 85 / E7: in derselben Transaktion wie das Anlegen, damit
-                # kein paralleler Import denselben Namen bekommt.
-                existing = [
-                    d.name for d in DatasetRepo(conn).list_for_engagement(self.engagement_id)
-                ]
-                dataset = replace(
-                    result.dataset,
-                    engagement_id=self.engagement_id,
-                    name=unique_dataset_name(result.dataset.name, existing),
-                )
-                stored = DatasetRepo(conn).create(
-                    dataset,
-                    result.rows,
-                    progress=progress.report,
-                    cancellation=cancellation,
-                )
-                AuditLogger(AuditRepo(conn), self.user_name, self.engagement_id).log_import(
-                    stored, rows_above_header=result.stats.rows_above_header
-                )
-            # `stats` ist nach voller `rows`-Konsumierung gefüllt (Sprint 11.3).
-            return ExcelImportTaskResult(dataset=stored, stats=result.stats)
+            # Eigene Database-Connection im Worker-Thread – kein Shared-State
+            # mit dem Main-Thread. WAL erlaubt parallele Reader, BEGIN IMMEDIATE
+            # serialisiert den Writer.
+            db = Database(self.db_path)
+            try:
+                with db.session() as conn:
+                    # Sprint 85 / E7: in derselben Transaktion wie das Anlegen, damit
+                    # kein paralleler Import denselben Namen bekommt.
+                    existing = [
+                        d.name for d in DatasetRepo(conn).list_for_engagement(self.engagement_id)
+                    ]
+                    dataset = replace(
+                        result.dataset,
+                        engagement_id=self.engagement_id,
+                        name=unique_dataset_name(result.dataset.name, existing),
+                    )
+                    stored = DatasetRepo(conn).create(
+                        dataset,
+                        result.rows,
+                        progress=progress.report,
+                        cancellation=cancellation,
+                    )
+                    AuditLogger(AuditRepo(conn), self.user_name, self.engagement_id).log_import(
+                        stored, rows_above_header=result.stats.rows_above_header
+                    )
+                # `stats` ist nach voller `rows`-Konsumierung gefüllt (Sprint 11.3).
+                return ExcelImportTaskResult(dataset=stored, stats=result.stats)
+            finally:
+                db.close()
         finally:
-            db.close()
+            # Sprint 97 / B: scheitert das Persistieren, hielte der nicht erschöpfte
+            # CSV-Generator die Datei offen, solange der Fortschrittsdialog lebt –
+            # unter Windows ließe sie sich so lange nicht umbenennen oder löschen.
+            close = getattr(result.rows, "close", None)
+            if callable(close):
+                close()
 
 
 # ---------------------------------------------------------------------------

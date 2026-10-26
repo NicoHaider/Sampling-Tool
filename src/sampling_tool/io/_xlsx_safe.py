@@ -14,11 +14,18 @@ Mechanismus: die gefährliche Zelle wird zunächst ganz normal geschrieben und
 danach auf `data_type = TYPE_STRING` gezwungen. Der Wert bleibt dabei
 byte-identisch erhalten (keine Apostroph-Mutation nötig) – verifiziert gegen
 openpyxl 3.1.5 (Reopen-Test: `data_type != "f"`, Wert unverändert).
+
+Sprint 97 / C – Steuerzeichen: openpyxl lehnt `\x00`–`\x08`, `\x0b`, `\x0c`,
+`\x0e`–`\x1f` ab (`IllegalCharacterError`, der Export bräche ab). Jedes davon
+wird hier eins zu eins durch sein Symbol aus dem Unicode-Block „Control
+Pictures" ersetzt (`\x0b` → `␋`) – sichtbar, nichts verschwindet still. Auch
+das passiert nur beim Export; `\t`, `\n`, `\r` sind erlaubt und bleiben.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import re
+from collections.abc import Iterable, Mapping
 from datetime import date, datetime
 from typing import Any, Final
 
@@ -26,6 +33,24 @@ from openpyxl.cell.cell import TYPE_STRING
 from openpyxl.worksheet.worksheet import Worksheet
 
 _DANGEROUS_PREFIXES: Final[tuple[str, ...]] = ("=", "+", "-", "@", "\t", "\r", "\n")
+
+# Die EINE Abbildung (Sprint 97 / C): Codepoint → Control-Pictures-Symbol, für
+# genau die Zeichen, die openpyxl in Zellen ablehnt. Als `str.translate`-Tabelle.
+CONTROL_CHAR_PICTURES: Final[Mapping[int, str]] = {
+    code: chr(0x2400 + code) for code in (*range(0x00, 0x09), 0x0B, 0x0C, *range(0x0E, 0x20))
+}
+
+_CONTROL_CHARS_RE: Final[re.Pattern[str]] = re.compile(
+    "[" + "".join(re.escape(chr(code)) for code in CONTROL_CHAR_PICTURES) + "]"
+)
+
+
+def control_chars_in(value: object) -> list[str]:
+    """Die Zeichen in ``value``, die `safe_cell_value` als Symbol darstellt (in Reihenfolge)."""
+    if value is None or isinstance(value, datetime | date | bool | int | float):
+        return []
+    text = value if isinstance(value, str) else str(value)
+    return _CONTROL_CHARS_RE.findall(text)
 
 
 def is_dangerous(value: object) -> bool:
@@ -45,16 +70,26 @@ def is_dangerous(value: object) -> bool:
 def safe_cell_value(value: Any) -> Any:
     """Typnormalisierung wie die früheren `_cell_value`/`_ensure_cell_value`.
 
-    `datetime`/`date`/`bool`/`int`/`float`/`str` gehen unverändert durch,
-    `None` bleibt `None`, alles andere wird `str(value)`. Neutralisiert
-    gefährliche Strings **nicht** – das passiert erst beim Zell-Schreiben in
-    `safe_row`, damit der Wert bis dahin exakt erhalten bleibt.
+    `datetime`/`date`/`bool`/`int`/`float` gehen unverändert durch,
+    `None` bleibt `None`, alles andere wird `str(value)`. In Strings werden
+    Steuerzeichen durch ihr Symbol ersetzt (`CONTROL_CHAR_PICTURES`), sonst
+    bleiben sie unverändert. Neutralisiert gefährliche Strings **nicht** – das
+    passiert erst beim Zell-Schreiben in `safe_row`, auf dem ersetzten Wert.
     """
     if value is None:
         return None
-    if isinstance(value, datetime | date | bool | int | float | str):
+    if isinstance(value, str):
+        return _picture_control_chars(value)
+    if isinstance(value, datetime | date | bool | int | float):
         return value
-    return str(value)
+    return _picture_control_chars(str(value))
+
+
+def _picture_control_chars(text: str) -> str:
+    # Schneller Vorab-Check: die allermeisten Zellen enthalten kein Steuerzeichen.
+    if _CONTROL_CHARS_RE.search(text) is None:
+        return text
+    return text.translate(CONTROL_CHAR_PICTURES)
 
 
 def safe_row(ws: Worksheet, values: Iterable[Any]) -> list[Any]:

@@ -1,34 +1,33 @@
-"""Billiger Main-Thread-Preflight für Excel-/CSV-Importe (Sprint 48 / S2.3b, S-003).
+"""Vorprüfung für Excel-/CSV-Importe (Sprint 48 / S2.3b, S-003; Sprint 97).
 
-`preflight_import(path)` läuft auf dem Main-Thread VOR dem Import-Worker und
-prüft rein lesend (kein Entpacken, keine Materialisierung, kein UI-Code hier):
-reguläre Datei → ZIP-Signatur (nur XLSX/XLSM) → Dateigröße → ZIP-Zentral-
-verzeichnis (Member-Anzahl / entpackte Gesamtgröße / Kompressionsverhältnis,
-nur XLSX/XLSM) → Sheet-Dimensionen (billig via calamine `sheet.height`/
-`width`, nur XLSX/XLSM). Bricht bei der ersten Hard-Reject-Bedingung ab.
+Zwei Stufen, damit der UI-Thread keine Datei parst (Sprint 97):
 
-Zwei-Stufen-Modell (Backlog S-003 Trade-off): Massendaten sind Kernfunktion,
-starre niedrige Limits wären fachlich falsch. WARN_*-Schwellen sind über
-einen Confirm-Dialog im Controller übergehbar; MAX_*-Schwellen sind es
-nicht. CSV bekommt nur die Regulär-Datei- und Dateigrößen-Prüfung – ein
-echter CSV-Streaming-Umbau ist bewusst NICHT Teil dieses Preflights (siehe
-SPRINT_48_PROMPT.md).
+1. `preflight_file(path)` – auf dem UI-Thread, VOR jedem Worker. Rein lesend,
+   kein Entpacken, kein calamine, kein CSV-Parse: reguläre Datei → ZIP-Signatur
+   (nur XLSX/XLSM) → Dateigröße → ZIP-Zentralverzeichnis (Member-Anzahl /
+   entpackte Gesamtgröße / Kompressionsverhältnis, nur XLSX/XLSM). Millisekunden.
+2. `check_sheet_dimensions(sheets, warnings)` – im Worker, aus
+   `ExcelImporter.probe`. Prüft Höhe/Breite der dort ohnehin geladenen Blätter.
+   calamine kennt die Dimensionen erst nach dem vollständigen Laden eines
+   Blatts – deshalb gehört diese Prüfung nicht auf den UI-Thread.
+
+Beide brechen bei der ersten Hard-Reject-Bedingung ab.
+
+Schwellen (Backlog S-003 Trade-off): Massendaten sind Kernfunktion, starre
+niedrige Limits wären fachlich falsch. WARN_*-Schwellen sind über einen
+Confirm-Dialog im Controller übergehbar (Dateigröße und Zeilen erscheinen
+gemeinsam in EINEM Dialog); MAX_*-Schwellen sind es nicht. CSV bekommt nur die
+Regulär-Datei- und Dateigrößen-Prüfung.
 """
 
 from __future__ import annotations
 
 import stat
 import zipfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
-
-from python_calamine import CalamineError
-
-# `as CalamineWorkbook` ist kein Stilfehler: Tests patchen
-# `import_preflight.CalamineWorkbook.from_path` direkt, mypy (`no_implicit_reexport`
-# via `strict = true`) verlangt dafür einen expliziten Re-Export.
-from python_calamine import CalamineWorkbook as CalamineWorkbook
+from typing import TYPE_CHECKING, Final
 
 from sampling_tool.config import (
     MAX_IMPORT_COLUMNS,
@@ -42,12 +41,15 @@ from sampling_tool.config import (
     WARN_IMPORT_ROWS,
 )
 
+if TYPE_CHECKING:
+    from sampling_tool.io.importer import SheetInfo
+
 _ZIP_MAGIC: Final[bytes] = b"PK\x03\x04"
 
 
 @dataclass(frozen=True, slots=True)
 class ImportPreflight:
-    """Ergebnis von `preflight_import`.
+    """Ergebnis von `preflight_file`.
 
     `reject_reason` gesetzt ⇒ Hard-Reject, der Import darf nicht starten.
     Sonst ⇒ `warnings` (leer = unauffällig, sonst Confirm-Kandidat).
@@ -61,8 +63,8 @@ class ImportPreflight:
         return self.reject_reason is not None
 
 
-def preflight_import(path: Path) -> ImportPreflight:
-    """Billiger, rein lesender Preflight-Check vor dem Import-Worker."""
+def preflight_file(path: Path) -> ImportPreflight:
+    """Billiger, rein lesender Preflight-Check auf dem UI-Thread, vor jedem Worker."""
     resolved = path.resolve()
 
     reject = _check_regular_file(resolved)
@@ -83,10 +85,6 @@ def preflight_import(path: Path) -> ImportPreflight:
 
     if is_excel:
         reject = _check_zip_container(resolved)
-        if reject is not None:
-            return ImportPreflight(reject_reason=reject)
-
-        reject = _check_dimensions(resolved, warnings)
         if reject is not None:
             return ImportPreflight(reject_reason=reject)
 
@@ -163,20 +161,28 @@ def _check_zip_container(resolved: Path) -> str | None:
     return None
 
 
-def _check_dimensions(resolved: Path, warnings: list[str]) -> str | None:
-    try:
-        wb = CalamineWorkbook.from_path(str(resolved))
-    except (CalamineError, OSError) as exc:
-        # `OSError` deckt TOCTOU-Fälle ab: `_check_zip_container` hat sein
-        # eigenes `ZipFile`-Handle schon geschlossen, bevor calamine die
-        # Datei hier erneut öffnet – zwischen beiden Checks kann sie
-        # verschwinden/gesperrt werden (analog `briefpapier.py`).
-        return f"Excel-Datei konnte nicht gelesen werden: {resolved.name} ({exc})."
+def unreadable_excel_reason(path: Path, exc: Exception) -> str:
+    """Reject-Text, wenn calamine die Arbeitsmappe nicht öffnen kann.
 
-    for name in wb.sheet_names:
-        sheet = wb.get_sheet_by_name(name)
-        height = int(sheet.height)
-        width = int(sheet.width)
+    Tritt auch nach bestandenem `preflight_file` auf (TOCTOU): `_check_zip_container`
+    hat sein `ZipFile`-Handle geschlossen, bevor calamine die Datei im Worker
+    erneut öffnet – dazwischen kann sie verschwinden/gesperrt werden (analog
+    `briefpapier.py`).
+    """
+    return f"Excel-Datei konnte nicht gelesen werden: {path.resolve().name} ({exc})."
+
+
+def check_sheet_dimensions(sheets: Sequence[SheetInfo], warnings: list[str]) -> str | None:
+    """Reject-Text beim ersten Blatt über den Hard-Grenzen, sonst ``None``.
+
+    Hängt Zeilen-Warnungen an ``warnings`` an. Prüfwerte sind `SheetInfo.row_count`
+    / `column_count` = calamine `height` / `width` – dieselben Werte, die der
+    Preflight vor Sprint 97 direkt am Blatt gelesen hat.
+    """
+    for info in sheets:
+        name = info.name
+        height = info.row_count
+        width = info.column_count
 
         if width > MAX_IMPORT_COLUMNS:
             return f"Sheet '{name}' hat zu viele Spalten ({width}, erlaubt: {MAX_IMPORT_COLUMNS})."
