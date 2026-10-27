@@ -16,7 +16,8 @@ import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Final
+from enum import Enum
+from typing import Any, Final, Literal, TypeAlias
 
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import (
@@ -140,6 +141,22 @@ _ORDERING_OPERATORS: frozenset[FilterOperator] = frozenset(
 )
 
 
+class _DrawCancelled(Enum):
+    DRAW_CANCELLED = "draw_cancelled"
+
+
+#: Ergebnis einer abgebrochenen Probeziehung (Sprint 98): der Dialog bleibt
+#: mit allen Eingaben offen, ohne Meldung.
+DRAW_CANCELLED: Final = _DrawCancelled.DRAW_CANCELLED
+
+#: Rückgabe von `draw_check`: Fehlermeldung, `None` (gelungen) oder `DRAW_CANCELLED`.
+DrawCheckOutcome: TypeAlias = str | Literal[_DrawCancelled.DRAW_CANCELLED] | None
+
+#: Hinweis unter der Größe, wenn eine Zählung abgebrochen wurde (Sprint 98).
+MATCH_COUNT_UNKNOWN_HINT: Final = "Trefferzahl nicht ermittelt"
+CLUSTER_COUNT_UNKNOWN_HINT: Final = "Clusterzahl nicht ermittelt"
+
+
 @dataclass(frozen=True, slots=True)
 class SamplingDialogResult:
     """Ergebnis des Sampling-Dialogs."""
@@ -192,14 +209,14 @@ class SamplingDialog(QDialog):
     def __init__(
         self,
         dataset: Dataset,
-        distinct_values_provider: Callable[[str], Sequence[Any]] | None = None,
+        distinct_values_provider: Callable[[str], Sequence[Any] | None] | None = None,
         current_sample: SampleResult | None = None,
         parent: QWidget | None = None,
         *,
         features: SamplingFeatures | None = None,
         preset_store: PresetStore | None = None,
         filter_match_count_provider: (
-            Callable[[tuple[FilterCondition, ...], bool], int] | None
+            Callable[[tuple[FilterCondition, ...], bool], int | None] | None
         ) = None,
         ui_scale_factor: float = 1.0,
     ) -> None:
@@ -257,9 +274,14 @@ class SamplingDialog(QDialog):
         # derselben Schlüssel-Semantik wie der Sampler; die Probeziehung prüft
         # beim OK exakt auf dem Zieh-Pfad und hält den Dialog bei einem Fehler
         # offen. Beide optional – ohne sie prüft der Dialog nur, was er selbst weiß.
-        self._group_count_provider: Callable[[str], int] | None = None
+        self._group_count_provider: Callable[[str], int | None] | None = None
         self._group_count_cache: dict[str, int] = {}
-        self._draw_check: Callable[[SamplingDialogResult], str | None] | None = None
+        self._draw_check: Callable[[SamplingDialogResult], DrawCheckOutcome] | None = None
+        # Sprint 98: die Provider laufen im Worker; ein Provider liefert `None`,
+        # wenn „Abbrechen" gedrückt wurde. Abgebrochene Zählungen werden nicht
+        # gecacht, aber gemerkt, damit dieselbe Zählung erst nach einer Änderung
+        # der Eingabe erneut startet (nicht z. B. beim OK nochmal).
+        self._cancelled_lookups: set[object] = set()
 
         self._build_ui()
         self._wire_signals()
@@ -299,8 +321,8 @@ class SamplingDialog(QDialog):
     def set_validators(
         self,
         *,
-        group_count_provider: Callable[[str], int] | None = None,
-        draw_check: Callable[[SamplingDialogResult], str | None] | None = None,
+        group_count_provider: Callable[[str], int | None] | None = None,
+        draw_check: Callable[[SamplingDialogResult], DrawCheckOutcome] | None = None,
     ) -> None:
         """Hängt die Prüfungen an, die Daten brauchen (Sprint 85 / B).
 
@@ -308,7 +330,9 @@ class SamplingDialog(QDialog):
         der Sampler Cluster und Schichten bildet (leere Zellen bilden eine
         eigene Gruppe). `draw_check(ergebnis)` zieht probeweise und liefert eine
         Fehlermeldung oder `None`; der Controller verwendet eine gelungene
-        Probeziehung weiter, gezogen wird also nicht doppelt.
+        Probeziehung weiter, gezogen wird also nicht doppelt. Seit Sprint 98
+        liefert der Gruppen-Zähler `None` und die Probeziehung `DRAW_CANCELLED`,
+        wenn der Anwender abbricht.
         """
         self._group_count_provider = group_count_provider
         self._group_count_cache.clear()
@@ -760,9 +784,10 @@ class SamplingDialog(QDialog):
             self._wire_filter_row(self._filter_rows[0])
         if self._show_cluster:
             self._cluster_field.currentIndexChanged.connect(self._validate)
-            self._cluster_field.currentIndexChanged.connect(self._update_size_hint)
+            self._cluster_field.currentIndexChanged.connect(self._on_lookup_input_changed)
         if self._show_stratified:
             self._stratum_field.currentIndexChanged.connect(self._validate)
+            self._stratum_field.currentIndexChanged.connect(self._retry_cancelled_lookups)
             self._stratify_group.buttonToggled.connect(self._validate)
         self._buttons.accepted.connect(self.accept)
         self._buttons.rejected.connect(self.reject)
@@ -770,7 +795,7 @@ class SamplingDialog(QDialog):
     def _wire_filter_row(self, row: _FilterRow) -> None:
         row.field.currentTextChanged.connect(lambda _text, r=row: self._on_filter_field_changed(r))
         row.value.currentTextChanged.connect(self._validate)
-        row.value.currentIndexChanged.connect(self._update_size_hint)
+        row.value.currentIndexChanged.connect(self._on_lookup_input_changed)
         row.operator.currentIndexChanged.connect(
             lambda _index, r=row: self._on_filter_operator_changed(r)
         )
@@ -779,7 +804,7 @@ class SamplingDialog(QDialog):
         # Table-Scan) triggern → nur `editingFinished` (Enter/Fokusverlust),
         # nicht `textChanged`. Die reine Leer-Validierung ist billig und
         # läuft pro Tastendruck weiter (kein Provider-Aufruf).
-        row.value_text.editingFinished.connect(self._update_size_hint)
+        row.value_text.editingFinished.connect(self._on_lookup_input_changed)
         row.value_text.editingFinished.connect(self._reset_combo_selection)
         row.value_text.textChanged.connect(self._validate)
         row.add_button.clicked.connect(self._add_filter_row)
@@ -802,6 +827,7 @@ class SamplingDialog(QDialog):
     def _on_method_changed(self) -> None:
         if not self._show_methods:
             return
+        self._retry_cancelled_lookups()
         is_cluster = self._show_cluster and self._radio_cluster.isChecked()
         is_stratified = self._show_stratified and self._radio_stratified.isChecked()
         if self._show_cluster:
@@ -812,14 +838,27 @@ class SamplingDialog(QDialog):
         self._update_size_hint()
         self._validate()
 
+    def _retry_cancelled_lookups(self) -> None:
+        """Nach einer Eingabeänderung darf eine abgebrochene Zählung neu starten."""
+        self._cancelled_lookups.clear()
+
+    def _on_lookup_input_changed(self) -> None:
+        self._retry_cancelled_lookups()
+        self._update_size_hint()
+
     def _on_filter_field_changed(self, row: _FilterRow) -> None:
+        self._retry_cancelled_lookups()
         self._refresh_filter_values(row)
         self._reset_combo_selection()
         self._update_filter_buttons()
         self._update_size_hint()
 
-    def _refresh_filter_values(self, row: _FilterRow | None = None) -> None:
-        """Füllt das Werte-Dropdown einer Filterzeile (Default: die erste)."""
+    def _refresh_filter_values(self, row: _FilterRow | None = None) -> bool:
+        """Füllt das Werte-Dropdown einer Filterzeile (Default: die erste).
+
+        `False`, wenn das Lesen der Werte abgebrochen wurde (Sprint 98): die
+        Zeile springt dann auf „(kein Filter)" zurück, nichts wird gecacht.
+        """
         row = row if row is not None else self._filter_rows[0]
         field = row.field.currentText()
         row.value.blockSignals(True)
@@ -831,7 +870,13 @@ class SamplingDialog(QDialog):
             values = self._distinct_cache.get(field)
             if values is None:
                 try:
-                    values = tuple(self._distinct_values_provider(field))
+                    provided = self._distinct_values_provider(field)
+                    if provided is None:
+                        row.value.blockSignals(False)
+                        # Löst `_on_filter_field_changed` für „(kein Filter)" aus.
+                        row.field.setCurrentText(NO_FILTER_LABEL)
+                        return False
+                    values = tuple(provided)
                 except Exception:
                     # Nicht cachen: ein transienter Fehler (z. B. "database is
                     # locked" durch eine parallele Snapshot-Erstellung) soll
@@ -847,6 +892,7 @@ class SamplingDialog(QDialog):
                 row.value.addItem(_display(value), userData=value)
         row.value.blockSignals(False)
         self._validate()
+        return True
 
     def _on_filter_operator_changed(self, row: _FilterRow | None = None) -> None:
         """Schaltet die Wert-Eingabe zwischen distinct-Dropdown (EQ/NE) und Textfeld.
@@ -858,6 +904,7 @@ class SamplingDialog(QDialog):
         row = row if row is not None else self._filter_rows[0]
         is_ordering = row.operator.currentData() in _ORDERING_OPERATORS
         row.value_stack.setCurrentWidget(row.value_text if is_ordering else row.value)
+        self._retry_cancelled_lookups()
         self._validate()
         self._update_size_hint()
 
@@ -935,11 +982,14 @@ class SamplingDialog(QDialog):
 
     def _match_count(
         self,
-        provider: Callable[[tuple[FilterCondition, ...], bool], int],
+        provider: Callable[[tuple[FilterCondition, ...], bool], int | None],
         filters: tuple[FilterCondition, ...],
         restrict: bool,
-    ) -> int:
-        """Trefferzahl aller Filter (UND) via Provider, memoisiert pro (Bedingungen, restrict)."""
+    ) -> int | None:
+        """Trefferzahl aller Filter (UND) via Provider, memoisiert pro (Bedingungen, restrict).
+
+        `None`: die Zählung wurde abgebrochen (Sprint 98) – nicht gecacht.
+        """
         # `repr`, nicht `str`: der Key MUSS Typen unterscheiden – `matches_filter`
         # vergleicht per `==`, und int 5 ≠ str "5". `str(5) == str("5")` würde
         # kollidieren und einen veralteten Count für gemischt-typige Spalten zeigen.
@@ -947,11 +997,16 @@ class SamplingDialog(QDialog):
         cached = self._match_count_cache.get(key)
         if cached is not None:
             return cached
+        if key in self._cancelled_lookups:
+            return None
         count = provider(filters, restrict)
+        if count is None:
+            self._cancelled_lookups.add(key)
+            return None
         self._match_count_cache[key] = count
         return count
 
-    def _available_rows(self) -> int:
+    def _available_rows(self) -> int | None:
         """Datensätze, aus denen die Ziehung tatsächlich wählen kann (kann 0 sein).
 
         F = aktive Filter (UND) mit Provider, R = Einschränken, E = Ergänzen:
@@ -959,6 +1014,7 @@ class SamplingDialog(QDialog):
         minus aktive Stichprobe (E); mit F → Treffer gesamt, Treffer in der
         Stichprobe (R) bzw. Differenz der beiden (E). Der Provider (Full-Table-
         Scan) wird nie ohne brauchbaren Wert aufgerufen und ist memoisiert.
+        `None`: eine nötige Trefferzahl wurde abgebrochen (Sprint 98).
         """
         restrict = self._resample_checkbox.isChecked()
         supplement = self._supplement_checkbox.isChecked()
@@ -967,9 +1023,13 @@ class SamplingDialog(QDialog):
         filters = self._active_filters()
         if provider is not None and filters:
             hits = self._match_count(provider, filters, False)
+            if hits is None:
+                return None
             if not (restrict or supplement) or self._current_sample is None:
                 return hits
             hits_in_sample = self._match_count(provider, filters, True)
+            if hits_in_sample is None:
+                return None
             return hits_in_sample if restrict else hits - hits_in_sample
         if restrict and self._current_sample is not None:
             return drawn
@@ -977,9 +1037,13 @@ class SamplingDialog(QDialog):
             return self._dataset.row_count - drawn
         return self._dataset.row_count
 
-    def _effective_max_sample_size(self) -> int:
-        """Aktuell zulässige Maximalgröße der Stichprobe (mindestens 1, für den Hinweis)."""
-        return max(self._available_rows(), 1)
+    def _effective_max_sample_size(self) -> int | None:
+        """Aktuell zulässige Maximalgröße der Stichprobe (mindestens 1, für den Hinweis).
+
+        `None`, wenn die Trefferzahl abgebrochen wurde.
+        """
+        available = self._available_rows()
+        return max(available, 1) if available is not None else None
 
     def _narrowing_note(self) -> str:
         """Zusatz, wenn eine Gruppenzahl nur die ganze Population beschreibt."""
@@ -990,15 +1054,24 @@ class SamplingDialog(QDialog):
         return ""
 
     def _group_count(self, column: str) -> int | None:
-        """Anzahl Gruppen einer Spalte über den Controller-Zähler (memoisiert)."""
+        """Anzahl Gruppen einer Spalte über den Controller-Zähler (memoisiert).
+
+        `None` ohne Zähler oder nach Abbruch (Sprint 98, dann nicht gecacht).
+        """
         if self._group_count_provider is None:
             return None
         cached = self._group_count_cache.get(column)
         if cached is None:
+            lookup = ("groups", column)
+            if lookup in self._cancelled_lookups:
+                return None
             # Ein Full-Table-Scan (~0,5 s bei 500.000 Zeilen, Sprint 85 gemessen),
             # einmal je Spalte und Dialog.
             with busy_indicator(self):
                 cached = self._group_count_provider(column)
+            if cached is None:
+                self._cancelled_lookups.add(lookup)
+                return None
             self._group_count_cache[column] = cached
         return cached
 
@@ -1012,7 +1085,13 @@ class SamplingDialog(QDialog):
                     f"max. {_format_int(clusters)} Cluster verfügbar{self._narrowing_note()}"
                 )
                 return
+            if ("groups", column) in self._cancelled_lookups:
+                self._lbl_size_hint.setText(CLUSTER_COUNT_UNKNOWN_HINT)
+                return
         max_n = self._effective_max_sample_size()
+        if max_n is None:
+            self._lbl_size_hint.setText(MATCH_COUNT_UNKNOWN_HINT)
+            return
         self._lbl_size_hint.setText(f"max. {_format_int(max_n)} verfügbar")
 
     def accept(self) -> None:
@@ -1037,6 +1116,8 @@ class SamplingDialog(QDialog):
             ok_button = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
             with busy_indicator(ok_button):
                 problem = self._draw_check(result)
+            if problem is DRAW_CANCELLED:
+                return  # Sprint 98: abgebrochen – Dialog bleibt offen, keine Meldung.
             if problem is not None:
                 self._show_message("size", problem)
                 return
@@ -1145,6 +1226,9 @@ class SamplingDialog(QDialog):
         if size < MIN_SAMPLE_SIZE:
             return f"Die Stichprobengröße muss mindestens {MIN_SAMPLE_SIZE} betragen."
         available = self._available_rows()
+        if available is None:
+            # Trefferzahl abgebrochen (Sprint 98): die Probeziehung prüft.
+            return None
         if available <= 0:
             return "Es sind keine ungezogenen Datensätze mehr übrig."
         if size > available:
@@ -1247,7 +1331,8 @@ class SamplingDialog(QDialog):
         row.field.blockSignals(True)
         row.field.setCurrentText(condition.field)
         row.field.blockSignals(False)
-        self._refresh_filter_values(row)
+        if not self._refresh_filter_values(row):
+            return False  # Werte lesen abgebrochen – Bedingung wird gemeldet.
         if condition.operator in _ORDERING_OPERATORS:
             # Ordering-Ops: Wert ins Schwellenwert-Textfeld (kein distinct-Match
             # gegen die Population – ein Vergleichswert muss dort nicht vorkommen).

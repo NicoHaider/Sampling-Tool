@@ -18,7 +18,9 @@ from sampling_tool.core.models import (
 from sampling_tool.core.sampling import SimpleSampler
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import DatasetRepo, EngagementRepo
-from sampling_tool.ui.controllers.workspace_controller import _count_filter_matches
+from sampling_tool.ui.controllers.sampling_paths import (
+    count_filter_matches as _count_filter_matches,
+)
 
 pytestmark = pytest.mark.integration
 

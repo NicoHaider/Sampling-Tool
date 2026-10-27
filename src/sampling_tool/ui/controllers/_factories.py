@@ -46,10 +46,10 @@ SamplingDialogFactory = Callable[
     [
         "MainWindow",
         Dataset,
-        Callable[[str], Sequence[Any]] | None,
+        Callable[[str], Sequence[Any] | None] | None,
         SampleResult | None,
         SamplingFeatures,
-        Callable[[tuple[FilterCondition, ...], bool], int] | None,
+        Callable[[tuple[FilterCondition, ...], bool], int | None] | None,
         float,
     ],
     SamplingDialog,
@@ -158,10 +158,12 @@ def default_duplicate_dialog_factory(
 def default_sampling_factory(
     parent: MainWindow,
     dataset: Dataset,
-    distinct_values_provider: Callable[[str], Sequence[Any]] | None,
+    distinct_values_provider: Callable[[str], Sequence[Any] | None] | None,
     current_sample: SampleResult | None,
     features: SamplingFeatures,
-    filter_match_count_provider: Callable[[tuple[FilterCondition, ...], bool], int] | None = None,
+    filter_match_count_provider: (
+        Callable[[tuple[FilterCondition, ...], bool], int | None] | None
+    ) = None,
     ui_scale_factor: float = 1.0,
 ) -> SamplingDialog:
     return SamplingDialog(

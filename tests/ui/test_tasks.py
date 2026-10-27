@@ -17,7 +17,15 @@ import pytest
 from openpyxl import Workbook
 
 from sampling_tool.core.cancellation import CancellationToken, OperationCancelled
-from sampling_tool.core.models import Engagement
+from sampling_tool.core.models import (
+    Dataset,
+    DatasetRow,
+    Engagement,
+    FilterCondition,
+    FilterOperator,
+    SampleConfig,
+    SamplingMethod,
+)
 from sampling_tool.io.importer import ExcelImporter
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import (
@@ -25,8 +33,22 @@ from sampling_tool.persistence.repositories import (
     DatasetRepo,
     EngagementRepo,
 )
+from sampling_tool.ui.controllers.sampling_paths import (
+    count_filter_matches,
+    count_groups,
+    draw_sample,
+    field_value_stats,
+)
+from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
 from sampling_tool.ui.workers.task_worker import ProgressReporter, _ProgressEmitter
-from sampling_tool.ui.workers.tasks import ExcelImportTask
+from sampling_tool.ui.workers.tasks import (
+    DrawSampleTask,
+    ExcelImportTask,
+    FieldStatsTask,
+    FilterCountTask,
+    GroupCountTask,
+    ImportProbeTask,
+)
 
 pytestmark = pytest.mark.ui
 
@@ -317,3 +339,96 @@ class TestReproducibility:
         for s, w in zip(sync_rows, worker_rows, strict=True):
             assert s.row_id == w.row_id
             assert s.values == w.values
+
+
+# ---------------------------------------------------------------------------
+# Sprint 98: Lese-Tasks des Stichproben-Dialogs
+# ---------------------------------------------------------------------------
+
+
+def _make_sampling_db(tmp_path: Path, n_rows: int = 300) -> tuple[Path, Dataset]:
+    db_path = tmp_path / "lesen.db"
+    db = Database(db_path)
+    db.migrate()
+    eng = EngagementRepo(db.connect()).get_or_create(
+        Engagement(auditor_name="A", client_name="C", auditor_position="S", audit_type="ISAE 3402")
+    )
+    rows = tuple(
+        DatasetRow(row_id=i, values={"Konto": f"K{i % 5}", "Betrag": i})
+        for i in range(1, n_rows + 1)
+    )
+    stored = DatasetRepo(db.connect()).create(
+        Dataset(name="d", columns=("Konto", "Betrag"), engagement_id=eng.id), rows
+    )
+    db.close()
+    return db_path, stored
+
+
+def _reporter() -> ProgressReporter:
+    return ProgressReporter(_ProgressEmitter())
+
+
+class TestSamplingReadTasks:
+    """Die Tasks liefern genau das, was die Qt-freien Funktionen auf derselben DB liefern."""
+
+    def test_results_match_sampling_paths(self, tmp_path: Path) -> None:
+        db_path, dataset = _make_sampling_db(tmp_path)
+        assert dataset.id is not None
+        filters = (
+            FilterCondition("Konto", FilterOperator.NE, "K1"),
+            FilterCondition("Betrag", FilterOperator.GT, 100),
+        )
+        request = SamplingDialogResult(
+            config=SampleConfig(method=SamplingMethod.SIMPLE, size=4, seed=9, filters=filters)
+        )
+        db = Database(db_path)
+        try:
+            repo = DatasetRepo(db.connect())
+            expected_stats = field_value_stats(repo, dataset.id, "Konto")
+            expected_count = count_filter_matches(repo, dataset.id, filters, None)
+            expected_groups = count_groups(repo, dataset.id, "Konto")
+            expected_draw = draw_sample(repo, dataset, request, (2, 3))
+        finally:
+            db.close()
+        token = CancellationToken()
+        assert FieldStatsTask(db_path, dataset.id, "Konto").run(_reporter(), token) == (
+            expected_stats
+        )
+        assert FilterCountTask(db_path, dataset.id, filters).run(_reporter(), token) == (
+            expected_count
+        )
+        assert GroupCountTask(db_path, dataset.id, "Konto").run(_reporter(), token) == (
+            expected_groups
+        )
+        drawn = DrawSampleTask(db_path, dataset, request, (2, 3)).run(_reporter(), token)
+        assert drawn.selected_row_ids == expected_draw.selected_row_ids
+        assert drawn.population_size == expected_draw.population_size
+        assert drawn.config == expected_draw.config
+
+    def test_read_tasks_detach_and_write_tasks_do_not(self) -> None:
+        for task_type in (
+            FieldStatsTask,
+            FilterCountTask,
+            GroupCountTask,
+            DrawSampleTask,
+            ImportProbeTask,
+        ):
+            assert task_type.detach_on_cancel is True, task_type
+        assert getattr(ExcelImportTask, "detach_on_cancel", False) is False
+
+    def test_set_token_interrupts_sql_as_cancellation(self, tmp_path: Path) -> None:
+        """Auch eine einzelne GROUP-BY-Abfrage bricht ab (SQLite-Progress-Handler)."""
+        db_path, dataset = _make_sampling_db(tmp_path, n_rows=20_000)
+        assert dataset.id is not None
+        token = CancellationToken()
+        token.set()
+        with pytest.raises(OperationCancelled):
+            GroupCountTask(db_path, dataset.id, "Konto").run(_reporter(), token)
+        with pytest.raises(OperationCancelled):
+            FilterCountTask(
+                db_path, dataset.id, (FilterCondition("Konto", FilterOperator.EQ, "K1"),)
+            ).run(_reporter(), token)
+
+    def test_other_sql_errors_are_not_masked(self, tmp_path: Path) -> None:
+        with pytest.raises(sqlite3.OperationalError):
+            GroupCountTask(tmp_path / "leer.db", 1, "Konto").run(_reporter(), CancellationToken())
