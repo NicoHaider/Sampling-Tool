@@ -13,13 +13,15 @@ erlaubt parallele Reader (Main-Thread) + 1 Writer (Worker).
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import sqlite3
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from sampling_tool.audit.logger import AuditLogger
-from sampling_tool.core.cancellation import CancellationToken
+from sampling_tool.core.cancellation import CancellationToken, OperationCancelled
 from sampling_tool.io.exporter import ExcelExporter, ExportError
 from sampling_tool.io.html_report import HtmlReportGenerator
 from sampling_tool.io.importer import ExcelImporter, ImportProbe, ImportStats
@@ -27,6 +29,14 @@ from sampling_tool.io.multi_report_exporter import MultiSheetReportExporter
 from sampling_tool.io.pdf_report import AuditTrailPDF
 from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import AuditRepo, DatasetRepo, SampleRepo
+from sampling_tool.ui.controllers.sampling_paths import (
+    DrawRequest,
+    FieldValueStats,
+    count_filter_matches,
+    count_groups,
+    draw_sample,
+    field_value_stats,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -35,6 +45,7 @@ if TYPE_CHECKING:
         AuditEvent,
         Dataset,
         Engagement,
+        FilterCondition,
         SampleResult,
     )
     from sampling_tool.io.bdo_locations import BdoCompany, BdoLocation
@@ -57,6 +68,10 @@ class ImportProbeTask:
     """
 
     path: Path
+
+    # Sprint 98 / C: liest nur – „Abbrechen" schließt sofort, der Worker läuft
+    # im Hintergrund zu Ende und sein Ergebnis wird verworfen.
+    detach_on_cancel: ClassVar[bool] = True
 
     def run(self, progress: ProgressReporter, cancellation: CancellationToken) -> ImportProbe:
         return ExcelImporter(cancellation=cancellation).probe(self.path)
@@ -163,6 +178,100 @@ class ExcelImportTask:
             close = getattr(result.rows, "close", None)
             if callable(close):
                 close()
+
+
+# ---------------------------------------------------------------------------
+# Lese-Tasks des Stichproben-Dialogs (Sprint 98)
+# ---------------------------------------------------------------------------
+
+# SQLite ruft den Progress-Handler alle so viele VM-Anweisungen – damit bricht
+# auch eine einzelne GROUP-BY-Abfrage ab, die vor der ersten Ergebniszeile scannt.
+_SQLITE_CANCEL_CHECK_OPS = 10_000
+
+
+@contextmanager
+def _read_repo(db_path: Path, cancellation: CancellationToken) -> Iterator[DatasetRepo]:
+    """Eigene, nur lesend genutzte Verbindung im Worker-Thread (Muster `ExcelImportTask`).
+
+    Ein gesetztes Token unterbricht laufende SQL-Anweisungen; der dabei
+    geworfene `sqlite3.OperationalError` wird zu `OperationCancelled`.
+    """
+    db = Database(db_path)
+    try:
+        conn = db.connect()
+        conn.set_progress_handler(lambda: int(cancellation.is_set()), _SQLITE_CANCEL_CHECK_OPS)
+        try:
+            yield DatasetRepo(conn)
+        except sqlite3.OperationalError:
+            if cancellation.is_set():
+                raise OperationCancelled() from None
+            raise
+    finally:
+        db.close()
+
+
+@dataclass(frozen=True, slots=True)
+class FieldStatsTask:
+    """Werteliste + Wertzählung einer Filterspalte (`field_value_stats`)."""
+
+    db_path: Path
+    dataset_id: int
+    column: str
+
+    detach_on_cancel: ClassVar[bool] = True
+
+    def run(self, progress: ProgressReporter, cancellation: CancellationToken) -> FieldValueStats:
+        with _read_repo(self.db_path, cancellation) as repo:
+            return field_value_stats(repo, self.dataset_id, self.column, cancellation)
+
+
+@dataclass(frozen=True, slots=True)
+class FilterCountTask:
+    """Trefferzahl aller Filter (UND), optional innerhalb der aktiven Stichprobe."""
+
+    db_path: Path
+    dataset_id: int
+    filters: tuple[FilterCondition, ...]
+    restrict_to_ids: tuple[int, ...] | None = None
+
+    detach_on_cancel: ClassVar[bool] = True
+
+    def run(self, progress: ProgressReporter, cancellation: CancellationToken) -> int:
+        with _read_repo(self.db_path, cancellation) as repo:
+            return count_filter_matches(
+                repo, self.dataset_id, self.filters, self.restrict_to_ids, cancellation
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class GroupCountTask:
+    """Anzahl Cluster bzw. Schichten einer Spalte (`count_groups`)."""
+
+    db_path: Path
+    dataset_id: int
+    column: str
+
+    detach_on_cancel: ClassVar[bool] = True
+
+    def run(self, progress: ProgressReporter, cancellation: CancellationToken) -> int:
+        with _read_repo(self.db_path, cancellation) as repo:
+            return count_groups(repo, self.dataset_id, self.column, cancellation)
+
+
+@dataclass(frozen=True, slots=True)
+class DrawSampleTask:
+    """Probeziehung (`draw_sample`) – liest nur; gespeichert wird auf dem UI-Thread."""
+
+    db_path: Path
+    dataset: Dataset
+    request: DrawRequest
+    parent_ids: tuple[int, ...] | None
+
+    detach_on_cancel: ClassVar[bool] = True
+
+    def run(self, progress: ProgressReporter, cancellation: CancellationToken) -> SampleResult:
+        with _read_repo(self.db_path, cancellation) as repo:
+            return draw_sample(repo, self.dataset, self.request, self.parent_ids, cancellation)
 
 
 # ---------------------------------------------------------------------------

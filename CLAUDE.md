@@ -347,20 +347,31 @@ ui ──▶ controllers ──▶ core ◀── io
   - `controllers/workspace_controller.py` – mutierende Workspace-
     Operationen: `handle_import_excel` (ruft `s.select_dataset(stored.
     id)` für Auto-Select nach Import), `handle_new_sampling`,
-    `handle_reset`, `handle_undo`, `handle_redo`. **Sprint 11.4 –
-    Sampling-Streaming**: `_build_sampling_iterator(repo, dataset,
-    from_sample_only)` liefert `(Iterable[DatasetRow], int)`: bei
-    `from_sample_only` → `get_rows_by_ids` mit den IDs des aktiven
-    Samples + Sample-Größe; sonst → `iter_rows`-Generator + `dataset.
-    row_count`. **Sprint 12.1 / P-002**: für `SimpleSampler` ohne
-    Filter + ohne Sub-Sampling Spezialpfad via `sampler.sample_ids(
-    repo.iter_row_ids(...))` – kein DatasetRow-Materialize, RAM-Peak
-    1 GB → <50 MB bei 1M-Datasets. **Sprint 35 / P-003**: analoge
-    Spezialpfade für Cluster/Stratified ohne Filter + ohne Sub-Sampling
-    via `sampler.sample_pairs(repo.iter_row_field_pairs(...))` –
-    bit-identische Ziehung (Oracles in `test_sampling.py` + E2E-Test),
-    RAM-Peak 1,12 GB → ~155 MB, Zeit −57/−68 % bei 1M. Spalten mit `"`/`\` im Namen laufen via `supports_field_pairs`-Guard klassisch. Gefilterte und
-    Resample-Ziehungen laufen weiter über `sample(iter_rows)`.
+    `handle_reset`, `handle_undo`, `handle_redo`. **Sprint 98:** alle
+    Lesezugriffe des Stichproben-Dialogs (Werteliste, Trefferzahl,
+    Gruppenzahl, Probeziehung) laufen über `_SamplingDataAccess` als Lese-
+    Tasks im Worker (`FieldStatsTask`, `FilterCountTask`, `GroupCountTask`,
+    `DrawSampleTask` in `ui/workers/tasks.py`, je eigene Verbindung, Dialog
+    erst nach 300 ms); `None` vom Provider heißt „abgebrochen". Speichern und
+    Audit-Log bleiben auf dem UI-Thread.
+  - `controllers/sampling_paths.py` – **Sprint 98**, Qt-frei: Pfadwahl der
+    Ziehung (`draw_sample`) und die Dialog-Zählungen (`count_filter_matches`,
+    `count_groups`, `field_value_stats`, `hits_from_counts`, `PoolCounter`).
+    Ungefiltert über den ganzen Datensatz: Simple via `sample_ids(
+    iter_row_ids)` (Sprint 12.1 / P-002), Cluster/Stratified via
+    `sample_pairs(iter_row_field_pairs)` (Sprint 35 / P-003). Gefiltert
+    und/oder Ergänzen: liest nur Filter- und Gruppenfelder
+    (`DatasetRepo.iter_row_multi_field_values`) und zieht über
+    `sample_ids`/`sample_pairs` mit der Konfiguration ohne Filter; das
+    Ergebnis trägt wieder die originale Konfiguration und die Pool-Größe.
+    Bit-identisch zu `sample(iter_rows)` mit `PoolCounter` (Oracle:
+    `tests/integration/test_sampling_fast_paths.py`). Einschränken bleibt
+    klassisch über `get_rows_by_ids`; Spalten mit `"`/`\` im Namen
+    (`supports_field_pairs`) klassisch über `iter_rows`. Trefferzahl bei
+    einem Filter aus `DatasetRepo.value_counts` (je Feld und Dialog einmal
+    geholt, danach kein Scan je Wertwechsel), ab zwei Filtern ein Scan über
+    die Filterfelder; Gruppenzahl = `set` über die decodierten Werte von
+    `value_counts` (fasst `1`/`1.0`/`True` wie der Sampler zusammen).
   - `controllers/selection_controller.py` – Dataset-/Sample-/Filter-
     Auswahl: `handle_dataset_selected` (delegiert an `session.select_
     dataset`), `handle_sample_selected`, `handle_sample_filter_toggled`
@@ -480,6 +491,12 @@ ui ──▶ controllers ──▶ core ◀── io
       (`_inline_errors`) und der Dialog schließt nicht. Zuletzt ruft
       `accept()` die Probeziehung des Controllers (`set_validators`,
       `draw_check`); deren Ergebnis verwendet `handle_new_sampling` weiter.
+      Seit Sprint 98 laufen alle Provider im Worker; bei „Abbrechen" springt
+      die Filterzeile auf „(kein Filter)" (Werteliste), der Hinweis zeigt
+      „Trefferzahl nicht ermittelt" bzw. „Clusterzahl nicht ermittelt", und
+      eine abgebrochene Probeziehung (`DRAW_CANCELLED`) lässt den Dialog
+      ohne Meldung offen. Abgebrochenes wird nicht gecacht und erst nach
+      einer Eingabeänderung erneut gezählt.
       Vorher hat `_on_resample_toggled` stilles QSpinBox-Capping gemacht –
       das ist raus.
     Verbleibender Unterschied Simple/Advanced: nur noch Methodenwahl +
@@ -521,9 +538,15 @@ ui ──▶ controllers ──▶ core ◀── io
     Body in der Zwischenablage (Clipboard-Fallback).
   - `dialogs/about_dialog.py` – statischer About-Dialog (Version,
     Beschreibung, Repo-Link).
-  - `dialogs/progress_dialog.py` – `TaskProgressDialog` wrapt
-    `QProgressDialog` mit Callback-Adapter im
-    `ExcelImporter`-Signatur-Format.
+  - `dialogs/progress_dialog.py` – `TaskProgressDialog.run_task(task)`
+    führt eine `WorkerTask` im `TaskWorker` aus (Sprint 17). Seit Sprint 98
+    erscheint der Dialog erst nach `minimumDuration()` (300 ms; bis dahin
+    Event-Loop ohne Nutzereingaben – `exec()` allein zeigte ihn sofort).
+    Tasks mit `detach_on_cancel = True` (nur lesende: `ImportProbeTask` und
+    die Stichproben-Lese-Tasks) schließen bei „Abbrechen" sofort, der Worker
+    läuft abgelöst zu Ende (Halter `_DetachedWorkers`, `aboutToQuit` wartet;
+    Tests: autouse-Fixture `wait_for_detached_workers`). Schreibende Tasks
+    warten wie bisher.
   - `dialogs/import_options_dialog.py` – `ImportOptionsDialog` (Sprint 16,
     VBA-Backlog). Kombinierter Sheet-Dropdown + Preview-Tabelle + Header-
     Zeile-Spinbox. Wird vom `WorkspaceController.handle_import_excel`
@@ -765,7 +788,9 @@ Drei Kerndogmen, die sich durch die ganze DB-Schicht ziehen:
   Danach `AuditLogger.log_import(dataset)`.
 - Row-Zugriffe siehe „Streaming-Architektur" in CHANGELOG.md (`get_row`,
   `get_rows_in_range`, `iter_rows`, `iter_row_ids`, `get_rows_by_ids`,
-  `get_all_rows` als Ausnahme).
+  `get_all_rows` als Ausnahme). Spaltenweise ohne Zeilen-Decode:
+  `iter_row_field_pairs` (Sprint 35), `iter_row_multi_field_values` und
+  `value_counts` (Sprint 98, u64-Werte exakt).
 - UI-Controller (Sprint 4+) bekommt `Database`-Instanz, baut bei Bedarf eigene
   Repo-Instanzen pro Operation. Connection-Lebensdauer = App-Sitzung.
 - `UndoManager(db, engagement_id)` ist persistiert (überlebt Connection-Wechsel).

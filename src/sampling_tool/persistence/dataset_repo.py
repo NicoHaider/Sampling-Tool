@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
+from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import replace
+from operator import itemgetter
 from typing import Any, ClassVar
 
 from sampling_tool.core.cancellation import CancellationToken
@@ -251,6 +253,107 @@ class DatasetRepo:
             jtype = r["jtype"]
             value = None if jtype is None or jtype == "null" else _distinct_decode(r["raw"], jtype)
             yield int(r["row_index"]), value
+
+    def iter_row_multi_field_values(
+        self, dataset_id: int, columns: Sequence[str]
+    ) -> Iterator[tuple[int, tuple[Any, ...]]]:
+        """Streaming über ``(row_index, (wert_1, …, wert_k))``, sortiert nach row_index.
+
+        Sprint 98: Mehrspalten-Variante von ``iter_row_field_pairs`` für die
+        gefilterten Schnellpfade – nur die Filter- und Gruppenfelder statt der
+        ganzen Zeile. Ein ``json_extract`` mit mehreren Pfaden liefert je Zeile
+        ein JSON-Array der Feldwerte (fehlender Key ⇒ ``null``); SQLite gibt
+        jeden Wert dabei als seinen ursprünglichen JSON-Text aus. Decodiert wird
+        mit genau der Mechanik von ``_values_from_json`` (orjson +
+        ``_decode_value`` je Wert) – also identisch zu ``DatasetRow.get``,
+        einschließlich u64-Ganzzahlen, die ``json_extract`` mit EINEM Pfad nur
+        gerundet als REAL liefert (Oracle in
+        ``tests/integration/test_sampling_fast_paths.py``). Ein Aufruf je Zeile
+        statt ``json_extract`` + ``json_type`` je Spalte.
+
+        Spaltennamen, die ``supports_field_pairs`` nicht erfüllen ⇒ ``ValueError``
+        wie bei ``iter_row_field_pairs``.
+        """
+        for column in columns:
+            if not self.supports_field_pairs(column):
+                raise ValueError(
+                    "iter_row_multi_field_values unterstützt keine Spaltennamen mit '\"' "
+                    f"oder '\\' (Spalte: {column!r}) – Caller weichen via "
+                    f"supports_field_pairs auf iter_rows aus."
+                )
+        k = len(columns)
+        if k == 0:
+            for row_index in self.iter_row_ids(dataset_id):
+                yield row_index, ()
+            return
+        # Mit nur einem Pfad gäbe json_extract den SQL-Wert statt eines Arrays
+        # zurück (u64 dann gerundet) – der doppelte Pfad erzwingt das Array.
+        paths = (
+            ['$."' + column + '"' for column in columns]
+            if k > 1
+            else ['$."' + columns[0] + '"'] * 2
+        )
+        placeholders = ", ".join("?" * len(paths))
+        cur = self.conn.cursor()
+        cur.row_factory = None  # schlichte Tupel – spart je Zeile das sqlite3.Row
+        cur.execute(
+            f"SELECT row_index, json_extract(values_json, {placeholders}) "
+            "FROM dataset_rows WHERE dataset_id = ? ORDER BY row_index",
+            (*paths, dataset_id),
+        )
+        loads = _json_loads
+        decode = _decode_value
+        for row_index, raw in cur:
+            values = loads(raw)
+            if k == 1:
+                values = values[:1]
+            # `_decode_value` gibt Nicht-dicts unverändert zurück – nur getaggte
+            # Datums-/Zeitwerte (dicts) brauchen den Aufruf.
+            yield (
+                int(row_index),
+                tuple([v if type(v) is not dict else decode(v) for v in values]),
+            )
+
+    def value_counts(self, dataset_id: int, column: str) -> list[tuple[Any, int]]:
+        """Alle Werte einer Spalte mit Anzahl – inklusive ``None`` –, in Reihenfolge
+        des ersten Vorkommens.
+
+        Sprint 98: Grundlage für Trefferzahl (ein Filter) und Gruppenzahl im
+        Stichproben-Dialog. Gezählt wird der JSON-Text des Werts (wie in
+        ``iter_row_multi_field_values`` als Array aus ``json_extract`` mit
+        doppeltem Pfad), decodiert wird nur je verschiedenem Text – mit der
+        Mechanik von ``_values_from_json``, also derselbe Wert wie
+        ``DatasetRow.get``. Der Text trägt den Typ: ``1``, ``1.0`` und ``True``
+        bleiben getrennte Einträge (wer sie wie ein ``set``/``dict`` zusammen-
+        fassen will, tut das über die Werte selbst), u64-Ganzzahlen sind exakt.
+        Fehlender Key und JSON-``null`` ergeben denselben Text, also einen
+        ``None``-Eintrag. Ohne SQL-``GROUP BY`` (kein Sortieren): der Zähler
+        über den Zeilen-Stream war bei 1 Mio. Zeilen schneller.
+
+        Spaltennamen mit ``"``/``\\`` ⇒ ``ValueError`` wie bei
+        ``iter_row_field_pairs``.
+        """
+        if not self.supports_field_pairs(column):
+            raise ValueError(
+                "value_counts unterstützt keine Spaltennamen mit '\"' oder "
+                f"'\\' (Spalte: {column!r}) – Caller weichen via supports_field_pairs "
+                f"auf iter_rows aus."
+            )
+        json_path = '$."' + column + '"'
+        cur = self.conn.cursor()
+        cur.row_factory = None
+        cur.execute(
+            "SELECT json_extract(values_json, ?, ?) FROM dataset_rows "
+            "WHERE dataset_id = ? ORDER BY row_index",
+            (json_path, json_path, dataset_id),
+        )
+        # Counter behält die Einfügereihenfolge = erstes Vorkommen.
+        by_text = Counter(map(itemgetter(0), cur))
+        counts: list[tuple[Any, int]] = []
+        for text, n in by_text.items():
+            value = _json_loads(text)[0]
+            counts.append((value if type(value) is not dict else _decode_value(value), n))
+        return counts
 
     _SQLITE_VAR_LIMIT: ClassVar[int] = 900
 

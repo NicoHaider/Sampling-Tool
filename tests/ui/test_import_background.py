@@ -19,8 +19,7 @@ from unittest.mock import patch
 
 import pytest
 from openpyxl import Workbook
-from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QDialog, QMessageBox, QPushButton
+from PyQt6.QtWidgets import QDialog, QMessageBox
 from pytestqt.qtbot import QtBot
 from python_calamine import CalamineError, CalamineWorkbook
 
@@ -33,7 +32,7 @@ from sampling_tool.persistence.database import Database
 from sampling_tool.persistence.repositories import EngagementRepo
 from sampling_tool.ui.controllers._factories import default_import_options_factory
 from sampling_tool.ui.controllers.main_controller import MainController
-from sampling_tool.ui.dialogs.progress_dialog import TaskProgressDialog
+from sampling_tool.ui.dialogs.progress_dialog import wait_for_detached_workers
 from sampling_tool.ui.main_window import MainWindow
 from sampling_tool.ui.recent import RecentEngagementsStore
 from sampling_tool.ui.workers.task_worker import ProgressReporter, _ProgressEmitter
@@ -42,6 +41,7 @@ from tests.integration.test_import_result_unchanged import (
     _make_rich_xlsx,
     _reference_values_to_json,
 )
+from tests.ui._progress_cancel import CancelClicker
 
 pytestmark = pytest.mark.ui
 
@@ -422,20 +422,21 @@ class TestProbeFlow:
             waited.append(True)
             return original_probe(self, path, max_rows)
 
-        def _press_cancel() -> None:
-            # Der echte Knopf: `QProgressDialog.cancel()` allein sendet `canceled`
-            # nicht und setzte das Token nie.
-            dialogs = [d for d in window.findChildren(TaskProgressDialog) if d.isVisible()]
-            assert [d.labelText() for d in dialogs] == ["Datei wird geprüft…"]
-            buttons = dialogs[0].findChildren(QPushButton)
-            assert [b.text() for b in buttons] == ["Abbrechen"]
-            buttons[0].click()
-
         monkeypatch.setattr(ExcelImporter, "probe", _waiting_probe)
-        QTimer.singleShot(100, _press_cancel)
-        with patch(f"{_WC}.QMessageBox.warning") as mock_warning:
-            _run_import(controller, clean_xlsx)
+        # Der echte Knopf: `QProgressDialog.cancel()` allein sendet `canceled`
+        # nicht und setzte das Token nie. Sprint 98: der Dialog erscheint erst
+        # nach 300 ms, der Helfer wartet darauf.
+        clicker = CancelClicker()
+        try:
+            with patch(f"{_WC}.QMessageBox.warning") as mock_warning:
+                _run_import(controller, clean_xlsx)
+        finally:
+            clicker.stop()
 
+        assert clicker.labels == ["Datei wird geprüft…"]
+        # Sprint 98 / C: die Probe liest nur – „Abbrechen" wartet nicht auf den
+        # Worker, der läuft abgelöst zu Ende. Erst danach steht `waited` fest.
+        wait_for_detached_workers()
         assert waited == [True], "Das Token muss im Worker angekommen sein"
         mock_warning.assert_not_called()
         assert _dataset_count(engagement_db) == 0

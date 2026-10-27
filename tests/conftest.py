@@ -62,6 +62,20 @@ from tests._test_floor import (
 _skipped_nodeids: set[str] = set()
 
 
+@pytest.fixture(autouse=True)
+def _join_detached_workers() -> Iterator[None]:
+    """Sprint 98: abgebrochene Lese-Worker laufen im Hintergrund zu Ende.
+
+    In der App wartet `aboutToQuit` auf sie; in der Test-Session gibt es kein
+    App-Ende je Test. Ohne Warten liefe ein Worker in den nächsten Test hinein
+    oder würde bei Prozessende mitten im Lauf zerstört.
+    """
+    yield
+    from sampling_tool.ui.dialogs.progress_dialog import wait_for_detached_workers
+
+    wait_for_detached_workers()
+
+
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:
     """Sammelt die übersprungenen Tests für den Ausführungs-Wächter.
 

@@ -508,6 +508,44 @@ fallen zusätzlich zwei Blatt-Ladevorgänge weg, deshalb wird der Ablauf kürzer
 bleibt die Arbeit gleich (Encoding-Vorlauf der Vorschau), sie läuft nur nicht mehr auf dem
 UI-Thread.
 
+**Sprint 98 – Stichprobe ziehen ohne Einfrieren, schnellerer Filterpfad:**
+
+Befund (Analyse 25.10.2026, B5): Probeziehung, Trefferzahl, Werteliste und Gruppenzahl des
+Stichproben-Dialogs liefen synchron auf dem UI-Thread; gefilterte Ziehungen und Ergänzen
+decodierten dabei jede Zeile komplett (`sample(iter_rows)`), jeder neue Filterwert startete
+einen eigenen Scan. Seit Sprint 98 laufen alle vier als Lese-Tasks im Worker (eigene
+Verbindung, Dialog erst nach 300 ms, „Abbrechen" schließt sofort). Gefilterte Ziehungen und
+Ergänzen lesen nur noch die beteiligten Felder: ein `json_extract` mit mehreren Pfaden je
+Zeile (`DatasetRepo.iter_row_multi_field_values`) statt `json_extract` + `json_type` je
+Spalte; Trefferzahl (ein Filter), Werteliste und Gruppenzahl kommen aus einer Wertzählung
+(`DatasetRepo.value_counts`, Zähler über den JSON-Text im Zeilen-Stream, kein SQL-`GROUP BY`),
+die je Feld und Dialog einmal geholt wird. Ziehungen bit-identisch
+(`tests/integration/test_sampling_fast_paths.py`, Golden-Vektoren unverändert).
+
+`scripts/bench_sampling.py` (neu; Mac, Apple Silicon, Python 3.13.13, 2026-10-27,
+`--rows 1000000 --runs 3`, Median aus 3, ohne tracemalloc). „vorher" ist eine eingefrorene
+Kopie der Controller-Logik von `bbb2d57` auf derselben Projektdatei, „nachher" der Sprint-98-Pfad;
+das Skript vergleicht je Lauf die Ergebnisse (identisch):
+
+| 1M Zeilen × 15 Spalten | `bbb2d57` | Sprint 98 | Faktor |
+|------------------------|----------:|----------:|-------:|
+| Einfache Ziehung, 2 Filter (Pool 150.685) | 3,48 s | 1,63 s | 2,13× |
+| Cluster-Ziehung, 1 Filter | 3,39 s | 1,47 s | 2,32× |
+| Ergänzen, ohne Filter (500 ausgeschlossen) | 5,35 s | 950 ms | 5,63× |
+| Ergänzen, 1 Filter | 3,56 s | 1,64 s | 2,17× |
+| Einfache Ziehung ohne Filter (Pfad unverändert) | 962 ms | 966 ms | 1,00× |
+| Cluster-Ziehung ohne Filter (Pfad unverändert) | 1,62 s | 1,64 s | 0,98× |
+| Werteliste eines Filterfelds (nachher inkl. Wertzählung) | 1,84 s | 979 ms | 1,88× |
+| Trefferzahl 1 Filter, erster Wert | 1,63 s | 979 ms | 1,66× |
+| Trefferzahl 1 Filter, je weiterer Wertwechsel | ~1,6 s | < 0,01 ms | – |
+| Trefferzahl 2 Filter | 2,95 s | 1,50 s | 1,96× |
+| Gruppenzahl (`kostenstelle`) | 1,54 s | 973 ms | 1,58× |
+
+Auf dem UI-Thread bleibt davon nichts (`tests/ui/test_sampling_background.py::
+TestNoScanOnUiThread`: 0 Scans auf dem Main-Thread, auf `bbb2d57` 6 bzw. 7). Bei einem Filter
+kostet das Wählen des Felds einen Scan (Werteliste + Zählung zusammen), jeder Wertwechsel
+danach keinen mehr.
+
 **Hinweis zur Mess-Tabelle unten:** Der 1M-Lauf stammt vom Sprint-11-Stand
 (Toolversion `19f18a1`) und liegt damit VOR den Sprint-12.1-Fixes für P-001
 (`setResizeContentsPrecision(100)` → Tabelle-Anzeige) und P-002

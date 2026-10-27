@@ -5666,13 +5666,12 @@ class TestUndoDepthWiring:
 
 
 def _spy_create_sampler(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Patcht `create_sampler` im workspace_controller-Modul so, dass jeder
+    """Patcht `create_sampler` im sampling_paths-Modul so, dass jeder
     `sample`/`sample_ids`-Aufruf in der zurückgegebenen Liste landet.
 
-    Sprint 13: `handle_new_sampling` lebt seit dem MainController-Split in
-    `WorkspaceController`. Patch-Pfad zeigt deshalb auf die Use-Site
-    `sampling_tool.ui.controllers.workspace_controller.create_sampler`,
-    nicht mehr auf `main_controller`.
+    Sprint 98: die Pfadwahl lebt in `sampling_paths.draw_sample` (läuft im
+    Worker). Patch-Pfad zeigt deshalb auf die Use-Site
+    `sampling_tool.ui.controllers.sampling_paths.create_sampler`.
 
     Die eigentliche Sampler-Logik läuft normal weiter – nur die
     Methoden-Aufrufe werden zusätzlich protokolliert. `isinstance`-Checks
@@ -5717,7 +5716,7 @@ def _spy_create_sampler(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return sampler
 
     monkeypatch.setattr(
-        "sampling_tool.ui.controllers.workspace_controller.create_sampler",
+        "sampling_tool.ui.controllers.sampling_paths.create_sampler",
         spy_create_sampler,
     )
     return calls
@@ -5782,7 +5781,7 @@ class TestSamplingPathDispatch:
         try:
             _open_dataset(controller, window, populated_db)
             controller.workspace.handle_new_sampling()
-            assert calls == ["sample"]
+            assert calls == ["sample_ids"]  # Sprint 98: Schnellpfad mit Filter
         finally:
             controller.engagement.handle_close_engagement()
 
@@ -5880,7 +5879,7 @@ class TestSamplingPathDispatch:
         try:
             _open_dataset(controller, window, populated_db)
             controller.workspace.handle_new_sampling()
-            assert calls == ["sample"]
+            assert calls == ["sample_pairs"]  # Sprint 98: Schnellpfad mit Filter
         finally:
             controller.engagement.handle_close_engagement()
 
@@ -6070,26 +6069,31 @@ class TestSupplementarySampling:
     vorhandene Stichprobe = row_ids (2, 4).
     """
 
-    def test_build_supplement_iterator_excludes_exactly_given_ids(
+    def test_supplement_draw_excludes_exactly_given_ids(
         self,
         window: MainWindow,
         recent_store: RecentEngagementsStore,
         populated_db: Path,
     ) -> None:
+        # Sprint 98: der Ausschluss lebt in `sampling_paths.draw_sample` (vorher
+        # `_build_supplement_iterator`). Größe = Restmenge → genau die Basis minus Exclude.
+        from sampling_tool.ui.controllers.sampling_paths import draw_sample
+        from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
+
         controller = MainController(window, recent_store=recent_store)
         try:
             _open_dataset(controller, window, populated_db)
             assert controller.session.db is not None
             assert controller.session.dataset is not None
             repo = DatasetRepo(controller.session.db.connect())
-            rows, population_size = controller.workspace._build_supplement_iterator(
-                repo, controller.session.dataset, [2, 4]
+            request = SamplingDialogResult(
+                config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=1),
+                exclude_sample_ids=True,
             )
-            yielded = [row.row_id for row in rows]
-            # Exakt die Basis minus Exclude, in iter_rows-Reihenfolge.
-            assert yielded == [1, 3, 5]
+            drawn = draw_sample(repo, controller.session.dataset, request, (2, 4))
+            assert drawn.selected_row_ids == (1, 3, 5)
             # population_size = row_count - len(exclude).
-            assert population_size == 5 - 2
+            assert drawn.population_size == 5 - 2
         finally:
             controller.engagement.handle_close_engagement()
 
@@ -6102,8 +6106,11 @@ class TestSupplementarySampling:
     ) -> None:
         from sampling_tool.ui.dialogs.sampling_dialog import SamplingDialogResult
 
-        # Spy: der ungefilterte SimpleSampler-Fastpath (sample_ids) DARF bei einer
-        # Nachstichprobe NICHT laufen – sonst könnte er die Exclude-IDs mitziehen.
+        # Spy: der ungefilterte SimpleSampler-Fastpath über den GANZEN Datensatz
+        # darf bei einer Nachstichprobe nicht laufen – sonst zöge er die Exclude-
+        # IDs mit. Seit Sprint 98 zieht Ergänzen über die IDs OHNE die aktive
+        # Stichprobe (`sample_ids` auf der Restmenge); die Dublettenfreiheit
+        # prüfen die Asserts unten.
         calls = _spy_create_sampler(monkeypatch)
         result = SamplingDialogResult(
             config=SampleConfig(method=SamplingMethod.SIMPLE, size=3, seed=42),
@@ -6121,8 +6128,8 @@ class TestSupplementarySampling:
             controller.workspace.handle_new_sampling()
             assert controller.session.sample is not None
             drawn = set(controller.session.sample.selected_row_ids)
-            # Klassischer Pfad (sample), NICHT der sample_ids-Fastpath.
-            assert calls == ["sample"]
+            # Restmengen-Pfad (Sprint 98): sample_ids über die IDs ohne Exclude.
+            assert calls == ["sample_ids"]
             # Dublettenfrei: keine der ausgeschlossenen IDs (2, 4) taucht auf ...
             assert drawn.isdisjoint({2, 4})
             # ... und alles stammt aus der Restmenge {1, 3, 5}.
